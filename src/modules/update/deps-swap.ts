@@ -37,13 +37,14 @@ export function discardSoon(dir: string): void {
  * 旧的孤儿备份（第 16 轮 P2-2）：`*.prev-<数字>` 里不是这次在途记录那一戳的，都是早先留下、不再是恢复来源的。
  * 下次更新开始 / 服务启动时清掉；keepStamp = 在途记录里的那一戳（它还可能是恢复来源，绝不碰）。
  */
-export async function sweepOrphanPrev(root: string, keepStamp: string | null): Promise<string[]> {
+export async function sweepOrphanPrev(root: string, keep: string | null | ReadonlyArray<string>): Promise<string[]> {
+  const keepStamps = new Set(keep === null ? [] : typeof keep === "string" ? [keep] : keep);
   const removed: string[] = [];
   for (const rel of PREV_TARGETS) {
     const dir = path.dirname(path.join(root, rel));
     let names: string[] = [];
     try { names = await fsp.readdir(dir); } catch { continue; }
-    for (const n of names.filter((x) => PREV_NAME(path.basename(rel)).test(x) && x !== `${path.basename(rel)}.prev-${keepStamp}`)) {
+    for (const n of names.filter((x) => PREV_NAME(path.basename(rel)).test(x) && ![...keepStamps].some((st) => x === `${path.basename(rel)}.prev-${st}`))) {
       await discard(path.join(dir, n));
       removed.push(path.relative(root, path.join(dir, n)));
     }
@@ -127,6 +128,7 @@ export class DepsSwap {
   /** 手动恢复时换回旧依赖的命令（不需要网络） */
   manualRestore(): string[] {
     return [...this.swaps, ...(this.distSwap ? [this.distSwap] : [])].map((s) =>
-      `rm -rf "${path.relative(this.root, s.current)}" && mv "${path.relative(this.root, s.prev)}" "${path.relative(this.root, s.current)}"`);
+      // 与恢复步骤同一种可以重复跑的写法：备份已经换回去了就什么都不做（第 17 轮 P3-1）
+      `[ -d "${path.relative(this.root, s.prev)}" ] && { rm -rf "${path.relative(this.root, s.current)}" && mv "${path.relative(this.root, s.prev)}" "${path.relative(this.root, s.current)}"; }`);
   }
 }

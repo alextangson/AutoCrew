@@ -99,6 +99,17 @@ export function discardPrevDirs(root: string, inflight: Pick<Inflight, "stamp">)
   for (const [, prev] of prevDirs(root, inflight)) discardSoon(path.join(root, prev));
 }
 
+/**
+ * 还可能是恢复来源的备份戳：在途记录那一戳，加上「自动退回也失败」的结果里记着的那一戳（第 17 轮 P3-1）。
+ * 孤儿清理绝不碰它们；在途记录是老版本留下、没记戳的，返回 null 表示一份都别碰。
+ */
+export function protectedStamps(machineDir: string): string[] | null {
+  const inflight = readInflight(machineDir);
+  if (inflight && !inflight.stamp) return null;
+  const r = readResult(machineDir);
+  return [inflight?.stamp, r?.outcome === "stuck" ? r.backupStamp : undefined].filter((x): x is string => Boolean(x));
+}
+
 /** 这份结果是「上次更新中断」吗：是的话只在还中断着时显示（恢复好了就不显示，不管点没点过「知道了」，第 16 轮 P2-1） */
 export function stillInterrupted(machineDir: string): boolean {
   const r = readResult(machineDir), inflight = readInflight(machineDir);

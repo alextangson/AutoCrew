@@ -36,6 +36,8 @@ export interface UpdateResult {
   manualCommands?: string[];
   notes?: ReleaseNotes[];
   seen?: boolean;
+  /** 自动退回也失败（stuck）时，这次留着的旧依赖备份的时间戳：手动恢复命令要用它，孤儿清理绝不能删（第 17 轮 P3-1） */
+  backupStamp?: string;
   /** 「上次更新中断」的结果：对应的在途记录时刻（恢复好之前一直显示） */
   interruptedAt?: string;
 }

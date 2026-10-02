@@ -11,8 +11,8 @@ import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
 import { DepsSwap, sweepOrphanPrev, sweepTrash } from "./deps-swap.js";
-import { markFinishing, markRestarting } from "./abort.js";
-import { clearInflight, markInflightVerified, writeInflight } from "./interrupted.js";
+import { markFinishing, markRestarting, markRollingBack } from "./abort.js";
+import { clearInflight, markInflightVerified, protectedStamps, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
@@ -225,6 +225,7 @@ async function restoreConflicts(job: UpdateJob, to: string, from: string): Promi
 export class DirtyRollbackError extends Error {}
 
 async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean, progress: Progress): Promise<"kept" | "restarted" | "not_restarted"> {
+  markRollingBack();
   // reset --hard 只在「这次真的把 HEAD 挪到了 movedTo、HEAD 还在那、而且相对它没有任何已跟踪改动」时才做：
   // 那时工作区里只有这次更新自己的东西，丢掉它不会丢用户的字（Codex 审第 5 轮 P1）
   const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
@@ -273,7 +274,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   }
   log(`旧版本提交：${oldHead}`);
   try {
-    const swept = [...await sweepTrash(job.root), ...await sweepOrphanPrev(job.root, null)];
+    const keep = protectedStamps(job.machineDir);
+    const swept = [...await sweepTrash(job.root), ...(keep ? await sweepOrphanPrev(job.root, keep) : [])];
     if (swept.length) log(`清掉上次留下的垃圾目录 / 不再用得上的旧备份：${swept.join("、")}`);
   }
   catch (e) { log(`!! 清不掉上次留下的垃圾目录（不影响更新）：${errText(e)}`); }
@@ -318,6 +320,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
       const cmds = e2 instanceof DirtyRollbackError ? dirtyManualCommands(job.root, oldHead, restoreCmds) : manualCommands(job.root, oldHead, restoreCmds);
       log(`!! 退回也失败：${errText(e2)}。请在终端手动恢复：\n${cmds.join("\n")}`);
       return finish(job, { ok: false, outcome: "stuck", at: at(), ...base, manualCommands: cmds,
+        ...(job.steps.backupStamp ? { backupStamp: job.steps.backupStamp } : {}),
         message: `更新失败，自动退回也失败了（${errText(e2)}）。请在终端依次执行下面的命令恢复到 ${job.from}，完整记录在 ${job.logFile}` }, log);
     }
   }
