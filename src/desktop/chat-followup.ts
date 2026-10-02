@@ -20,7 +20,7 @@
  * 环里每一处引用都在函数体内、没有模块求值期的调用，ESM 的实时绑定能正常解开——
  * **别在本模块的顶层做任何会立即执行的事**（顺手加一句 `await`/自启动就会踩进 TDZ）。
  */
-import { appendTurn, getConversation } from "../storage/conversation-store.js";
+import { getConversation } from "../storage/conversation-store.js";
 import { getTopic } from "../storage/local-store.js";
 import type { AngleCard } from "../modules/research/brief-store.js";
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
@@ -31,7 +31,7 @@ import {
   type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "../modules/research/research-perspectives.js";
-import { enqueueConversationWrite, runPersistedChatTurn } from "./chat-persist.js";
+import { runPersistedChatTurn } from "./chat-persist.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { hasActiveTurnForConversation } from "./turn-registry.js";
 
