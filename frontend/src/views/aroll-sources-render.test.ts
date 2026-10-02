@@ -65,6 +65,13 @@ describe("待录制列头的收件箱提示", () => {
     expect(calls.find((c) => c.fn === "revealSource")!.args).toEqual(["/i/IMG_1.mov"]);
   });
 
+  it("暂停了自动找原片：列头说已暂停，不说「正在核对」", async () => {
+    const { InboxHeader } = await import("./InboxHeader");
+    await act(async () => { root.render(createElement(InboxHeader, { inbox: { checking: 1, failed: [], unmatched: [], paused: true }, targets: [], reload: async () => {} })); });
+    expect(el.textContent).toContain("已暂停自动找原片");
+    expect(el.textContent).not.toContain("正在核对");
+  });
+
   it("什么都没有就不占列头", async () => {
     const { InboxHeader } = await import("./InboxHeader");
     await act(async () => { root.render(createElement(InboxHeader, { inbox: { checking: 0, failed: [], unmatched: [] }, targets: [], reload: async () => {} })); });

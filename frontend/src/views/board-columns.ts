@@ -98,7 +98,9 @@ export interface BoardTopic {
 
 /** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
 export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
-export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number }
+export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number;
+  /** 暂停了自动找原片：这一轮收件箱只按文件名对 */
+  paused?: boolean }
 
 /**
  * 写稿中卡片的原片提示（1b 预演反馈）：有 pending_match → 「正在核对原片」；有原片候选 → 「发现 N 个疑似原片」。

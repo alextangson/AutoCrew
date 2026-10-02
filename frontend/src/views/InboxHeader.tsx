@@ -14,7 +14,7 @@ export function InboxHeader(p: { inbox: InboxStatus | undefined; targets: Array<
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const inbox = p.inbox;
-  if (!inbox || (!inbox.unmatched.length && !inbox.failed.length && !inbox.checking)) return null;
+  if (!inbox || (!inbox.unmatched.length && !inbox.failed.length && !inbox.checking && !inbox.paused)) return null;
   // 绑着列表里那份字节（整分支审 11 P2）：文件之后被换了，服务端回 stale，不挪新字节
   const assign = async (file: string, sha: string, id: string) => {
     if (!id) return;
@@ -29,7 +29,8 @@ export function InboxHeader(p: { inbox: InboxStatus | undefined; targets: Array<
   return <div className="bcol-inbox">
     {inbox.unmatched.length > 0 && <button className="bcard-link" aria-expanded={open} onClick={() => setOpen(!open)}>收件箱里有 {inbox.unmatched.length} 个视频没对上</button>}
     {inbox.failed.length > 0 && <p className="bcol-refuse" role="status">{inbox.failed.length} 个视频没核对成：{inbox.failed.map((f) => `${f.name}（${f.reason}）`).join("；")}</p>}
-    {inbox.checking > 0 && <p className="bcol-note">收件箱里 {inbox.checking} 个视频正在核对</p>}
+    {inbox.paused ? <p className="bcol-note">已暂停自动找原片：收件箱里的视频只按文件名对</p>
+      : inbox.checking > 0 && <p className="bcol-note">收件箱里 {inbox.checking} 个视频正在核对</p>}
     {open && <ul className="bcol-inbox-list">{inbox.unmatched.map((f) => <li key={f.path}>
       <strong title={f.path}>{f.name}</strong> <span className="muted">· 收件箱 · {mb(f.size)} · {when(f.mtime_ms)}</span>
       <p className="card-panel-note">{f.guess.length ? `哪条都不够像，最接近《${f.guess[0]}》` : "哪条都不像"}</p>

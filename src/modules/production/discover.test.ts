@@ -132,6 +132,18 @@ describe("§4 收件箱自动挪", () => {
     expect(await facts(c.id)).toEqual([]);
   });
 
+  it("暂停自动找原片：认不出的视频不入队、不挡整批，文件名唯一对上的照样挪；列头说已暂停（整分支审 16 P2）", async () => {
+    asr(heardFrom({}), true);
+    const a = await videoContent(env, "甲稿暂停批次测试", "draft_ready", A);
+    const named = await put(path.join(env.inbox, "甲稿暂停批次测试-原片.mov"), "named");
+    await put(path.join(env.inbox, "IMG_7.mov"), "unknown");
+    const r = await tick();
+    expect(await exists(named)).toBe(false);
+    expect((await facts(a.id)).map((f) => f.state)).toEqual(["accepted"]);
+    expect(r.inbox).toMatchObject({ checking: 0, paused: true });
+    expect(calls).toEqual([]);
+  });
+
   it("没能比完（转写一直失败）与没对上分开：退避到头后进「没核对成」并进对账警告（B36、§14-14）", async () => {
     asr(() => ({ ok: false, unavailable: false, reason: "sidecar 崩了" }));
     await videoContent(env, "甲稿失败测试", "draft_ready", A);
@@ -145,13 +157,14 @@ describe("§4 收件箱自动挪", () => {
     expect(r.inbox?.unmatched).toEqual([]);
   });
 
-  it("暂停自动找原片：收件箱的转写不跑，文件留在「在核对」（B13）", async () => {
+  it("暂停自动找原片：收件箱的转写不跑，按文件名判、列进「没对上」，列头标已暂停（B13；整分支审 16 改）", async () => {
     asr(heardFrom({}), true);
     await videoContent(env, "甲稿暂停测试", "draft_ready", A);
     await put(path.join(env.inbox, "IMG_p.mov"), "p");
     const r = await tick();
     expect(calls).toEqual([]);
-    expect(r.inbox?.checking).toBe(1);
+    expect(r.inbox).toMatchObject({ checking: 0, paused: true });
+    expect(r.inbox?.unmatched.map((f) => f.name)).toEqual(["IMG_p.mov"]);
   });
 });
 

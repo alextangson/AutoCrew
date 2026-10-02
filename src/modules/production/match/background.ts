@@ -26,7 +26,7 @@ registerMatchHandler(TRANSCRIBE, async ({ dataDir, job, signal }) => {
 export interface Found { file: string; name: string; sha256: string; size: number; mtime_ms: number }
 
 export type Verdict =
-  | { kind: "decided"; d: MatchDecision; note?: string }
+  | { kind: "decided"; d: MatchDecision; note?: string; paused?: true }
   | { kind: "checking" }
   | { kind: "failed"; reason: string };
 
@@ -45,6 +45,8 @@ export async function fileVerdict(dataDir: string, f: Found, pool: readonly Pool
   const tr = matchDeps().transcriber;
   const notReady = tr.notReady ? await tr.notReady(dataDir) : null;
   if (notReady) return nameOnly(`转写环境没装好（${notReady}）`);
+  // 暂停自动找原片 = 只停自己去找的转写（整分支审 16 P2）：不入队（入了也没人跑，会让整批永远「正在核对」），按文件名判
+  if (opts.priority !== "explicit" && (await matchDeps().paused(dataDir).catch(() => true))) return { ...nameOnly("暂停了自动找原片，只比了文件名"), paused: true } as Verdict;
   const prev = await enqueueMatchJob(dataDir, { purpose: TRANSCRIBE, priority: opts.priority ?? "background", sha256: f.sha256, path: f.file, size: f.size, mtime_ms: f.mtime_ms, target: "head", payload: {} });
   const job = prev;
   if (job.state === "failed") return { kind: "failed", reason: job.error ?? "转写失败" };

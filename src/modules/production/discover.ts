@@ -146,6 +146,7 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
     const v: Verdict = await fileVerdict(dataDir, f, pool);
     if (v.kind === "checking") out.inbox.checking += 1;
     else if (v.kind === "failed") out.inbox.failed.push({ name: f.name, path: f.file, reason: v.reason });
+    else if (v.paused) out.inbox.paused = true;
     else if (v.note) out.warnings.push(`收件箱里的 ${f.name} ${v.note}，这次只比了文件名（一小时后再试转写）`);
     seen.push({ f, v });
   }
