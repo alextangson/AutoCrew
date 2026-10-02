@@ -19,9 +19,11 @@ async function publishedByAgent() {
   const c = await videoContent(env, "客户问你们用AI吗");
   await founderApprove(env, c.id);
   await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "客户问你们用AI吗-原片.mov"), "raw"), request_id: "a" });
+  // 定时时间必须相对现在取未来：写死日期一过，同一份计划就会被正确地判成「应已公开」
+  const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
   await put(path.join(projectRoot(env, c.id), "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
-    { platform: "douyin", publication: { status: "scheduled", scheduled_at: "2026-09-30T20:00:00+08:00" } },
-    { platform: "bilibili", publication: { status: "scheduled", scheduled_at: "2026-09-30T20:00:00+08:00" } },
+    { platform: "douyin", publication: { status: "scheduled", scheduled_at: future } },
+    { platform: "bilibili", publication: { status: "scheduled", scheduled_at: future } },
   ] }));
   await reconcileAll(env.dir);
   return c;
