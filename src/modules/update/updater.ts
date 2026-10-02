@@ -116,6 +116,28 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   log("== 健康检查"); await job.steps.health(log);
 }
 
+/**
+ * 旧版本有、新版本没有的路径——reset 会把它们写回来。磁盘上已经有同名的未跟踪 / 被忽略文件（比如新版删掉、
+ * 用户在更新途中又建了一个），或者某一级父路径被一个文件占着，reset 会悄悄覆盖：列出来，不退回（Codex 审第 7 轮 P1）。
+ */
+async function restoreConflicts(job: UpdateJob, oldHead: string, head: string): Promise<string[]> {
+  const list = async (rev: string) => {
+    const r = await job.git(["ls-tree", "-r", "--name-only", "-z", rev]);
+    if (!r.ok) throw new Error(`读不出 ${rev.slice(0, 8)} 的文件清单（${firstLine(r.stderr)}）`);
+    return r.stdout.split("\0").filter(Boolean);
+  };
+  const now = new Set(await list(head));
+  const occupied = (rel: string): boolean => {
+    try { fs.lstatSync(path.join(job.root, rel)); return true; } catch { /* 不在 */ }
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      try { if (!fs.lstatSync(path.join(job.root, ...parts.slice(0, i))).isDirectory()) return true; } catch { return false; }
+    }
+    return false;
+  };
+  return (await list(oldHead)).filter((p) => !now.has(p) && occupied(p));
+}
+
 /** 退回前发现工作区里有不是这次更新带来的改动：不 reset，给手动步骤 */
 export class DirtyRollbackError extends Error {}
 
@@ -126,6 +148,8 @@ async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: bool
   if (!progress.movedTo || head !== progress.movedTo) throw new DirtyRollbackError(`当前版本不是这次更新合进来的那一版（${head.slice(0, 8)}），不自动退回`);
   const dirty = await trackedChanges(job.git);
   if (dirty) throw new DirtyRollbackError(`程序文件有不是这次更新带来的改动（${firstLine(dirty)}…），不自动退回，免得覆盖它们`);
+  const clash = await restoreConflicts(job, oldHead, head);
+  if (clash.length) throw new DirtyRollbackError(`退回会覆盖这些不归 git 管的文件：${clash.slice(0, 5).join("、")}${clash.length > 5 ? ` 等 ${clash.length} 个` : ""}，不自动退回`);
   await gitStep(job.git, ["reset", "--hard", oldHead], log);
   log("== 退回：安装依赖"); await job.steps.install(log);
   log("== 退回：构建前端"); await job.steps.build(log);

@@ -86,19 +86,44 @@ function readLock(machineDir: string): LockBody | null {
   try { return JSON.parse(fs.readFileSync(files(machineDir).lock, "utf-8")) as LockBody; } catch { return null; }
 }
 
+/** 读不出内容（空的、半截的）的锁在这段时间内一律当「有人刚拿」，过了才算死锁（Codex 审第 7 轮 P2） */
+export const UNREADABLE_LOCK_GRACE_MS = 10_000;
+
+type LockState = { kind: "none" } | { kind: "live"; body: LockBody | null } | { kind: "dead"; token: string | null };
+
+function lockState(machineDir: string, now = Date.now()): LockState {
+  const file = files(machineDir).lock;
+  let mtime: number;
+  try { mtime = fs.statSync(file).mtimeMs; } catch { return { kind: "none" }; }
+  const body = readLock(machineDir);
+  if (!body) return now - mtime < UNREADABLE_LOCK_GRACE_MS ? { kind: "live", body: null } : { kind: "dead", token: null };
+  return pidAlive(body.pid) ? { kind: "live", body } : { kind: "dead", token: body.token };
+}
+
 /** 持锁进程的 pid（没有锁就是 null） */
 export function lockOwner(machineDir: string): number | null {
   return readLock(machineDir)?.pid ?? null;
 }
 
-/** 锁在、且持锁进程还活着 */
+/** 锁在、且持锁进程还活着（读不出内容的新锁也算） */
 export function lockHeld(machineDir: string): boolean {
-  const body = readLock(machineDir);
-  return Boolean(body && pidAlive(body.pid));
+  return lockState(machineDir).kind === "live";
 }
 
 /**
- * 拿锁：已被活进程持有就返回 false；持锁进程死了的旧锁收回重拿。
+ * 原子发布一份完整的锁：先写进本进程独有的临时文件，再 link 到锁的位置——link 是原子的、目标已存在就失败，
+ * 所以锁文件一出现就是完整的 JSON，不会有「空文件被别人当死锁收走」的缝（Codex 审第 7 轮 P2）。
+ */
+function publishLock(file: string, body: LockBody): boolean {
+  const tmp = `${file}.new-${process.pid}-${randomBytes(6).toString("hex")}`;
+  fs.writeFileSync(tmp, JSON.stringify(body));
+  try { fs.linkSync(tmp, file); return true; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === "EEXIST") return false; throw e; }
+  finally { fs.rmSync(tmp, { force: true }); }
+}
+
+/**
+ * 拿锁：已被活进程持有（或是刚出现、还读不出内容）就返回 false；持锁进程死了的旧锁收回重拿。
  * 收回走原子 rename（Codex 审第 6 轮 P2）：先认准看到的那把死锁（令牌），把它改名成本进程独有的墓碑——
  * 两个进程同时收回，只有一个 rename 成功；改名后再核对墓碑里还是那把死锁，不是就原样放回（别人刚拿的新锁绝不删）。
  */
@@ -106,15 +131,10 @@ export function acquireLock(machineDir: string, token: string, pid = process.pid
   const file = files(machineDir).lock;
   fs.mkdirSync(machineDir, { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(file, JSON.stringify({ pid, token, at: new Date().toISOString() }), { flag: "wx" });
-      return true;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const seen = readLock(machineDir);
-      if (seen && pidAlive(seen.pid)) return false;
-      if (!reclaimStale(file, seen?.token ?? null)) return false;
-    }
+    if (publishLock(file, { pid, token, at: new Date().toISOString() })) return true;
+    const state = lockState(machineDir);
+    if (state.kind === "live") return false;
+    if (state.kind === "dead" && !reclaimStale(file, state.token)) return false;
   }
   return false;
 }
@@ -124,7 +144,7 @@ function reclaimStale(file: string, staleToken: string | null): boolean {
   try { fs.renameSync(file, tomb); }
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return true; throw e; }
   let moved: LockBody | null = null;
-  try { moved = JSON.parse(fs.readFileSync(tomb, "utf-8")) as LockBody; } catch { /* 半截文件当死锁 */ }
+  try { moved = JSON.parse(fs.readFileSync(tomb, "utf-8")) as LockBody; } catch { /* 读不出：改名前已核过它过了宽限期 */ }
   if (moved && moved.token !== staleToken && pidAlive(moved.pid)) {
     // 改名前一瞬别人已经收回并拿了新锁：放回去（目标被占就说明又有人拿了，这把留给它）
     try { fs.linkSync(tomb, file); } catch { /* 已有新锁 */ }
@@ -142,7 +162,11 @@ function reclaimStale(file: string, staleToken: string | null): boolean {
 export function adoptLock(machineDir: string, token: string, nonce: string, pid = process.pid): boolean {
   const body = readLock(machineDir);
   if (!body || body.token !== token) return false;
-  fs.writeFileSync(files(machineDir).lock, JSON.stringify({ ...body, pid, adopted: nonce }));
+  // 整份写进临时文件再 rename 覆盖（原子替换），不截断重写——别人任何时刻读到的都是完整的锁
+  const file = files(machineDir).lock;
+  const tmp = `${file}.adopt-${process.pid}-${randomBytes(6).toString("hex")}`;
+  fs.writeFileSync(tmp, JSON.stringify({ ...body, pid, adopted: nonce }));
+  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
   return true;
 }
 
