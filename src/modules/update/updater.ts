@@ -347,6 +347,11 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
   const npm = opts.npm ?? (process.platform === "win32" ? "npm.cmd" : "npm");
   const swap = new DepsSwap(root);
   let nonceBefore: string | null = null;
+  let startedForCheck = false;
+  /** 调启动器：带上 AUTOCREW_UPDATER，启动器才知道这是更新自己在操作，不会因为更新锁拒绝 */
+  const launcher = (cmd: string, label: string, log: Log) =>
+    runCommand(label, process.execPath, [path.join(root, "bin", "autocrew.mjs"), cmd, "--no-open"], root, log,
+      { env: { ...process.env, AUTOCREW_PORT: String(port), AUTOCREW_UPDATER: "1" } });
   return {
     activate: async (log) => swap.activateDist(log),
     restore: async (log) => {
@@ -372,17 +377,23 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     // 构建进 dist.next：等待期间旧进程照旧服务旧前端，确认没人在跑才换上（activate）
     build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal }),
     restart: async (log) => {
-      if (!opts.serverWasRunning) { log("服务本来没在跑：不启动，之后用 npm start 启动"); return; }
       // 记下重启前的启动标记：重启必须换出一个新的，健康检查只认新的（旧进程没停下来不能算重启成功）
       nonceBefore = launcherNonce(opts.machineDir ?? getMachineDir());
-      await runCommand("重启服务", process.execPath, [path.join(root, "bin", "autocrew.mjs"), "restart", "--no-open"], root, log,
-        { env: { ...process.env, AUTOCREW_PORT: String(port) } });
+      // 服务本来没在跑：也把这一版起一次做健康检查，检查完再停掉，保持更新前的样子（第 12 轮 P2）
+      // 检查用的服务还开着（上一次健康检查没过，现在是退回）：先停掉它再起旧版
+      const cmd = opts.serverWasRunning || startedForCheck ? "restart" : "start";
+      if (!opts.serverWasRunning) { startedForCheck = true; log("服务本来没在跑：起一次做健康检查，检查完再停掉"); }
+      await launcher(cmd, opts.serverWasRunning ? "重启服务" : "启动服务做检查", log);
       const after = launcherNonce(opts.machineDir ?? getMachineDir());
       if (!after || after === nonceBefore) throw new Error("重启没有换出新的服务进程（旧的还在跑），详情见日志");
     },
     health: async (log) => {
-      if (!opts.serverWasRunning) return;
       await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir(), notNonce: nonceBefore });
+      if (startedForCheck) {
+        startedForCheck = false;
+        await launcher("stop", "停掉检查用的服务", log);
+        log("检查通过，已停掉，和更新前一样不在运行");
+      }
     },
   };
 }

@@ -113,3 +113,53 @@ describe("P2 服务把剪辑 / 深调研的在跑数交给更新判断", () => {
     expect(line).toContain("researchBusyCount()");
   });
 });
+
+import net from "node:net";
+import { spawnSync } from "node:child_process";
+import { realSteps } from "./updater.js";
+
+const REPO = path.resolve(__dirname, "..", "..", "..");
+const freePort = () => new Promise<number>((resolve) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); }); });
+/** 假服务：报启动暗号、打印启动链接；broken=true 就一起来就退出 */
+function fakeServer(broken: boolean): string {
+  const f = path.join(tmp, broken ? "broken-server.mjs" : "fake-server.mjs");
+  fs.writeFileSync(f, broken ? "process.exit(3);\n" : `import http from "node:http";
+http.createServer((req, res) => {
+  if (req.url === "/__autocrew/launch") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, nonce: process.env.AUTOCREW_LAUNCH_NONCE, via: "launcher" }));
+  res.writeHead(200).end("ok");
+}).listen(Number(process.env.AUTOCREW_PORT), "127.0.0.1", () => console.log("http://127.0.0.1:" + process.env.AUTOCREW_PORT + "/?token=ab12"));
+setInterval(() => {}, 1000);
+`);
+  return f;
+}
+
+describe("P2 服务本来没开：也要起一次新版做健康检查", () => {
+  const prevLocal = process.env.AUTOCREW_LOCAL_DIR, prevScript = process.env.AUTOCREW_SERVER_SCRIPT, prevTimeout = process.env.AUTOCREW_LAUNCH_TIMEOUT_MS;
+  afterEach(() => {
+    for (const [k, v] of [["AUTOCREW_LOCAL_DIR", prevLocal], ["AUTOCREW_SERVER_SCRIPT", prevScript], ["AUTOCREW_LAUNCH_TIMEOUT_MS", prevTimeout]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+  const answers = async (port: number) => { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1_000) }); return true; } catch { return false; } };
+
+  it("新版能起来：起一次、检查通过、再停掉（和更新前一样不在运行）", async () => {
+    const port = await freePort();
+    Object.assign(process.env, { AUTOCREW_LOCAL_DIR: tmp, AUTOCREW_SERVER_SCRIPT: fakeServer(false) });
+    const lines: string[] = [];
+    const steps = realSteps(REPO, port, { serverWasRunning: false, busy: async () => null, machineDir: tmp, healthTimeoutMs: 10_000 });
+    await steps.restart((l) => lines.push(l));
+    await steps.health((l) => lines.push(l));
+    expect(lines.join("\n")).toContain("检查通过，已停掉");
+    expect(await answers(port)).toBe(false);
+  }, 40_000);
+
+  it("新版起不来：重启 / 健康检查失败（交给退回），不报成功", async () => {
+    const port = await freePort();
+    Object.assign(process.env, { AUTOCREW_LOCAL_DIR: tmp, AUTOCREW_SERVER_SCRIPT: fakeServer(true), AUTOCREW_LAUNCH_TIMEOUT_MS: "2000" });
+    const steps = realSteps(REPO, port, { serverWasRunning: false, busy: async () => null, machineDir: tmp, healthTimeoutMs: 2_000 });
+    let ok = false;
+    try { await steps.restart(() => {}); await steps.health(() => {}); ok = true; } catch { /* 应该失败 */ }
+    expect(ok).toBe(false);
+    spawnSync(process.execPath, [path.join(REPO, "bin", "autocrew.mjs"), "stop"], { env: { ...process.env, AUTOCREW_PORT: String(port) } });
+  }, 40_000);
+});
