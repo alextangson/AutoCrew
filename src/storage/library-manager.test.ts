@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { applyPendingStorage, previewStorage, queueStorage, storageStatus } from "./library-manager.js";
-import { getConfigDir, getHostStateDir, LIBRARY_MARKER, readLibraryLocation, resolveDataDir } from "./storage-roots.js";
+import { getConfigDir, getHostStateDir, getWorkspaceCacheDir, LIBRARY_MARKER, readLibraryLocation, resolveDataDir } from "./storage-roots.js";
 import { acquireLibraryLock, WRITER_LOCK } from "./library-lock.js";
 import { addAssets, getAsset, listLibrary, removeAsset, updateAsset } from "./library-store.js";
 import { createWorkspace, listWorkspaces, switchWorkspace } from "../desktop/workspace-store.js";
@@ -196,5 +196,20 @@ describe("portable libraries", () => {
     expect(await fs.readFile(path.join(target, relativeBrief), "utf8")).toBe(brief);
     expect(await fs.readFile(path.join(target, "workspaces/default/contents", c.id, "meta.json"), "utf8")).toBe(previousMeta);
     await expect(fs.access(path.join(newLocal, "workspaces/default/project-layout.json"))).rejects.toThrow();
+  });
+});
+
+describe("workspace cache dir", () => {
+  it("stays on this machine for the library and with the explicit directory everywhere else", async () => {
+    const fixture = path.join(temp, "fixture");
+    expect(getWorkspaceCacheDir()).toBe(path.join(local, "cache"));
+    expect(getWorkspaceCacheDir(fixture)).toBe(path.join(fixture, "cache")); // no library: fixtures never share the machine cache
+
+    await put(path.join(target, LIBRARY_MARKER), { version: 1, id: "lib-abc123", createdAt: "2026-10-02T00:00:00.000Z" });
+    await put(path.join(local, "storage.json"), { version: 1, id: "lib-abc123", root: target });
+    const machineCache = path.join(local, "libraries", "lib-abc123", "workspaces", "default", "cache");
+    expect(getWorkspaceCacheDir()).toBe(machineCache);
+    expect(getWorkspaceCacheDir(path.join(target, "workspaces", "default"))).toBe(machineCache);
+    expect(getWorkspaceCacheDir(fixture)).toBe(path.join(fixture, "cache"));
   });
 });
