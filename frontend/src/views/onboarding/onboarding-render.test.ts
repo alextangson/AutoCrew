@@ -180,3 +180,15 @@ describe("先不配", () => {
     expect(shouldOnboard(false, { ok: true, data: { hosts: [H("codex", { connected: true })], skipped: false } })).toBe(false);
   });
 });
+
+describe("Codex 评审 P2-3：写进去但没核对上", () => {
+  it("设置页那一行写原因，按钮是「再试一次」；引导不把它当接好了", async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了", unverified: "Claude 说连不上 autocrew" }), H("codex"), H("workbuddy")], skipped: false };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("claude").textContent).toContain("写进去了但没连上：Claude 说连不上 autocrew");
+    expect(btn("再试一次")).toBeTruthy();
+    const { shouldOnboard } = await import("./connect-api");
+    expect(shouldOnboard(false, { ok: true, data: { hosts: [H("claude", { unverified: "x", lastUsedAt: "2026-10-01T00:00:00Z" })], skipped: false } })).toBe(true);
+  });
+});

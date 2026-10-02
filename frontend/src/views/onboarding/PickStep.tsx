@@ -40,7 +40,7 @@ function HostCard(props: { h: HostStatus; picked: boolean; onPick: (on: boolean)
         {h.connected && <span className="ob-tag ok">已接上</span>}
       </div>
       <p className="ob-card-what">{WHAT[h.host]}</p>
-      <p className={`ob-card-state${usable ? "" : " warn"}`}>{probe ? (probe.ok ? probe.detail : probe.error) : h.detail}</p>
+      <p className={`ob-card-state${usable && !h.unverified ? "" : " warn"}`}>{probe ? (probe.ok ? probe.detail : probe.error) : h.unverified ? `写进去了但没连上：${h.unverified}，下一步里再试一次` : h.detail}</p>
       {h.found && h.host !== "workbuddy" && (
         <button className="btn-ghost" disabled={probing} onClick={(e) => { e.stopPropagation(); void check(); }}>{probing ? "正在检测…" : "检测登录"}</button>
       )}

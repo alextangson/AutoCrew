@@ -7,6 +7,7 @@ import path from "node:path";
 import { listHostTokens } from "../host-tokens.js";
 import { appInstalled, findDesktopClaude, findOnPath, type HostEnv } from "./env.js";
 import { readMcpEntry } from "./mcp-json-file.js";
+import { readVerifyState } from "./verify-state.js";
 
 export const CONNECT_HOSTS = ["claude", "codex", "workbuddy"] as const;
 export type ConnectHost = (typeof CONNECT_HOSTS)[number];
@@ -39,8 +40,10 @@ export interface HostStatus {
   loggedIn: boolean | null;
   /** 给人看的一句状态 */
   detail: string;
-  /** 宿主配置里有 autocrew 条目、且令牌还在 */
+  /** 宿主配置里有 autocrew 条目、令牌还在、且上一次核对过能连上 */
   connected: boolean;
+  /** 条目和令牌都在，但上一次没核对上（或从没核对过）：原因 */
+  unverified?: string;
   lastUsedAt?: string;
 }
 
@@ -94,8 +97,11 @@ function detectWorkbuddy(env: HostEnv): Pick<HostStatus, "found" | "loggedIn" | 
 export async function detectHost(host: ConnectHost, env: HostEnv): Promise<HostStatus> {
   const base = host === "claude" ? detectClaude(env) : host === "codex" ? await detectCodex(env) : detectWorkbuddy(env);
   const token = listHostTokens(env.dataDir).find((t) => t.host === TOKEN_HOST[host]);
-  const connected = Boolean(token) && hasEntry(host, env);
-  return { host, label: HOST_LABEL[host], ...base, connected, ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
+  const registered = Boolean(token) && hasEntry(host, env);
+  const record = readVerifyState(env.dataDir)[host];
+  const connected = registered && record?.verified === true;
+  const unverified = registered && !connected ? (record?.reason ?? "还没核对过能不能连上") : undefined;
+  return { host, label: HOST_LABEL[host], ...base, connected, ...(unverified ? { unverified } : {}), ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
 }
 
 /** 找到且（已知）已登录的排前面；其余保持 Claude → Codex → WorkBuddy */

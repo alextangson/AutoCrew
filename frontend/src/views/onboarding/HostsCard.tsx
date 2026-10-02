@@ -35,14 +35,16 @@ function HostRow(props: { h: HostStatus; reload: () => void }) {
     props.reload();
   };
   const now = Date.now();
-  const state = h.connected ? (h.lastUsedAt ? `已接上 · ${relativeTime(h.lastUsedAt, now)}用过` : "已接上 · 还没用过") : h.detail;
+  const state = h.connected
+    ? (h.lastUsedAt ? `已接上 · ${relativeTime(h.lastUsedAt, now)}用过` : "已接上 · 还没用过")
+    : h.unverified ? `写进去了但没连上：${h.unverified}` : h.detail;
   return (
     <div className="row" data-host={h.host}>
       <span className="row-title">{h.label}</span>
       <span className="muted">{state}</span>
       {h.connected
         ? <button className="btn-ghost" disabled={busy} onClick={() => void act("disconnect")}>{busy ? "正在断开…" : "断开"}</button>
-        : h.found && <button disabled={busy || h.loggedIn === false} onClick={() => void act("connect")}>{busy ? "正在接…" : "接上"}</button>}
+        : h.found && <button disabled={busy || h.loggedIn === false} onClick={() => void act("connect")}>{busy ? "正在接…" : h.unverified ? "再试一次" : "接上"}</button>}
       {result && <p className={result.ok && (result.verified || !result.registered) ? "set-test-ok" : "set-test-fail"}>{result.ok ? result.message : result.error ?? result.message}</p>}
     </div>
   );

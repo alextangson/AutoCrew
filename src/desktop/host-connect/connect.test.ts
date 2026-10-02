@@ -192,3 +192,22 @@ describe("断开（O9）", () => {
     expect(fs.readFileSync(path.join(sb.home, ".codex", "config.toml"), "utf-8")).not.toContain("autocrew");
   });
 });
+
+describe("Codex 评审 P2-3：写进去但没核对上，下次检测也不能算接上", () => {
+  it("记住每个宿主上一次核对的结果；没连上就是「写进去了但没连上」并带原因", async () => {
+    await sb.stopServer();
+    await connectHost("claude", sb.env);
+    const s = (await detectHosts(sb.env)).find((h) => h.host === "claude")!;
+    expect(s.connected).toBe(false);
+    expect(s.unverified).toContain("连不上");
+  });
+  it("核对过的才算接上；断开后状态清掉", async () => {
+    await connectHost("claude", sb.env);
+    expect((await detectHosts(sb.env)).find((h) => h.host === "claude")).toMatchObject({ connected: true });
+    expect((await detectHosts(sb.env)).find((h) => h.host === "claude")?.unverified).toBeUndefined();
+    await disconnectHost("claude", sb.env);
+    const after = (await detectHosts(sb.env)).find((h) => h.host === "claude")!;
+    expect(after.connected).toBe(false);
+    expect(after.unverified).toBeUndefined();
+  });
+});

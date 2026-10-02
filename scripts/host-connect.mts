@@ -20,7 +20,11 @@ function ago(iso?: string): string {
 if (verb === "connect" && rest.includes("--list")) {
   const hosts = await detectHosts(env);
   if (json) console.log(JSON.stringify(hosts, null, 2));
-  else for (const h of hosts) console.log(`${h.connected ? "✓ 已接上" : "· 没接上"}  ${h.label.padEnd(12)} ${h.connected ? ago(h.lastUsedAt) : h.detail}`);
+  else for (const h of hosts) {
+    const mark = h.connected ? "✓ 已接上" : h.unverified ? "! 没连上" : "· 没接上";
+    const note = h.connected ? ago(h.lastUsedAt) : h.unverified ? `写进去了但没连上：${h.unverified}（再试一次：autocrew connect ${h.host}）` : h.detail;
+    console.log(`${mark}  ${h.label.padEnd(12)} ${note}`);
+  }
 } else {
   const host = parseConnectHost(target);
   if (!host || (verb !== "connect" && verb !== "disconnect")) {

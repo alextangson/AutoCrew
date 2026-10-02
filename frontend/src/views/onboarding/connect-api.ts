@@ -9,6 +9,8 @@ export interface HostStatus {
   loggedIn: boolean | null;
   detail: string;
   connected: boolean;
+  /** 写进去了但没核对上：原因 */
+  unverified?: string;
   lastUsedAt?: string;
 }
 export interface ConnectView { hosts: HostStatus[]; skipped: boolean }
@@ -47,5 +49,6 @@ export function asResult(host: HostId, r: Reply<ConnectResult>): ConnectResult {
 export function shouldOnboard(engineConfigured: boolean, view: Reply<ConnectView>): boolean {
   if (engineConfigured) return false;
   if (!view.ok) return true;
-  return !view.data.skipped && !view.data.hosts.some((h) => h.connected || h.lastUsedAt);
+  // 没核对上的条目不算接好（Codex 评审 P2-3）；用过的老令牌（仓库 .mcp.json 开发用）算
+  return !view.data.skipped && !view.data.hosts.some((h) => h.connected || (h.lastUsedAt && !h.unverified));
 }

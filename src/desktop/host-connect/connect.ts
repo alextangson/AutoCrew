@@ -12,6 +12,7 @@ import type { HostEnv } from "./env.js";
 import { detectHost, findClaudeCli, HOST_LABEL, TOKEN_HOST, type ConnectHost } from "./detect.js";
 import { cliFailure, codexListEntry, hostEntry, registerHost, unregisterHost } from "./register.js";
 import { findOnPath } from "./env.js";
+import { recordVerify } from "./verify-state.js";
 
 export interface ConnectResult {
   ok: boolean;
@@ -111,6 +112,12 @@ export async function connectHost(host: ConnectHost, env: HostEnv): Promise<Conn
   const reg = await registerHost(host, env);
   if (!reg.ok) return { ok: false, host, registered: false, verified: false, code: reg.code, error: reg.error, message: reg.error };
   const reason = await verifyHost(host, env, started);
+  try {
+    recordVerify(host, { verified: reason === null, ...(reason ? { reason } : {}), at: new Date().toISOString() }, env.dataDir);
+  } catch (err) {
+    const error = `接好了，但没能记下核对结果：${err instanceof Error ? err.message : String(err)}`;
+    return { ok: false, host, registered: true, verified: false, code: "state_write_failed", error, message: error };
+  }
   const replacedNote = reg.replaced ? `已替换原来的 autocrew 配置（备份在 ${reg.backup}）。` : "";
   return {
     ok: true, host, registered: true, verified: reason === null,
@@ -124,6 +131,7 @@ export async function disconnectHost(host: ConnectHost, env: HostEnv): Promise<C
   const un = await unregisterHost(host, env);
   // 删条目失败也照样撤令牌：撤了它就连不上（O9），配置里剩下的条目只会报「令牌被拒」
   const revoked = revokeHostToken(TOKEN_HOST[host], env.dataDir);
+  try { recordVerify(host, null, env.dataDir); } catch { /* 令牌已撤、条目已删：残留的核对记录只会让它显示「没接上」，不影响安全 */ }
   const label = HOST_LABEL[host];
   if (!un.ok) {
     const error = `${revoked ? "令牌已撤销，它再调用会被拒绝；" : ""}但没能从 ${label} 的配置里删掉 autocrew：${un.error}`;

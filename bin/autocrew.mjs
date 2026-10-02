@@ -576,6 +576,7 @@ switch (command) {
       + `\n${inbox.text}`
       + (checks.engineConfigured ? "" : "\n  没配钥匙：深调研、选题雷达、复盘、人设、每日摘要暂时不可用；在接上的 Claude Code / Codex / WorkBuddy 里写稿不受影响（设置→模型 里随时补）")
       + (hostsError ? `\n  → ${hostsError}，宿主接没接未知（autocrew connect --list 重查）` : "")
+      + hosts.filter((h) => h.unverified).map((h) => `\n  → ${h.label} 写进去了但没连上：${h.unverified}（再试一次：autocrew connect ${h.host}）`).join("")
       + (checks.hostClaude || checks.hostCodex || checks.hostWorkbuddy ? "" : "\n  → 还没接任何宿主：autocrew connect claude（或 codex / workbuddy），也可以在 设置→接入更多→宿主 里点「接上」")
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
