@@ -181,6 +181,11 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
     .then((n) => (n > 0 ? report(`${n} 篇成片的收尾清理没做完，已重排`) : undefined))
     .catch((err: unknown) => report(`启动回收失败：${String(err)}`));
 
+  // 预热归服务进程管：启动时读一次（允许恢复），上一个进程被重启打断的「预热中」当场改成就绪 / 失败，
+  // 不用等有人打开设置页；原片比对因此不会在每次更新重启后一直报「正在预热」（第 14 轮跟进）
+  void effectiveAsrStatus(dataDir, process.env, { recoverInterrupted: true })
+    .catch((err: unknown) => report(`读 ASR 预热状态失败：${String(err)}`));
+
   function serialize<T>(fn: () => Promise<T>): Promise<T> {
     const next = chain.then(fn, fn);
     chain = next.catch(() => undefined);

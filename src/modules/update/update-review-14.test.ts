@@ -37,3 +37,20 @@ describe("P3 写不了状态", () => {
     expect(asrWarmupCount()).toBe(0);
   });
 });
+
+import { createVideoService } from "../video/service.js";
+
+describe("跟进：服务一启动就把被打断的预热恢复过来", () => {
+  it("盘上留着「预热中」、服务新启动：不用打开设置页，状态就不再是预热中", async () => {
+    const statusFile = path.join(tmp, "video", "asr-status.json");
+    fs.mkdirSync(path.dirname(statusFile), { recursive: true });
+    fs.writeFileSync(statusFile, JSON.stringify({ status: "warming", detail: "正在下载", updatedAt: "2026-10-02T00:00:00Z" }));
+    const prev = process.env.MODELSCOPE_CACHE;
+    process.env.MODELSCOPE_CACHE = path.join(tmp, "empty-cache");
+    try {
+      const svc = createVideoService({ dataDir: tmp, deps: { spawnImpl: routedSpawn({ uv: fakeUvSpawn("ok") }) }, onError: () => {} });
+      await expect.poll(() => JSON.parse(fs.readFileSync(statusFile, "utf-8")).status, { timeout: 3000 }).toBe("failed");
+      await svc.shutdown();
+    } finally { if (prev === undefined) delete process.env.MODELSCOPE_CACHE; else process.env.MODELSCOPE_CACHE = prev; }
+  });
+});
