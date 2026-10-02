@@ -208,39 +208,6 @@ describe("P3-E 更新进程意外退出", () => {
   });
 });
 
-import { admitMutation } from "../../desktop/http-busy-guard.js";
-import { activeWorkCount, beginWork, resetActiveWork } from "./active-work.js";
-import { activeTurnCount, registerTurn, resetActiveTurns } from "../../desktop/turn-registry.js";
-
-describe("P3-G 一个对话轮只算一件事", () => {
-  it("浏览器发来的对话轮：请求本身、IPC 长通道、对话轮登记合起来只算 1", async () => {
-    resetActiveWork(); resetActiveTurns();
-    let seen = -1, release!: () => void;
-    const server = http.createServer((req, res) => {
-      if (!admitMutation(req, res, "/api/invoke")) return;
-      void (async () => {
-        await Promise.resolve();
-        const w = beginWork("chat:turn"); // IPC 长通道
-        const t = registerTurn("turn-g", "client-g"); // 对话轮登记
-        seen = activeWorkCount() + activeTurnCount();
-        await new Promise<void>((r) => { release = r; });
-        if (w.ok) w.end();
-        void t;
-        res.writeHead(200).end("{}");
-      })();
-    });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    try {
-      const port = (server.address() as import("node:net").AddressInfo).port;
-      const pending = fetch(`http://127.0.0.1:${port}/api/invoke`, { method: "POST", body: "{}" });
-      expect(await until(() => seen >= 0)).toBe(true);
-      expect(seen).toBe(1);
-      release();
-      await pending;
-    } finally { await new Promise((r) => server.close(r)); resetActiveTurns(); resetActiveWork(); }
-  });
-});
-
 import { bannerFor, checkForUpdate } from "./check.js";
 import { gitRunner } from "./git.js";
 import { readSettings, readStatus } from "./state.js";
@@ -258,5 +225,32 @@ describe("S2 检查失败不抹掉已知的新版本", () => {
     const s = await checkForUpdate(user, m, { git: gitRunner(user) });
     expect(s.error).toMatch(/连不上 GitHub/);
     expect(bannerFor(readStatus(m), readSettings(m), "0.4.9")?.version).toBe("0.5.0");
+  });
+});
+
+import { admitMutation } from "../../desktop/http-busy-guard.js";
+import { activeWorkCount, beginWork, resetActiveWork } from "./active-work.js";
+import { busyWork } from "./preflight.js";
+
+describe("第 15 轮 P1：请求发起、请求返回后还在跑的后台活照样算忙", () => {
+  it("写请求里起了后台写稿就先回了：响应结束后，后台活仍计入忙碌，跑完才释放", async () => {
+    resetActiveWork();
+    let job: ReturnType<typeof beginWork> | null = null;
+    const server = http.createServer((req, res) => {
+      if (!admitMutation(req, res, "/api/invoke")) return;
+      job = beginWork("后台写稿"); // 像 startGenerateScript / startCoverJob：请求先回，活在后台接着跑
+      res.writeHead(200).end("{}");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      await (await fetch(`http://127.0.0.1:${port}/api/invoke`, { method: "POST", body: "{}" })).text();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(activeWorkCount()).toBe(1);
+      expect(busyWork(tmp, { runAlive: () => false, inProcessTurns: activeWorkCount })).toBe("有任务正在跑（写稿、对话、发布或剪辑），等它们停下再更新");
+      const j = job as ReturnType<typeof beginWork> | null;
+      if (j?.ok) j.end();
+      expect(activeWorkCount()).toBe(0);
+    } finally { await new Promise((r) => server.close(r)); resetActiveWork(); }
   });
 });
