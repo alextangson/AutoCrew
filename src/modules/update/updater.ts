@@ -34,8 +34,11 @@ export interface UpdateSteps {
   /** 取消（没重启）之后：服务本来在跑、现在却不在了（比如被人手动停了），把它起回来（第 12 轮 P2） */
   ensureUp?: (log: Log) => Promise<void>;
   build: (log: Log, signal?: AbortSignal) => Promise<void>;
-  restart: (log: Log) => Promise<void>;
-  health: (log: Log) => Promise<void>;
+  /** 第二个参数：是不是退回时调的（服务本来没开、更新也没起过它时，退回不必启动） */
+  restart: (log: Log, ctx?: { rollback?: boolean }) => Promise<void>;
+  health: (log: Log, ctx?: { rollback?: boolean }) => Promise<void>;
+  /** 这次更新有没有把本来没开的服务起起来了（结果里要告诉用户「AutoCrew 已经启动」） */
+  startedService?: () => boolean;
 }
 
 export interface UpdateJob {
@@ -244,8 +247,8 @@ async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: bool
     log(`服务没有重启：${e.message}`);
     return "not_restarted";
   }
-  log("== 退回：重启服务"); await job.steps.restart(log);
-  log("== 退回：健康检查"); await job.steps.health(log);
+  log("== 退回：重启服务"); await job.steps.restart(log, { rollback: true });
+  log("== 退回：健康检查"); await job.steps.health(log, { rollback: true });
   return "restarted";
 }
 
@@ -268,7 +271,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   try {
     await forward(job, oldHead, log, progress);
     if (job.steps.cleanup) await job.steps.cleanup(log).catch((e) => log(`!! 删旧依赖没删成（不影响使用，可手动删 *.prev-* 目录）：${errText(e)}`));
-    return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}` }, log);
+    return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}${job.steps.startedService?.() ? "，AutoCrew 已经启动" : ""}` }, log);
   } catch (e) {
     // 子进程被中止信号结束时，报的是「中止」而不是「装依赖失败」
     const aborted = e instanceof AbortedError || Boolean(job.signal?.aborted);
@@ -363,6 +366,7 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
   const swap = new DepsSwap(root);
   let nonceBefore: string | null = null;
   let startedForCheck = false;
+  let skipRollbackStart = false;
   const installTimeout = opts.installTimeoutMs ?? 20 * 60_000;
   /** 调启动器：带上 AUTOCREW_UPDATER，启动器才知道这是更新自己在操作，不会因为更新锁拒绝 */
   const launcher = (cmd: string, label: string, log: Log) =>
@@ -401,25 +405,25 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     },
     // 构建进 dist.next：等待期间旧进程照旧服务旧前端，确认没人在跑才换上（activate）
     build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal, timeoutMs: opts.buildTimeoutMs ?? 10 * 60_000 }),
-    restart: async (log) => {
+    restart: async (log, ctx) => {
+      // 退回时：服务本来没开、更新也没起过它——代码和依赖已经换回，没有要重启的东西（第 13 轮 P2：别为了检查起一个再掐掉）
+      if (ctx?.rollback && !opts.serverWasRunning && !startedForCheck) { skipRollbackStart = true; log("服务本来没在跑，退回后也不启动"); return; }
       // 记下重启前的启动标记：重启必须换出一个新的，健康检查只认新的（旧进程没停下来不能算重启成功）
       nonceBefore = launcherNonce(opts.machineDir ?? getMachineDir());
-      // 服务本来没在跑：也把这一版起一次做健康检查，检查完再停掉，保持更新前的样子（第 12 轮 P2）
+      // 服务本来没在跑：也把这一版起起来做健康检查，通过后就让它接着跑（第 13 轮 P2：起了再停会掐断启动时捡回来的剪辑 / 调研）
       // 检查用的服务还开着（上一次健康检查没过，现在是退回）：先停掉它再起旧版
       const cmd = opts.serverWasRunning || startedForCheck ? "restart" : "start";
-      if (!opts.serverWasRunning) { startedForCheck = true; log("服务本来没在跑：起一次做健康检查，检查完再停掉"); }
+      if (!opts.serverWasRunning) { startedForCheck = true; log("服务本来没在跑：把这一版起起来做健康检查，通过后让它接着跑"); }
       await launcher(cmd, opts.serverWasRunning ? "重启服务" : "启动服务做检查", log);
       const after = launcherNonce(opts.machineDir ?? getMachineDir());
       if (!after || after === nonceBefore) throw new Error("重启没有换出新的服务进程（旧的还在跑），详情见日志");
     },
-    health: async (log) => {
+    health: async (log, ctx) => {
+      if (ctx?.rollback && skipRollbackStart) return;
       await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir(), notNonce: nonceBefore });
-      if (startedForCheck) {
-        startedForCheck = false;
-        await launcher("stop", "停掉检查用的服务", log);
-        log("检查通过，已停掉，和更新前一样不在运行");
-      }
+      if (startedForCheck) log("检查通过，AutoCrew 已经启动");
     },
+    startedService: () => startedForCheck,
   };
 }
 

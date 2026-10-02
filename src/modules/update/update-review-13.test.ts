@@ -49,3 +49,42 @@ describe("P2 服务把 ASR 预热计入忙碌", () => {
     expect(src.split("\n").find((l) => l.includes("inProcessTurns:"))).toContain("asrWarmupCount()");
   });
 });
+
+import { execFileSync } from "node:child_process";
+import { realSteps, runUpdate, type UpdateSteps } from "./updater.js";
+import { checkForUpdate } from "./check.js";
+import { gitRunner } from "./git.js";
+
+const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+const g = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, env: ENV, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+async function releases() {
+  const origin = path.join(tmp, "o.git"), dev = path.join(tmp, "d"), user = path.join(tmp, "u"), machine = path.join(tmp, "m");
+  g(tmp, "init", "-q", "--bare", "-b", "main", origin); g(tmp, "clone", "-q", origin, dev); g(dev, "checkout", "-q", "-b", "main");
+  const rel = (v: string) => { fs.writeFileSync(path.join(dev, "package.json"), JSON.stringify({ version: v })); g(dev, "add", "package.json"); g(dev, "commit", "-q", "-m", v); g(dev, "tag", "-a", `v${v}`, "-m", v); g(dev, "push", "-q", "origin", "main", "--tags"); };
+  rel("0.4.0"); g(tmp, "clone", "-q", origin, user); rel("0.5.0");
+  fs.mkdirSync(machine);
+  await checkForUpdate(user, machine, { git: gitRunner(user) });
+  return { user, machine, old: g(user, "rev-parse", "HEAD"), commit: g(user, "rev-parse", "v0.5.0^{commit}") };
+}
+
+describe("P2 服务本来没开：检查用的服务不再起了又掐，退回也不凭空起服务", () => {
+  it("装依赖失败要退回、服务本来没开、更新也没起过它：退回不启动（真实步骤，临时仓库里根本没有启动器）", async () => {
+    const { user, machine, old, commit } = await releases();
+    fs.mkdirSync(path.join(user, "node_modules")); // 有旧依赖可留：退回靠改名换回，不需要再装
+    const npm = path.join(tmp, "bad-npm.sh");
+    fs.writeFileSync(npm, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user),
+      steps: realSteps(user, 1, { serverWasRunning: false, busy: async () => null, npm }), logFile: path.join(machine, "u.log") });
+    expect(r).toMatchObject({ ok: false, outcome: "rolled_back" });
+    expect(g(user, "rev-parse", "HEAD")).toBe(old);
+    expect(fs.readFileSync(path.join(machine, "u.log"), "utf-8")).toContain("退回后也不启动");
+  });
+
+  it("检查通过、服务是这次起的：结果里说「AutoCrew 已经启动」", async () => {
+    const { user, machine, commit } = await releases();
+    const s = async () => {};
+    const steps: UpdateSteps = { install: s, build: s, quiesce: s, serviceDown: async () => false, restart: s, health: s, startedService: () => true };
+    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
+    expect(r.message).toBe("已更新到 0.5.0，AutoCrew 已经启动");
+  });
+});

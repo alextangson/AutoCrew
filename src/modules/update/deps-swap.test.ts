@@ -42,8 +42,8 @@ esac
 afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const job = () => ({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user),
-  steps: noService(realSteps(user, 1, { serverWasRunning: false, busy: async () => null, npm })), logFile: path.join(machine, "u.log") });
-/** 这组只测依赖换回：启动 / 健康检查换成空的（临时仓库里没有启动器，也绝不起真服务） */
+  steps: realSteps(user, 1, { serverWasRunning: false, busy: async () => null, npm }), logFile: path.join(machine, "u.log") });
+/** 成功那条要走到「起服务做检查」：临时仓库里没有启动器，也绝不起真服务，换成空的。退回的几条用真实步骤（服务本来没开，退回不启动） */
 function noService(s: ReturnType<typeof realSteps>): ReturnType<typeof realSteps> { return { ...s, restart: async () => {}, health: async () => {} }; }
 const prevDirs = () => [...fs.readdirSync(user), ...fs.readdirSync(path.join(user, "frontend"))].filter((f) => f.includes(".prev-"));
 
@@ -60,7 +60,7 @@ describe("装依赖前留一份旧的，退回不靠网络", () => {
   });
 
   it("成功：新依赖、新前端换上；留着的旧目录在健康检查之后删掉；用的是 --prefer-offline", async () => {
-    const r = await runUpdate(job());
+    const r = await runUpdate({ ...job(), steps: noService(job().steps) });
     expect(r).toMatchObject({ ok: true });
     expect(read("node_modules/marker")).toBe("new");
     expect(read("frontend/dist/marker")).toBe("new");
@@ -70,7 +70,7 @@ describe("装依赖前留一份旧的，退回不靠网络", () => {
 
   it("退回也失败：手动恢复命令用留着的旧依赖换回，不需要网络", async () => {
     fs.writeFileSync(path.join(tmp, "offline"), "");
-    const steps = noService(realSteps(user, 1, { serverWasRunning: false, busy: async () => null, npm }));
+    const steps = realSteps(user, 1, { serverWasRunning: false, busy: async () => null, npm });
     const r = await runUpdate({ ...job(), steps: { ...steps, restore: async () => { throw new Error("换回失败"); } } });
     expect(r).toMatchObject({ outcome: "stuck" });
     expect(r.manualCommands?.join("\n")).toMatch(/mv "node_modules\.prev-\d+" "node_modules"/);
