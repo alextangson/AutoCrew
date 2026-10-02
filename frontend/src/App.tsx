@@ -14,7 +14,7 @@ import { Library } from "./views/Library";
 import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
-import { Onboarding } from "./views/Onboarding";
+import { OnboardingGate } from "./views/onboarding/OnboardingGate";
 import { loadConnect, shouldOnboard } from "./views/onboarding/connect-api";
 import { EngineDot } from "./views/EngineBanner";
 import { PreferenceBanner } from "./views/PreferenceBanner";
@@ -99,7 +99,7 @@ export function App() {
     );
   }
   if (gate === "onboarding") {
-    return <Onboarding onDone={() => setGate("ready")} onOpenSettings={() => { setGate("ready"); setRoute({ view: "settings", tab: "models" }); }} />;
+    return <OnboardingGate onDone={() => setGate("ready")} onOpenSettings={() => { setGate("ready"); setRoute({ view: "settings", tab: "models" }); }} />;
   }
 
   return (
