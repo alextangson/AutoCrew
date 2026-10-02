@@ -31,6 +31,13 @@ describe("payoff 收紧", () => {
     expect(emptyPayoffReason("帮你 3 分钟认识 Harness")).toMatch(/认识 X/);
     expect(emptyPayoffReason("看完能判断自己的团队该不该上 AI 客服")).toBeNull();
     expect(emptyPayoffReason("今天就把上周的返工时间记一次")).toBeNull();
+    // 理解类动词后面接着要做的事 / 要下的判断，不是空话
+    expect(emptyPayoffReason("明白自己该先自查哪 3 样再决定上不上 AI")).toBeNull();
+    expect(emptyPayoffReason("看懂报价单之后，能判断这家值不值得签")).toBeNull();
+    expect(emptyPayoffReason("了解要不要现在就给团队买")).toBeNull();
+    // 只接一个光秃秃的对象，仍是空话
+    expect(emptyPayoffReason("明白 AI 客服的原理")).toMatch(/明白 X/);
+    expect(emptyPayoffReason("搞懂大模型")).toMatch(/搞懂 X/);
   });
 
   it("立意产出：空话 payoff 被打回", () => {

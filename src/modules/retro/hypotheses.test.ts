@@ -162,3 +162,23 @@ describe("parseHypothesisProposals", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe("回归：周复盘不按默认 D+7 裁选题会下注", () => {
+  it("带 meetingDate 的下注留给选题会按 watchDay 对账，不进周复盘裁决", async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-retro-bet-"));
+    try {
+      const { appendHypotheses } = await import("./hypotheses.js");
+      const { gatherFacts } = await import("./retro-facts.js");
+      const base = { statement: "s", metricFocus: "views" as const, direction: "up" as const, scope: { platform: "douyin" }, contentIds: [], proposedAt: "2026-09-25T00:00:00Z", status: "open" as const };
+      await appendHypotheses([
+        { ...base, id: "hyp-retro", retroRunId: "r1" },
+        { ...base, id: "hyp-meeting-2026-09-25-s1", retroRunId: "meeting-2026-09-25", meetingDate: "2026-09-25", watchDay: 3 },
+      ], dir);
+      const facts = await gatherFacts(7, dir);
+      expect(facts.judged.map((j) => j.hypothesis.id)).toEqual(["hyp-retro"]);
+    } finally { await fsp.rm(dir, { recursive: true, force: true }); }
+  });
+});

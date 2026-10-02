@@ -37,6 +37,12 @@ async function expiryAnchor(topic: Topic, dataDir: string): Promise<number> {
   return Number.isFinite(generatedAt) ? Math.max(base, generatedAt) : base;
 }
 
+async function reportMeetingReadFailure(err: unknown, dataDir: string): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[topic-expiry] 会议记录读不出，本轮不清理片单选题：${message}`);
+  await emitEngineEvent({ role: "scout", kind: "work", label: `灵感库清理：会议记录读不出（${message}），本轮跳过带会议位的选题` }, dataDir);
+}
+
 export interface TopicExpiryResult {
   /** 各工作区清理数(仅含 >0 的) */
   expiredByWorkspace: Record<string, number>;
@@ -60,10 +66,12 @@ export async function expireStaleTopics(
     try {
       const [topics, contents] = await Promise.all([listTopics(ws.dataDir), listContents(ws.dataDir)]);
       const usedTopicIds = new Set(contents.map((c) => c.topicId).filter((id): id is string => Boolean(id)));
-      const latestMeeting = await latestMeetingDate(ws.dataDir).catch(() => null);
+      const meeting = await latestMeetingDate(ws.dataDir).then((date) => ({ ok: true as const, date }), (err: unknown) => ({ ok: false as const, err }));
+      if (!meeting.ok) await reportMeetingReadFailure(meeting.err, ws.dataDir);
       for (const t of topics) {
-        // 会议位豁免（选题会 spec 边界 8）：只豁免到下次开会；下次没再选中就恢复正常过期
-        if (inCurrentSlate(t, latestMeeting)) continue;
+        // 会议位豁免（选题会 spec 边界 8）：只豁免到下次开会；下次没再选中就恢复正常过期。
+        // 会议记录读不出时，这一轮带会议位的一律不清（宁可晚清，也不把片单当灵感清走）
+        if (t.meetingSlot && (!meeting.ok || inCurrentSlate(t, meeting.date))) continue;
         // 续期锚：有动作(如启动深调研)就从那一刻重新计时,没有才回落 createdAt
         if (!(now - new Date(t.renewedAt ?? t.createdAt).getTime() > ttlMs)) continue; // 未到期(坏时间戳 NaN 同理不误删)
         // 到期了才去读简报：sweep 是启动全量扫,没到期的那批一次盘都不该多读

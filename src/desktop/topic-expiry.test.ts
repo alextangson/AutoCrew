@@ -1,7 +1,7 @@
 /**
  * topic-expiry.test.ts — 灵感库 3 天过期清理（创始人 2026-07-08 裁决）
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -39,6 +39,20 @@ async function ageTopic(id: string, daysAgo: number, dataDir?: string): Promise<
 }
 
 describe("expireStaleTopics", () => {
+  it("回归：会议记录读不出时不清带会议位的选题，并留下可见记录", async () => {
+    const slotted = await saveTopic({ title: "片单", description: "d", tags: [] });
+    const plain = await saveTopic({ title: "普通", description: "d", tags: [] });
+    await ageTopic(slotted.id, 5);
+    await ageTopic(plain.id, 5);
+    await updateTopic(slotted.id, { meetingSlot: { meetingDate: "2026-09-25", slotId: "s1" } });
+    await fs.writeFile(path.join(tmpHome, "meetings"), "不是目录");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await expireStaleTopics()).total).toBe(1);
+    expect((await listTopics()).map((t) => t.id)).toEqual([slotted.id]);
+    expect(warn.mock.calls.flat().join("")).toContain("会议记录读不出");
+    warn.mockRestore();
+  });
+
   it("会议位选题豁免到下次开会为止；下次没再选中就恢复正常过期（选题会边界 8）", async () => {
     const { saveMeetingCas } = await import("../modules/meetings/meeting-store.js");
     const slotted = await saveTopic({ title: "本周片单", description: "d", tags: [] });

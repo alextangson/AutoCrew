@@ -267,7 +267,8 @@ export async function gatherFacts(days: number, dataDir?: string): Promise<Retro
     loadProfile(dataDir),
     listContents(dataDir).catch(() => []),
     readOrReport(listOutcomes(dataDir), []),
-    readOrReport(listOpenHypotheses(dataDir), []),
+    // 选题会下注按各自 watchDay（D+3/D+7）由选题会对账裁，不在周复盘里按默认 D+7 提前判
+    readOrReport(listOpenHypotheses(dataDir).then((list) => list.filter((h) => !h.meetingDate)), []),
   ]);
   const outcomes = outcomesRead.value;
 

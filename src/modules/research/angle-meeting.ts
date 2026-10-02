@@ -32,11 +32,14 @@ const EMPTY_PAYOFF = new RegExp(
   `^(?:(?:用|通过|借助|借|从|帮|让|带|一起)[^，。,；;]{0,20}?)?(${UNDERSTAND_VERBS.join("|")})`,
 );
 
+const ACTION_OR_JUDGMENT = /该|决定|判断|能不能|能否|可以|怎么|如何|是否|要不要|值不值|(.)不\1|再|然后|从而|，|,|；|;/;
+
 /** 空话 payoff 的拒绝理由；合格返回 null */
 export function emptyPayoffReason(payoff: string): string | null {
   const text = payoff.trim().replace(/^[「“"]/, "");
   const hit = EMPTY_PAYOFF.exec(text);
-  if (!hit) return null;
+  // 动词后面跟着要做的事或要下的判断（「明白该先自查哪 3 样再决定上不上」）就不是空话
+  if (!hit || ACTION_OR_JUDGMENT.test(text.slice(hit[0].length))) return null;
   return `payoff「${payoff.slice(0, 40)}」是「${hit[1]} X」式空话——写观众看完能做的一件事或能下的一个判断（谁、做什么/判断什么）`;
 }
 
