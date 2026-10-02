@@ -373,16 +373,16 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     runCommand(label, process.execPath, [path.join(root, "bin", "autocrew.mjs"), cmd, "--no-open"], root, log,
       { env: { ...process.env, AUTOCREW_PORT: String(port), AUTOCREW_UPDATER: "1" } });
   return {
-    activate: async (log) => swap.activateDist(log),
+    activate: (log) => swap.activateDist(log),
     restore: async (log) => {
-      if (swap.hasBackup) return swap.restore(log);
+      if (swap.hasBackup) return await swap.restore(log);
       // 本来就没有依赖目录可留（全新安装）：只能重新装，尽量用本机缓存
-      swap.restore(log);
+      await swap.restore(log);
       await runCommand("重新安装依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
       await runCommand("重新安装前端依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
       await runCommand("重新构建前端", npm, ["run", "fe:build"], root, log);
     },
-    cleanup: async (log) => swap.cleanup(log),
+    cleanup: (log) => swap.cleanup(log),
     ensureUp: async (log) => {
       if (!opts.serverWasRunning) return;
       const down = await (async () => { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; } catch { return true; } })();

@@ -78,6 +78,7 @@ function fakeInstall(updateScript: string | null): string {
   if (updateScript !== null) {
     fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
     fs.symlinkSync(TSX, path.join(root, "node_modules", ".bin", "tsx"));
+    fs.symlinkSync(path.join(REPO, "node_modules", "tsx"), path.join(root, "node_modules", "tsx")); // 更新进程用 node --import tsx 起
     fs.writeFileSync(path.join(root, "scripts", "update.mts"), updateScript);
   }
   return root;

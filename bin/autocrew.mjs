@@ -369,7 +369,10 @@ async function runDetachedUpdate(tsx) {
   await fsp.mkdir(logDir, { recursive: true });
   const out = path.join(logDir, `cli-${new Date().toISOString().replace(/[:.]/g, "-")}.out`);
   const fd = fs.openSync(out, "a", 0o600);
-  const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], {
+  // 不经 tsx 命令行外壳：外壳收到 Ctrl-C 只等子进程几十毫秒就强杀它，而更新进程可能正忙着删目录（e2e 1002 P1-A）。
+  // 直接一个 node 进程、用 --import tsx 载入 TypeScript，信号只到更新进程自己，由它在安全点处理
+  void tsx;
+  const child = spawn(process.execPath, ["--import", "tsx", path.join(ROOT, "scripts", "update.mts")], {
     cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
   });
   fs.closeSync(fd);
@@ -429,7 +432,9 @@ function interruptedUpdateHelp() {
     const dir = path.dirname(path.join(ROOT, rel));
     const base = path.basename(rel);
     let prev = [];
-    try { prev = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}.prev-`)).sort(); } catch { /* 目录不在 */ }
+    // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…（与 deps-swap.ts 的 PREV_NAME 同一条）
+    const prevName = new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
+    try { prev = fs.readdirSync(dir).filter((n) => prevName.test(n)).sort(); } catch { /* 目录不在 */ }
     const latest = prev[prev.length - 1];
     if (latest) back.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`);
   }

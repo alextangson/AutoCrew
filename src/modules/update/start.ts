@@ -83,8 +83,8 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
   try {
     fs.mkdirSync(path.dirname(log), { recursive: true });
     fd = fs.openSync(log, "a", 0o600);
-    const tsx = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-    const child = spawnImpl(tsx, [path.join(root, "scripts", "update.mts"), "--from-server",
+    // 一个 node 进程、--import tsx：没有 tsx 命令行外壳在中间（外壳收到信号几十毫秒就强杀子进程，e2e 1002 P1-A）
+    const child = spawnImpl(process.execPath, ["--import", "tsx", path.join(root, "scripts", "update.mts"), "--from-server",
       "--tag", job.tag, "--commit", job.commit, "--head", job.head, "--lock-token", job.token, "--adopt-nonce", nonce, "--log", log, "--port", String(port)], {
       cwd: root, detached: true, stdio: ["ignore", fd, fd],
       env: { ...process.env, AUTOCREW_LOCAL_DIR: machineDir, AUTOCREW_PORT: String(port) },

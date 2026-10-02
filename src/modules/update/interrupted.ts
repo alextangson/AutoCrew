@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { files, writeResult, type UpdateResult } from "./state.js";
 import { lockHeld } from "./preflight.js";
+import { PREV_NAME } from "./deps-swap.js";
 
 export interface Inflight { at: string; from: string; to: string; log: string; oldHead: string }
 
@@ -35,7 +36,8 @@ export function recoveryCommands(root: string, oldHead: string): string[] {
     const dir = path.dirname(path.join(root, rel));
     const base = path.basename(rel);
     let prev: string[] = [];
-    try { prev = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}.prev-`)).sort(); } catch { /* 目录不在 */ }
+    // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…，绝不拿来恢复（e2e 1002 P1-A）
+    try { prev = fs.readdirSync(dir).filter((n) => PREV_NAME(base).test(n)).sort(); } catch { /* 目录不在 */ }
     const latest = prev[prev.length - 1];
     if (latest) back.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest).replace(/^\.\//, "")}" "${rel}"`);
   }
