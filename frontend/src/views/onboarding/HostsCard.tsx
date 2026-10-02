@@ -1,7 +1,7 @@
 /**
  * 设置 · 接入更多 ·「宿主」（onboarding-connect §3）：每个宿主一行——接上 / 断开 / 状态。
  * 与引导页、`autocrew connect` 同一套实现；令牌值不进这个组件。
- * 不在三家里的命名令牌（如 dsh）照旧列出来，只能撤销。
+ * 下面另列全部命名令牌（含三家宿主自己的和 dsh），每把都能单独撤销。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../../transport";
@@ -11,7 +11,6 @@ import { hostLabel } from "../host-badge";
 import { asResult, connectHost, disconnectHost, loadConnect, type ConnectResult, type HostId, type HostStatus } from "./connect-api";
 
 interface TokenView { host: string; createdAt: string; lastUsedAt?: string }
-const OWN_TOKENS = new Set(["claude-code", "codex", "workbuddy"]);
 
 function HostRow(props: { h: HostStatus; reload: () => void }) {
   const { h } = props;
@@ -42,9 +41,9 @@ function HostRow(props: { h: HostStatus; reload: () => void }) {
     <div className="row" data-host={h.host}>
       <span className="row-title">{h.label}</span>
       <span className="muted">{state}</span>
-      {h.connected
-        ? <button className="btn-ghost" disabled={busy} onClick={() => void act("disconnect")}>{busy ? "正在断开…" : "断开"}</button>
-        : h.found && <button disabled={busy || h.loggedIn === false} onClick={() => void act("connect")}>{busy ? "正在接…" : h.unverified ? "再试一次" : "接上"}</button>}
+      {!h.connected && h.found && <button disabled={busy || h.loggedIn === false} onClick={() => void act("connect")}>{busy ? "正在接…" : h.unverified ? "再试一次" : "接上"}</button>}
+      {/* 有条目或有令牌就能断开，不看核对结果（Codex 评审第 2 轮 P2-b） */}
+      {(h.connected || h.hasEntry || h.hasToken) && <button className="btn-ghost" disabled={busy} onClick={() => void act("disconnect")}>{busy ? "正在断开…" : "断开"}</button>}
       {result && <p className={result.ok && (result.verified || !result.registered) ? "set-test-ok" : "set-test-fail"}>{result.ok ? result.message : result.error ?? result.message}</p>}
     </div>
   );
@@ -57,7 +56,8 @@ export function HostsCard() {
   const load = async () => {
     const [c, t] = await Promise.all([loadConnect(), invoke("hosts:list")]);
     if (c.ok) { setHosts(c.data.hosts); setError(null); } else setError(c.error);
-    if (t.ok) setOthers(((t as unknown as { data?: { hosts?: TokenView[] } }).data?.hosts ?? []).filter((x) => !OWN_TOKENS.has(x.host)));
+    // 所有令牌都列出来、都能撤销（包括三家宿主自己的），和原来的设置页一样
+    if (t.ok) setOthers((t as unknown as { data?: { hosts?: TokenView[] } }).data?.hosts ?? []);
   };
   useEffect(() => { void load(); }, []);
   const revoke = async (host: string) => {

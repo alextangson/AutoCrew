@@ -44,6 +44,9 @@ export interface HostStatus {
   connected: boolean;
   /** 条目和令牌都在，但上一次没核对上（或从没核对过）：原因 */
   unverified?: string;
+  /** 宿主配置里有 autocrew 条目 / 有这个宿主的令牌——任一为真就该能断开（不看核对结果） */
+  hasEntry: boolean;
+  hasToken: boolean;
   lastUsedAt?: string;
 }
 
@@ -99,11 +102,12 @@ function detectWorkbuddy(env: HostEnv): Pick<HostStatus, "found" | "loggedIn" | 
 export async function detectHost(host: ConnectHost, env: HostEnv): Promise<HostStatus> {
   const base = host === "claude" ? detectClaude(env) : host === "codex" ? await detectCodex(env) : detectWorkbuddy(env);
   const token = listHostTokens(env.dataDir).find((t) => t.host === TOKEN_HOST[host]);
-  const registered = Boolean(token) && hasEntry(host, env);
+  const entry = hasEntry(host, env);
+  const registered = Boolean(token) && entry;
   const record = readVerifyState(env.dataDir)[host];
   const connected = registered && record?.verified === true;
   const unverified = registered && !connected ? (record?.reason ?? "还没核对过能不能连上") : undefined;
-  return { host, label: HOST_LABEL[host], ...base, connected, ...(unverified ? { unverified } : {}), ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
+  return { host, label: HOST_LABEL[host], ...base, connected, hasEntry: entry, hasToken: Boolean(token), ...(unverified ? { unverified } : {}), ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
 }
 
 /** 找到且（已知）已登录的排前面；其余保持 Claude → Codex → WorkBuddy */

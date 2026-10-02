@@ -232,3 +232,19 @@ describe("Codex 评审 P2-5：没接上、没钥匙就离开引导，也要记�
     expect(store.calls).not.toContain("skip");
   });
 });
+
+describe("Codex 评审第 2 轮 P2-b：没核对上 / 只剩令牌也能断开", () => {
+  it("没核对上的宿主：「再试一次」和「断开」都在；只剩令牌没条目的也能断开", async () => {
+    store.view = { hosts: [
+      H("claude", { found: true, detail: "找到了", unverified: "连不上", hasEntry: true, hasToken: true }),
+      H("codex", { found: true, loggedIn: true, detail: "已登录", hasEntry: false, hasToken: true }),
+      H("workbuddy"),
+    ], skipped: false };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("claude").textContent).toContain("再试一次");
+    expect(card("claude").textContent).toContain("断开");
+    expect(card("codex").textContent).toContain("断开");
+    expect(card("workbuddy").textContent).not.toContain("断开");
+  });
+});

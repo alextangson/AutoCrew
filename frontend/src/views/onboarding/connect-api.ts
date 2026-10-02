@@ -11,6 +11,8 @@ export interface HostStatus {
   connected: boolean;
   /** 写进去了但没核对上：原因 */
   unverified?: string;
+  hasEntry?: boolean;
+  hasToken?: boolean;
   lastUsedAt?: string;
 }
 export interface ConnectView { hosts: HostStatus[]; skipped: boolean }
