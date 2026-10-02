@@ -5,6 +5,7 @@ import { createProjectReviewHandler } from "../src/desktop/project-review-route.
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
+import { detectInterrupted } from "../src/modules/update/interrupted.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
@@ -191,6 +192,12 @@ const projectReview = createProjectReviewHandler({ authorize, originAllowed: req
 const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+// 上次更新被硬生生打断（进程被杀 / 机器重启）：启动时认出来，写一份「上次更新中断」结果给页面（第 12 轮 P1）
+try {
+  const interrupted = detectInterrupted(programRoot(), getMachineDir());
+  if (interrupted) console.error(`[update] ${interrupted.message}`);
+} catch (err) { console.error("[update] 检查上次更新是否中断失败:", err instanceof Error ? err.message : err); }
+
 // 一键更新（self-update §3）：只有用 npm start（启动器写了 pid 文件、就是本进程）起的服务才能被自动重启
 const updateRoute = createUpdateHandler({
   authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,

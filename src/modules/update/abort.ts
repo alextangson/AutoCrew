@@ -1,5 +1,5 @@
 /**
- * Ctrl-C / SIGTERM 落在更新中途（e2e P1-3）：不能就这么死掉留下半新半旧。
+ * Ctrl-C / SIGTERM / SIGHUP 落在更新中途（e2e P1-3、第 12 轮 P1）：不能就这么死掉留下半新半旧。
  * 第一次：请求中止——更新在下一个检查点停下，走正常退回（换回旧依赖、按安全规则退回代码），写结果、放锁再退出。
  * 之后再按：只提示「正在退回，请稍等」，不打断退回。
  */
@@ -7,18 +7,25 @@ export interface AbortHandle { signal: AbortSignal; onSignal: () => void; dispos
 
 export function createAbortHandle(write: (msg: string) => void = (m) => process.stderr.write(`${m}\n`)): AbortHandle {
   const controller = new AbortController();
+  // 终端已经关了时写屏会出错（EIO / EPIPE）：说不出来也照样中止、照样退回，绝不能因为写屏把进程弄崩（第 12 轮 P1）
+  const say = (m: string) => { try { write(m); } catch { /* 终端不在了 */ } };
   const onSignal = () => {
-    if (controller.signal.aborted) { write("正在退回，请稍等"); return; }
-    write("收到中止：停下更新、退回原来的版本，别关窗口");
+    if (controller.signal.aborted) { say("正在退回，请稍等"); return; }
+    say("收到中止：停下更新、退回原来的版本，别关窗口");
     controller.abort();
   };
   return { signal: controller.signal, onSignal, dispose: () => {} };
 }
 
 /** 接到进程信号上；dispose 摘掉 */
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+const swallow = () => { /* 终端关掉后的写屏错误：吞掉，退回照常跑完 */ };
+
+/** 接到进程信号上（含 SIGHUP：关终端窗口 / ssh 断线也按中止走退回）；dispose 摘掉 */
 export function installAbortHandlers(write?: (msg: string) => void): AbortHandle {
   const h = createAbortHandle(write);
-  process.on("SIGINT", h.onSignal);
-  process.on("SIGTERM", h.onSignal);
-  return { ...h, dispose: () => { process.off("SIGINT", h.onSignal); process.off("SIGTERM", h.onSignal); } };
+  for (const s of SIGNALS) process.on(s, h.onSignal);
+  process.stdout.on("error", swallow);
+  process.stderr.on("error", swallow);
+  return { ...h, dispose: () => { for (const s of SIGNALS) process.off(s, h.onSignal); } };
 }

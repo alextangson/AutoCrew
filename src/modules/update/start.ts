@@ -10,6 +10,7 @@ import { checkForUpdate, localVersion } from "./check.js";
 import { acquireLock, preflight, releaseLock, RUNNING_MESSAGE, lockHeld, lockAdoptedBy, type PreflightDeps } from "./preflight.js";
 import { gitRunner } from "./git.js";
 import { newLogFile } from "./updater.js";
+import { detectInterrupted } from "./interrupted.js";
 import { readResult, writeResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 
@@ -21,6 +22,9 @@ export type PrepareResult = Prepared | { ok: false; code: string; reason: string
 
 export async function prepareUpdate(root: string, machineDir: string, deps: Omit<PreflightDeps, "git"> & { git?: PreflightDeps["git"] }): Promise<PrepareResult> {
   if (lockHeld(machineDir)) return { ok: false, code: "running", reason: RUNNING_MESSAGE };
+  // 上次更新被硬生生打断：先恢复，不叠着再更新（否则会说「已经是最新版」，把半新半旧盖过去）
+  const interrupted = detectInterrupted(root, machineDir);
+  if (interrupted) return { ok: false, code: "interrupted", reason: `${interrupted.message}\n${(interrupted.manualCommands ?? []).join("\n")}` };
   const git = deps.git ?? gitRunner(root);
   const status = await checkForUpdate(root, machineDir, { git });
   if (status.error) return { ok: false, code: "check_failed", reason: status.error };

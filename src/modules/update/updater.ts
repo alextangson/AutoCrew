@@ -11,6 +11,7 @@ import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
 import { DepsSwap } from "./deps-swap.js";
+import { clearInflight, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
@@ -261,6 +262,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base, message: `更新没开始：${errText(e)}，完整记录在 ${job.logFile}` }, log);
   }
   log(`旧版本提交：${oldHead}`);
+  // 在途记录：被硬杀时下次能认出「上次更新中断了」；finish 时删掉
+  try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
   const progress: Progress = { touchedService: false };
   try {
     await forward(job, oldHead, log, progress);
@@ -306,6 +309,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
 function finish(job: UpdateJob, result: UpdateResult, log: Log): UpdateResult {
   log(result.message);
   try { writeResult(job.machineDir, result); } catch (e) { log(`!! 写不了更新结果：${errText(e)}`); }
+  clearInflight(job.machineDir);
   return result;
 }
 

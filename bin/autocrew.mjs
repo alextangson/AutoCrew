@@ -260,6 +260,8 @@ async function start() {
     process.exit(1);
   }
 
+  const help = interruptedUpdateHelp();
+  if (help) console.error(help);
   const stalePid = readPid();
   if (stalePid && !processAlive(stalePid)) await fsp.rm(PID_FILE, { force: true });
   // 测试钩子：AUTOCREW_SERVER_SCRIPT 换成一个假服务脚本（不构建前端、不碰资料库）；正常使用不设
@@ -357,6 +359,44 @@ async function statusBrief() {
   console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
 }
 
+/**
+ * `autocrew update`（第 12 轮 P1）：更新进程脱离终端在后台跑，前台只跟它的输出。
+ * - 关终端窗口 / ssh 断线：前台走了，更新照常跑完（成功或退回），结果在页面和下一次 autocrew update 里看得见；
+ * - Ctrl-C：转给更新进程请求中止，前台继续等到退回跑完、拿到结果才把提示符还给你；再按只提示「正在退回，请稍等」。
+ */
+async function runDetachedUpdate(tsx) {
+  const logDir = path.join(DATA_DIR, "update-logs");
+  await fsp.mkdir(logDir, { recursive: true });
+  const out = path.join(logDir, `cli-${new Date().toISOString().replace(/[:.]/g, "-")}.out`);
+  const fd = fs.openSync(out, "a", 0o600);
+  const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], {
+    cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
+  });
+  fs.closeSync(fd);
+  let aborting = false;
+  const toChild = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* 已经结束 */ } } };
+  process.on("SIGINT", () => {
+    if (aborting) { console.log("正在退回，请稍等"); return; }
+    aborting = true;
+    toChild("SIGINT");
+  });
+  process.on("SIGTERM", () => toChild("SIGTERM"));
+  // 终端没了：不再往屏幕写，直接走；更新进程不在这个终端的进程组里，会自己跑完
+  process.on("SIGHUP", () => process.exit(0));
+  let offset = 0;
+  const pump = () => {
+    try {
+      const buf = fs.readFileSync(out);
+      if (buf.length > offset) { process.stdout.write(buf.subarray(offset)); offset = buf.length; }
+    } catch { /* 还没写 */ }
+  };
+  const timer = setInterval(pump, 200);
+  const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
+  clearInterval(timer);
+  pump();
+  return code;
+}
+
 /** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/desktop/chief-editor/run-store.ts 的 startEpoch 同一种读法 */
 function startEpoch(pid) {
   const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } });
@@ -374,6 +414,28 @@ function liveUpdateLock() {
     if (now === null || Math.abs(now - body.start) > 1) return null;
   }
   return body;
+}
+
+/**
+ * 上次一键更新被硬生生打断（第 12 轮 P1）：在途记录还在、却没有活的更新进程。依赖可能装到一半、连 tsx 都没有，
+ * 所以这里用纯 JS 按磁盘现状算恢复命令（与 src/modules/update/interrupted.ts 同一条规则：有留着的旧依赖就改名换回，不需要网络）。
+ */
+function interruptedUpdateHelp() {
+  let inflight;
+  try { inflight = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-inflight.json"), "utf-8")); } catch { return null; }
+  if (!inflight?.oldHead || liveUpdateLock()) return null;
+  const back = [];
+  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
+    const dir = path.dirname(path.join(ROOT, rel));
+    const base = path.basename(rel);
+    let prev = [];
+    try { prev = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}.prev-`)).sort(); } catch { /* 目录不在 */ }
+    const latest = prev[prev.length - 1];
+    if (latest) back.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`);
+  }
+  const deps = back.some((c) => c.includes("node_modules")) ? back : ["npm ci", "(cd frontend && npm ci)", "npm run fe:build"];
+  return [`上次一键更新中断了（没跑完，也没有自动退回）。请依次执行下面的命令恢复到 ${inflight.from}：`,
+    `cd "${ROOT}"`, `git reset --hard ${inflight.oldHead}`, ...deps, "npm run restart"].join("\n");
 }
 
 /**
@@ -606,12 +668,11 @@ switch (command) {
     // 一键更新（self-update §3）：和看板上「更新」走同一个执行进程，只是在前台跑
     const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     if (!fs.existsSync(tsx)) {
-      console.error(`缺少依赖。请先在 ${ROOT} 执行 npm ci`);
+      console.error(interruptedUpdateHelp() ?? `缺少依赖。请先在 ${ROOT} 执行 npm ci`);
       process.exitCode = 1;
       break;
     }
-    const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], { cwd: ROOT, stdio: "inherit", env: { ...process.env, AUTOCREW_PORT: String(PORT) } });
-    process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
+    process.exitCode = await runDetachedUpdate(tsx);
     break;
   }
   case "storage": {
