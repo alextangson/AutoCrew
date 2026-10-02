@@ -27,6 +27,14 @@ const FIXTURE_DIR = path.join(os.tmpdir(), "autocrew-video-fixtures");
 const AROLL_FIXTURE = path.join(FIXTURE_DIR, "aroll-3s.mp4");
 const BGM_FIXTURE = path.join(FIXTURE_DIR, "bgm-5s.wav");
 
+/**
+ * 多个测试 worker 会同时要夹具：先写到本进程独有的临时名、合成完再 rename 到位，
+ * 别的 worker 要么看不到文件、要么看到完整的文件，不会拿到写了一半的 mp4（CI 每次都是空 tmp）。
+ */
+function partialPath(file: string): string {
+  return `${file}.${process.pid}-${Math.random().toString(36).slice(2, 8)}.tmp${path.extname(file)}`;
+}
+
 /** 3 秒 640×360 测试图 + 440Hz 正弦音轨。合成一次缓存复用（每个测试重合成太慢） */
 export async function ensureArollFixture(): Promise<string> {
   try {
@@ -36,6 +44,7 @@ export async function ensureArollFixture(): Promise<string> {
     /* 还没合成过 */
   }
   await fs.mkdir(FIXTURE_DIR, { recursive: true });
+  const partial = partialPath(AROLL_FIXTURE);
   const result = await runProcess({
     command: "ffmpeg",
     args: [
@@ -43,11 +52,12 @@ export async function ensureArollFixture(): Promise<string> {
       "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=3",
       "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
       "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-shortest", AROLL_FIXTURE,
+      "-c:a", "aac", "-shortest", partial,
     ],
     timeoutMs: 60_000,
   });
   if (result.code !== 0) throw new Error(`合成 A-roll 夹具失败：${result.stderr}`);
+  await fs.rename(partial, AROLL_FIXTURE);
   return AROLL_FIXTURE;
 }
 
@@ -60,12 +70,14 @@ export async function ensureBgmFixture(): Promise<string> {
     /* 还没合成过 */
   }
   await fs.mkdir(FIXTURE_DIR, { recursive: true });
+  const partial = partialPath(BGM_FIXTURE);
   const result = await runProcess({
     command: "ffmpeg",
-    args: ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "pcm_s16le", BGM_FIXTURE],
+    args: ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "pcm_s16le", partial],
     timeoutMs: 60_000,
   });
   if (result.code !== 0) throw new Error(`合成 BGM 夹具失败：${result.stderr}`);
+  await fs.rename(partial, BGM_FIXTURE);
   return BGM_FIXTURE;
 }
 

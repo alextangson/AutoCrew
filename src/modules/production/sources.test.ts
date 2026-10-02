@@ -38,7 +38,8 @@ describe("监视文件夹的路径（§14-8）", () => {
     if (!v.ok) throw new Error(v.error);
     const f = { ...v.folder, scan: true, allow_move: true };
     expect(await folderProblem(f)).toBeNull();
-    await fs.rm(watch, { recursive: true });
+    // 旧目录挪走而不是删掉：Linux 会把刚释放的 inode 号立刻发给同名新目录，删了重建的 dev/ino 和原来一样
+    await fs.rename(watch, `${watch}-旧`);
     await fs.mkdir(watch);
     expect(await folderProblem(f)).toContain("被换过");
   });

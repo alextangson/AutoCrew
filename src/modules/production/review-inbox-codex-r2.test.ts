@@ -21,7 +21,8 @@ const agent = (p: Record<string, unknown>) => executeContentSave({ _dataDir: env
 async function editing(title = "二轮回归") {
   const c = await videoContent(env, title);
   await founderApprove(env, c.id);
-  await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${title}-原片.mov`), "raw"), request_id: "a" });
+  // 原片名取标题前 80 字：Linux/NAS 单个文件名上限 255 字节（APFS 按字符算，Mac 上建得出、CI 上建不出）
+  await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${title.slice(0, 80)}-原片.mov`), "raw"), request_id: "a" });
   return c;
 }
 const img = (n: string, w: number, h: number) => put(path.join(env.chatcut, n), png(w, h, n));
