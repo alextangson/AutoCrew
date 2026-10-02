@@ -43,7 +43,8 @@ describe("M1 契约不变：工具名、参数名、类型、必填、枚举、�
   const fixture = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", "tool-contract.json"), "utf-8")) as Record<string, Array<{ name: string; shape: unknown }>>;
   it.each(HOSTS)("%s 看到的工具清单与参数形状", async (host) => {
     const now = (await toolsFor(host)).map((t) => ({ name: t.name, shape: schemaShape(t.inputSchema) }));
-    expect(now).toEqual(fixture[host]);
+    // 2026-10-02 起 codex 与别的命名宿主能力一样：它看到的就是 workbuddy 那一份，不另存一份快照
+    expect(now).toEqual(fixture[host === "codex" ? "workbuddy" : host]);
   });
 });
 
@@ -88,7 +89,7 @@ describe("长说明搬进按需资源", () => {
     expect(uris).toContain(`${TOOL_GUIDE_PREFIX}autocrew_writer`);
     expect(uris.some((u) => u.includes("<"))).toBe(false);
     const codex = await handleMcpRequest({ jsonrpc: "2.0", id: 8, method: "resources/list" }, access("codex"));
-    expect((codex!.result as { resources: Array<{ uri: string }> }).resources.map((x) => x.uri)).not.toContain(`${TOOL_GUIDE_PREFIX}autocrew_writer`);
+    expect((codex!.result as { resources: Array<{ uri: string }> }).resources.map((x) => x.uri)).toEqual(uris);
   });
   it("短说明点名资源；instructions 点名写作守则", async () => {
     const tools = await toolsFor("workbuddy");

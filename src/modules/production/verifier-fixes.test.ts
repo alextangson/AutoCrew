@@ -80,9 +80,11 @@ describe("P2-7 启用后不再指向旧交接流程", () => {
     expect(t.error).toContain("record kind=aroll");
     expect(t.error).not.toContain("剪这条");
     const { executeVideo } = await import("../../tools/video.js");
-    expect(await executeVideo({ _dataDir: env.dir, action: "handoff", content_id: c.id, aroll_path: "/x.mov", _host: "claude-code" })).toMatchObject({ ok: false, code: "entry_closed" });
-    expect(hostPolicy("codex", "autocrew_video", { action: "handoff" }, true)).toMatchObject({ ok: false, result: { code: "entry_closed" } });
-    expect((hostPolicy("codex", "autocrew_writer", { action: "pack" }, true) as { error: string }).error).toContain("只报事实");
+    // 旧交接入口由工具自己关，对每个宿主都一样（2026-10-02 起 codex 不再单独限权）
+    for (const host of ["claude-code", "codex"]) {
+      expect(await executeVideo({ _dataDir: env.dir, action: "handoff", content_id: c.id, aroll_path: "/x.mov", _host: host })).toMatchObject({ ok: false, code: "entry_closed" });
+      expect(hostPolicy(host, "autocrew_writer", { action: "pack" }).ok).toBe(true);
+    }
     const { createElement } = await import("../../../frontend/node_modules/react/index.js") as typeof import("react");
     const { renderToStaticMarkup } = await import("../../../frontend/node_modules/react-dom/server.node.js") as typeof import("react-dom/server");
     const { SharedProjectPanel } = await import("../../../frontend/src/views/SharedProjectPanel");

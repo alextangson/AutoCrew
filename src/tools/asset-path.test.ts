@@ -60,8 +60,8 @@ it("符号链接和相对路径不收", async () => {
   expect(await fs.readFile(real, "utf8")).toBe("x");
 });
 
-it("codex 可以 asset add，别的 asset 动作照旧拒", () => {
-  expect(hostPolicy("codex", "autocrew_asset", { action: "add" }).ok).toBe(true);
-  expect(hostPolicy("codex", "autocrew_asset", { action: "remove" }).ok).toBe(false);
-  expect(hostPolicy("codex", "autocrew_asset", { action: "revert" }).ok).toBe(false);
+it("codex 的素材动作与 claude-code 一样放行（2026-10-02 起不再单独限权）", () => {
+  for (const action of ["add", "remove", "revert"]) {
+    expect(hostPolicy("codex", "autocrew_asset", { action })).toEqual(hostPolicy("claude-code", "autocrew_asset", { action }));
+  }
 });

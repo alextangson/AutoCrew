@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { handleMcpRequest, normalizeSession, runner, DEFAULT_HOST, HOST_PARAM, SESSION_PARAM, UNKNOWN_SESSION } from "./server.js";
-import { CODEX_EDITOR_DENIED, HOST_HIDDEN_TOOLS, hostAuthorize, hostPolicy } from "./host-policy.js";
+import { ADOPTION_HOST_DENIED, HOST_HIDDEN_TOOLS, hostAuthorize, hostPolicy } from "./host-policy.js";
 
 // 宿主限权会读「资料库启用了没有」：别读到这台机器上真实资料库的状态（本机已启用本体时话术会变），指向空的本机目录
 beforeAll(() => { vi.stubEnv("AUTOCREW_LOCAL_DIR", mkdtempSync(path.join(os.tmpdir(), "autocrew-mcp-test-machine-"))); });
@@ -36,28 +36,15 @@ describe("MCP protocol adapters", () => {
     expect(response?.result).toMatchObject({ isError: true });
   });
 
-  it("按宿主限权（P6 §3.4）：codex 调写稿工具在协议层就被拒，工具不执行", async () => {
-    const response = await handleMcpRequest(
-      { id: 5, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "测试" } } },
-      { principal: { subject: "codex", plan: "local" }, host: "codex", authorize: hostAuthorize("codex") },
-    );
-    expect(response?.result).toMatchObject({ isError: true, content: [{ type: "text", text: CODEX_EDITOR_DENIED }] });
-    const allowed = await handleMcpRequest(
-      { id: 6, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "测试" } } },
-      { principal: { subject: "claude-code", plan: "local" }, host: "claude-code", authorize: hostAuthorize("claude-code") },
-    );
-    expect((allowed?.result as { content: Array<{ text: string }> }).content[0].text).not.toBe(CODEX_EDITOR_DENIED);
-  });
-
-  it("codex 不带 confirmation_id 调 handoff：协议层回结构化 confirmation_required 和 match → confirm 的下一步", async () => {
-    const response = await handleMcpRequest(
-      { id: 7, method: "tools/call", params: { name: "autocrew_video", arguments: { action: "handoff", content_id: "content-1", aroll_path: "/tmp/a.mov" } } },
-      { principal: { subject: "codex", plan: "local" }, host: "codex", authorize: hostAuthorize("codex") },
-    );
-    const result = response?.result as { isError: boolean; structuredContent: Record<string, unknown>; content: Array<{ text: string }> };
-    expect(result).toMatchObject({ isError: true, structuredContent: { ok: false, code: "confirmation_required" } });
-    expect(String(result.structuredContent.next_action)).toMatch(/match[\s\S]*confirm/);
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ code: "confirmation_required" });
+  it("按宿主限权：codex 与 claude-code 一样能调写稿工具；采纳对所有命名宿主都拒（2026-10-02）", async () => {
+    for (const host of ["codex", "claude-code"]) {
+      const r = await handleMcpRequest(
+        { id: 5, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "测试" } } },
+        { principal: { subject: host, plan: "local" }, host, authorize: hostAuthorize(host) },
+      );
+      expect((r?.result as { content: Array<{ text: string }> }).content[0].text).not.toBe(ADOPTION_HOST_DENIED);
+      expect(hostPolicy(host, "autocrew_content", { action: "adoption" })).toMatchObject({ ok: false, error: ADOPTION_HOST_DENIED });
+    }
   });
 
   it("records usage for an allowed tool call", async () => {
@@ -233,28 +220,8 @@ describe("工具表面瘦身：tools/list 按宿主过滤（P6 §3.7）", () => 
     }
   });
 
-  it("codex 只列它调得动的：等于宿主白名单，列外的工具任何 action 都被拒", async () => {
-    const names = await listedNames("codex");
-    expect([...names].sort()).toEqual(["autocrew_asset", "autocrew_content", "autocrew_desk", "autocrew_publish", "autocrew_status", "autocrew_video"]);
-    for (const tool of runner.getTools().map((t) => t.name).filter((name) => !names.includes(name))) {
-      for (const action of ["", "list", "get", "status", "register"]) expect(hostPolicy("codex", tool, { action }).ok).toBe(false);
-    }
-  });
-
-  it("发布前把关 §2：codex 能调 publish check / propose_preference，调不了其他发布动作（协议层拒，工具不执行）", async () => {
-    for (const action of ["check", "propose_preference"]) expect(hostPolicy("codex", "autocrew_publish", { action }).ok).toBe(true);
-    for (const action of ["ego_lite_prepare", "wechat_mp_draft", "confirm_published", "clipboard", "digest", ""]) {
-      expect(hostPolicy("codex", "autocrew_publish", { action })).toMatchObject({ ok: false, error: CODEX_EDITOR_DENIED });
-    }
-    const codex = { principal: { subject: "codex", plan: "local" as const }, host: "codex", authorize: hostAuthorize("codex") };
-    const denied = await handleMcpRequest({ id: 81, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "ego_lite_prepare", content_id: "content-1-abc" } } }, codex);
-    expect(denied?.result).toMatchObject({ isError: true, content: [{ type: "text", text: CODEX_EDITOR_DENIED }] });
-    // check 真的走到了工具（不是被协议层拒）：内容不存在时回工具自己的 not_found
-    const allowed = await handleMcpRequest({ id: 82, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "check", content_id: "content-1-nosuch", plan: {} } } }, codex);
-    const structured = (allowed?.result as { structuredContent: Record<string, unknown> }).structuredContent;
-    expect(structured).toMatchObject({ ok: false, code: "not_found" });
-    const proposed = await handleMcpRequest({ id: 83, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "propose_preference", kind: "bogus", founder_quote: "x" } } }, codex);
-    expect((proposed?.result as { structuredContent: Record<string, unknown> }).structuredContent).toMatchObject({ ok: false, code: "bad_kind" });
+  it("codex 看到的工具清单和 claude-code 一样（不再有白名单）", async () => {
+    expect(await listedNames("codex")).toEqual(await listedNames("claude-code"));
   });
 
   it("不列 ≠ 不能调：claude-code 硬调隐藏工具照常执行，回执多一句 host_note；local-user 没有这句", async () => {

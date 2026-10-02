@@ -73,7 +73,7 @@ export function HostsCard() {
         <h3 className="serif set-title">宿主 · Claude Code / Codex / WorkBuddy</h3>
         <span className="chip">{hosts ? (connected ? `${connected} 个已接上` : "还没接") : "…"}</span>
       </div>
-      <p className="muted int-line">让你电脑上的 AI 直接用 AutoCrew：Claude Code 写稿、审稿、发布；Codex 当剪辑工位（登记成片和素材，其余只看不改）；WorkBuddy 看进度、帮你干活。</p>
+      <p className="muted int-line">让你电脑上的 AI 直接用 AutoCrew：写稿、审稿、剪辑、发布都能做；审片、认稿、选封面、「我发了」只有你在这里点。</p>
       {error && <p className="set-test-fail">没查到宿主状态：{error}</p>}
       {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} />)}
       {others.map((t) => (

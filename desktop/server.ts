@@ -274,7 +274,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
     try { request = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end("bad json"); return; }
     const mcpDataDir = await activeDataDir();
     const host = identity?.subject ?? LOCAL_SUBJECT;
-    // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限。
+    // 按宿主限权（P6 §3.4）：命名宿主能力一样，只拒创始人自己的决定（见 mcp/host-policy.ts）。
     // 会话归因（P6 §3.8）：转发器每进程一个 nonce，Codex 直连可带可不带——只做诊断，缺省 unknown
     const response = await handleMcpRequest(request, {
       principal: { subject: host, plan: "local" },

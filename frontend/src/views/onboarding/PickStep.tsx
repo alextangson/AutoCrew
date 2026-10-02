@@ -10,7 +10,7 @@ import { probeHost, type HostId, type HostStatus, type ProbeResult } from "./con
 
 const WHAT: Record<HostId, string> = {
   claude: "写稿、审稿、发布都在这里做",
-  codex: "剪辑工位：登记成片和素材，其余只看不改",
+  codex: "写稿、审稿、剪辑、发布都能做",
   workbuddy: "在 WorkBuddy 里看稿件进度、让它帮你干活",
 };
 

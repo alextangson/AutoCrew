@@ -24,11 +24,10 @@ describe("insights MCP discovery and invocation", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("不扩大原codex剪辑身份的权限", async () => {
-    expect(hostListsTool("codex", "autocrew_insights")).toBe(false);
+  it("codex 与别的命名宿主一样能看到并调用账号洞察（2026-10-02 起不再单独限权）", async () => {
+    expect(hostListsTool("codex", "autocrew_insights")).toBe(hostListsTool("claude-code", "autocrew_insights"));
     const call = await handleMcpRequest({ id: 5, method: "tools/call", params: { name: "autocrew_insights", arguments: {} } },
       { host: "codex", principal: { subject: "codex", plan: "local" }, authorize: hostAuthorize("codex") }, dir);
-    expect(call?.result).toMatchObject({ isError: true });
-    expect(await fs.readdir(dir)).toEqual([]);
+    expect(call?.result).toMatchObject({ structuredContent: { ok: true } });
   });
 });

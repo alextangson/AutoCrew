@@ -22,11 +22,11 @@ beforeEach(() => {
 });
 
 describe("autocrew host", () => {
-  it("points codex at the one-click connect, says it is the editing station, never prints the token", () => {
+  it("points codex at the one-click connect, says it has the same capabilities, never prints the token", () => {
     const out = hostInstructions("codex", { dataDir: booted(), port: 4317 });
     expect(out).toContain("npx autocrew connect codex");
     expect(out).not.toContain("export AUTOCREW_MCP_TOKEN");
-    expect(out).toContain("剪辑工位");
+    expect(out).toContain("写稿、审稿、剪辑、发布准备都能做");
     expect(out).toContain(path.join("tokens", "codex.token"));
     expect(out).not.toMatch(TOKEN_VALUE);
   });

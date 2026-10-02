@@ -48,7 +48,7 @@ export interface HostStatus {
   /** 宿主配置里有 autocrew 条目 / 有这个宿主的令牌——任一为真就该能断开（不看核对结果） */
   hasEntry: boolean;
   hasToken: boolean;
-  /** 按 mcp/host-policy 的限权表，这个宿主能不能写稿（Codex 是剪辑工位：不能） */
+  /** 按 mcp/host-policy 的限权表，这个宿主能不能写稿 */
   canWrite: boolean;
   lastUsedAt?: string;
 }

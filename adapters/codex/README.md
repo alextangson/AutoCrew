@@ -9,22 +9,14 @@ AutoCrew 的案卷里，不在会话里。
 前提：AutoCrew 至少启动过一次（`npm start`）。令牌目录是服务建的。
 
 ```bash
-npx autocrew host codex
+npx autocrew connect codex
 ```
 
-它做两件事：确保 `~/.autocrew/tokens/codex.token` 存在，然后把接入步骤打出来。
-**令牌值永远不出现在输出里**，只出现文件路径——终端会被录屏、会进剪贴板历史，
-而这个文件等于整间编辑部的钥匙。
+它发 `~/.autocrew/tokens/codex.token`，再用 `codex mcp add autocrew --env AUTOCREW_HOST=codex -- <node> <仓库>/bin/autocrew.mjs mcp`
+登记成 stdio 转发器（改配置前先备份 `config.toml`），最后核对真连上。也可以在工作台「设置 · 接入更多 · 宿主」里点「接上」。
+**令牌值永远不进 Codex 配置也不出现在输出里**，转发器自己读令牌文件。
 
-按打印出来的步骤走，大致是：
-
-```bash
-export AUTOCREW_MCP_TOKEN=$(cat ~/.autocrew/tokens/codex.token)
-codex mcp add autocrew --url http://127.0.0.1:4317/mcp --bearer-token-env-var AUTOCREW_MCP_TOKEN
-```
-
-撤销 = 删掉那个文件（或在工作台「设置 · 接入更多 · 宿主」卡上点撤销），
-下一次调用立刻 401。
+断开 = `npx autocrew disconnect codex`（删条目 + 撤令牌），下一次调用立刻被拒。
 
 ### `codex exec` 的坑
 
@@ -39,12 +31,13 @@ Codex 端会看到连接失败或 401。这是对的——AutoCrew 的所有写�
 
 ## 2. 装人设
 
-三份人设在这个目录里：
+三份人设在这个目录里。Codex 写稿、审稿、剪辑、发布准备都能做；审片、认稿、选封面、「我发了」只有创始人在工作台点。
+「Claude 写、Codex 剪」只是创始人的习惯，不是规则：
 
 | 文件 | 岗位 | 干什么 |
 |---|---|---|
-| `AGENTS.editor-writer.md` | 总编辑 + 写手 | **P6 起在 codex 宿主上停用**：服务端只放行 `autocrew_video register/status/revoke` 与只读查询（`mcp/host-policy.ts`），写稿在 Claude 会话里做 |
-| `AGENTS.cover.md` | 封面师 | **P6 起在 codex 宿主上停用**：封面在 `personal-ip-video-loop` 里用 Codex 内置生图做，随 `register` 一起登记 |
+| `AGENTS.editor-writer.md` | 总编辑 + 写手 | 领写作包写稿、审稿（2026-10-02 起 codex 与 claude-code 能力一样，`mcp/host-policy.ts` 不再按宿主分工） |
+| `AGENTS.cover.md` | 封面师 | 做封面；也可以在 `personal-ip-video-loop` 里用 Codex 内置生图做，随 `register` 一起登记 |
 | `AGENTS.editor.md` | 剪辑师 | 待办桌认领 → 开工转写 → 选段门 → 素材规划门 → 成片审核门（三道门都由创作者点头） |
 
 Codex 读工作目录（及其上层）的 `AGENTS.md`。把人设写进去：

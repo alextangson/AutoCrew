@@ -245,7 +245,7 @@ AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
 
 `autocrew_insights prepare` 读取并冻结现有定位、内容样本、生产进度、分平台数据和开放假设；当前宿主分析后调用 `submit`，得到完整报告与本地文件。报告包含证据、数据缺口、最多3项关键判断，以及负责岗位、优先级、具体动作、交付物、验证指标与前提。`list/get` 可回看或恢复。普通洞察不调用后台模型、不自动抓新数据，也不自动派工、改稿或发布；执行建议仍走原工作流。
 
-默认观察30天，可传 `days`（1—366）、`platform`、`focus`。累计值与期间增量分开，缺失字段不补0，待复核数据不进入基线，只有正好第7天的日快照才计入D+7。现有Codex剪辑工位权限不扩大。更新后需在安全重启服务、宿主刷新MCP工具列表后使用。详见 [账号洞察设计与验收](docs/account-insights-design.md)。
+默认观察30天，可传 `days`（1—366）、`platform`、`focus`。累计值与期间增量分开，缺失字段不补0，待复核数据不进入基线，只有正好第7天的日快照才计入D+7。更新后需在安全重启服务、宿主刷新MCP工具列表后使用。详见 [账号洞察设计与验收](docs/account-insights-design.md)。
 
 ### 宿主写稿
 
@@ -302,7 +302,7 @@ autocrew disconnect claude
 | 宿主 | 一键接入实际做的事 |
 | --- | --- |
 | Claude Code | `claude mcp add --scope user autocrew -e AUTOCREW_HOST=claude-code -- <node> <仓库>/bin/autocrew.mjs mcp`。命令行和 **Claude 桌面版的 Code 页**都读这份用户级配置，新开一个会话就能用。PATH 上没有 `claude` 时用桌面版自带的那个；都找不到才直接改 `~/.claude.json`（先备份），此时要新开会话，Claude 开着时可能把改动盖掉 |
-| Codex | `codex mcp add autocrew --env AUTOCREW_HOST=codex -- <node> <仓库>/bin/autocrew.mjs mcp`，不再需要 export 环境变量。Codex 是剪辑工位：登记原片、成片、字幕、封面和素材，发布前检查，其余只读；写稿、审稿、发布在 Claude Code 里做 |
+| Codex | `codex mcp add autocrew --env AUTOCREW_HOST=codex -- <node> <仓库>/bin/autocrew.mjs mcp`，不再需要 export 环境变量。Codex 和 Claude Code 能力一样：写稿、审稿、剪辑、发布准备都能做；审片、认稿、选封面、「我发了」只有你在工作台点 |
 | WorkBuddy | 把一条 `autocrew` 合并进 `~/.workbuddy/mcp.json`（别的条目原样保留，文件读不懂就不写）。重启 WorkBuddy 后生效。之后在稿件页或对话栏点「复制给 WorkBuddy」，把那句话粘进 WorkBuddy 就能接着处理这篇稿 |
 | dsh | 走进程内工具桥，见 `adapters/dsh/README.md`；`autocrew host dsh` 打印步骤 |
 

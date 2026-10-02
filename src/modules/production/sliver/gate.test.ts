@@ -306,6 +306,6 @@ describe("触发、缓存与范围（E15、E16、E18、E20）", () => {
     const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "check_slivers", content_id: s.c.id }) as Json;
     expect(r).toMatchObject({ ok: true, status: "slivers", written: false, slivers: [{ start_frame: 100, end_frame: 105 }] });
     expect((await readProductionDoc(s.c.id, env.dir))!.revision).toBe(before);
-    expect(hostPolicy("codex", "autocrew_content", { action: "check_slivers" }, true)).toEqual({ ok: true });
+    expect(hostPolicy("codex", "autocrew_content", { action: "check_slivers" })).toEqual({ ok: true });
   });
 });
