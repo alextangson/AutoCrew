@@ -192,8 +192,38 @@ function ensureBuild() {
   if (newestSrc > distAt) runBuild();
 }
 
+const LAUNCH_FILE = path.join(DATA_DIR, "autocrew.launch");
+/** 新版本起得慢也给够时间；超时就结束它，绝不留一个没人管的进程（e2e P1-1） */
+const LAUNCH_TIMEOUT_MS = Number(process.env.AUTOCREW_LAUNCH_TIMEOUT_MS) || 60_000;
+
+/** 端口上那个服务报的启动标记（不是 AutoCrew、或旧版本没有这个端点 → null） */
+async function launchInfo() {
+  try {
+    const r = await fetch(`${BASE_URL}__autocrew/launch`, { signal: AbortSignal.timeout(1_500) });
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body && typeof body === "object" ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 「由 npm start 管着」的唯一定义：端口上的服务报的标记 = 启动器这次写下的标记（服务端同一条规则见 src/modules/update/remote.ts） */
+async function ourServerUp() {
+  const info = await launchInfo();
+  let mine = "";
+  try { mine = fs.readFileSync(LAUNCH_FILE, "utf-8").trim(); } catch { /* 没有标记文件 */ }
+  return Boolean(mine && info?.nonce && info.nonce === mine);
+}
+
+function killLaunched(pid) {
+  for (const sig of ["SIGTERM", "SIGKILL"]) {
+    try { process.kill(process.platform === "win32" ? pid : -pid, sig); } catch { try { process.kill(pid, sig); } catch { /* 已经不在 */ } }
+  }
+}
+
 async function waitForLaunch(logOffset, pid) {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (!processAlive(pid)) break;
     let chunk = "";
@@ -217,14 +247,24 @@ async function start() {
   await fsp.chmod(DATA_DIR, 0o700).catch(() => {});
 
   if (await serverUp()) {
-    console.log(`AutoCrew 已在运行: ${BASE_URL}`);
-    openBrowser(BASE_URL);
-    return;
+    // 端口有人应答 ≠ 是我们起的那个 AutoCrew（e2e P1-1）：只有标记对上才算已在运行
+    if (await ourServerUp()) {
+      console.log(`AutoCrew 已在运行: ${BASE_URL}`);
+      openBrowser(BASE_URL);
+      return;
+    }
+    const info = await launchInfo();
+    console.error(info?.via === "serve"
+      ? `端口 ${PORT} 上已在运行的 AutoCrew 是用 npm run serve 启动的，不归启动器管，没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`
+      : `端口 ${PORT} 上已在运行的不是这个启动器起的 AutoCrew（或是别的程序），没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+    process.exit(1);
   }
 
   const stalePid = readPid();
   if (stalePid && !processAlive(stalePid)) await fsp.rm(PID_FILE, { force: true });
-  ensureBuild();
+  // 测试钩子：AUTOCREW_SERVER_SCRIPT 换成一个假服务脚本（不构建前端、不碰资料库）；正常使用不设
+  const testScript = process.env.AUTOCREW_SERVER_SCRIPT;
+  if (!testScript) ensureBuild();
 
   const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
   if (!fs.existsSync(tsx)) {
@@ -232,16 +272,18 @@ async function start() {
     process.exit(1);
   }
 
-  const storageApply = spawnSync(tsx, [path.join(ROOT, "scripts", "storage.mts"), "apply"], { stdio: "inherit", env: process.env });
-  if (storageApply.status !== 0) throw new Error("资料库准备失败；未启动服务，原资料保持不变");
+  if (!testScript) {
+    const storageApply = spawnSync(tsx, [path.join(ROOT, "scripts", "storage.mts"), "apply"], { stdio: "inherit", env: process.env });
+    if (storageApply.status !== 0) throw new Error("资料库准备失败；未启动服务，原资料保持不变");
+  }
 
   const logOffset = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : 0;
   const logFd = fs.openSync(LOG_FILE, "a", 0o600);
   fs.chmodSync(LOG_FILE, 0o600);
   // 一次性启动标记：服务凭它确认「我是启动器起的」，一键更新才敢重启它（pid 文件里是 tsx 的 pid，不是服务本身）
   const launchNonce = randomBytes(16).toString("hex");
-  await fsp.writeFile(path.join(DATA_DIR, "autocrew.launch"), `${launchNonce}\n`, { mode: 0o600 });
-  const child = spawn(tsx, [path.join(ROOT, "desktop", "server.ts")], {
+  await fsp.writeFile(LAUNCH_FILE, `${launchNonce}\n`, { mode: 0o600 });
+  const child = spawn(tsx, [testScript || path.join(ROOT, "desktop", "server.ts")], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -252,9 +294,13 @@ async function start() {
   await fsp.writeFile(PID_FILE, `${child.pid}\n`, { mode: 0o600 });
 
   const url = await waitForLaunch(logOffset, child.pid);
-  if (!url) {
+  // 打印了地址还不够：端口上应答的必须是这一次起的进程（标记对上），否则可能是别的进程占着端口
+  if (!url || !(await ourServerUp())) {
+    killLaunched(child.pid);
     await fsp.rm(PID_FILE, { force: true });
-    console.error(`AutoCrew 启动失败。查看日志: ${LOG_FILE}`);
+    console.error(url
+      ? `AutoCrew 启动失败：端口 ${PORT} 上应答的不是这次启动的进程，已结束它。查看日志: ${LOG_FILE}`
+      : `AutoCrew ${Math.round(LAUNCH_TIMEOUT_MS / 1000)} 秒内没起来，已结束这次启动的进程。查看日志: ${LOG_FILE}`);
     process.exit(1);
   }
   console.log(`AutoCrew 已启动（PID ${child.pid}）`);

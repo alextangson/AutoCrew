@@ -8,7 +8,7 @@ import { programRoot, startUpdateScheduler } from "../src/modules/update/check.j
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
 import { getMachineDir } from "../src/storage/storage-roots.js";
-import { launchedByLauncher } from "../src/modules/update/remote.js";
+import { launchedByLauncher, launchVia } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
@@ -197,7 +197,7 @@ const updateRoute = createUpdateHandler({
   // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
   inProcessTurns: () => activeTurnCount() + activeWorkCount(),
   // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
-  launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()) }),
+  launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
 });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -217,6 +217,12 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if ((p === "/mcp" || p.startsWith("/api/")) && !["/api/session", "/api/invoke", "/api/events"].includes(p) && authorize(req)) assertLibraryAvailable();
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
+  // 启动标记（e2e P1-1）：启动器与更新进程凭它确认端口上应答的就是自己起的那一个；不带任何资料，无需登录
+  if (p === "/__autocrew/launch" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" })
+      .end(JSON.stringify({ ok: true, nonce: process.env.AUTOCREW_LAUNCH_NONCE ?? null, via: launchVia() }));
+    return;
+  }
 
   // React 前端:/ 为主,/v2 为书签兼容别名(D 期清场后同一份 dist)
   if (p === "/v2" || p.startsWith("/v2/")) {

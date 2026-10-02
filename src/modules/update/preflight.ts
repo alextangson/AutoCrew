@@ -11,7 +11,8 @@ import { getMachineDir } from "../../storage/storage-roots.js";
 import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, type RunRecord } from "../../desktop/chief-editor/run-store.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
-export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。在 AutoCrew 文件夹里运行 npm run restart，之后再点更新。";
+export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
+export const SERVE_MESSAGE = "这次 AutoCrew 是用 npm run serve 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
 export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
 
 /** 更新锁在手时，新的对话轮、本机 agent 轮、发布动作一律不开（已经在跑的不碰） */
@@ -26,7 +27,7 @@ export interface PreflightDeps {
   /** 轮次记录的「还在跑」判断，测试注入 */
   runAlive?: (r: RunRecord) => boolean;
   /** 服务是不是由启动器（npm start）管着：不是就没法自动重启 */
-  launcher?: () => Promise<{ running: boolean; managed: boolean }>;
+  launcher?: () => Promise<{ running: boolean; managed: boolean; via?: "launcher" | "serve" | "other" }>;
   /** 命令行里问正在跑的服务有没有轮在跑（null = 空闲；抛 = 问不到） */
   remoteBusy?: () => Promise<string | null>;
 }
@@ -70,7 +71,7 @@ export async function preflight(root: string, machineDir: string, target: string
     if (remote) return no("busy", remote);
   }
   const launcher = deps.launcher ? await deps.launcher() : { running: false, managed: true };
-  if (launcher.running && !launcher.managed) return no("unmanaged", UNMANAGED_MESSAGE);
+  if (launcher.running && !launcher.managed) return no("unmanaged", launcher.via === "serve" ? SERVE_MESSAGE : UNMANAGED_MESSAGE);
   return { ok: true };
 }
 

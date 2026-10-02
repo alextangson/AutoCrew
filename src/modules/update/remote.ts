@@ -11,10 +11,48 @@ import { getHostStateDir } from "../../storage/storage-roots.js";
 export const LAUNCH_FILE = "autocrew.launch";
 export const LAUNCH_ENV = "AUTOCREW_LAUNCH_NONCE";
 
+/** 启动器这一次写下的标记（没有就是 null） */
+export function launcherNonce(machineDir: string): string | null {
+  try { return fs.readFileSync(path.join(machineDir, LAUNCH_FILE), "utf-8").trim() || null; } catch { return null; }
+}
+
+/**
+ * 「由 npm start 管着」的唯一定义（e2e P1-1）：服务报的启动标记 = 启动器这一次写下的标记。
+ * 服务自己拿环境变量里的标记来比，命令行 / 更新进程拿 `/__autocrew/launch` 报的标记来比；bin/autocrew.mjs 是同一条规则的 JS 版。
+ */
+export function managedBy(serverNonce: string | null | undefined, machineDir: string): boolean {
+  const mine = launcherNonce(machineDir);
+  return Boolean(serverNonce && mine && serverNonce === mine);
+}
+
 export function launchedByLauncher(machineDir: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const mine = env[LAUNCH_ENV]?.trim();
-  if (!mine) return false;
-  try { return fs.readFileSync(path.join(machineDir, LAUNCH_FILE), "utf-8").trim() === mine; } catch { return false; }
+  return managedBy(env[LAUNCH_ENV]?.trim(), machineDir);
+}
+
+export type LaunchVia = "launcher" | "serve" | "other";
+
+/** 服务怎么起的：npm run serve 起的 npm 会带上 npm_lifecycle_event=serve */
+export function launchVia(env: NodeJS.ProcessEnv = process.env): LaunchVia {
+  if (env[LAUNCH_ENV]) return "launcher";
+  return env.npm_lifecycle_event === "serve" ? "serve" : "other";
+}
+
+/** 端口上的服务报的启动信息（不是 AutoCrew、连不上、旧版本没有这个端点 → null） */
+export async function fetchLaunchInfo(port: number, fetchImpl: typeof fetch = fetch): Promise<{ nonce: string | null; via: LaunchVia } | null> {
+  try {
+    const r = await fetchImpl(`http://127.0.0.1:${port}/__autocrew/launch`, { signal: AbortSignal.timeout(2_000) });
+    if (!r.ok) return null;
+    const b = await r.json() as { nonce?: unknown; via?: unknown };
+    const via = b.via === "launcher" || b.via === "serve" ? b.via : "other";
+    return { nonce: typeof b.nonce === "string" ? b.nonce : null, via };
+  } catch { return null; }
+}
+
+/** 命令行 / 更新进程看端口上的服务：在不在、是不是 npm start 起的那个、怎么起的 */
+export async function launcherState(port: number, machineDir: string, up: boolean, fetchImpl: typeof fetch = fetch): Promise<{ running: boolean; managed: boolean; via: LaunchVia }> {
+  if (!up) return { running: false, managed: false, via: "other" };
+  const info = await fetchLaunchInfo(port, fetchImpl);
+  return { running: true, managed: managedBy(info?.nonce, machineDir), via: info?.via ?? "other" };
 }
 
 function serverToken(): string {

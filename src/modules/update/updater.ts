@@ -9,6 +9,8 @@ import { spawn } from "node:child_process";
 import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
+import { fetchLaunchInfo, managedBy } from "./remote.js";
+import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
 
@@ -247,7 +249,7 @@ export async function waitIdle(check: () => Promise<string | null>, opts: { time
   }
 }
 
-export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null> }): UpdateSteps {
+export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number }): UpdateSteps {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   return {
     quiesce: (log) => waitIdle(opts.busy, { timeoutMs: 120_000, intervalMs: 2_000, log }),
@@ -267,19 +269,28 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     },
     health: async (log) => {
       if (!opts.serverWasRunning) return;
-      await waitHealthy(`http://127.0.0.1:${port}/`, 60_000, log);
+      await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir() });
     },
   };
 }
 
-export async function waitHealthy(url: string, timeoutMs: number, log: Log, fetchImpl: typeof fetch = fetch): Promise<void> {
+/**
+ * 健康检查：首页 200 还不够——端口上应答的必须是这一次启动器起的那个进程（启动标记对上，e2e P1-1），
+ * 否则一个留下来没人管的旧进程（或别的程序）也能让「已更新 / 已退回」报成功。
+ */
+export async function waitHealthy(url: string, timeoutMs: number, log: Log, fetchImpl: typeof fetch = fetch,
+  identity?: { port: number; machineDir: string }): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "";
   while (Date.now() < deadline) {
     try {
       const r = await fetchImpl(url, { signal: AbortSignal.timeout(3_000) });
-      if (r.status === 200) { log(`首页 200：${url}`); return; }
-      last = `HTTP ${r.status}`;
+      if (r.status === 200) {
+        if (!identity) { log(`首页 200：${url}`); return; }
+        const info = await fetchLaunchInfo(identity.port, fetchImpl);
+        if (managedBy(info?.nonce, identity.machineDir)) { log(`首页 200，且是这次启动的进程：${url}`); return; }
+        last = "端口上应答的不是这次启动的 AutoCrew";
+      } else last = `HTTP ${r.status}`;
     } catch (e) { last = errText(e); }
     await new Promise((r) => setTimeout(r, 1_000));
   }

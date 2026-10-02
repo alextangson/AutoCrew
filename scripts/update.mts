@@ -3,14 +3,13 @@
  * - 服务拉起：`--from-server --tag vX --lock-token T --log <文件> --port P`，锁已由服务拿好，这里接过来；
  * - 本机用户在终端跑 `autocrew update`：自己现查、预检、拿锁，在前台跑完并打印结果。
  */
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { gitRunner } from "../src/modules/update/git.js";
 import { readStatus } from "../src/modules/update/state.js";
 import { adoptLock, busyWork, releaseLock } from "../src/modules/update/preflight.js";
-import { serverBusy } from "../src/modules/update/remote.js";
+import { launcherState, serverBusy } from "../src/modules/update/remote.js";
 import { prepareUpdate } from "../src/modules/update/start.js";
 import { newLogFile, realSteps, runUpdate } from "../src/modules/update/updater.js";
 import { localVersion } from "../src/modules/update/check.js";
@@ -22,15 +21,6 @@ const PORT = Number(arg("port") ?? process.env.AUTOCREW_PORT) || 4317;
 
 async function serverUp(): Promise<boolean> {
   try { const r = await fetch(`http://127.0.0.1:${PORT}/`, { signal: AbortSignal.timeout(1_000) }); return r.status < 500; } catch { return false; }
-}
-
-function launcherPidAlive(): boolean {
-  try {
-    const pid = Number(fs.readFileSync(path.join(MACHINE, "autocrew.pid"), "utf-8").trim());
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    process.kill(pid, 0);
-    return true;
-  } catch { return false; }
 }
 
 /** 重启前的「还有没有任务在跑」：本机 agent 轮次记录 + 服务进程里的对话轮（服务在跑才问） */
@@ -55,7 +45,8 @@ async function fromCli(): Promise<number> {
   const running = await serverUp();
   console.log("正在检查新版本…");
   const prep = await prepareUpdate(ROOT, MACHINE, {
-    launcher: async () => ({ running, managed: launcherPidAlive() }),
+    // 与服务端、启动器同一条「npm start 管着」的定义：端口上的服务报的标记 = 启动器写下的标记
+    launcher: () => launcherState(PORT, MACHINE, running),
     // 内置引擎的对话轮只在服务内存里：服务在跑就必须问到它空闲，问不到就不动手
     ...(running ? { remoteBusy: () => serverBusy(PORT) } : {}),
   });
