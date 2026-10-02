@@ -246,8 +246,6 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           // 总编辑本机 agent：chief-editor/ipc-handlers.ts 的专用处理器
           !ch.startsWith("agent:") &&
           ch !== "conversations:rename" &&
-          ch !== "hosts:workbuddy_status" &&
-          ch !== "hosts:workbuddy_connect" &&
           ch !== "generate:script" &&
           // 中断稿原地重写：ipc.ts 的 generateRetryHandler（带 job-claims 防双击）
           ch !== "generate:retry" &&

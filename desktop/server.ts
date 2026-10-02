@@ -4,6 +4,7 @@ import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
+import { createConnectHandler } from "../src/desktop/connect-route.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
@@ -199,6 +200,9 @@ const updateRoute = createUpdateHandler({
   // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
   launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
 });
+
+// 一键接入宿主（onboarding-connect §3）：写宿主用户配置，只认同源浏览器会话
+const connectRoute = createConnectHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -402,6 +406,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
   if (await updateRoute(req, res, url)) return;
+  if (await connectRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
 

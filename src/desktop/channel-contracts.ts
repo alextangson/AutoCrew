@@ -54,8 +54,6 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "agent:pending": [],
   "agent:answer": ["ask_id", "decision"],
   "agent:settings": ["conversation_id"],
-  "hosts:workbuddy_status": [],
-  "hosts:workbuddy_connect": [],
   "conversations:rename": ["id", "title"],
   "settings:get": [],
   // providers 是可选数组（字段存在性判定：未提交保留、空数组清空、有数组走 merge）

@@ -62,9 +62,6 @@ export const IPC_CHANNELS = [
   // 只出宿主名与时间戳，token 值一个字节都不进这条通道
   "hosts:list",
   "hosts:revoke",
-  // WorkBuddy 反向接入（spec W1–W8）：是否装了 / 一键连接（发令牌 + 合并 ~/.workbuddy/mcp.json）
-  "hosts:workbuddy_status",
-  "hosts:workbuddy_connect",
   "settings:search_get",
   "settings:search_set",
   "settings:publish_get",
