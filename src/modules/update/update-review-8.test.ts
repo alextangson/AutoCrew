@@ -89,3 +89,32 @@ describe("P2 长调用清单不许悄悄漏项", () => {
     expect(isLongRunningTool("autocrew_review_desk", "submit")).toBe(true);
   });
 });
+
+import lockfile from "proper-lockfile";
+import { vi } from "vitest";
+import { startEpoch } from "../../desktop/chief-editor/run-store.js";
+
+describe("P2 收回死锁时绝不挪开活锁（三方交错，确定性重放）", () => {
+  it("B 看到死锁后、动手前，A 已收回并拿到新锁，C 正等着空位：A 的锁留着，B、C 都拿不到", () => {
+    const lock = path.join(tmp, "update.lock");
+    fs.writeFileSync(lock, JSON.stringify({ pid: 99999999, token: "dead", at: "" }));
+    const live = (token: string) => JSON.stringify({ pid: process.pid, token, at: "", start: startEpoch(process.pid) });
+    let injected = false;
+    // 「A 收回完成」插在 B 初次检查之后、B 下一步动手之前：新实现的下一步是拿收回短锁，旧实现是把锁改名成墓碑
+    const injectA = () => { if (!injected) { injected = true; fs.writeFileSync(lock, live("A")); } };
+    const realRename = fs.renameSync.bind(fs), realLink = fs.linkSync.bind(fs), realLockSync = lockfile.lockSync.bind(lockfile);
+    const spies = [
+      vi.spyOn(lockfile, "lockSync").mockImplementation((f, o) => { injectA(); return realLockSync(f, o); }),
+      vi.spyOn(fs, "renameSync").mockImplementation((from, to) => { if (String(from) === lock) injectA(); return realRename(from, to); }),
+      // C 一看到空位就发布（旧实现把 A 的锁挪开、再放回之间那一瞬）
+      vi.spyOn(fs, "linkSync").mockImplementation((from, to) => {
+        if (String(to) === lock && String(from).includes(".stale-") && !fs.existsSync(lock)) fs.writeFileSync(lock, live("C"));
+        return realLink(from, to);
+      }),
+    ];
+    try {
+      expect(acquireLock(tmp, "B")).toBe(false);
+    } finally { for (const s of spies) s.mockRestore(); }
+    expect(JSON.parse(fs.readFileSync(lock, "utf-8")).token).toBe("A");
+  });
+});

@@ -42,41 +42,56 @@ describe("P2 省略 action 也按默认动作分类", () => {
   });
 });
 
+/**
+ * N 个真进程同时收回同一批死锁。赢家在大家都抢完之前不退出——否则先跑完的进程一退出，它的锁就真成了死锁，
+ * 后面的进程把它收回是对的，会被误判成「两个赢家」。
+ */
+async function race(names: string[], rounds: number): Promise<{ dirs: string[]; wins: Record<string, number[]> }> {
+  const dirs = Array.from({ length: rounds }, (_, i) => path.join(tmp, `d${i}`));
+  for (const d of dirs) {
+    fs.mkdirSync(d);
+    fs.writeFileSync(path.join(d, "update.lock"), JSON.stringify({ pid: 99999999, token: "dead", at: "" }));
+  }
+  const go = path.join(tmp, "go");
+  const script = path.join(tmp, "racer.mts");
+  fs.writeFileSync(script, [
+    `import fs from "node:fs";`,
+    `import { acquireLock } from ${JSON.stringify(pathToFileURL(path.join(REPO, "src/modules/update/preflight.ts")).href)};`,
+    `const [me, go, ...dirs] = process.argv.slice(2);`,
+    `fs.writeFileSync(go + "." + me, "ready");`,
+    `while (!fs.existsSync(go)) { /* 自旋等起跑，大家尽量同时开抢 */ }`,
+    `const won = dirs.map((d) => acquireLock(d, me) ? 1 : 0);`,
+    `fs.writeFileSync(go + "." + me + ".out", JSON.stringify(won));`,
+    `while (!fs.existsSync(go + ".done")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);`,
+  ].join("\n"));
+  const tsx = path.join(REPO, "node_modules", ".bin", "tsx");
+  const exits = names.map((me) => new Promise<number | null>((resolve) => spawn(tsx, [script, me, go, ...dirs]).on("exit", resolve)));
+  const until = async (f: () => boolean) => { while (!f()) await new Promise((r) => setTimeout(r, 20)); };
+  await until(() => names.every((me) => fs.existsSync(`${go}.${me}`)));
+  fs.writeFileSync(go, "go");
+  await until(() => names.every((me) => fs.existsSync(`${go}.${me}.out`)));
+  const wins = Object.fromEntries(names.map((me) => [me, JSON.parse(fs.readFileSync(`${go}.${me}.out`, "utf-8")) as number[]]));
+  fs.writeFileSync(`${go}.done`, "");
+  await Promise.all(exits);
+  return { dirs, wins };
+}
+
+function assertOneWinner(dirs: string[], wins: Record<string, number[]>, names: string[]) {
+  const bad = dirs.filter((_, i) => names.reduce((n, me) => n + wins[me][i], 0) !== 1);
+  expect(bad, "每把死锁恰好一个赢家").toEqual([]);
+  for (const [i, d] of dirs.entries()) {
+    expect(JSON.parse(fs.readFileSync(path.join(d, "update.lock"), "utf-8")).token).toBe(names.find((me) => wins[me][i]));
+  }
+}
+
 describe("P2 收回死锁不互相删", () => {
   it("两个进程同时收回同一把死锁：每把只有一个拿到", async () => {
-    const ROUNDS = 150;
-    const dirs = Array.from({ length: ROUNDS }, (_, i) => path.join(tmp, `d${i}`));
-    for (const d of dirs) {
-      fs.mkdirSync(d);
-      fs.writeFileSync(path.join(d, "update.lock"), JSON.stringify({ pid: 99999999, token: "dead", at: "" }));
-    }
-    const go = path.join(tmp, "go");
-    const script = path.join(tmp, "racer.mts");
-    fs.writeFileSync(script, [
-      `import fs from "node:fs";`,
-      `import { acquireLock } from ${JSON.stringify(pathToFileURL(path.join(REPO, "src/modules/update/preflight.ts")).href)};`,
-      `const [me, go, ...dirs] = process.argv.slice(2);`,
-      `fs.writeFileSync(go + "." + me, "ready");`,
-      `while (!fs.existsSync(go)) { /* 自旋等起跑，两边尽量同时开抢 */ }`,
-      `const won = dirs.map((d) => acquireLock(d, me) ? 1 : 0);`,
-      `process.stdout.write(JSON.stringify(won));`,
-    ].join("\n"));
-    const tsx = path.join(REPO, "node_modules", ".bin", "tsx");
-    const run = (me: string) => new Promise<number[]>((resolve, reject) => {
-      const p = spawn(tsx, [script, me, go, ...dirs]);
-      let out = "";
-      p.stdout.on("data", (c) => { out += c; });
-      p.on("exit", (code) => (code === 0 ? resolve(JSON.parse(out) as number[]) : reject(new Error(`racer ${me} 退出码 ${code}`))));
-    });
-    const a = run("A"), b = run("B");
-    while (!(fs.existsSync(`${go}.A`) && fs.existsSync(`${go}.B`))) await new Promise((r) => setTimeout(r, 20));
-    fs.writeFileSync(go, "go");
-    const [wa, wb] = await Promise.all([a, b]);
-    const both = dirs.filter((_, i) => wa[i] + wb[i] !== 1);
-    expect(both, "每把死锁恰好一个赢家").toEqual([]);
-    // 锁里留下的就是赢家的
-    for (const [i, d] of dirs.entries()) {
-      expect(JSON.parse(fs.readFileSync(path.join(d, "update.lock"), "utf-8")).token).toBe(wa[i] ? "A" : "B");
-    }
-  }, 60_000);
+    const { dirs, wins } = await race(["A", "B"], 150);
+    assertOneWinner(dirs, wins, ["A", "B"]);
+  }, 90_000);
+
+  it("三个进程同时收回同一把死锁：每把只有一个拿到（Codex 审第 8 轮 P2）", async () => {
+    const { dirs, wins } = await race(["A", "B", "C"], 150);
+    assertOneWinner(dirs, wins, ["A", "B", "C"]);
+  }, 90_000);
 });

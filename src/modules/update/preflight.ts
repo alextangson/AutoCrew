@@ -3,6 +3,8 @@
  * 「有没有人在跑」复用总编辑的轮次记录（runs.json）与它判断「主人还活着」的同一套逻辑。
  */
 import fs from "node:fs";
+import path from "node:path";
+import lockfile from "proper-lockfile";
 import { randomBytes } from "node:crypto";
 import { firstLine, type GitRunner } from "./git.js";
 import { isGitInstall, NOT_GIT } from "./check.js";
@@ -130,36 +132,44 @@ function publishLock(file: string, body: LockBody): boolean {
 }
 
 /**
- * 拿锁：已被活进程持有（或是刚出现、还读不出内容）就返回 false；持锁进程死了的旧锁收回重拿。
- * 收回走原子 rename（Codex 审第 6 轮 P2）：先认准看到的那把死锁（令牌），把它改名成本进程独有的墓碑——
- * 两个进程同时收回，只有一个 rename 成功；改名后再核对墓碑里还是那把死锁，不是就原样放回（别人刚拿的新锁绝不删）。
+ * 收回死锁、接手锁这两件改动别人锁文件的事，排在同一把短锁后面串行做（Codex 审第 8 轮 P2）。
+ * 短锁用 proper-lockfile：mkdir 建锁、过期（10 秒没刷新）自动作废，是现成的、经过检验的原语，不再自己手写抢锁。
+ * 持有时间只有几毫秒；拿不到就短暂重试，仍拿不到说明别人正在收回 / 接手，本次当没拿到。
+ */
+function withReclaimMutex<T>(machineDir: string, fn: () => T): { ok: true; value: T } | { ok: false } {
+  const target = path.join(machineDir, "update.lock.guard");
+  fs.writeFileSync(target, "", { flag: "a" });
+  let release: (() => void) | null = null;
+  const deadline = Date.now() + 2_000;
+  while (!release) {
+    try { release = lockfile.lockSync(target, { stale: 10_000, realpath: false }); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ELOCKED" || Date.now() > deadline) return { ok: false };
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  try { return { ok: true, value: fn() }; } finally { release(); }
+}
+
+/**
+ * 拿锁：没人持有就原子发布一份（link，别人已发布则失败）；已被活进程持有（或刚出现、还读不出内容）就返回 false。
+ * 持锁进程死了：在收回短锁里再核对一次「还是那把死锁」，才删掉它、发布自己的——活锁绝不挪开。
  */
 export function acquireLock(machineDir: string, token: string, pid = process.pid): boolean {
   const file = files(machineDir).lock;
   fs.mkdirSync(machineDir, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (publishLock(file, { pid, token, at: new Date().toISOString(), start: startEpoch(pid) ?? 0 })) return true;
-    const state = lockState(machineDir);
-    if (state.kind === "live") return false;
-    if (state.kind === "dead" && !reclaimStale(file, state.token)) return false;
-  }
-  return false;
-}
-
-function reclaimStale(file: string, staleToken: string | null): boolean {
-  const tomb = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
-  try { fs.renameSync(file, tomb); }
-  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return true; throw e; }
-  let moved: LockBody | null = null;
-  try { moved = JSON.parse(fs.readFileSync(tomb, "utf-8")) as LockBody; } catch { /* 读不出：改名前已核过它过了宽限期 */ }
-  if (moved && moved.token !== staleToken && ownerLive(moved)) {
-    // 改名前一瞬别人已经收回并拿了新锁：放回去（目标被占就说明又有人拿了，这把留给它）
-    try { fs.linkSync(tomb, file); } catch { /* 已有新锁 */ }
-    fs.rmSync(tomb, { force: true });
-    return false;
-  }
-  fs.rmSync(tomb, { force: true });
-  return true;
+  const body = (): LockBody => ({ pid, token, at: new Date().toISOString(), start: startEpoch(pid) ?? 0 });
+  if (publishLock(file, body())) return true;
+  const seen = lockState(machineDir);
+  if (seen.kind !== "dead") return seen.kind === "none" ? publishLock(file, body()) : false;
+  const r = withReclaimMutex(machineDir, () => {
+    const now = lockState(machineDir);
+    if (now.kind === "none") return publishLock(file, body());
+    if (now.kind !== "dead" || now.token !== seen.token) return false;
+    fs.rmSync(file, { force: true });
+    return publishLock(file, body());
+  });
+  return r.ok && r.value;
 }
 
 /**
@@ -167,14 +177,18 @@ function reclaimStale(file: string, staleToken: string | null): boolean {
  * 服务按暗号确认接手，不比 pid——服务拿到的是 tsx 启动器的 pid，跑脚本的是 tsx 拉起的另一个 node（Codex 审第 4 轮 P1）。
  */
 export function adoptLock(machineDir: string, token: string, nonce: string, pid = process.pid): boolean {
-  const body = readLock(machineDir);
-  if (!body || body.token !== token) return false;
-  // 整份写进临时文件再 rename 覆盖（原子替换），不截断重写——别人任何时刻读到的都是完整的锁
-  const file = files(machineDir).lock;
-  const tmp = `${file}.adopt-${process.pid}-${randomBytes(6).toString("hex")}`;
-  fs.writeFileSync(tmp, JSON.stringify({ ...body, pid, start: startEpoch(pid) ?? 0, adopted: nonce }));
-  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
-  return true;
+  // 和收回死锁排在同一把短锁后面：核对令牌与整体替换之间，别人不会把这把锁收走再换成新的
+  const r = withReclaimMutex(machineDir, () => {
+    const body = readLock(machineDir);
+    if (!body || body.token !== token) return false;
+    // 整份写进临时文件再 rename 覆盖（原子替换），不截断重写——别人任何时刻读到的都是完整的锁
+    const file = files(machineDir).lock;
+    const tmp = `${file}.adopt-${process.pid}-${randomBytes(6).toString("hex")}`;
+    fs.writeFileSync(tmp, JSON.stringify({ ...body, pid, start: startEpoch(pid) ?? 0, adopted: nonce }));
+    try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
+    return true;
+  });
+  return r.ok && r.value;
 }
 
 /** 锁上写着的接手暗号（还没接手 / 没有锁就是 null） */

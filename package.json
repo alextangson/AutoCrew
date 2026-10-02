@@ -36,6 +36,7 @@
     "@earendil-works/pi-coding-agent": "0.80.10",
     "@sinclair/typebox": "0.34.48",
     "@zed-industries/codex-acp": "0.16.0",
+    "proper-lockfile": "4.1.2",
     "smol-toml": "1.9.0",
     "typebox": "1.1.38",
     "undici": "^8.9.0"
@@ -63,6 +64,7 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^25.9.2",
+    "@types/proper-lockfile": "4.1.4",
     "eslint": "^9.0.0",
     "happy-dom": "^20.14.5",
     "prettier": "^3.5.0",
