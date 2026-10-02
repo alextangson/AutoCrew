@@ -86,7 +86,9 @@ describe.skipIf(!HAS_FFMPEG)("交接会拒的原片在认稿就拒（§12.6）",
   });
 });
 
-describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
+// 每条都串 match → confirm → handoff，各有一次 300ms 的「原片还在拷贝吗」等待，外加真 ffmpeg/ffprobe；
+// 单跑一秒出头，全量并行时会被别的 ffmpeg 编码抢走 CPU，5 秒默认超时不够（同类真 ffmpeg 流程都给了显式超时）
+describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", { timeout: 30_000 }, () => {
   it("codex-handoff-needs-confirmation-record：没带、造的、用过的确认都不放行", async () => {
     const c = await ready("第一条长长的标题");
     const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
