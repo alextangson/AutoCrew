@@ -286,7 +286,7 @@ async function commitFailed(a: RecordArgs, content: Content, dataDir: string, tx
 }
 
 /** keepArgs：核对作业落结果时沿用原请求的参数指纹（重放照旧认）；patch：同一次写里给事实补的字段 */
-export interface CommitOpts { keepArgs?: boolean; patch?: Partial<Fact>; event?: string }
+export interface CommitOpts { keepArgs?: boolean; patch?: Partial<Fact>; event?: string; pairArgs?: string }
 
 export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string, release?: ReleaseOp, opts: CommitOpts = {}): Promise<Receipt> {
   const reuse = p.action === "existing" || (p.action === "candidate" && p.existing);
@@ -317,9 +317,10 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
       const args = opts.keepArgs ? doc.requests?.[a.request_id]?.args ?? requestArgs(a) : requestArgs(a);
-      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args, receipt: { ...core } } };
-      if (journaled) doc.txns = [...(doc.txns ?? []), txn.id];
+      // group_id 先写进 core 再落盘（整分支审 14 P2）：重放 / 中断后恢复读到的回执要带组
       if (coverEvents.length) core.group_id = coverEvents[0].detail.group_id as string;
+      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args, receipt: { ...core }, ...(opts.pairArgs ? { pair_args: opts.pairArgs } : {}) } };
+      if (journaled) doc.txns = [...(doc.txns ?? []), txn.id];
       if (a.review && fact.kind === "cut" && fact.state === "accepted") coverEvents.push(...addReadyMark(doc, fact, a));
       return { value: core, events: [...(reuse ? [] : [{ type: opts.event ?? "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }]), ...coverEvents] };
     });
@@ -339,11 +340,11 @@ async function joinExistingPair(a: RecordArgs, content: Content, doc: Production
   if (!group) return null;
   await mutateProduction(content.id, dataDir, (d) => {
     for (const f of d.facts.filter((x) => x.id === f34.id || x.id === f43.id)) if (a.cover_text && !f.text) f.text = a.cover_text;
-    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { kind: "cover", pair: { facts: [{ fact_id: f34.id, ratio: "3:4" }, { fact_id: f43.id, ratio: "4:3" }] } } } };
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { kind: "cover", pair: { facts: [{ fact_id: f34.id, ratio: "3:4" }, { fact_id: f43.id, ratio: "4:3" }], group_id: group.group.id } } } };
     return { value: null, events: [{ type: "cover_pair_joined", detail: { group_id: group.group.id, by: a.host } }] };
   });
   const fresh = await readProductionDocOrEmpty(content.id, dataDir);
-  return pairReceiptNow(content, withCoverGroups(fresh, approvedCoverShas(fresh, content.body)), dataDir, { facts: [{ fact_id: f34.id }, { fact_id: f43.id }] });
+  return pairReceiptNow(content, withCoverGroups(fresh, approvedCoverShas(fresh, content.body)), dataDir, { facts: [{ fact_id: f34.id }, { fact_id: f43.id }], group_id: group.group.id });
 }
 
 /**
@@ -356,7 +357,10 @@ async function pairReceiptNow(content: Content, doc: ProductionDoc, dataDir: str
     return { fact_id: x.fact_id, ratio: f?.ratio ?? x.ratio, state: f?.state ?? "rejected", path: f?.path };
   });
   const groups = facts.map((f) => groupsOfFact(doc, f.fact_id).map((g) => g.group.id));
-  const shared = groups[0]?.find((id) => groups.every((g) => g.includes(id))) ?? null;
+  // 同一对图可能在好几组里：先认这次记进的那一组（回执里存的），没存就认最新的共同组
+  const common = groups[0]?.filter((id) => groups.every((g) => g.includes(id))) ?? [];
+  const hint = typeof stored.group_id === "string" ? stored.group_id : null;
+  const shared = hint && common.includes(hint) ? hint : common.at(-1) ?? null;
   const exp = await explainContent(content, dataDir);
   const view = exp.shadow ?? exp;
   return { ok: true, content_id: content.id, kind: "cover", facts, group_id: shared, stage: view.stage ?? view.column, missing: view.missing,
@@ -367,7 +371,11 @@ async function pairReceiptNow(content: Content, doc: ProductionDoc, dataDir: str
 
 async function recordCoverPair(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Receipt> {
   // 上次只记上了一半（第二张落位 / 写入失败）：同一 request_id 重试接着那一版补另一半，不另起一版、不撞自己占的槽（整分支审 9 P2）
-  const done = a.paths!.map((_, i) => doc.requests?.[`${a.request_id}#${i}`]?.receipt as unknown as ReceiptCore | undefined);
+  // 续记前核对整对请求的参数（整分支审 14 P2）：换了 version / paths 的重试不能接着别的那一半，混成一组还报成功
+  const pairArgs = requestArgs(a);
+  const saved = a.paths!.map((_, i) => doc.requests?.[`${a.request_id}#${i}`]);
+  if (saved.some((x) => x && x.pair_args !== pairArgs)) return fail("request_conflict", `request_id「${a.request_id}」上次记的那一半用的是另一组参数（版本或路径不同）：换一个新的 request_id 再报`);
+  const done = saved.map((x) => x?.receipt as unknown as ReceiptCore | undefined);
   const doneFacts = done.map((r) => (r ? doc.facts.find((f) => f.id === r.fact_id) : undefined));
   const version = a.version ?? doneFacts.find((f) => f?.version)?.version ?? nextCoverVersion(doc);
   const parts = a.paths!.map((p, i): RecordArgs => ({ ...a, path: p, paths: a.paths, request_id: `${a.request_id}#${i}`, version }));
@@ -387,19 +395,19 @@ async function recordCoverPair(a: RecordArgs, content: Content, doc: ProductionD
   if (joined) return joined;
   const receipts: Receipt[] = [];
   for (const [i, plan] of plans.entries()) {
-    const r = plan ? await commitFile(parts[i], content, plan, dataDir) : await receiptFor(content, dataDir, currentCore(doc, done[i]!));
+    const r = plan ? await commitFile(parts[i], content, plan, dataDir, undefined, { pairArgs }) : await receiptFor(content, dataDir, currentCore(doc, done[i]!));
     receipts.push(r);
     if (!r.ok) return i === 0 ? r : { ...r, error: `第一张（${ratioOf(0)}）已记下，第二张没记上：${String(r.error)}。用同一个 request_id 重试会接着这一组补上`, first: receipts[0] };
   }
-  const facts = receipts.map((r, i) => ({ fact_id: r.fact_id, ratio: ratioOf(i), state: r.state, path: r.path }));
-  const groupId = (receipts.find((r) => r.group_id)?.group_id as string | undefined) ?? null;
-  const out = { ok: true, content_id: content.id, kind: "cover", facts, group_id: groupId, stage: receipts[1].stage, missing: receipts[1].missing,
-    next_action: groupId ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "两张都只记成了候选（不在可搬入目录），等创始人在「等你拍板」里确认。" };
+  // 组按现在的事实和成员关系算（整分支审 14 P2）：续记 / 中断后恢复时子回执里可能没有 group_id
+  const hinted = receipts.map((r) => r.group_id).find((g) => typeof g === "string");
+  const stored = { facts: receipts.map((r, i) => ({ fact_id: r.fact_id as string, ratio: ratioOf(i) })), ...(hinted ? { group_id: hinted } : {}) } as Receipt;
   await mutateProduction(content.id, dataDir, (d) => {
-    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { kind: "cover", pair: out } } };
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: pairArgs, receipt: { kind: "cover", pair: stored } } };
     return { value: null, events: [] };
   });
-  return out;
+  const fresh = await readProductionDocOrEmpty(content.id, dataDir);
+  return pairReceiptNow(content, withCoverGroups(fresh, approvedCoverShas(fresh, content.body)), dataDir, stored);
 }
 
 // ---- chatcut_project：不带文件，只记工程与它显式引用的原片 ----

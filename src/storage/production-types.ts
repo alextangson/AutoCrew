@@ -293,7 +293,9 @@ export interface Registration {
 }
 
 /** args：这次请求的参数指纹；同一 request_id 只在参数一致时回放 */
-export interface StoredReceipt { at: string; receipt: Record<string, unknown>; args?: string }
+export interface StoredReceipt { at: string; receipt: Record<string, unknown>; args?: string;
+  /** 一对封面里的单张：整对请求的参数指纹，重试续记前核对（整分支审 14 P2） */
+  pair_args?: string }
 
 export interface ProductionDoc {
   schema: 1;
