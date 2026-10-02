@@ -10,8 +10,8 @@ import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
-import { DepsSwap } from "./deps-swap.js";
-import { clearInflight, writeInflight } from "./interrupted.js";
+import { DepsSwap, sweepTrash } from "./deps-swap.js";
+import { clearInflight, markInflightVerified, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
@@ -168,6 +168,8 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   progress.touchedService = true;
   log("== 重启服务"); await job.steps.restart(log);
   log("== 健康检查"); await job.steps.health(log);
+  // 新版过了检查：之后就算被打断（比如在清理旧依赖时），停在新版也算安装一致，不再叫人退回（第 15 轮 P2-1）
+  try { markInflightVerified(job.machineDir); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
 }
 
 /**
@@ -265,6 +267,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base, message: `更新没开始：${errText(e)}，完整记录在 ${job.logFile}` }, log);
   }
   log(`旧版本提交：${oldHead}`);
+  try { const swept = await sweepTrash(job.root); if (swept.length) log(`清掉上次留下的垃圾目录：${swept.join("、")}`); }
+  catch (e) { log(`!! 清不掉上次留下的垃圾目录（不影响更新）：${errText(e)}`); }
   // 在途记录：被硬杀时下次能认出「上次更新中断了」；finish 时删掉
   try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead, commit: job.commit }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
   const progress: Progress = { touchedService: false };

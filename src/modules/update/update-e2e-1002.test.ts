@@ -293,3 +293,82 @@ setInterval(() => {}, 1000);
     expect(fs.existsSync(alive), "子进程还活着，交给更新进程在安全点收尾").toBe(true);
   }, 30_000);
 });
+
+import { installState, markInflightVerified } from "./interrupted.js";
+import { sweepTrash } from "./deps-swap.js";
+
+describe("第 15 轮 P2-1：「安装一致」要看新版有没有过健康检查", () => {
+  /** 一个 git 安装：旧版本提交 + 新版本提交，HEAD 停在 at 指定的那一个，两份依赖的关键命令在 */
+  function twoVersions(at: "old" | "new") {
+    const root = path.join(tmp, "r");
+    const old = consistentInstall(root);
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "0.5.0" }));
+    execFileSync("git", ["commit", "-q", "-am", "new"], { cwd: root, env: ENV });
+    const neu = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8" }).trim();
+    if (at === "old") execFileSync("git", ["reset", "-q", "--hard", old], { cwd: root });
+    return { root, old, neu };
+  }
+  const inflight = (old: string, neu: string, verified = false) => ({ at: "", from: "0.4.9", to: "0.5.0", log: "/l", oldHead: old, commit: neu, ...(verified ? { verified } : {}) });
+
+  it("构建时被杀（已切到新版、依赖都在、但没过健康检查）：不一致，再跑更新要先恢复，不说「已经是最新版」", async () => {
+    const { root, old, neu } = twoVersions("new");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    expect(installState(root, inflight(old, neu))).toBe("inconsistent");
+    writeInflight(m, inflight(old, neu));
+    expect(detectInterrupted(root, m, { trustInstall: true })?.outcome).toBe("stuck");
+  });
+
+  it("新版过了健康检查之后才被打断：一致，不再提示", () => {
+    const { root, old, neu } = twoVersions("new");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeInflight(m, inflight(old, neu));
+    markInflightVerified(m);
+    expect(readInflight(m)?.verified).toBe(true);
+    expect(detectInterrupted(root, m, { trustInstall: true })).toBeNull();
+  });
+
+  it("还在旧版、但留着一份完整的旧依赖备份没换回来：不一致，恢复步骤里有它", () => {
+    const { root, old, neu } = twoVersions("old");
+    fs.mkdirSync(path.join(root, "node_modules.prev-77"));
+    expect(installState(root, inflight(old, neu))).toBe("inconsistent");
+    expect(recoveryCommands(root, old).join("\n")).toContain('mv "node_modules.prev-77" "node_modules"');
+  });
+
+  it("用户自己 git pull 到了别的版本、工作区干净：当他已经往前走了，清掉记录、放行", () => {
+    const { root, old } = twoVersions("new");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeInflight(m, inflight(old, "e".repeat(40)));
+    expect(installState(root, inflight(old, "e".repeat(40)))).toBe("moved_on");
+    expect(detectInterrupted(root, m, { trustInstall: true })).toBeNull();
+    expect(readInflight(m)).toBeNull();
+  });
+
+  it("启动器同一条规则：构建时被杀的状态下 npm start 停下给步骤；自己 git pull 过的放行（说一句）", () => {
+    // 程序根 = 拷贝的启动器 + 一个 git 安装
+    const { root, old, neu } = twoVersions("new");
+    fs.mkdirSync(path.join(root, "bin"), { recursive: true });
+    fs.copyFileSync(path.join(REPO, "bin", "autocrew.mjs"), path.join(root, "bin", "autocrew.mjs"));
+    fs.writeFileSync(path.join(root, ".gitignore"), "bin/\nnode_modules/\nfrontend/\n");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeInflight(m, inflight(old, neu));
+    const stuck = runBin(root, "start", m);
+    expect(stuck.status).toBe(1);
+    expect(stuck.stderr).toContain("上次一键更新中断了");
+    writeInflight(m, inflight(old, "e".repeat(40)));
+    const moved = runBin(root, "start", m);
+    expect(moved.stderr).toContain("不再提示恢复");
+    expect(readInflight(m)).toBeNull();
+  });
+});
+
+describe("第 15 轮 P3：上次留下的垃圾目录", () => {
+  it("下次更新 / 服务启动时清掉 *.trash-*，完整的 .prev 不碰", async () => {
+    const root = path.join(tmp, "r");
+    fs.mkdirSync(path.join(root, "node_modules.prev-1.trash-9-123"), { recursive: true });
+    fs.mkdirSync(path.join(root, "frontend", "dist.trash-9-124"), { recursive: true });
+    fs.mkdirSync(path.join(root, "node_modules.prev-2"));
+    const removed = await sweepTrash(root);
+    expect(removed.sort()).toEqual(["frontend/dist.trash-9-124", "node_modules.prev-1.trash-9-123"]);
+    expect(fs.existsSync(path.join(root, "node_modules.prev-2"))).toBe(true);
+  });
+});

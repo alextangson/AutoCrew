@@ -11,7 +11,11 @@ import { files, writeResult, type UpdateResult } from "./state.js";
 import { lockHeld } from "./preflight.js";
 import { PREV_NAME } from "./deps-swap.js";
 
-export interface Inflight { at: string; from: string; to: string; log: string; oldHead: string; /** 要更新到的提交 */ commit?: string }
+export interface Inflight {
+  at: string; from: string; to: string; log: string; oldHead: string;
+  /** 要更新到的提交 */ commit?: string;
+  /** 新版已经过了健康检查（第 15 轮 P2-1） */ verified?: boolean;
+}
 
 const inflightFile = (machineDir: string) => path.join(machineDir, "update-inflight.json");
 
@@ -40,14 +44,43 @@ function headOf(root: string): string | null {
   try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; }
 }
 
+function hasCompletePrev(root: string): boolean {
+  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
+    try { if (fs.readdirSync(path.dirname(path.join(root, rel))).some((n) => PREV_NAME(path.basename(rel)).test(n))) return true; } catch { /* 目录不在 */ }
+  }
+  return false;
+}
+
+function trackedClean(root: string): boolean {
+  try { return execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() === ""; } catch { return false; }
+}
+
+export type InstallState = "consistent" | "moved_on" | "inconsistent";
+
 /**
- * 安装是一致的吗：当前版本就是更新前或要更新到的那一版，两份依赖都在（e2e 1002 P2-B）。
- * 是的话，上次虽然中断，现在这份安装能用——不用恢复，也不该叫人去动它。
+ * 上次中断之后，这份安装是什么状态（第 15 轮 P2-1）：
+ * - consistent：要么已经在新版、而且新版过了健康检查（在途记录标了 verified）；要么还在旧版、没有留着的完整旧依赖、程序文件没改动，
+ *   两份依赖都在——能用，不用恢复；
+ * - moved_on：版本既不是旧的也不是新的、工作区干净——用户自己 git pull 换了版本，不再管这次中断；
+ * - inconsistent：其余一律要恢复（比如在新版但没验证过、或在旧版却还留着完整的旧依赖备份没换回来）。
  */
-export function installConsistent(root: string, inflight: Inflight): boolean {
+export function installState(root: string, inflight: Inflight): InstallState {
   const head = headOf(root);
-  const known = head !== null && (head === inflight.oldHead || (inflight.commit !== undefined && head === inflight.commit));
-  return known && depsComplete(root, "node_modules") && depsComplete(root, "frontend/node_modules");
+  if (head === null) return "inconsistent";
+  const depsOk = depsComplete(root, "node_modules") && depsComplete(root, "frontend/node_modules");
+  if (inflight.commit !== undefined && head === inflight.commit) return inflight.verified && depsOk ? "consistent" : "inconsistent";
+  if (head === inflight.oldHead) return depsOk && !hasCompletePrev(root) && trackedClean(root) ? "consistent" : "inconsistent";
+  return trackedClean(root) ? "moved_on" : "inconsistent";
+}
+
+export function installConsistent(root: string, inflight: Inflight): boolean {
+  return installState(root, inflight) === "consistent";
+}
+
+/** 新版过了健康检查：在途记录标上 verified——之后再被打断，停在新版也算安装一致 */
+export function markInflightVerified(machineDir: string): void {
+  const cur = readInflight(machineDir);
+  if (cur) writeInflight(machineDir, { ...cur, verified: true });
 }
 
 /**
@@ -82,7 +115,9 @@ export function detectInterrupted(root: string, machineDir: string, opts: { trus
   const inflight = readInflight(machineDir);
   if (!inflight || lockHeld(machineDir)) return null;
   const startedAfter = opts.processStartedAt === undefined || opts.processStartedAt > Date.parse(inflight.at);
-  if (opts.trustInstall && startedAfter && installConsistent(root, inflight)) {
+  const state = opts.trustInstall && startedAfter ? installState(root, inflight) : "inconsistent";
+  if (state !== "inconsistent") {
+    if (state === "moved_on") console.error("[update] 上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复");
     clearInflight(machineDir);
     fs.rmSync(files(machineDir).lock, { force: true });
     return null;

@@ -442,10 +442,25 @@ function interruptedUpdateHelp() {
   let inflight;
   try { inflight = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-inflight.json"), "utf-8")); } catch { return null; }
   if (!inflight?.oldHead || liveUpdateLock()) return null;
-  // 安装一致（当前版本是更新前或要更新到的那一版、两份依赖都在）：能用，交给服务启动时清掉记录，不打扰（e2e 1002 P2-B）
+  // 与 src/modules/update/interrupted.ts 的 installState 同一条规则（第 15 轮 P2-1）：
+  // 在新版且新版过了健康检查（verified）、或在旧版且没有留着的完整旧依赖、程序文件没改动——能用，不打扰；
+  // 版本既不是旧的也不是新的、工作区干净——用户自己换了版本，清掉记录、说一句就放行
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf-8" }).stdout?.trim();
   const depsOk = (rel) => fs.existsSync(path.join(ROOT, rel === "node_modules" ? "node_modules/.bin/tsx" : "frontend/node_modules/.bin/vite"));
-  if ((head === inflight.oldHead || head === inflight.commit) && depsOk("node_modules") && depsOk("frontend/node_modules")) return null;
+  const prevName = (base) => new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
+  const hasPrev = ["node_modules", "frontend/node_modules", "frontend/dist"].some((rel) => {
+    try { return fs.readdirSync(path.dirname(path.join(ROOT, rel))).some((n) => prevName(path.basename(rel)).test(n)); } catch { return false; }
+  });
+  const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: ROOT, encoding: "utf-8" });
+  const clean = status.status === 0 && status.stdout.trim() === "";
+  const allDeps = depsOk("node_modules") && depsOk("frontend/node_modules");
+  if (head && head === inflight.commit && inflight.verified && allDeps) return null;
+  if (head && head === inflight.oldHead && allDeps && !hasPrev && clean) return null;
+  if (head && head !== inflight.commit && head !== inflight.oldHead && clean) {
+    console.error("上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复。");
+    try { fs.rmSync(path.join(DATA_DIR, "update-inflight.json"), { force: true }); } catch { /* 删不掉下次再说 */ }
+    return null;
+  }
   // 与 src/modules/update/interrupted.ts 的 recoveryCommands 同一条规则：有完整备份就改名换回；没备份但现在完整的不动；都没有才重装
   const steps = [];
   for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
@@ -453,8 +468,7 @@ function interruptedUpdateHelp() {
     const base = path.basename(rel);
     let prev = [];
     // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…（与 deps-swap.ts 的 PREV_NAME 同一条）
-    const prevName = new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
-    try { prev = fs.readdirSync(dir).filter((n) => prevName.test(n)).sort(); } catch { /* 目录不在 */ }
+    try { prev = fs.readdirSync(dir).filter((n) => prevName(base).test(n)).sort(); } catch { /* 目录不在 */ }
     const latest = prev[prev.length - 1];
     if (latest) { steps.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`); continue; }
     if (rel === "frontend/dist") continue;
