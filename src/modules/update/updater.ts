@@ -121,7 +121,11 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   // 预检之后到这里可能有人改了程序文件：合并前再查一次（Codex 审第 5 轮 P1）
   const dirty = await trackedChanges(job.git);
   if (dirty) throw new NotStartedError(`程序文件刚刚有了本地改动（${firstLine(dirty)}…），自动更新会覆盖它们`);
-  try { await gitStep(job.git, ["merge", "--ff-only", job.commit], log); }
+  // 新版开始跟踪的路径，本地正好有一个被忽略 / 未跟踪的同名文件：合并会把它换掉。先列出来，不更新（Codex 审第 8 轮 P1）
+  const clobber = await restoreConflicts(job, job.commit, oldHead);
+  if (clobber.length) throw new NotStartedError(`新版本会覆盖这些不归 git 管的本地文件：${clobber.slice(0, 5).join("、")}${clobber.length > 5 ? ` 等 ${clobber.length} 个` : ""}，先把它们挪走再更新`);
+  // --no-overwrite-ignore：万一上面没查到，git 自己也不覆盖被忽略的文件
+  try { await gitStep(job.git, ["merge", "--ff-only", "--no-overwrite-ignore", job.commit], log); }
   catch (e) { throw new NotStartedError(errText(e)); }
   const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
   if (head === oldHead) throw new NotStartedError("合并后版本没有变化");
@@ -139,13 +143,17 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
  * 旧版本有、新版本没有的路径——reset 会把它们写回来。磁盘上已经有同名的未跟踪 / 被忽略文件（比如新版删掉、
  * 用户在更新途中又建了一个），或者某一级父路径被一个文件占着，reset 会悄悄覆盖：列出来，不退回（Codex 审第 7 轮 P1）。
  */
-async function restoreConflicts(job: UpdateJob, oldHead: string, head: string): Promise<string[]> {
+/**
+ * 从 from 切到 to 时会被写出来、而磁盘上已经被不归 git 管（未跟踪 / 被忽略）的东西占着的路径。
+ * 前进（新版开始跟踪一个本地被忽略的路径）和退回（旧版有、新版删掉的路径）都用它（Codex 审第 8 轮 P1）。
+ */
+async function restoreConflicts(job: UpdateJob, to: string, from: string): Promise<string[]> {
   const list = async (rev: string) => {
     const r = await job.git(["ls-tree", "-r", "--name-only", "-z", rev]);
     if (!r.ok) throw new Error(`读不出 ${rev.slice(0, 8)} 的文件清单（${firstLine(r.stderr)}）`);
     return r.stdout.split("\0").filter(Boolean);
   };
-  const now = new Set(await list(head));
+  const now = new Set(await list(from));
   const occupied = (rel: string): boolean => {
     try { fs.lstatSync(path.join(job.root, rel)); return true; } catch { /* 不在 */ }
     const parts = rel.split("/");
@@ -154,7 +162,7 @@ async function restoreConflicts(job: UpdateJob, oldHead: string, head: string): 
     }
     return false;
   };
-  return (await list(oldHead)).filter((p) => !now.has(p) && occupied(p));
+  return (await list(to)).filter((p) => !now.has(p) && occupied(p));
 }
 
 /** 退回前发现工作区里有不是这次更新带来的改动：不 reset，给手动步骤 */
