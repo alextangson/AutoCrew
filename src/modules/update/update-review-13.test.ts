@@ -19,7 +19,7 @@ describe("P2 ASR 预热被更新重启打断", () => {
 
   it("盘上是「预热中」、本进程没在预热、模型没到：写成失败，叫人再点一次（不再永远「预热中」）", async () => {
     leftWarming();
-    const st = await effectiveAsrStatus(tmp, { ...process.env, MODELSCOPE_CACHE: path.join(tmp, "empty-cache") });
+    const st = await effectiveAsrStatus(tmp, { ...process.env, MODELSCOPE_CACHE: path.join(tmp, "empty-cache") }, { recoverInterrupted: true });
     expect(st.status).toBe("failed");
     expect(st.detail).toContain("再点一次");
     expect(JSON.parse(fs.readFileSync(statusFile(), "utf-8")).status).toBe("failed");
@@ -31,7 +31,7 @@ describe("P2 ASR 预热被更新重启打断", () => {
     for (const repo of ["iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch", "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", "iic/punc_ct-transformer_cn-en-common-vocab471067-large"]) {
       fs.mkdirSync(path.join(cache, "hub", "models", repo), { recursive: true });
     }
-    const st = await effectiveAsrStatus(tmp, { ...process.env, MODELSCOPE_CACHE: cache });
+    const st = await effectiveAsrStatus(tmp, { ...process.env, MODELSCOPE_CACHE: cache }, { recoverInterrupted: true });
     expect(st.status).toBe("ready");
   });
 
