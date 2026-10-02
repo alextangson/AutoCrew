@@ -292,9 +292,22 @@ export async function asrModelsCached(env: NodeJS.ProcessEnv = process.env): Pro
 /** 状态文件说了算，除非它没说 ready 而模型其实已在共享缓存里 */
 export async function effectiveAsrStatus(dataDir: string, env: NodeJS.ProcessEnv = process.env): Promise<AsrStatusRecord> {
   const record = await readAsrStatus(dataDir);
-  if (record.status === "ready" || record.status === "warming") return record;
+  if (record.status === "ready") return record;
+  if (record.status === "warming") {
+    if (warmingUp.has(dataDir)) return record;
+    // 盘上写着「预热中」，本进程却没在预热：上一个进程（比如一键更新重启）把它打断了，写结果的那一步跟着没了。
+    // 不能永远停在「预热中」（第 13 轮 P2）：模型其实到了就算就绪，没到就说清楚、让人再点一次
+    return (await asrModelsCached(env))
+      ? writeAsrStatus(dataDir, { status: "ready", detail: "模型已在本机缓存里" })
+      : writeAsrStatus(dataDir, { status: "failed", detail: "预热被中断了（AutoCrew 重启过），再点一次「预热 ASR 模型」" });
+  }
   if (await asrModelsCached(env)) return { status: "ready", detail: "模型已在本机缓存里" };
   return record;
+}
+
+/** 本进程里正在跑的预热数（一键更新的忙碌判断用：预热要下 1GB，重启会把写结果的那一步弄丢） */
+export function asrWarmupCount(): number {
+  return warmingUp.size;
 }
 
 /** 同一进程内只许有一次预热在跑——1GB 下载重复两遍纯属浪费带宽 */
