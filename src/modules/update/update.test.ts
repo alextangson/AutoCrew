@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-const noBusy = { runAlive: () => false, inProcessTurns: () => 0 };
+const noBusy = { inProcessTurns: () => 0 };
 const git = () => gitRunner(user);
 
 describe("semver", () => {
@@ -152,14 +152,11 @@ describe("预检", () => {
     expect(await preflight(user, machine, "v0.5.0", { git: git(), ...noBusy })).toMatchObject({ ok: false, code: "not_main" });
   });
 
-  it("有任务在跑：不动手（总编辑轮次记录 + 本进程对话轮）", async () => {
+  it("有任务在跑：不动手（本进程的对话轮与后台长任务）", async () => {
     await fetchFirst();
-    const home = path.join(machine, "chief-editor");
-    fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(path.join(home, "runs.json"), JSON.stringify([{ turnId: "t1", status: "running", owner: { pid: 1, start: 1 } }, { turnId: "t2", status: "done" }]));
-    expect(await preflight(user, machine, "v0.5.0", { git: git(), runAlive: () => true })).toMatchObject({ ok: false, code: "busy" });
-    expect(busyWork(machine, { runAlive: () => false })).toBeNull();
-    expect(busyWork(machine, { runAlive: () => false, inProcessTurns: () => 1 })).toMatch(/正在跑/);
+    expect(await preflight(user, machine, "v0.5.0", { git: git(), inProcessTurns: () => 2 })).toMatchObject({ ok: false, code: "busy" });
+    expect(busyWork(machine)).toBeNull();
+    expect(busyWork(machine, { inProcessTurns: () => 1 })).toMatch(/正在跑/);
   });
 
   it("服务不是启动器起的：不动手", async () => {

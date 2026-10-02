@@ -55,7 +55,7 @@ describe("P1 命令行要问服务里的对话轮", () => {
     process.env.AUTOCREW_TOKEN = "tok";
     const route = createUpdateHandler({
       authorize: (req) => (req.headers.authorization === "Bearer tok" ? "bearer" : null), originAllowed: () => false,
-      readBody: async () => "", root: tmp, machineDir: tmp, port: 0, inProcessTurns: () => turns, runAlive: () => false,
+      readBody: async () => "", root: tmp, machineDir: tmp, port: 0, inProcessTurns: () => turns,
     });
     server = http.createServer((req, res) => void route(req, res, new URL(req.url!, "http://x")).then((h) => { if (!h) res.writeHead(404).end(); }));
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -78,7 +78,7 @@ describe("P1 命令行要问服务里的对话轮", () => {
     fs.writeFileSync(path.join(user, "package.json"), "{}"); g(user, "add", "package.json"); g(user, "commit", "-q", "-m", "a"); g(user, "tag", "v0.5.0");
     void origin;
     const machine = path.join(tmp, "m"); fs.mkdirSync(machine);
-    const base = { git: gitRunner(user), runAlive: () => false };
+    const base = { git: gitRunner(user) };
     expect(await preflight(user, machine, "v0.5.0", { ...base, remoteBusy: async () => "有 1 个任务正在跑" })).toMatchObject({ ok: false, code: "busy" });
     expect(await preflight(user, machine, "v0.5.0", { ...base, remoteBusy: async () => { throw new Error("问不到服务"); } })).toMatchObject({ ok: false, code: "busy_unknown", reason: expect.stringContaining("没法确认") });
     expect(await preflight(user, machine, "v0.5.0", { ...base, remoteBusy: async () => null })).toEqual({ ok: true });

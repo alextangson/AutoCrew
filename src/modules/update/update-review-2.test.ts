@@ -34,7 +34,7 @@ describe("P1 后台长任务进忙碌计数，更新中不开新的", () => {
   it("后台生图起跑即计数、跑完释放；预检据此判忙", async () => {
     const job = startIdentityPortraitJob({ _dataDir: path.join(tmp, "lib") });
     expect(activeWorkCount()).toBe(1);
-    expect(busyWork(tmp, { runAlive: () => false, inProcessTurns: activeWorkCount })).toMatch(/正在跑/);
+    expect(busyWork(tmp, { inProcessTurns: activeWorkCount })).toMatch(/正在跑/);
     await job.completion;
     expect(activeWorkCount()).toBe(0);
   });

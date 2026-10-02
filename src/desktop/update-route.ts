@@ -20,7 +20,6 @@ export interface UpdateRouteDeps {
   launcher?: PreflightDeps["launcher"];
   /** 测试注入 */
   git?: GitRunner;
-  runAlive?: PreflightDeps["runAlive"];
   spawnUpdater?: (job: Prepared) => Promise<{ ok: true; log: string } | { ok: false; reason: string }>;
 }
 
@@ -41,7 +40,6 @@ export function createUpdateHandler(deps: UpdateRouteDeps) {
     const prep = await prepareUpdate(deps.root, deps.machineDir, {
       ...(deps.git ? { git: deps.git } : {}),
       ...(deps.inProcessTurns ? { inProcessTurns: deps.inProcessTurns } : {}),
-      ...(deps.runAlive ? { runAlive: deps.runAlive } : {}),
       ...(deps.launcher ? { launcher: deps.launcher } : {}),
     });
     if (!prep.ok) return { ok: false, code: prep.code, error: prep.reason };
@@ -55,7 +53,7 @@ export function createUpdateHandler(deps: UpdateRouteDeps) {
     // 「有没有轮在跑」：命令行 autocrew update 与独立的更新进程用本机 server-token 来问（只读，不触发任何动作）
     if (p === "/api/update/busy" && req.method === "GET") {
       if (deps.authorize(req) === null) { res.writeHead(403).end(); return true; }
-      send(res, 200, { ok: true, busy: busyWork(deps.machineDir, { inProcessTurns: deps.inProcessTurns ?? (() => 0), ...(deps.runAlive ? { runAlive: deps.runAlive } : {}) }) });
+      send(res, 200, { ok: true, busy: busyWork(deps.machineDir, { inProcessTurns: deps.inProcessTurns ?? (() => 0)}) });
       return true;
     }
     const isGet = p === "/api/update" && req.method === "GET";
