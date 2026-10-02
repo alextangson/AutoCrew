@@ -602,7 +602,7 @@ describe("整分支审 15：发布认领看得见依据；可写可不写的动�
   it("没链接也没依据 → 提醒去平台看一眼", async () => {
     await mountInbox([{ ...claim, detail: { platform: "douyin", url: null, item: null, evidence: "" } }]);
     await openRow(claim.summary);
-    expect(el.textContent).toContain("Claude 没给链接，去平台上看一眼再确认");
+    expect(el.textContent).toContain("没给作品链接，去平台上看一眼再确认");
   });
 
   it("「发了吗」：主按钮一点就记；「填作品链接…」展开输入框，非 http 链接就地报错，对的才交", async () => {

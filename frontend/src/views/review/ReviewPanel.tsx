@@ -239,7 +239,7 @@ function ClaimBody(p: { item: InboxItem; act: Act }) {
     <Props rows={[["稿子", p.item.title], ["平台", d.platform ? platformName(String(d.platform)) : null],
       ["作品链接", url ? <a href={url} target="_blank" rel="noopener noreferrer">{url}</a> : null],
       ["说的是", `已经发出去了${d.item ? `（作品编号 ${String(d.item)}）` : ""}`], ["依据", evidence]]} />
-    {!url && !evidence && <p className="ri-note">Claude 没给链接，去平台上看一眼再确认</p>}
+    {!url && !evidence && <p className="ri-note">没给作品链接，去平台上看一眼再确认</p>}
     <Actions item={p.item} act={p.act} />
   </>;
 }
