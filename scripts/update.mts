@@ -45,6 +45,9 @@ async function fromServer(): Promise<number> {
   } finally { releaseLock(MACHINE, token); }
 }
 
+/** 预检没过、什么都没动（与 bin/autocrew.mjs 的 UPDATE_REFUSED 同一个值） */
+const REFUSED = 3;
+
 async function fromCli(): Promise<number> {
   const running = await serverUp();
   console.log("正在检查新版本…");
@@ -54,7 +57,8 @@ async function fromCli(): Promise<number> {
     // 内置引擎的对话轮只在服务内存里：服务在跑就必须问到它空闲，问不到就不动手
     ...(running ? { remoteBusy: () => serverBusy(PORT) } : {}),
   });
-  if (!prep.ok) { console.log(prep.reason); return prep.code === "no_update" ? 0 : 1; }
+  // 预检没过：什么都没动、原因已经打印——用专门的退出码，前台不会把它当成「更新进程意外退出」（第 15 轮 P2）
+  if (!prep.ok) { console.log(prep.reason); return prep.code === "no_update" ? 0 : REFUSED; }
   const log = newLogFile(MACHINE);
   console.log(`开始更新 ${prep.from} → ${prep.to}，大约 1 分钟；记录写在 ${log}`);
   try {

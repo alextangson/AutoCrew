@@ -254,3 +254,42 @@ describe("第 15 轮 P1：请求发起、请求返回后还在跑的后台活照
     } finally { await new Promise((r) => server.close(r)); resetActiveWork(); }
   });
 });
+
+describe("第 15 轮：前台退出提示与信号只发给更新进程", () => {
+  it("预检没过（退出码 3、什么都没动）：不报「更新进程意外退出」", () => {
+    const root = fakeInstall(`console.log("本地程序有改动，没动手"); process.exit(3);`);
+    const r = runBin(root, "update", path.join(tmp, "m"));
+    expect(r.status).toBe(3);
+    expect(r.stderr).not.toContain("意外退出");
+  });
+
+  it("更新进程被信号杀掉：报「意外退出」", () => {
+    const root = fakeInstall(`console.log("开始更新"); process.kill(process.pid, "SIGKILL");`);
+    const r = runBin(root, "update", path.join(tmp, "m"));
+    expect(r.stderr).toContain("更新进程意外退出了");
+  });
+
+  it("Ctrl-C 只到更新进程：它正在跑的 git 之类子进程不会跟着被杀", async () => {
+    const alive = path.join(tmp, "child-alive");
+    const root = fakeInstall(`
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+const kid = spawn("sleep", ["5"]); // 像正在跑的 git merge：和更新进程同一个进程组
+let done = false;
+kid.on("exit", () => { done = true; });
+process.on("SIGINT", () => {
+  setTimeout(() => { if (!done) fs.writeFileSync(${JSON.stringify(alive)}, "yes"); kid.kill(); console.log("更新中止了，已退回"); process.exit(1); }, 500);
+});
+console.log("开始更新");
+setInterval(() => {}, 1000);
+`);
+    const p = spawn(process.execPath, [path.join(root, "bin", "autocrew.mjs"), "update"], { detached: true, env: { ...process.env, AUTOCREW_LOCAL_DIR: path.join(tmp, "m") } });
+    let out = "";
+    p.stdout.on("data", (c) => { out += c; });
+    const exit = new Promise((r) => p.on("exit", r));
+    expect(await until(() => out.includes("开始更新"))).toBe(true);
+    process.kill(-p.pid!, "SIGINT"); // 终端里按 Ctrl-C
+    await exit;
+    expect(fs.existsSync(alive), "子进程还活着，交给更新进程在安全点收尾").toBe(true);
+  }, 30_000);
+});
