@@ -120,7 +120,7 @@ openclaw plugin install autocrew
 不用独立的引导文件，而是一个 `onboarding` skill，在用户首次触发任何 AutoCrew 功能时自动检测：
 
 ```
-用户说"帮我找选题" → 触发 spawn-planner skill → 
+用户说"帮我找选题" → 触发 topic-meeting（原 spawn-planner） skill → 
 skill 检测到 ~/.autocrew/creator-profile.json 不存在 →
 自动进入 onboarding 流程：
 
@@ -164,7 +164,7 @@ Step 3: 继续原始任务
 
 ```
 onboarding          → 首次使用任何功能时自动触发（内部检测）
-spawn-planner       → "找选题" / "调研" / "这周写什么"
+topic-meeting（原 spawn-planner）       → "找选题" / "调研" / "这周写什么"
 topic-ideas         → "帮我想" / "想选题"
 spawn-writer        → "写这个" / "帮我写"
 spawn-batch-writer  → "都写了" / "批量写"

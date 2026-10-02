@@ -17,7 +17,7 @@ import { WRITING_INSTRUCTIONS } from "./writing-instructions.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SKILLS = [
-  "calibrate", "style-calibration", "topic-ideas", "spawn-planner", "research",
+  "calibrate", "style-calibration", "topic-ideas", "topic-meeting", "research",
   "spawn-writer", "write-script", "spawn-batch-writer", "platform-rewrite",
   "humanizer-zh", "content-review", "memory-distill", "pre-publish", "manage-pipeline", "onboarding",
   "video-session",

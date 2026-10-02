@@ -8,7 +8,7 @@
 4. Read existing creator information with `autocrew_editorial profile` and proceed with the user request. Save only confirmed information through `update_profile`; do not require onboarding or silently promote inferred preferences to confirmed facts.
 5. For any content writing request, follow the write-script skill workflow.
 6. For batch writing (multiple articles), use the spawn-batch-writer skill.
-7. For topic research, use the research or spawn-planner skill.
+7. For topic research, use the research or topic-meeting skill.
 8. Save topics with `autocrew_topic`. Generated drafts must use `autocrew_writer pack/submit`, followed by `autocrew_review_desk pack/submit` for host review; content import is only for existing user-authored drafts. `pack` (or the first write) returns a `claim_token`; every later write on that content must carry it — the same host in another session is refused without it.
 9. Research, angles, writing and review default to the current host model. Use `autocrew_scout` for research tasks and verified source capture; read the writing pack for current requirements and profile. No engine setup is required for ordinary MCP work. Mark same-host review as `host_self_review`, not independent review or author approval. Third-party search, images and videos use separate service allowances.
 10. After completing a task, suggest one concrete next step.
@@ -36,7 +36,7 @@ Read existing profile information through `autocrew_editorial profile`, reuse th
 |-------------|---------------|
 | First use / profile incomplete | onboarding (progressive, non-blocking) |
 | "风格校准" / "调风格" / "设置风格" | style-calibration |
-| "帮我找选题" / "调研" / "这周写什么" / "内容规划" | spawn-planner or research |
+| "开选题会" / "帮我找选题" / "调研" / "这周写什么" / "内容规划" | topic-meeting or research |
 | "帮我想" / "想选题" / seed idea | topic-ideas |
 | "写这个" / "帮我写" / "写一篇" | spawn-writer |
 | "批量写" / "都写了" / "写N篇" | spawn-batch-writer |

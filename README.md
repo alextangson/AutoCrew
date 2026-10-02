@@ -268,7 +268,7 @@ MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使
 | 环节 | 技能 |
 | --- | --- |
 | 定位与声音 | `calibrate`、`style-calibration` |
-| 找题与备料 | `topic-ideas`、`spawn-planner`、`research` |
+| 找题与备料 | `topic-ideas`、`topic-meeting`、`research` |
 | 编排与写稿 | `spawn-writer`、`write-script`、`spawn-batch-writer` |
 | 改写与把关 | `platform-rewrite`、`humanizer-zh`、`content-review` |
 | 用户反馈 | `memory-distill` |

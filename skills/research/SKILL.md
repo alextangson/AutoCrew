@@ -10,7 +10,7 @@ description: |
 
 ## 开始
 
-用户还在找题时先按 `topic-ideas` / `spawn-planner` 构思，不对整个选题库自动开启研究。明确题目后复用或用 `autocrew_topic` 建题，把受众、目标、提纲、篇幅、必写/禁写放 `requirements`；明确主张另传 `direction`。
+用户还在找题时先按 `topic-ideas` / `topic-meeting` 构思，不对整个选题库自动开启研究。明确题目后复用或用 `autocrew_topic` 建题，把受众、目标、提纲、篇幅、必写/禁写放 `requirements`；明确主张另传 `direction`。
 
 ```json
 { "action":"prepare", "topic_id":"topic-…", "platform":"wechat_mp", "requirements":"保留用户完整规划" }
