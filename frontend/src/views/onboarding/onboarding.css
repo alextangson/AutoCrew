@@ -1,0 +1,39 @@
+/* 新引导（onboarding-connect §2.5）：Notion / YouMind 样子——无衬线、浅灰分隔、一屏一件事；按钮沿用全站三种 */
+.ob { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 64px 20px; background: #faf9f6; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; color: #1f1e1b; }
+.ob-panel { width: min(640px, 100%); }
+.ob-brand { font-size: 13px; color: #8a877f; letter-spacing: 0.04em; margin-bottom: 28px; }
+.ob-title { font-size: 26px; font-weight: 650; margin: 0 0 8px; }
+.ob-sub { color: #5f5c55; margin: 0 0 20px; line-height: 1.6; }
+.ob-note { background: #f3f2ee; border-radius: 8px; padding: 10px 14px; color: #5f5c55; line-height: 1.6; font-size: 14px; }
+.ob-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.ob-card { border: 1px solid #e8e6e1; border-radius: 10px; background: #fff; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.ob-card.on { border-color: #1f1e1b; }
+.ob-card.off { background: #fbfbf9; }
+.ob-card.off .ob-card-name { color: #8a877f; }
+.ob-card-main { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.ob-card-name { font-weight: 600; }
+.ob-dot { width: 13px; height: 13px; border-radius: 50%; border: 1px solid #d6d3cc; }
+.ob-tag { font-size: 12px; border-radius: 4px; padding: 1px 6px; background: #f0efe9; color: #5f5c55; }
+.ob-tag.ok { background: #e7f4ec; color: #1f7a45; }
+.ob-card-what { margin: 0; font-size: 14px; color: #5f5c55; line-height: 1.5; }
+.ob-card-state { margin: 0; font-size: 13px; color: #8a877f; }
+.ob-card-state.warn { color: #9a5b00; }
+.ob-card .btn-ghost { align-self: flex-start; padding-left: 0; }
+.ob-key { display: flex; gap: 8px; }
+.ob-key input { flex: 1; min-width: 0; }
+.ob-link { font-size: 13px; color: #5f5c55; }
+.ob-ok { color: #1f7a45; margin: 6px 0 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.ob-fail { color: #b42318; margin: 6px 0 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.ob-refresh, .ob-advanced-toggle { margin-top: 12px; margin-right: 8px; }
+.ob-advanced { border-top: 1px solid #e8e6e1; margin-top: 12px; padding-top: 12px; }
+.ob-kinds { display: flex; gap: 16px; }
+.ob-kind { display: flex; gap: 6px; align-items: center; }
+.ob-hint { font-size: 13px; color: #8a877f; }
+.ob-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ob-advanced .field { margin: 8px 0; }
+.ob-rows { border-top: 1px solid #e8e6e1; }
+.ob-row { border-bottom: 1px solid #e8e6e1; padding: 14px 0; }
+.ob-row-head { display: flex; align-items: center; gap: 8px; }
+.ob-row-spacer { flex: 1; }
+.ob-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 28px; }
+.ob-why { color: #8a877f; font-size: 14px; }
