@@ -366,6 +366,11 @@ switch (command) {
     break;
   case "restart":
     await stop();
+    // 停完端口上还有人应答：旧的没停下来（pid 记录丢了 / 不是启动器起的）。这不是「已在运行」，是重启失败（Codex 审第 10 轮 P1）
+    if (await serverUp()) {
+      console.error(`AutoCrew 重启失败：端口 ${PORT} 上已在运行的旧服务停不下来（找不到它的进程记录）。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+      process.exit(1);
+    }
     await start();
     break;
   case "status":

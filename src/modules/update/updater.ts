@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
-import { fetchLaunchInfo, managedBy } from "./remote.js";
+import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
 import { DepsSwap } from "./deps-swap.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
@@ -54,6 +54,9 @@ export interface UpdateJob {
 
 export class QuiesceError extends Error {}
 
+/** 搞不清停在哪了（合并出错后 HEAD 去了别处、或连 HEAD 都读不出）：不自动退回，给手动恢复步骤 */
+export class UncertainStateError extends Error {}
+
 /** 用户中止（Ctrl-C / SIGTERM）：走正常退回 */
 export class AbortedError extends Error {}
 export const ABORT_REASON = "你中止了更新（Ctrl-C）";
@@ -75,7 +78,8 @@ async function gitStep(git: GitRunner, args: string[], log: Log): Promise<string
   const r = await git(args, { timeoutMs: 120_000 });
   if (r.stdout.trim()) log(r.stdout.trim());
   if (r.stderr.trim()) log(r.stderr.trim());
-  if (!r.ok) throw new Error(`${GIT_STEP_WORDS[args[0]] ?? "读写程序版本"}没成功，详情见日志`);
+  const verb = args.find((a, i) => !a.startsWith("-") && args[i - 1] !== "-c") ?? "";
+  if (!r.ok) throw new Error(`${GIT_STEP_WORDS[verb] ?? "读写程序版本"}${r.timedOut ? "超时了" : "没成功"}，详情见日志`);
   return r.stdout.trim();
 }
 
@@ -125,11 +129,18 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   const clobber = await restoreConflicts(job, job.commit, oldHead);
   if (clobber.length) throw new NotStartedError(`新版本会覆盖这些不归 git 管的本地文件：${clobber.slice(0, 5).join("、")}${clobber.length > 5 ? ` 等 ${clobber.length} 个` : ""}，先把它们挪走再更新`);
   // --no-overwrite-ignore：万一上面没查到，git 自己也不覆盖被忽略的文件
-  try { await gitStep(job.git, ["merge", "--ff-only", "--no-overwrite-ignore", job.commit], log); }
-  catch (e) { throw new NotStartedError(errText(e)); }
-  const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
-  if (head === oldHead) throw new NotStartedError("合并后版本没有变化");
+  // 不跑用户仓库里的 git 钩子（core.hooksPath 指向空）：钩子不属于更新，慢钩子还会让合并超时（Codex 审第 10 轮 P1）
+  let mergeError: unknown = null;
+  try { await gitStep(job.git, ["-c", "core.hooksPath=/dev/null", "merge", "--ff-only", "--no-overwrite-ignore", job.commit], log); }
+  catch (e) { mergeError = e; }
+  // 合并报错不等于没动：超时、被打断时 HEAD 可能已经挪了。以真实的 HEAD 为准
+  let head: string;
+  try { head = await gitStep(job.git, ["rev-parse", "HEAD"], log); }
+  catch (e) { if (mergeError) throw new UncertainStateError(`切到新版本出错，之后连当前版本都读不出来（${errText(e)}）`); throw e; }
+  if (head === oldHead) throw new NotStartedError(mergeError ? errText(mergeError) : "合并后版本没有变化");
+  if (head !== job.commit) throw new UncertainStateError(`切到新版本后，当前版本（${head.slice(0, 8)}）既不是原来的也不是要更新到的`);
   progress.movedTo = head;
+  if (mergeError) throw new Error(`切到新版本时出错（${errText(mergeError)}），但版本已经换了`);
   log("== 安装依赖"); await job.steps.install(log, job.signal); checkpoint();
   log("== 构建前端"); await job.steps.build(log, job.signal); checkpoint();
   log("== 确认没有任务在跑"); await job.steps.quiesce(log); checkpoint();
@@ -154,15 +165,29 @@ async function restoreConflicts(job: UpdateJob, to: string, from: string): Promi
     return r.stdout.split("\0").filter(Boolean);
   };
   const now = new Set(await list(from));
-  const occupied = (rel: string): boolean => {
-    try { fs.lstatSync(path.join(job.root, rel)); return true; } catch { /* 不在 */ }
+  // 文件 ↔ 目录互换（module ↔ module/index.ts）时，git 自己会换掉的那些不是本地数据：只拦真正不归 git 管的（Codex 审第 10 轮 P2）
+  const trackedUnder = (dir: string) => { const prefix = `${dir}/`; for (const p of now) if (p.startsWith(prefix)) return true; return false; };
+  const untrackedUnder = async (dir: string) => {
+    const r = await job.git(["ls-files", "--others", "-z", "--", dir]);
+    if (!r.ok) throw new Error(`读不出 ${dir} 里的文件（${firstLine(r.stderr)}）`);
+    return r.stdout.split("\0").some(Boolean);
+  };
+  const occupied = async (rel: string): Promise<boolean> => {
+    let st: fs.Stats | null = null;
+    try { st = fs.lstatSync(path.join(job.root, rel)); } catch { /* 不在 */ }
+    if (st) return st.isDirectory() && trackedUnder(rel) ? untrackedUnder(rel) : true;
     const parts = rel.split("/");
     for (let i = 1; i < parts.length; i++) {
-      try { if (!fs.lstatSync(path.join(job.root, ...parts.slice(0, i))).isDirectory()) return true; } catch { return false; }
+      const anc = parts.slice(0, i).join("/");
+      let a: fs.Stats;
+      try { a = fs.lstatSync(path.join(job.root, anc)); } catch { return false; }
+      if (!a.isDirectory()) return !now.has(anc); // 是个被跟踪的文件：git 会把它换成目录；不被跟踪才是挡路的本地文件
     }
     return false;
   };
-  return (await list(to)).filter((p) => !now.has(p) && occupied(p));
+  const out: string[] = [];
+  for (const p of await list(to)) if (!now.has(p) && await occupied(p)) out.push(p);
+  return out;
 }
 
 /** 退回前发现工作区里有不是这次更新带来的改动：不 reset，给手动步骤 */
@@ -219,6 +244,12 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     // 子进程被中止信号结束时，报的是「中止」而不是「装依赖失败」
     const aborted = e instanceof AbortedError || Boolean(job.signal?.aborted);
     const reason = aborted ? ABORT_REASON : errText(e);
+    if (e instanceof UncertainStateError) {
+      const cmds = manualCommands(job.root, oldHead, job.steps.manualRestore?.());
+      log(`!! 更新中途状态不明：${reason}。请在终端手动恢复：\n${cmds.join("\n")}`);
+      return finish(job, { ok: false, outcome: "stuck", at: at(), ...base, manualCommands: cmds,
+        message: `更新中途状态不明（${reason}），没有自动退回。请在终端依次执行下面的命令恢复到 ${job.from}，完整记录在 ${job.logFile}` }, log);
+    }
     if (e instanceof NotStartedError || !progress.movedTo) {
       log(`!! 更新没做：${reason}；没有动任何文件`);
       return finish(job, { ok: false, outcome: "not_started", at: at(), ...base,
@@ -295,6 +326,7 @@ export async function waitIdle(check: () => Promise<string | null>, opts: { time
 export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number; npm?: string }): UpdateSteps {
   const npm = opts.npm ?? (process.platform === "win32" ? "npm.cmd" : "npm");
   const swap = new DepsSwap(root);
+  let nonceBefore: string | null = null;
   return {
     activate: async (log) => swap.activateDist(log),
     restore: async (log) => {
@@ -321,12 +353,16 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal }),
     restart: async (log) => {
       if (!opts.serverWasRunning) { log("服务本来没在跑：不启动，之后用 npm start 启动"); return; }
+      // 记下重启前的启动标记：重启必须换出一个新的，健康检查只认新的（旧进程没停下来不能算重启成功）
+      nonceBefore = launcherNonce(opts.machineDir ?? getMachineDir());
       await runCommand("重启服务", process.execPath, [path.join(root, "bin", "autocrew.mjs"), "restart", "--no-open"], root, log,
         { env: { ...process.env, AUTOCREW_PORT: String(port) } });
+      const after = launcherNonce(opts.machineDir ?? getMachineDir());
+      if (!after || after === nonceBefore) throw new Error("重启没有换出新的服务进程（旧的还在跑），详情见日志");
     },
     health: async (log) => {
       if (!opts.serverWasRunning) return;
-      await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir() });
+      await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir(), notNonce: nonceBefore });
     },
   };
 }
@@ -336,7 +372,7 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
  * 否则一个留下来没人管的旧进程（或别的程序）也能让「已更新 / 已退回」报成功。
  */
 export async function waitHealthy(url: string, timeoutMs: number, log: Log, fetchImpl: typeof fetch = fetch,
-  identity?: { port: number; machineDir: string }): Promise<void> {
+  identity?: { port: number; machineDir: string; notNonce?: string | null }): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let last = "";
   while (Date.now() < deadline) {
@@ -345,7 +381,8 @@ export async function waitHealthy(url: string, timeoutMs: number, log: Log, fetc
       if (r.status === 200) {
         if (!identity) { log(`首页 200：${url}`); return; }
         const info = await fetchLaunchInfo(identity.port, fetchImpl);
-        if (managedBy(info?.nonce, identity.machineDir)) { log(`首页 200，且是这次启动的进程：${url}`); return; }
+        const fresh = !identity.notNonce || info?.nonce !== identity.notNonce;
+        if (fresh && managedBy(info?.nonce, identity.machineDir)) { log(`首页 200，且是这次启动的进程：${url}`); return; }
         last = "端口上应答的不是这次启动的 AutoCrew";
       } else last = `HTTP ${r.status}`;
     } catch (e) { last = errText(e); }
