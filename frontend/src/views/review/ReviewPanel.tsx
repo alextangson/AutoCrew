@@ -38,12 +38,31 @@ function Props(p: { rows: Array<[string, ReactNode]> }) {
 }
 
 /** 就地输入框：回车发送，Shift+回车换行 */
+/** 这个动作的「一句话」其实是作品链接（「发了吗」） */
+const takesUrl = (a: InboxAction) => a.action === "i_published";
+/** 只认 http / https 链接；不对就说哪里不对 */
+export function urlProblem(text: string): string | null {
+  try {
+    const u = new URL(text);
+    return u.protocol === "http:" || u.protocol === "https:" ? null : "作品链接要以 http:// 或 https:// 开头";
+  } catch { return "这不像一个链接：贴作品页的完整地址（https://…）"; }
+}
+
 function Inline(p: { a: InboxAction; onSend: (note: string) => void; onCancel: () => void }) {
   const [note, setNote] = useState("");
-  const send = () => { if (p.a.note !== "required" || note.trim()) p.onSend(note.trim()); };
+  const [err, setErr] = useState<string | null>(null);
+  const send = () => {
+    const t = note.trim();
+    if (p.a.note === "required" && !t) return;
+    // 作品链接就地校验（整分支审 15 P2）：空着 = 不填链接，照常记「发了」
+    const bad = t && takesUrl(p.a) ? urlProblem(t) : null;
+    if (bad) { setErr(bad); return; }
+    p.onSend(t);
+  };
   return <div className="ri-inline">
-    <textarea autoFocus value={note} placeholder={p.a.placeholder ?? "写一句"} onChange={(e) => setNote(e.target.value)}
+    <textarea autoFocus value={note} placeholder={p.a.placeholder ?? "写一句"} onChange={(e) => { setNote(e.target.value); setErr(null); }}
       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } if (e.key === "Escape") p.onCancel(); }} />
+    {err && <p className="ri-reason" role="alert">{err}</p>}
     <div className="ri-actions"><Button variant="primary" onClick={send}>发送</Button><Button variant="quiet" onClick={p.onCancel}>算了</Button></div>
   </div>;
 }
@@ -64,11 +83,16 @@ export function Actions(p: { item: InboxItem; act: Act; extra?: () => Record<str
   if (open) return <Inline a={open} onSend={(n) => { setOpen(null); run(open, n); }} onCancel={() => setOpen(null)} />;
   const loud = list.filter((a) => a.role !== "quiet"), quiet = list.filter((a) => a.role === "quiet");
   const click = (a: InboxAction) => (a.note === "required" ? setOpen(a) : run(a));
+  const optional = loud.filter((a) => a.note === "optional" && !(p.item.blocked_reason && a.role === "primary"));
   // 条件不够时：主按钮的位置写原因（不放灰按钮），次按钮照给（verifier 2a P2：「还要改…」要留着）
   return <div className="ri-actions">
     {p.item.blocked_reason && <span className="ri-reason">{p.item.blocked_reason}</span>}
     {loud.filter((a) => !(p.item.blocked_reason && a.role === "primary")).map((a, i) => <Button key={`${a.action}-${i}`} variant={variant(a.role)} onClick={() => click(a)}>{a.label}</Button>)}
-    {quiet.length > 0 && <span className="ri-quiet-slot">{quiet.map((a, i) => <Button key={`${a.action}-q${i}`} variant="quiet" onClick={() => click(a)}>{a.label}</Button>)}</span>}
+    {/* 可写可不写的动作：按钮照样一点就记；旁边一个安静的入口展开输入框（整分支审 15 P2） */}
+    {(quiet.length > 0 || optional.length > 0) && <span className="ri-quiet-slot">
+      {optional.map((a, i) => <Button key={`${a.action}-o${i}`} variant="quiet" onClick={() => setOpen(a)}>{takesUrl(a) ? "填作品链接…" : "补一句…"}</Button>)}
+      {quiet.map((a, i) => <Button key={`${a.action}-q${i}`} variant="quiet" onClick={() => click(a)}>{a.label}</Button>)}
+    </span>}
   </div>;
 }
 
@@ -206,6 +230,20 @@ function CandidateBody(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
+/** 「Claude 说已经发了」：先给链接、说法和依据，再让创始人认（整分支审 15 P2） */
+function ClaimBody(p: { item: InboxItem; act: Act }) {
+  const d = p.item.detail;
+  const url = typeof d.url === "string" && !urlProblem(d.url) ? d.url : null;
+  const evidence = d.evidence ? plainWords(String(d.evidence)) : null;
+  return <>
+    <Props rows={[["稿子", p.item.title], ["平台", d.platform ? platformName(String(d.platform)) : null],
+      ["作品链接", url ? <a href={url} target="_blank" rel="noopener noreferrer">{url}</a> : null],
+      ["说的是", `已经发出去了${d.item ? `（作品编号 ${String(d.item)}）` : ""}`], ["依据", evidence]]} />
+    {!url && !evidence && <p className="ri-note">Claude 没给链接，去平台上看一眼再确认</p>}
+    <Actions item={p.item} act={p.act} />
+  </>;
+}
+
 function Generic(p: { item: InboxItem; act: Act }) {
   const d = p.item.detail;
   const rows: Array<[string, ReactNode]> = [["稿子", p.item.content_id ? p.item.title : null], ["为什么", d.reason ? String(d.reason) : null], ["文件", d.name ? String(d.name) : null],
@@ -231,7 +269,7 @@ function AssignPicker(p: { item: InboxItem; act: Act }) {
 export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClose: () => void }) {
   const it = p.item;
   const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "draft" ? DraftBody
-    : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : Generic;
+    : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : it.type === "publish_claim" ? ClaimBody : Generic;
   return <aside className="ri-peek" role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>
     <h2>{plainWords(it.summary)}</h2>

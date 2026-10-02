@@ -586,3 +586,54 @@ describe("整分支审 10：按选中的那一版 / 那一组交", () => {
     expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-1", cover_text: "新的字" });
   });
 });
+
+describe("整分支审 15：发布认领看得见依据；可写可不写的动作能补一句", () => {
+  const claim = ITEMS[8];
+  it("「说已经发了」：链接新标签打开、说法、依据都在按钮之前", async () => {
+    await mountInbox([{ ...claim, detail: { platform: "douyin", url: "https://www.douyin.com/video/123", item: "123", evidence: "发布页回执" } }]);
+    await openRow(claim.summary);
+    const a = el.querySelector(".ri-peek a") as HTMLAnchorElement;
+    expect(a.href).toBe("https://www.douyin.com/video/123");
+    expect(a.target).toBe("_blank");
+    expect(el.textContent).toContain("已经发出去了（作品编号 123）");
+    expect(el.textContent).toContain("发布页回执");
+  });
+
+  it("没链接也没依据 → 提醒去平台看一眼", async () => {
+    await mountInbox([{ ...claim, detail: { platform: "douyin", url: null, item: null, evidence: "" } }]);
+    await openRow(claim.summary);
+    expect(el.textContent).toContain("Claude 没给链接，去平台上看一眼再确认");
+  });
+
+  it("「发了吗」：主按钮一点就记；「填作品链接…」展开输入框，非 http 链接就地报错，对的才交", async () => {
+    const ask = ITEMS[7];
+    await mountInbox([ask]);
+    await openRow(ask.summary);
+    await click(btn("填作品链接…"));
+    const box = el.querySelector(".ri-inline textarea") as HTMLTextAreaElement;
+    const type = async (v: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, v);
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await type("javascript:alert(1)");
+    await click(btn("发送"));
+    expect(decided).toHaveLength(0);
+    expect(el.querySelector("[role=alert]")?.textContent).toContain("http");
+    await type("https://www.douyin.com/video/9");
+    await click(btn("发送"));
+    expect(decided.at(-1)).toMatchObject({ action: "i_published", platform: "douyin", note: "https://www.douyin.com/video/9" });
+  });
+
+  it("闪帧条目：「补一句…」能带修改意见", async () => {
+    await mountInbox([ITEMS[4]]);
+    await openRow(ITEMS[4].summary);
+    await click(btn("补一句…"));
+    const box = el.querySelector(".ri-inline textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, "第三秒那个缝补上");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(btn("发送"));
+    expect(decided.at(-1)).toMatchObject({ action: "reject_cut", note: "第三秒那个缝补上" });
+  });
+});
