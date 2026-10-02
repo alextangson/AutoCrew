@@ -17,11 +17,15 @@ export function NotesList(props: { notes: ReleaseNotes[] }) {
   </div>)}</>;
 }
 
-export function UpdatingOverlay(props: { stalled: boolean }) {
+export function UpdatingOverlay(props: { stalled: boolean; log?: string }) {
+  // 卡住了也不叫人重启：重启会打断还在跑的更新（第 12 轮 P2）；页面照样接着等，服务回来就自动刷新
   return <div className="upd-overlay" role="alertdialog" aria-label="正在更新">
     <div className="upd-overlay-card">
       <h3>AutoCrew 正在更新，大约 1 分钟</h3>
-      <p className="muted">{props.stalled ? "等了 5 分钟服务还没回来。在终端运行 autocrew logs 看看，或者 npm run restart。" : "更新完会自动刷新这一页，不用动。"}</p>
+      <p className="muted">{props.stalled
+        ? "服务已经 5 分钟连不上了。更新可能还在进行，先别手动重启，这一页会一直等它回来。"
+        : "更新完会自动刷新这一页，不用动。网慢时装依赖要多等几分钟。"}</p>
+      {props.log && <p className="muted">完整记录：{props.log}</p>}
     </div>
   </div>;
 }
@@ -32,6 +36,7 @@ export function UpdateBanner(props: { initial?: UpdateView | null; reload?: () =
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [updating, setUpdating] = useState<"no" | "yes" | "stalled">("no");
+  const [log, setLog] = useState("");
   // 后台检查（启动 1 分钟后、之后每天）的结果要自己冒出来：每分钟重读一次本机状态，切回这个标签页时也读（Codex 审 P2）
   useEffect(() => {
     const read = () => void loadUpdate().then((r) => { if (r.ok) setView(r.data); });
@@ -43,17 +48,18 @@ export function UpdateBanner(props: { initial?: UpdateView | null; reload?: () =
   }, [props.initial]);
   const watch = async () => {
     setUpdating("yes");
-    if (await waitBack()) (props.reload ?? (() => window.location.reload()))();
-    else setUpdating("stalled");
+    await waitBack({ onState: (s) => setUpdating(s === "stalled" ? "stalled" : "yes") });
+    (props.reload ?? (() => window.location.reload()))();
   };
   useEffect(() => { if (view?.running && updating === "no") void watch(); }, [view?.running]);
-  if (updating !== "no") return <UpdatingOverlay stalled={updating === "stalled"} />;
+  if (updating !== "no") return <UpdatingOverlay stalled={updating === "stalled"} {...(log ? { log } : {})} />;
   const banner = view?.banner;
   if (!banner) return null;
   const go = async () => {
     setError("");
     const r = await startUpdate();
     if (!r.ok) { setConfirming(false); return setError(r.error); }
+    setLog(r.data.log);
     void watch();
   };
   const skip = async () => {

@@ -30,6 +30,8 @@ export interface UpdateSteps {
   cleanup?: (log: Log) => Promise<void>;
   /** 手动恢复时换回旧依赖的命令（不需要网络） */
   manualRestore?: () => string[];
+  /** 取消（没重启）之后：服务本来在跑、现在却不在了（比如被人手动停了），把它起回来（第 12 轮 P2） */
+  ensureUp?: (log: Log) => Promise<void>;
   build: (log: Log, signal?: AbortSignal) => Promise<void>;
   restart: (log: Log) => Promise<void>;
   health: (log: Log) => Promise<void>;
@@ -226,7 +228,11 @@ async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: bool
   if (job.steps.restore) { log("== 退回：换回旧依赖与旧前端（不需要网络）"); await job.steps.restore(log); }
   else { log("== 退回：安装依赖"); await job.steps.install(log); log("== 退回：构建前端"); await job.steps.build(log); }
   // 因为有任务在跑而取消：旧服务一直没停，不重启（绝不掐断在跑的轮）
-  if (!restart) { log("服务没有重启过，保持运行"); return "kept"; }
+  if (!restart) {
+    if (job.steps.ensureUp) await job.steps.ensureUp(log);
+    else log("服务没有重启过，保持运行");
+    return "kept";
+  }
   // 更新已经动过服务、而服务现在确实不在（新版没起来）：没有谁的活会被掐，直接把旧版启动（Codex 审第 3 轮 P1）
   const down = progress.touchedService && await job.steps.serviceDown().catch(() => false);
   // 否则先确认没人在跑（Codex 审第 2 轮 P1）：只有「服务在、而且说忙」才挡住重启，代码已经退回
@@ -309,19 +315,24 @@ function finish(job: UpdateJob, result: UpdateResult, log: Log): UpdateResult {
  * 跑一条命令。子进程放在自己的进程组：终端里的 Ctrl-C 只到更新进程，由它决定怎么收（中止就结束这一组）。
  * 失败原因只写人话（「装依赖没成功」），完整命令和输出留在日志里（e2e P3）。
  */
-function runCommand(label: string, cmd: string, args: string[], cwd: string, log: Log, opts: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<void> {
+function runCommand(label: string, cmd: string, args: string[], cwd: string, log: Log, opts: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<void> {
   log(`$ (${cwd}) ${cmd} ${args.join(" ")}`);
   return new Promise((resolve, reject) => {
     if (opts.signal?.aborted) return reject(new AbortedError(ABORT_REASON));
     const child = spawn(cmd, args, { cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const onAbort = () => { try { process.kill(-child.pid!, "SIGTERM"); } catch { /* 已经不在 */ } };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
+    // 装依赖、构建不许无限卡着（第 12 轮 P2）：到点结束这一组，按失败走退回
+    let timedOut = false;
+    const timer = opts.timeoutMs ? setTimeout(() => { timedOut = true; onAbort(); }, opts.timeoutMs) : null;
     const pipe = (chunk: Buffer) => { for (const l of chunk.toString("utf-8").split("\n")) if (l.trim()) log(l); };
     child.stdout.on("data", pipe);
     child.stderr.on("data", pipe);
     child.on("error", (e) => { log(`起不来：${e.message}`); reject(new Error(`${label}没开始（找不到要用的程序），详情见日志`)); });
     child.on("exit", (code, sig) => {
       opts.signal?.removeEventListener("abort", onAbort);
+      if (timer) clearTimeout(timer);
+      if (timedOut) return reject(new Error(`${label}超时了（${Math.round(opts.timeoutMs! / 60_000)} 分钟没跑完），详情见日志`));
       if (code === 0) return resolve();
       if (opts.signal?.aborted) return reject(new AbortedError(ABORT_REASON));
       reject(new Error(`${label}没成功${sig ? "（被结束了）" : `（退出码 ${code}）`}，详情见日志`));
@@ -343,11 +354,12 @@ export async function waitIdle(check: () => Promise<string | null>, opts: { time
   }
 }
 
-export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number; npm?: string }): UpdateSteps {
+export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number; npm?: string; installTimeoutMs?: number; buildTimeoutMs?: number }): UpdateSteps {
   const npm = opts.npm ?? (process.platform === "win32" ? "npm.cmd" : "npm");
   const swap = new DepsSwap(root);
   let nonceBefore: string | null = null;
   let startedForCheck = false;
+  const installTimeout = opts.installTimeoutMs ?? 20 * 60_000;
   /** 调启动器：带上 AUTOCREW_UPDATER，启动器才知道这是更新自己在操作，不会因为更新锁拒绝 */
   const launcher = (cmd: string, label: string, log: Log) =>
     runCommand(label, process.execPath, [path.join(root, "bin", "autocrew.mjs"), cmd, "--no-open"], root, log,
@@ -363,6 +375,15 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
       await runCommand("重新构建前端", npm, ["run", "fe:build"], root, log);
     },
     cleanup: async (log) => swap.cleanup(log),
+    ensureUp: async (log) => {
+      if (!opts.serverWasRunning) return;
+      const down = await (async () => { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; } catch { return true; } })();
+      if (!down) { log("服务没有重启过，保持运行"); return; }
+      log("服务这时不在了（可能被手动停了）：把原来的版本起回来");
+      nonceBefore = launcherNonce(opts.machineDir ?? getMachineDir());
+      await launcher("start", "启动原来的版本", log);
+      await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir(), notNonce: nonceBefore });
+    },
     manualRestore: () => swap.manualRestore(),
     quiesce: (log) => waitIdle(opts.busy, { timeoutMs: 120_000, intervalMs: 2_000, log }),
     serviceDown: async () => {
@@ -371,11 +392,11 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     },
     install: async (log, signal) => {
       swap.backupDeps(log);
-      await runCommand("装依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log, { signal });
-      await runCommand("装前端依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log, { signal });
+      await runCommand("装依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log, { signal, timeoutMs: installTimeout });
+      await runCommand("装前端依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log, { signal, timeoutMs: installTimeout });
     },
     // 构建进 dist.next：等待期间旧进程照旧服务旧前端，确认没人在跑才换上（activate）
-    build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal }),
+    build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal, timeoutMs: opts.buildTimeoutMs ?? 10 * 60_000 }),
     restart: async (log) => {
       // 记下重启前的启动标记：重启必须换出一个新的，健康检查只认新的（旧进程没停下来不能算重启成功）
       nonceBefore = launcherNonce(opts.machineDir ?? getMachineDir());

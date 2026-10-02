@@ -95,6 +95,15 @@ describe("看板横幅", () => {
   });
 });
 
+describe("更新中遮罩", () => {
+  it("卡住了也不叫人手动重启（重启会打断还在跑的更新）", async () => {
+    await mount("./UpdateBanner", "UpdatingOverlay", { stalled: true, log: "/x/update-1.log" });
+    expect(el.textContent).not.toContain("restart");
+    expect(el.textContent).toContain("先别手动重启");
+    expect(el.textContent).toContain("/x/update-1.log");
+  });
+});
+
 describe("更新后的说明", () => {
   it("成功：「需要你做的」突出，点知道了不再弹", async () => {
     await mount("./UpdateResultDialog", "UpdateResultDialog", { initial: { ok: true, outcome: "updated", from: "0.4.0", to: "0.5.0", message: "", log: "/l", notes: NOTES } });

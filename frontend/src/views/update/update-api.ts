@@ -34,14 +34,28 @@ export const saveUpdateSettings = (p: { auto_check?: boolean; skip_version?: str
 export const ackResult = () => post<UpdateView>("/api/update/ack");
 export const startUpdate = () => post<{ from: string; to: string; log: string }>("/api/update/start");
 
-/** 服务重启期间轮询：连不上就继续等，回来且不再「正在更新」才算完 */
-export async function waitBack(opts: { timeoutMs?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<boolean> {
+export type WaitState = "updating" | "unreachable" | "stalled";
+
+/**
+ * 等更新跑完（第 12 轮 P2）：服务连得上、还在更新 → 一直等（装依赖慢的时候可能好几分钟），绝不叫人去重启；
+ * 连不上 → 在重启，继续等；连续连不上超过 stalledAfterMs 才标成「卡住」，但照样接着轮询，回来了就算完。
+ */
+export async function waitBack(opts: {
+  intervalMs?: number; stalledAfterMs?: number;
+  sleep?: (ms: number) => Promise<void>; now?: () => number;
+  load?: typeof loadUpdate; onState?: (s: WaitState) => void;
+} = {}): Promise<true> {
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  const deadline = Date.now() + (opts.timeoutMs ?? 5 * 60_000);
-  while (Date.now() < deadline) {
+  const now = opts.now ?? Date.now;
+  const load = opts.load ?? loadUpdate;
+  const stalledAfter = opts.stalledAfterMs ?? 5 * 60_000;
+  let downSince: number | null = null;
+  for (;;) {
     await sleep(opts.intervalMs ?? 2_000);
-    const r = await loadUpdate();
+    const r = await load();
     if (r.ok && !r.data.running) return true;
+    if (r.ok) { downSince = null; opts.onState?.("updating"); continue; }
+    downSince ??= now();
+    opts.onState?.(now() - downSince >= stalledAfter ? "stalled" : "unreachable");
   }
-  return false;
 }

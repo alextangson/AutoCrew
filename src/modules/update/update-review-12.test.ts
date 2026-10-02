@@ -163,3 +163,46 @@ describe("P2 服务本来没开：也要起一次新版做健康检查", () => {
     spawnSync(process.execPath, [path.join(REPO, "bin", "autocrew.mjs"), "stop"], { env: { ...process.env, AUTOCREW_PORT: String(port) } });
   }, 40_000);
 });
+
+import { startEpoch } from "../../desktop/chief-editor/run-store.js";
+import { QuiesceError } from "./updater.js";
+
+describe("P2 更新进行中，启动器不许启动 / 停止 / 重启", () => {
+  it("活的更新锁在：start 拒绝并说人话；更新自己调（AUTOCREW_UPDATER=1）不受限", async () => {
+    const port = await freePort();
+    fs.writeFileSync(path.join(tmp, "update.lock"), JSON.stringify({ pid: process.pid, token: "t", at: "", start: startEpoch(process.pid) }));
+    const env = { ...process.env, AUTOCREW_LOCAL_DIR: tmp, AUTOCREW_PORT: String(port), AUTOCREW_SERVER_SCRIPT: fakeServer(false) };
+    const run = (cmd: string, extra: Record<string, string> = {}) => spawnSync(process.execPath, [path.join(REPO, "bin", "autocrew.mjs"), cmd, "--no-open"], { env: { ...env, ...extra }, encoding: "utf-8", timeout: 30_000 });
+    for (const cmd of ["start", "restart", "stop"]) {
+      const r = run(cmd);
+      expect(r.status, cmd).toBe(1);
+      expect(r.stderr, cmd).toContain("正在更新");
+    }
+    expect(run("start", { AUTOCREW_UPDATER: "1" }).status).toBe(0);
+    expect(run("stop", { AUTOCREW_UPDATER: "1" }).status).toBe(0);
+  }, 60_000);
+});
+
+describe("P2 取消（没重启）之后服务却不在了：把原来的版本起回来", () => {
+  it("等不到空闲而取消、此时服务被人停了：调 ensureUp", async () => {
+    const { user, machine, commit } = await releases(() => [], () => []);
+    const calls: string[] = [];
+    const steps = fakeSteps(calls, {
+      quiesce: async () => { calls.push("quiesce"); throw new QuiesceError("有 1 个任务正在跑"); },
+      ensureUp: async () => { calls.push("ensureUp"); },
+    });
+    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
+    expect(r.outcome).toBe("cancelled");
+    expect(calls).toContain("ensureUp");
+    expect(calls).not.toContain("restart");
+  });
+});
+
+describe("P2 装依赖 / 构建有时限", () => {
+  it("npm ci 卡住：到点结束、报超时（交给退回）", async () => {
+    const npm = path.join(tmp, "slow-npm.sh");
+    fs.writeFileSync(npm, "#!/bin/sh\nsleep 20\n", { mode: 0o755 });
+    const err = await realSteps(tmp, 1, { serverWasRunning: false, busy: async () => null, npm, installTimeoutMs: 500 }).install(() => {}).catch((e: Error) => e);
+    expect((err as Error).message).toContain("超时");
+  }, 10_000);
+});

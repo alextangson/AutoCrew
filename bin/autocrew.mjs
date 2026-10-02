@@ -357,6 +357,37 @@ async function statusBrief() {
   console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
 }
 
+/** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/desktop/chief-editor/run-store.ts 的 startEpoch 同一种读法 */
+function startEpoch(pid) {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } });
+  const t = r.stdout?.trim() ? Date.parse(`${r.stdout.trim()} GMT`) : NaN;
+  return Number.isFinite(t) ? Math.round(t / 1000) : null;
+}
+
+/** 有一个活着的更新进程拿着更新锁吗（pid 在、记了启动时刻的话也要对得上） */
+function liveUpdateLock() {
+  let body;
+  try { body = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update.lock"), "utf-8")); } catch { return null; }
+  if (!body?.pid || !processAlive(body.pid)) return null;
+  if (typeof body.start === "number" && body.start > 0) {
+    const now = startEpoch(body.pid);
+    if (now === null || Math.abs(now - body.start) > 1) return null;
+  }
+  return body;
+}
+
+/**
+ * 更新进行中不许手动启动 / 停止 / 重启（第 12 轮 P2）：会打断更新、在依赖换到一半时去构建，把服务弄停。
+ * 更新进程自己调启动器时带 AUTOCREW_UPDATER=1，不受这条限制。
+ */
+if (["start", "stop", "restart"].includes(command) && process.env.AUTOCREW_UPDATER !== "1") {
+  const lock = liveUpdateLock();
+  if (lock) {
+    console.error(`AutoCrew 正在更新，先别${command === "stop" ? "停止" : command === "start" ? "启动" : "重启"}——等它跑完会自动重启好。进度记录在 ${path.join(DATA_DIR, "update-logs")} 里最新的那份。`);
+    process.exit(1);
+  }
+}
+
 switch (command) {
   case "start":
     await start();
