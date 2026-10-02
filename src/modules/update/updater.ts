@@ -186,9 +186,13 @@ async function restoreConflicts(job: UpdateJob, to: string, from: string): Promi
     if (!r.ok) throw new Error(`读不出 ${dir} 里的文件（${firstLine(r.stderr)}）`);
     return r.stdout.split("\0").some(Boolean);
   };
+  // 不区分大小写的文件系统（macOS 默认）：新版的 README.md 会命中本地被跟踪的 Readme.md——那是 git 自己会改名的文件，不是本地数据（第 12 轮 P2）
+  const ic = await job.git(["config", "--bool", "core.ignorecase"]);
+  const nowLower = firstLine(ic.stdout) === "true" ? new Set([...now].map((p) => p.toLowerCase())) : null;
   const occupied = async (rel: string): Promise<boolean> => {
     let st: fs.Stats | null = null;
     try { st = fs.lstatSync(path.join(job.root, rel)); } catch { /* 不在 */ }
+    if (st && nowLower?.has(rel.toLowerCase())) return false;
     if (st) return st.isDirectory() && trackedUnder(rel) ? untrackedUnder(rel) : true;
     const parts = rel.split("/");
     for (let i = 1; i < parts.length; i++) {

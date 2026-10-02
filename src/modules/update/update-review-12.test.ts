@@ -32,3 +32,45 @@ describe("P2 发布 tag 被重新指向", () => {
     expect(s).toMatchObject({ available: true, tag: "v0.5.0", commit: g(dev, "rev-parse", "v0.5.0^{commit}") });
   });
 });
+
+import { runUpdate, type UpdateSteps } from "./updater.js";
+
+const fakeSteps = (calls: string[] = [], over: Partial<UpdateSteps> = {}): UpdateSteps => {
+  const s = (n: string) => async () => { calls.push(n); };
+  return { install: s("install"), build: s("build"), quiesce: s("quiesce"), serviceDown: async () => false, restart: s("restart"), health: s("health"), ...over };
+};
+
+/** origin 上 0.4.0 → 0.5.0，edit04 / edit05 各自改文件、返回要 add 的路径 */
+async function releases(edit04: (d: string) => string[], edit05: (d: string) => string[]) {
+  const origin = path.join(tmp, "o.git"), dev = path.join(tmp, "d"), user = path.join(tmp, "u"), machine = path.join(tmp, "m");
+  g(tmp, "init", "-q", "--bare", "-b", "main", origin); g(tmp, "clone", "-q", origin, dev); g(dev, "checkout", "-q", "-b", "main");
+  const rel = (v: string, edit: (d: string) => string[]) => {
+    fs.writeFileSync(path.join(dev, "package.json"), JSON.stringify({ version: v }));
+    g(dev, "add", "-A", "package.json", ...edit(dev)); g(dev, "commit", "-q", "-m", v); g(dev, "tag", "-a", `v${v}`, "-m", v); g(dev, "push", "-q", "origin", "main", "--tags");
+  };
+  rel("0.4.0", edit04); g(tmp, "clone", "-q", origin, user); rel("0.5.0", edit05);
+  fs.mkdirSync(machine);
+  await checkForUpdate(user, machine, { git: gitRunner(user) });
+  return { user, machine, old: g(user, "rev-parse", "HEAD"), commit: g(user, "rev-parse", "v0.5.0^{commit}") };
+}
+
+describe("P2 文件名只改了大小写", () => {
+  const caseInsensitive = (() => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "autocrew-case-"));
+    fs.writeFileSync(path.join(d, "a"), "");
+    const yes = fs.existsSync(path.join(d, "A"));
+    fs.rmSync(d, { recursive: true, force: true });
+    return yes;
+  })();
+
+  it.skipIf(!caseInsensitive)("Readme.md → README.md（不区分大小写的盘）：照常更新，不说会覆盖本地文件", async () => {
+    const { user, machine, commit } = await releases(
+      (d) => { fs.writeFileSync(path.join(d, "Readme.md"), "说明\n"); return ["Readme.md"]; },
+      (d) => { g(d, "mv", "Readme.md", "README.md"); return []; },
+    );
+    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps: fakeSteps(), logFile: path.join(machine, "u.log") });
+    expect(r.message).not.toContain("不归 git 管");
+    expect(r).toMatchObject({ ok: true });
+    expect(g(user, "ls-files")).toContain("README.md");
+  });
+});
