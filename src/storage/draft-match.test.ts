@@ -49,6 +49,15 @@ describe("draft compare-and-update", () => {
     expect(saved?.adoption).toBeUndefined();
   });
 
+  it("写入按调用顺序排队：先调用的 updateContent 排在后面同步排进去的写之前（不因锁外读文件快慢换序）", async () => {
+    // 系列范围外的稿只走单稿队列（范围内的会退出来改走系列锁，那条由上面「共用队列」覆盖）
+    const content = await saveContent({ title: "社区菜园", body: "我们一起给菜苗浇水。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+    const editorWrite = updateContent(content.id, { body: "编辑器的新稿" }, dir);
+    const seen = serializeContentWrite(content.id, async () => (await getContent(content.id, dir))?.body);
+    await editorWrite;
+    expect(await seen).toBe("编辑器的新稿");
+  });
+
   it("锁内补丁函数合并最新反馈，旧快照不会覆盖其他入口留下的历史", async () => {
     const content = await draft();
     const fromEditor = { instruction: "编辑器已确认的局部建议", scope: "selection" as const, at: "first", selection: "菜苗" };

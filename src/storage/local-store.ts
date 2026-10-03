@@ -581,13 +581,10 @@ async function inSeriesScope(id: string, dataDir?: string): Promise<boolean> {
  */
 function contentWrite<T>(id: string, dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
   if (holdsSeriesLock()) return serializeContentWrite(id, fn);
-  return (async () => {
-    if (!(await inSeriesScope(id, dataDir))) {
-      const out = await serializeContentWrite(id, async () => (await inSeriesScope(id, dataDir)) ? RETRY_UNDER_SERIES_LOCK : fn());
-      if (out !== RETRY_UNDER_SERIES_LOCK) return out as T;
-    }
-    return seriesTransaction(() => serializeContentWrite(id, fn));
-  })();
+  // 调用当下就排进单稿队列，范围判断放到锁里：锁外先 await 读一次，谁先读完谁先排，
+  // 先调用的改稿会被后调用的旧快照抢到前面（CI 上 draft-match「共用队列」那条就是这么挂的）
+  const first = serializeContentWrite(id, async () => (await inSeriesScope(id, dataDir)) ? RETRY_UNDER_SERIES_LOCK : fn());
+  return first.then((out) => out !== RETRY_UNDER_SERIES_LOCK ? out as T : seriesTransaction(() => serializeContentWrite(id, fn)));
 }
 
 /** ProductionService 用：在稿件写锁里读 + 用不取锁的原语写（锁不可重入，别在里面再调 updateContent） */
