@@ -431,6 +431,17 @@ describe("seg12 归档口径", () => {
     expect(at && Date.parse(at)).toBe(Date.parse("2026-10-02T09:00:00+08:00"));
   });
 
+  it("[10-03 Codex P2] 重开后审核中、没定时的新提交：没有公开时间也要进新一轮，不被当成旧记录去重", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "reviewing", submitted_at: "2026-09-10T00:00:00Z", evidence: "发布计划里的记录" }]);
+    doc.decisions.push({ id: "r1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
+    doc.round = 2;
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "reviewing", submitted_at: "2026-09-25T00:00:00Z", evidence: "发布计划里的记录" }]);
+    expect(slotOf(doc, 2, "douyin")).toMatchObject({ pub_state: "reviewing" });
+  });
+
   it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");

@@ -176,9 +176,10 @@ export function importObservations(doc: ProductionDoc, obs: Observation[]): numb
     const known = observationsOf(doc);
     const lastInStream = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round === round).at(-1);
     if (lastInStream && same(lastInStream, raw)) continue;
-    // 没有发布时间、又和上一轮流里最后一条一模一样：是重开前那份旧记录被再读到，不算进新一轮
+    // 没有发布时间、也没有实际提交时间，又和上一轮流里最后一条一模一样：是重开前那份旧记录被再读到，不算进新一轮。
+    // 带 submitted_at 的已按提交时间定了轮次（审核中没定时的条目没有公开时间，靠它区分新一轮提交）
     const lastEarlier = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round < round).at(-1);
-    if (!raw.published_at && lastEarlier && same(lastEarlier, raw)) continue;
+    if (!raw.published_at && !raw.submitted_at && lastEarlier && same(lastEarlier, raw)) continue;
     const inherited = raw.gate ? slotGate(doc, round, raw.platform) : undefined;
     doc.facts.push(observationFact(doc, inherited ? { ...raw, gate: inherited } : raw, round));
     added++;
