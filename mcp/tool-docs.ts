@@ -22,7 +22,7 @@ export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_desk: "待办桌。inbox 看本岗待办；claim 认领（拿 claim_token）；release 干完释放。",
   autocrew_video: "剪辑台（口播原片 → 成片），三道门由创作者决定。status 看状态与下一步；start / transcript / cut_confirm / editor_* / reassemble / review 等按 status 的 next 逐步做；handoff / match / confirm / register / report / revoke 用于交给剪辑工位与登记成片。",
   autocrew_editorial: "编辑档案与改稿反馈。profile 读档案；update_profile 改档案（需确认）；inspect 读稿与 draft_hash；feedback 记改稿要求并领改稿包。",
-  autocrew_insights: "账号洞察。prepare 备料（内容、定位、回流数据）；submit 保存宿主写的报告；list / get 查看历史报告。meeting_* 选题会。calib_* 判断要对账（预测、复盘、升级）。",
+  autocrew_insights: "账号洞察。prepare 备料（内容、定位、回流数据）；submit 保存宿主写的报告；list / get 查看历史报告。meeting_* 选题会。calib_* 判断要对账（预测、复盘、升级）。work_bind / history_create / history_delete 作品归属（创始人确认后调）。",
   autocrew_cover_review: "封面。按 action 生成、查看、批准或修改封面；批准前先看图。",
   autocrew_publish: "发布。check 发布前把关（被拦平台不提交）；propose_preference 提议偏好；wechat_mp_draft 推公众号草稿（需审批）；clipboard 复制；ego_lite_prepare 备上传包；confirm_published 标记已发布（需审批）；digest 摘要。",
   autocrew_pre_publish: "发布前检查：check 逐项核对标题、正文、封面、平台要求，全过才能发布；video_kit 交发布包；title_methods 读标题方法库与试用期统计。",
