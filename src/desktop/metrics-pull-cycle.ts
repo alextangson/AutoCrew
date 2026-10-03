@@ -184,12 +184,20 @@ function labelOf(platform: PullPlatform): string {
   return PULL_PLATFORM_LABELS[platform];
 }
 
+/** 成功但不完整：只拿到第 1 页 / 中途出错（已拿到的完整页照常入账）——都要看得见 */
+function partialNote(errorCode: string | undefined): string {
+  if (!errorCode) return "";
+  if (errorCode === "only_first_page") return "（只拿到第 1 页）";
+  if (errorCode.startsWith("partial:risk_control")) return "（中途出现风控提示，已停手；已拿到的页照常入账）";
+  return `（中途出错：${errorCode}，已拿到的页照常入账）`;
+}
+
 /** 事件文案：一行人话，说清发生了什么、人要不要动手（Report 页与工作日志共用） */
 function eventLabel(attempt: PullAttempt): string {
   const name = labelOf(attempt.platform);
   switch (attempt.status) {
     case "ok":
-      return `自动回流：${name} 抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条`;
+      return `自动回流：${name} 抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条${partialNote(attempt.errorCode)}`;
     case "needs_login":
       return `${name}登录态过期——在 ego lite 里登录${name}后台，之后数据继续回流`;
     case "risk_control":
@@ -201,6 +209,7 @@ function eventLabel(attempt: PullAttempt): string {
     case "timeout":
       return `${name}抓取超时，稍后重试`;
     default:
+      if (attempt.errorCode === "no_data_response") return `${name}页面没返回作品数据，本次零写入`;
       return `${name}抓取失败：${attempt.errorCode ?? "unknown"}`;
   }
 }

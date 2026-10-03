@@ -295,6 +295,17 @@ describe("pullPlatformNow — 入库与状态", () => {
     expect(String(event.label)).toContain("视频号");
   });
 
+  it("旁听的不完整结果都看得见：只拿到第 1 页 / 中途风控 / 页面没返回数据", async () => {
+    const labelOf = async (result: PullResult) => {
+      const emit = vi.fn(async () => ({ ts: "", role: "analyst" as const, kind: "metrics_pull", label: "" }));
+      await pullPlatformNow("xiaohongshu", { dataDir: dir, ...deps({ registry: { xiaohongshu: async () => result }, emit }) });
+      return String((emit.mock.calls[0][0] as unknown as Record<string, unknown>).label);
+    };
+    expect(await labelOf({ ...okResult(), errorCode: "only_first_page" })).toContain("只拿到第 1 页");
+    expect(await labelOf({ ...okResult(), errorCode: "partial:risk_control:risk_page" })).toContain("风控");
+    expect(await labelOf(fail("error", "no_data_response"))).toContain("页面没返回作品数据");
+  });
+
   it("single-flight：同平台并发只真抓一次，后到的直接拿 in_flight", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));

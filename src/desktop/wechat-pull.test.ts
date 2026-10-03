@@ -29,8 +29,8 @@ describe("flywheel:wechat_pull", () => {
       dir,
     );
     const pull = vi.fn(async () => ({
-      status: "in" as const,
-      rows: [{ title: "AI 写码的账", read: 456, share: 12, like: 7, fans: 1200, sentTime: 1783600000 }],
+      status: "ok" as const,
+      rows: [{ title: "AI 写码的账", publishedAt: new Date(1783600000_000).toISOString(), metrics: { views: 456, shares: 12, likes: 7 } }],
     }));
     const r = (await wechatPullHandler({ _dataDir: dir }, undefined, { pull })) as {
       ok: boolean;
@@ -47,7 +47,7 @@ describe("flywheel:wechat_pull", () => {
 
   it("登录态失效 → needLogin + 扫码指引;瞬时超时 → 提示重试,都不静默", async () => {
     const out = (await wechatPullHandler({ _dataDir: dir }, undefined, {
-      pull: vi.fn(async () => ({ status: "out" as const, rows: [] })),
+      pull: vi.fn(async () => ({ status: "needs_login" as const, rows: [] })),
     })) as { ok: boolean; needLogin?: boolean; error?: string };
     expect(out.ok).toBe(false);
     expect(out.needLogin).toBe(true);
@@ -58,5 +58,16 @@ describe("flywheel:wechat_pull", () => {
     })) as { ok: boolean; error?: string };
     expect(to.ok).toBe(false);
     expect(String(to.error)).toContain("重试");
+
+    const risk = (await wechatPullHandler({ _dataDir: dir }, undefined, {
+      pull: vi.fn(async () => ({ status: "risk_control" as const, rows: [], errorCode: "risk_page" })),
+    })) as { ok: boolean; error?: string };
+    expect(risk.ok).toBe(false);
+    expect(String(risk.error)).toContain("风控");
+
+    const none = (await wechatPullHandler({ _dataDir: dir }, undefined, {
+      pull: vi.fn(async () => ({ status: "error" as const, rows: [], errorCode: "no_data_response" })),
+    })) as { ok: boolean; error?: string };
+    expect(String(none.error)).toContain("没返回文章数据");
   });
 });
