@@ -473,7 +473,16 @@ export async function reattributeItem(platform: string, itemId: string, contentI
     const latest = await latestByKey(dataDir);
     const target = normalizePlatform(platform);
     const id = itemId.trim();
-    const rows = [...latest.values()].filter((o) => o.platform === target && o.platformItemId === id);
+    const all = [...latest.values()].filter((o) => o.platform === target);
+    const idRows = all.filter((o) => o.platformItemId === id);
+    // 同一作品早期没带 id（或 id 截坏）的快照：同 标题@北京发布日 且这个标题@日期下只有这一条带 id 的作品才认，
+    // 否则绑定后它们会被对账藏起来（D+N 快照丢失）；有歧义就不认
+    const titleOf = (o: PerformanceOutcome) => outcomeKey({ ...o, contentId: null, metricDate: "" });
+    const titles = new Set(idRows.map(titleOf));
+    const trusted = (o: PerformanceOutcome) => !!o.platformItemId && !isTruncatedItemId(target, o.platformItemId);
+    const otherIds = new Set(all.filter((o) => trusted(o) && o.platformItemId !== id && titles.has(titleOf(o))).map(titleOf));
+    const idless = all.filter((o) => !trusted(o) && (o.contentId === null || o.contentId === contentId) && titles.has(titleOf(o)) && !otherIds.has(titleOf(o)));
+    const rows = [...idRows, ...idless];
     const dates = [...new Set(rows.map((r) => r.metricDate))];
     const recordedAt = new Date().toISOString();
     const out: PerformanceOutcome[] = [];

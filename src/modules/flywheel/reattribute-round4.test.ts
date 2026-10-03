@@ -83,3 +83,26 @@ describe("P2 已归属快照带着归属复核理由，人工确认时也清掉"
     expect((await fs.readFile(path.join(dir, "outcomes.jsonl"), "utf8")).trim().split("\n").length).toBe(lines);
   });
 });
+
+describe("演练发现：绑定后不丢同一作品早期没带 id 的快照", () => {
+  it("09-26 无 id 快照 + 10-03 带 id 快照，人工绑定后两天都在本稿名下", async () => {
+    const c = await draft();
+    await appendOutcomes([
+      row({ platformItemId: undefined, metricDate: "2026-09-26", metrics: { views: 6811 } }),
+      row({ metricDate: "2026-10-03", metrics: { views: 7629 } }),
+    ], dir);
+    expect(await bindWorkManually(c.id, "douyin", A_ID, dir)).toMatchObject({ ok: true, reattributed: 2 });
+    const mine = (await listOutcomes(dir)).filter((o) => o.contentId === c.id).map((o) => [o.metricDate, o.metrics.views]).sort();
+    expect(mine).toEqual([["2026-09-26", 6811], ["2026-10-03", 7629]]);
+  });
+
+  it("同标题同日有另一条带 id 的作品时，无 id 的快照有歧义，不挂", async () => {
+    const c = await draft();
+    await appendOutcomes([
+      row({ platformItemId: undefined, metricDate: "2026-09-26", metrics: { views: 6811 } }),
+      row({ metricDate: "2026-10-03" }),
+      row({ platformItemId: B_ID, metricDate: "2026-10-02", metrics: { views: 0 } }),
+    ], dir);
+    expect(await bindWorkManually(c.id, "douyin", A_ID, dir)).toMatchObject({ ok: true, reattributed: 1 });
+  });
+});
