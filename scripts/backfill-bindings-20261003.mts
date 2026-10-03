@@ -19,6 +19,7 @@ import { readPlatformItemsStrict, platformItemKey, type PlatformItemBinding } fr
 import { isTruncatedItemId, normalizeTitle, shanghaiDate, type PerformanceOutcome } from "../src/modules/flywheel/outcome-schema.js";
 import { bindWorkManually, createHistoryRecord } from "../src/modules/flywheel/work-binding.js";
 import { isImportedHistory } from "../src/storage/imported-history.js";
+import { acquireLibraryLock } from "../src/storage/library-lock.js";
 
 /** 表里的一个平台作品：标题按归一化前缀比（视频号会把正文拼进标题）。任何多条命中一律停 */
 export interface ItemSpec { platform: string; date: string; title: string }
@@ -223,8 +224,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const plan = await planBackfill(dataDir);
   console.log(describePlan(plan));
   if (apply) {
-    const { backup, log } = await applyBackfill(plan, dataDir);
-    console.log(`\n已备份到 ${backup}\n${log.join("\n")}`);
+    // 资料库单写者：和服务一样先领写入锁（:4317 在跑时领不到会直接报错，不抢占）
+    const release = acquireLibraryLock();
+    try {
+      const { backup, log } = await applyBackfill(plan, dataDir);
+      console.log(`\n已备份到 ${backup}\n${log.join("\n")}`);
+    } finally {
+      release();
+    }
   } else if (plan.problems.length) {
     process.exitCode = 2;
   }
