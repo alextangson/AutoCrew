@@ -12,6 +12,7 @@ import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { resolveDataDir } from "./storage-roots.js";
 import { moveFileVerified } from "./move-file.js";
+import { historyRefusal, type IMPORTED_HISTORY } from "./imported-history.js";
 import { EDITING_VIA_HANDOFF, EDITING_VIA_ONTOLOGY, isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
@@ -415,6 +416,8 @@ export interface Content {
    * 落在稿件上，而不只在回执里——导入稿补证入口（与后续交接快速通道）只认这里。
    */
   writingSource?: { kind: "manual_import"; importedAt: string; reason: string };
+  /** 补录的历史作品记录（imported-history.ts）：没有正文，不进任何生产流程 */
+  source?: typeof IMPORTED_HISTORY;
   /**
    * 发出去的写作包（P3 §5.2）。`submittedAt` 缺席 + 状态 `drafting` = **包发出去了、稿没回来**，
    * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
@@ -1729,6 +1732,9 @@ async function transitionStatusLocked(
 ): Promise<TransitionResult> {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
+  // 历史作品记录不走状态机——force（看板强推）也越不过
+  const history = historyRefusal(content);
+  if (history) return { ok: false, blocked: true, error: history };
 
   const currentStatus = normalizeLegacyStatus(content.status);
   const label = (s: ContentStatus) => CONTENT_STATUS_LABEL[s] ?? s;

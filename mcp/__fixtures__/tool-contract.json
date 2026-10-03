@@ -2321,7 +2321,10 @@
        "calib_retro",
        "calib_bump",
        "calib_observe",
-       "calib_learn"
+       "calib_learn",
+       "work_bind",
+       "history_create",
+       "history_delete"
       ],
       "type": "string"
      },
@@ -2537,7 +2540,8 @@
       ],
       "type": "object"
      },
-     "tag": {}
+     "tag": {},
+     "work": {}
     },
     "type": "object"
    }
@@ -4899,7 +4903,10 @@
        "calib_retro",
        "calib_bump",
        "calib_observe",
-       "calib_learn"
+       "calib_learn",
+       "work_bind",
+       "history_create",
+       "history_delete"
       ],
       "type": "string"
      },
@@ -5115,7 +5122,8 @@
       ],
       "type": "object"
      },
-     "tag": {}
+     "tag": {},
+     "work": {}
     },
     "type": "object"
    }

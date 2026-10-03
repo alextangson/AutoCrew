@@ -1,4 +1,5 @@
 import { getConfigDir } from "../storage/storage-roots.js";
+import { historyGuard } from "./history-guard.js";
 import { inspectHostResearchTask } from "../modules/research/host-research-store.js";
 import { executeScout } from "./scout.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
@@ -514,6 +515,8 @@ export async function executeWorkflow(
   const dataDir = getDataDir((params._dataDir as string) || undefined);
   const warn = deps.onWarn ?? ((m: string) => console.warn(`[workflow] ${m}`));
   const action = str(params.action);
+  const history = await historyGuard(params.content_id, dataDir);
+  if (history) return history;
   try {
     switch (action) {
       case "prepare":

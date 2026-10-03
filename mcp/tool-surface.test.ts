@@ -34,7 +34,11 @@ async function toolsFor(host: string) {
  * 2026-10-03 判断要对账：autocrew_insights 加 calib_* 动作（status/blind/predict/retro/bump/observe/learn）与一个 calib 参数，
  * 用法全放 tool-guide 资源、工具说明只加一句；实测 29,088 → 约 29,230，上限随之从 29,200 提到 29,400。
  */
-export const BUDGET = { total: 29_400, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-03 回流认领：autocrew_insights 加 work_bind / history_create / history_delete 与一个 work 参数，
+ * 用法放 tool-guide、工具说明只加一句；实测 29,470，上限随之从 29,400 提到 29,600。
+ */
+export const BUDGET = { total: 29_600, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

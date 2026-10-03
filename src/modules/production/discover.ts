@@ -7,6 +7,7 @@
  * - 监视文件夹只出建议，从不自动挪；对不上的静默跳过，不计入列头；没有「等 A-roll」的稿时不转写（B14）。
  * - 导出目录：先按标题前缀认，认不出再用转写（低优先级）；同目录同名 .srt → 字幕候选；其他文件忽略。
  */
+import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { listContents, type Content } from "../../storage/local-store.js";
@@ -261,7 +262,7 @@ export async function discoverExternal(dataDir: string): Promise<Discovery> {
   if (roots.inbox) await guard("收件箱没扫成", () => discoverInbox(dataDir, roots.inbox!, pool, waiting, out));
   const sources = await readArollSources(dataDir).catch((e: unknown) => { out.warnings.push(`读不了原片监视文件夹设置：${errCode(e)}`); return null; });
   for (const folder of (sources?.folders ?? []).filter((x) => x.scan)) await guard(`监视文件夹 ${folder.path} 没扫成`, () => discoverWatch(dataDir, folder, pool, waiting, out));
-  const contents = (await listContents(dataDir)).filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && EXPORT_POOL_STATUS.has(c.status));
+  const contents = (await listContents(dataDir)).filter((c) => isVideoPlatform(c.platform) && !isImportedHistory(c) && !c.deletedAt && EXPORT_POOL_STATUS.has(c.status));
   const xpool = await exportPool(dataDir);
   for (const dir of [roots.chatcut, roots.jianying]) if (dir) await guard(`导出目录 ${dir} 没扫成`, () => discoverExport(dataDir, dir, contents, xpool, out));
   return out;

@@ -46,6 +46,11 @@ export interface PerformanceOutcome {
   recordedAt: string;
   needsReview: boolean;
   reviewReasons: string[];
+  /**
+   * 撤销标记（append-only 的「删除」）：删历史作品记录时给它名下的行追加一条同键 retracted 行，
+   * latest-wins 后这一键就消失，原始未归属行重新露出来。journal 本身仍然不改写。
+   */
+  retracted?: true;
 }
 
 export interface OutcomeValidation {
@@ -103,6 +108,26 @@ export function shanghaiDate(value: string): string {
   if (Number.isNaN(ms)) return value.slice(0, 10);
   return new Date(ms + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+/**
+ * 抖音作品 id 是 19 位整数，超过 JS 安全整数；2026-10-03 之前入账的 id 被数字解析截成了
+ * 「最短双精度写法」（…000 结尾）。这种 id 不可信：不参与绑定、不能拿来人工绑定，
+ * 等下一次抓取带正确 id 的行按 latest-wins 覆盖。判据：超过安全整数且与自身的双精度写法完全相同
+ * ——真实 id 恰好落在可精确表示的双精度上的概率约千分之一，宁可让这极少数等一轮重抓。
+ */
+export function isTruncatedItemId(platform: string, itemId: string): boolean {
+  if (normalizePlatform(platform) !== "douyin") return false;
+  const id = itemId.trim();
+  if (!/^\d{17,}$/.test(id)) return false;
+  const n = Number(id);
+  return n > Number.MAX_SAFE_INTEGER && String(n) === id;
+}
+
+/**
+ * 只关归属、不关指标的复核理由前缀：按标题认到的稿在该平台已精确绑定了另一条作品，本行留未归属。
+ * 指标级复核（metric-review.reasonMetric）据此保留全部指标；人工绑定认领这一行时清掉。
+ */
+export const ATTRIBUTION_REVIEW_PREFIX = "归属待确认：";
 
 export function normalizeTitle(title: string): string {
   return title

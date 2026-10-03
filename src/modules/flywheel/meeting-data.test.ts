@@ -124,7 +124,9 @@ describe("发布计划按平台绑定（§5.2）+ 作品标签（§5.4）", () =
     await pull("2026-09-20", 30);
     expect((await listOutcomes(f.data)).map((r) => r.metricDate).sort()).toEqual(["2026-09-04", "2026-09-08", "2026-09-20"]);
     const [w] = (await buildMeetingBrief(f.data, now)).works;
-    expect(w).toMatchObject({ contentId: c.id, boundVia: "plan", format: "教学", d3: { ageDays: 3 }, d7: { ageDays: 7 } });
+    // 2026-10-03 回流认领规格 ②：认领候选含发布计划里的平台与标题，这一行在入库时就归属了（boundVia=outcome），
+    // 早期快照随之补挂（carryOverSnapshots），D+3/D+7 与标签照旧在
+    expect(w).toMatchObject({ contentId: c.id, boundVia: "outcome", format: "教学", d3: { ageDays: 3 }, d7: { ageDays: 7 } });
   });
 
   it("发布计划里实际公开时间优先于计划时间", async () => {

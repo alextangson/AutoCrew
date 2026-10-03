@@ -5,6 +5,7 @@
  * → `refreshProductionProjection` 在同一把锁里投影 status 与冻结 → 追加时间线 → 更新字节索引。
  * 外部不能传目标阶段；status 只由这里投影。
  */
+import { HISTORY_REFUSAL, isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { contentTransaction, getDataDir, type Content, type ContentTx } from "../../storage/local-store.js";
@@ -109,6 +110,8 @@ export async function refreshProductionProjection(tx: ContentTx, content: Conten
   // 按本体走的稿，已发布只认本轮的回执与「我发了」决定（§6），不再直接读外部发布记录
   const publish = { verified: false };
   const exp = deriveExplanation({ content, doc, enabled: true, publish });
+  // 历史作品记录不投影：所有投影写入（状态、冻结、登记）都从这里过，force 也一样
+  if (isImportedHistory(content)) return { content, doc, explanation: exp, events: [] };
   // 启用事务进行中（force）或这一条已按本体走，才投影；影子模式 / 被排除的稿什么都不写
   if (!opts.force && !(await isOntologyActive(dataDir, content.id))) return { content, doc, explanation: exp, events: [] };
   const next = structuredClone(doc);
@@ -151,6 +154,7 @@ export async function mutateProduction<T>(
   return contentTransaction(contentId, dataDir, async (tx) => {
     const content = await tx.read();
     if (!content) throw new Error(`Content ${contentId} not found`);
+    if (isImportedHistory(content)) throw new Error(HISTORY_REFUSAL);
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
     const next = structuredClone(doc);
     // 封面统一准入的迁移（review-inbox §6.2）随第一次写落盘：只改标签，不动文件

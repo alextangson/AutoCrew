@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { listContents, listTopics, type Content, type Topic } from "../storage/local-store.js";
+import { isImportedHistory } from "../storage/imported-history.js";
 import { scriptText } from "../storage/my-content-plan.js";
 import { explainContent, explainContext, type ExplainContext } from "../modules/production/read.js";
 import { readReconcileReport, type ReconcileReport } from "../modules/production/reconcile.js";
@@ -167,7 +168,9 @@ function topicOf(t: Topic, latestMeeting: string | null): BoardTopic {
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {
-  const [contents, topics, ctx] = await Promise.all([listContents(dataDir), listTopics(dataDir), explainContext(dataDir)]);
+  const [all, topics, ctx] = await Promise.all([listContents(dataDir), listTopics(dataDir), explainContext(dataDir)]);
+  // 历史作品记录只挂回流数据，不是生产稿，不上看板
+  const contents = all.filter((c) => !isImportedHistory(c));
   const items: BoardItem[] = [];
   for (const c of contents) {
     const item = await itemOf(c, dataDir, ctx);

@@ -7,6 +7,7 @@
  * 任何一条失败：开关不写，失败逐条列给创始人。创始人可以把某几条**明确排除**（exclude），它们留在旧行为、
  * 卡片上标「未纳入本体」——从不静默跳过。进程中途退出（日志还在）：启动时按同一份排除清单续跑。
  */
+import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { contentRoot, ONTOLOGY_PROJECT_RULES, PROJECT_RULES } from "../../storage/content-project.js";
@@ -38,7 +39,7 @@ export async function ontologyStatus(dataDir: string) {
 
 async function materializeLegacy(dataDir: string, skip: ReadonlySet<string>, failures: EnableFailure[]): Promise<void> {
   for (const c of await listContents(dataDir)) {
-    if (!isVideoPlatform(c.platform) || c.deletedAt || c.status === "archived" || skip.has(c.id)) continue;
+    if (!isVideoPlatform(c.platform) || isImportedHistory(c) || c.deletedAt || c.status === "archived" || skip.has(c.id)) continue;
     try {
       await mutateProduction(c.id, dataDir, async (d, content) => {
         const at = new Date().toISOString();
@@ -53,7 +54,7 @@ async function materializeLegacy(dataDir: string, skip: ReadonlySet<string>, fai
 
 async function projectAll(dataDir: string, skip: ReadonlySet<string>, failures: EnableFailure[]): Promise<void> {
   for (const c of await listContents(dataDir)) {
-    if (!isVideoPlatform(c.platform) || c.deletedAt || skip.has(c.id)) continue;
+    if (!isVideoPlatform(c.platform) || isImportedHistory(c) || c.deletedAt || skip.has(c.id)) continue;
     await refreshContent(c.id, dataDir, { force: true })
       .catch((e: unknown) => failures.push({ id: c.id, title: c.title, step: "投影", error: e instanceof Error ? e.message : String(e) }));
   }
@@ -62,7 +63,7 @@ async function projectAll(dataDir: string, skip: ReadonlySet<string>, failures: 
 /** 项目 AGENTS.md 改成一行指向（§8）：只替换没被手改过的旧约定；替换失败不挡启用，照实记日志 */
 async function pointProjectRules(dataDir: string, skip: ReadonlySet<string>): Promise<void> {
   for (const c of await listContents(dataDir)) {
-    if (!isVideoPlatform(c.platform) || skip.has(c.id)) continue;
+    if (!isVideoPlatform(c.platform) || isImportedHistory(c) || skip.has(c.id)) continue;
     const file = path.join(contentRoot(c.id, dataDir), "AGENTS.md");
     const text = await fs.readFile(file, "utf8").catch(() => null);
     if (text === PROJECT_RULES) await fs.writeFile(file, ONTOLOGY_PROJECT_RULES).catch((e: unknown) => console.warn(`[production] ${c.id} 的 AGENTS.md 没改成指向：${e instanceof Error ? e.message : String(e)}`));

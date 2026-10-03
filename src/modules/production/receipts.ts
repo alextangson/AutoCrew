@@ -68,9 +68,10 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
     const [platform, ...rest] = b.key.split(":");
-    // 只有按作品 id（链接解析）绑上的才算可信；按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）。
+    // 只有按作品 id 绑上的才算可信：链接解析（url）或创始人确认的人工绑定（manual）；
+    // 按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）。
     // 绑定时间是发现时间不是发布时间，不当作轮次证据
-    const byId = b.via === "url";
+    const byId = b.via === "url" || b.via === "manual";
     out.push({ source: byId ? "metrics_id" : "metrics_title", platform: canonPlatform(platform), item_id: rest.join(":"), pub_state: "public",
       evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条" });
   }

@@ -13,6 +13,8 @@
  * 不再混读口播稿的标题、标签和正文（P6 §3.6）。另有 action=video_kit：宿主交发布包，只校验与保存。
  */
 import { Type } from "@sinclair/typebox";
+import { historyGuard } from "./history-guard.js";
+import { historyRefusal } from "../storage/imported-history.js";
 import {
   getContent,
   getCoverReview,
@@ -350,6 +352,8 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
 
 /** MCP 入口按 action 分派；GUI 与发布门只跑 check，直接调 executePrePublish */
 export async function executePrePublishTool(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const history = await historyGuard(params.content_id, (params._dataDir as string) || undefined);
+  if (history) return history;
   if (params.action === "title_methods") return titleMethodsAction(params);
   return params.action === "video_kit" ? saveHostVideoKit(params) : executePrePublish(params);
 }
@@ -364,6 +368,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
+  // GUI 与发布门直接调这里，不经 executePrePublishTool
+  const history = historyRefusal(content);
+  if (history) return { ok: false, code: "imported_history", error: history };
 
   const platform = content.platform || "";
   const stale = staleKit(content, platform);

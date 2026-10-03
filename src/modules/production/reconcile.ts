@@ -8,6 +8,7 @@
  * - 逐条隔离：每条 try/catch，失败汇总进报告（看板顶部 + 晨报 warnings）。
  * - 影子模式（未启用）：只算不写，报告里给「要挪 N 张卡」的差异清单。
  */
+import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, listContents, transitionStatus, type Content } from "../../storage/local-store.js";
@@ -105,6 +106,7 @@ async function ownedElsewhere(dataDir: string, contentId: string): Promise<(sha:
 /** 单条对账：写模式经 ProductionService 落盘；影子模式返回合并后的内存 doc */
 export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string>; suggestions?: Seen[]; warnings?: string[] }): Promise<ProductionDoc> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  if (isImportedHistory(content)) return doc;
   const obs = await observe(content, doc, dataDir, opts.externals, opts.archived, opts.suggestions);
   for (const w of obs.warnings ?? []) opts.warnings?.push(`${content.title}（${content.id}）：${w}`);
   const owned = await ownedElsewhere(dataDir, content.id);
@@ -194,7 +196,8 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
     }
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
     for (const c of await listContents(dataDir)) {
-      if (c.deletedAt) continue;
+      // 历史作品记录只挂回流数据，不进制作对账（回流认领规格 2026-10-03）
+      if (c.deletedAt || isImportedHistory(c)) continue;
       const active = !excluded.has(c.id) && (opts.write ?? enabled);
       try {
         await syncSubmitted(c, dataDir, enabled && !excluded.has(c.id));
@@ -228,7 +231,7 @@ export async function reconcileContent(contentId: string, dataDir: string): Prom
   await ensureProductionReady(dataDir);
   await withFileOwnership(async () => {
     const c = await getContent(contentId, dataDir);
-    if (!c || c.deletedAt || !isVideoPlatform(c.platform)) return;
+    if (!c || c.deletedAt || isImportedHistory(c) || !isVideoPlatform(c.platform)) return;
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
     await reconcileOne(c, dataDir, { write: true, externals: null, archived });
   });
