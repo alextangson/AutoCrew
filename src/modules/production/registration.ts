@@ -23,7 +23,7 @@ import { spokenFromSrt } from "../video/handoff/spoken.js";
 import { readProjectJson, type Citation } from "../video/handoff/project-evidence.js";
 import type { VideoFinalRecord } from "../video/handoff/types.js";
 import { buildChecklist } from "./checklist.js";
-import { matchingRegistration, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
+import { matchingRegistration, registeredSrt, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
 import { identityOf } from "./files.js";
 import { checkTargetDir } from "./record-plan.js";
 import { isWithin } from "../../storage/storage-roots.js";
@@ -198,7 +198,7 @@ async function landRegistration(content: Content, root: string, picked: Picked, 
 export async function registrationPatch(content: Content, doc: ProductionDoc, reg: Registration, dataDir: string): Promise<ContentUpdates | null> {
   if (reg.source !== "commit" || content.video?.final?.register_hash === reg.id) return null;
   const n = doc.registrations.findIndex((r) => r.id === reg.id) + 1;
-  const cutFact = accepted(doc, "cut", reg.cut_sha), c34 = accepted(doc, "cover", reg.cover_3x4_sha), c43 = accepted(doc, "cover", reg.cover_4x3_sha), srt = accepted(doc, "srt", reg.srt_sha);
+  const cutFact = accepted(doc, "cut", reg.cut_sha), c34 = accepted(doc, "cover", reg.cover_3x4_sha), c43 = accepted(doc, "cover", reg.cover_4x3_sha), srt = registeredSrt(doc, reg);
   if (!cutFact?.path || !c34?.path || !c43?.path) return null;
   const root = contentRoot(content.id, dataDir);
   const name = registeredCutName(n, reg.cut_sha!, path.extname(cutFact.path).toLowerCase());

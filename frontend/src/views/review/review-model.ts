@@ -67,7 +67,8 @@ const KIND: Record<string, string> = { cover: "封面", srt: "字幕", cut: "成
 
 export function groupRows(items: InboxItem[]): Row[] {
   const byKey = new Map<string, InboxItem[]>();
-  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.type === "draft" ? "group:draft" : i.item_id);
+  // 挡着成片 / 封面审阅的稿子单独一行，说明不能被「N 篇稿子写好了」吞掉
+  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.type === "draft" && !i.detail.waiting_behind ? "group:draft" : i.item_id);
   for (const i of items) byKey.set(keyOf(i), [...(byKey.get(keyOf(i)) ?? []), i]);
   const rows: Row[] = [];
   for (const [key, group] of byKey) {

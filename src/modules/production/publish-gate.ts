@@ -14,7 +14,7 @@ import { isOntologyActive, readProductionDocOrEmpty, scriptApprovalFor } from ".
 import type { Fact, ProductionDoc, Registration } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { sha256File } from "../video/handoff/manifest.js";
-import { matchingRegistration, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
+import { matchingRegistration, registeredSrt, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
 
 export interface PublishPackageFiles { registration: Registration; video: string; cover34: string; cover43: string; srt: string | null }
 export type GateResult = { ok: true; files: PublishPackageFiles } | { ok: false; code: string; error: string };
@@ -54,7 +54,7 @@ export async function registeredPackage(content: Content, dataDir: string): Prom
   const c43 = await fileOf(root, accepted(doc, "cover", reg.cover_4x3_sha), "4:3 封面");
   for (const x of [video, c34, c43]) if (typeof x !== "string") return { ok: false, code: "registered_file_changed", error: x.error };
   // 登记绑的字幕同样不可少（Codex 审 seg2 P2）：缺了或字节变了照样拦
-  const srt = reg.srt_sha ? await fileOf(root, accepted(doc, "srt", reg.srt_sha), "字幕") : null;
+  const srt = reg.srt_sha ? await fileOf(root, registeredSrt(doc, reg), "字幕") : null;
   if (srt && typeof srt !== "string") return { ok: false, code: "registered_file_changed", error: srt.error };
   return { ok: true, files: { registration: reg, video: video as string, cover34: c34 as string, cover43: c43 as string, srt } };
 }

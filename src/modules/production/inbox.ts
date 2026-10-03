@@ -357,12 +357,26 @@ export function draftRef(content: Content): { item_id: string; gen: string } | n
   return { item_id, gen: genOf([item_id, d.snapshot]) };
 }
 
-function draftItem(content: Content): Draft | null {
+/**
+ * 认稿前已经交上来、要等认稿才出条目的审阅（成片标了「可以审了」、有完整的一组封面）。
+ * 只在稿件条目上说明，不进代次：认稿的对象还是这份正文（看板拖动认稿的 draftRef 不读制作记录）。
+ */
+function waitingBehindScript(doc: ProductionDoc | null): Array<"cut_review" | "cover_pick"> {
+  if (!doc) return [];
+  return [...(markedCuts(doc).length ? ["cut_review" as const] : []), ...(validCoverGroups(doc).some((g) => g.complete) ? ["cover_pick" as const] : [])];
+}
+
+const BEHIND_TEXT: Record<string, string> = { "cut_review,cover_pick": "成片和封面都做好了", cut_review: "成片剪好了", cover_pick: "封面做好了" };
+
+function draftItem(content: Content, behindDoc: ProductionDoc | null = null): Draft | null {
   if (content.status !== "draft_ready") return null;
+  const behind = waitingBehindScript(behindDoc);
   return {
-    item_id: `draft:${content.id}`, type: "draft", summary: "稿子写好了，过一眼", waiting: null, agent_waiting: false, since: content.updatedAt, rank: 3,
+    item_id: `draft:${content.id}`, type: "draft", waiting: null, agent_waiting: false, since: content.updatedAt,
+    // 挡着成片 / 封面审阅时算「挡住推进」
+    summary: behind.length ? `稿子写好了，过一眼（${BEHIND_TEXT[behind.join(",")]}，认稿后才能审）` : "稿子写好了，过一眼", rank: behind.length ? 1 : 3,
     actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：开头换成客户问的那句话" }],
-    detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length },
+    detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length, ...(behind.length ? { waiting_behind: behind } : {}) },
     // 退回修改后重交（同样的正文也算重交）开新代次
     snapshot: [bodyHash(content.body), content.title, content.updatedAt],
   };
@@ -381,7 +395,7 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
     drafts.push(...publishItems(doc, input).filter((x) => x.type === "publish_claim" || x.type === "published_ask"));
     return finish(drafts, input, now);
   }
-  const d = draftItem(content);
+  const d = draftItem(content, exp?.phase === "writing" ? doc : null);
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere), ...sliverItems(doc, content));
