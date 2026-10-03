@@ -2313,7 +2313,8 @@
        "calib_predict",
        "calib_retro",
        "calib_bump",
-       "calib_observe"
+       "calib_observe",
+       "calib_learn"
       ],
       "type": "string"
      },
@@ -4883,7 +4884,8 @@
        "calib_predict",
        "calib_retro",
        "calib_bump",
-       "calib_observe"
+       "calib_observe",
+       "calib_learn"
       ],
       "type": "string"
      },

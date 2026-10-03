@@ -17,7 +17,7 @@ import { getDataDir } from "../../storage/local-store.js";
 import { STATE_SCHEMA_VERSION } from "./constants.js";
 import { DEFAULT_RUBRIC, rubricLeaks, type Rubric } from "./rubric.js";
 
-export type LogName = "predictions" | "rubric-memo" | "blind-runs";
+export type LogName = "predictions" | "rubric-memo" | "blind-runs" | "benchmark-imports" | "script-patterns";
 
 export interface BaselineEntry { plays: number; source: "age_cohort_d3" | "calibration_pool"; n: number; computed_at: string }
 export interface DirectionalError { dir: "high" | "low"; ratio: number; prediction_id: string }
