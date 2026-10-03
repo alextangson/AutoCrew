@@ -4,6 +4,7 @@
  */
 import { decodeArg } from "../modules/meetings/meeting-args.js";
 import { calibrationStatus } from "../modules/calibration/status.js";
+import { acknowledgeLogDamage } from "../modules/calibration/store.js";
 import { blindStep } from "../modules/calibration/predict.js";
 import { commitPrediction } from "../modules/calibration/commit.js";
 import { retro } from "../modules/calibration/retro.js";
@@ -14,7 +15,7 @@ import { learnPrepare, learnSave } from "../modules/calibration/learn-from.js";
 export const CALIB_ACTIONS = ["calib_status", "calib_blind", "calib_predict", "calib_retro", "calib_bump", "calib_observe", "calib_learn"] as const;
 
 export const CALIB_DESCRIPTION = [
-  "判断要对账（技能 video-session 第 6 步）：calib_status 看评分表版本、校准样本数、置信度、待复盘与提醒。",
+  "判断要对账（技能 video-session 第 6 步）：calib_status 看评分表版本、校准样本数、置信度、待复盘与提醒；日志末尾被删时，经创始人确认可带 {repair_log, confirm:true, reason} 显式恢复链头。",
   "calib_blind{content_id, self_scores:{ER,SR,HP,QL,NA,AB,SAT,MS,TS 各 0–5}, seen_data?, skip_blind?, reconstructed?, redo_of?}：盲度检查，先封存你的自评，再起盲评通道（只喂稿子+rubric），返回分歧表。",
   "calib_predict{blind_run_id, seen_data?(已发布必填 false), decisions?:{维度:\"blind\"|\"self\"|0–5}, prediction:{bucket, distribution:{5 档百分比合计 100}, center, reason}, factors:[{factor,direction:+|-,confidence:高|中|低,note}], counterfactuals:{每档一段}, hypothesis, basis?}：落预测（不可改）。",
   "calib_retro{prediction_id|content_id, hypothesis_conclusion, verified_factors?:[{factor,verdict:验证|推翻|无法判断,note}], observations?:[一句话], manual_metrics?:{views,likes,comments,shares}, force_early?} T+3 复盘（只追加一次，数据取回流、缺了手填不编）；reading:\"d7\" 追加 D+7 读数；correction 追加修正。",
@@ -31,6 +32,16 @@ export function calibArg(v: unknown): Obj {
   return d as Obj;
 }
 
+const LOGS = ["predictions", "rubric-memo", "blind-runs", "benchmark-imports", "script-patterns"] as const;
+/** 链头显式恢复：只在创始人确认后（confirm:true + 他的原话 reason） */
+async function repairLog(args: Obj, dir: string): Promise<Obj> {
+  const name = String(args.repair_log);
+  if (!(LOGS as readonly string[]).includes(name)) return { ok: false, error: `repair_log 只能是 ${LOGS.join("/")}` };
+  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+  if (args.confirm !== true || !reason) return { ok: false, code: "needs_confirmation", error: "恢复链头会承认末尾记录已丢失：先把完整性问题告诉创始人，他确认后带 confirm:true 和他的原话 reason" };
+  return acknowledgeLogDamage(name as (typeof LOGS)[number], reason, dir);
+}
+
 export async function executeCalibrationAction(action: string, raw: unknown, dir: string, _host: string): Promise<Obj> {
   try {
     const args = calibArg(raw);
@@ -40,6 +51,7 @@ export async function executeCalibrationAction(action: string, raw: unknown, dir
     if (action === "calib_bump") return await proposeBump(args, dir);
     if (action === "calib_observe") return await observe(args, dir);
     if (action === "calib_learn") return args.op === "save" ? await learnSave(args, dir) : await learnPrepare(args, dir);
+    if (action === "calib_status" && args.repair_log !== undefined) return await repairLog(args, dir);
     if (action === "calib_status") return { ok: true, ...(await calibrationStatus(dir)) };
     return { ok: false, error: `未知动作 ${action}` };
   } catch (err) {

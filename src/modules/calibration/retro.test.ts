@@ -52,13 +52,13 @@ describe("§三 复盘", () => {
     expect(pool[0].weight).toBe(EARLY_RETRO_WEIGHT);
     expect(EARLY_RETRO_WEIGHT).toBeLessThan(1);
   });
-  it("预测主体被改过 → 追加 Integrity warning，不计样本、不进池", async () => {
+  it("预测主体被改过 → 拒绝复盘（不往坏链上追加），不计样本、不进池", async () => {
     const { p, later } = await predictPublished(dir, 800);
     const file = path.join(calibrationDir(dir), "predictions.jsonl");
     const raw = await fs.readFile(file, "utf-8");
     await fs.writeFile(file, raw.replace(/"center":\d+/, "\"center\":901"));
-    const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x" }, dir, later);
-    expect(r).toMatchObject({ integrity_warning: true, counted_as_calibration_sample: false });
+    await expect(retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x" }, dir, later)).rejects.toThrow(/完整性/);
+    expect((await ensureCalibration(dir)).state.calibration_samples).toBe(0);
     expect(await calibrationPool(dir)).toHaveLength(0);
   });
   it("Reconstructed 不进池", async () => {

@@ -12,7 +12,7 @@ import { runBlindChannel } from "./blind.js";
 import { applyBump, ids, recordRejection } from "./bump-cleanup.js";
 import { SOFT_MIN_NEW_SAMPLES, SOFT_MIN_POOL } from "./constants.js";
 import { calibrationPool, readPredictions, type PoolSample } from "./pool.js";
-import { latestBlindRun } from "./predict.js";
+import { latestBlindRun, type BlindRunRecord } from "./predict.js";
 import { rankGate, type GateSample, type RankGateResult } from "./rank-gate.js";
 import { ALL_DIMS, composite, formulaText, type DimKey, type DimScores, type RubricFormula } from "./rubric.js";
 import { ensureCalibration, type CalibrationState } from "./store.js";
@@ -52,35 +52,56 @@ export function proposalGate(state: CalibrationState, poolSize: number, args: Ob
   return null;
 }
 
-/** 每个样本按版本生效的维度分：最近一次升级追加的 rescored.scores（含补打分），没有就用预测时的终分 */
-export async function effectiveScores(dataDir?: string): Promise<Map<string, DimScores>> {
+export type DimSource = { source: "blind" | "self" | "backfill"; endpoint?: string };
+export type Provenance = Partial<Record<DimKey, DimSource>>;
+type Effective = { scores: DimScores; provenance: Provenance };
+const reusable = (p?: DimSource) => p?.source === "blind" || p?.source === "backfill";
+
+/** 每个样本按版本生效的维度分与逐维出处：最近一次升级追加的 rescored（没有出处的老记录一律当自评） */
+export async function effectiveScores(dataDir?: string): Promise<Map<string, Effective>> {
   const { records, selfOk } = await readPredictions(dataDir);
-  const out = new Map<string, DimScores>();
-  for (const r of records) if (r.type === "rescored" && r.scores && selfOk(r)) out.set(String(r.prediction_id), r.scores as DimScores);
+  const out = new Map<string, Effective>();
+  for (const r of records) {
+    if (r.type === "rescored" && r.scores && selfOk(r)) out.set(String(r.prediction_id), { scores: r.scores as DimScores, provenance: (r.provenance as Provenance) ?? {} });
+  }
   return out;
 }
 
-type SampleScores = { scores: DimScores; backfilled: boolean; endpoint?: string };
+/** 预测时的出处：创始人裁定「信盲评」且盲评成功的维度 = blind（带实际线路），其余 = self */
+function predictionProvenance(s: PoolSample, run: BlindRunRecord | null): Provenance {
+  const rows = ((s.prediction as unknown as { header?: { blind_score_disagreement?: Array<{ dim: DimKey; decided_as?: string }> } }).header?.blind_score_disagreement) ?? [];
+  const out: Provenance = {};
+  for (const d of ALL_DIMS) {
+    const row = rows.find((x) => x.dim === d);
+    out[d] = run?.status === "ok" && row?.decided_as === "blind" ? { source: "blind", ...(run.endpoint ? { endpoint: run.endpoint } : {}) } : { source: "self" };
+  }
+  return out;
+}
 
-/** 新增维度（旧公式没用到）的分：已有生效分 > 预测时盲评分 > 对存档稿子补跑一次盲评通道 */
-async function newDimScores(s: PoolSample, newDims: DimKey[], eff: DimScores | undefined, dataDir: string | undefined, deps: BumpDeps): Promise<SampleScores> {
-  const scores: DimScores = { ...(eff ?? s.prediction.scores.final) };
+type SampleScores = Effective & { backfilled: boolean };
+
+/** 新增维度（旧公式没用到）的分：出处是盲评/补打的生效分 > 预测时盲评分 > 对存档稿子补跑一次盲评通道；自评分绝不复用 */
+async function newDimScores(s: PoolSample, newDims: DimKey[], eff: Effective | undefined, dataDir: string | undefined, deps: BumpDeps): Promise<SampleScores> {
+  const run = await latestBlindRun(s.prediction.blind_run_id, dataDir);
+  const scores: DimScores = { ...(eff?.scores ?? s.prediction.scores.final) };
+  const provenance: Provenance = { ...predictionProvenance(s, run), ...(eff?.provenance ?? {}) };
   const missing: DimKey[] = [];
   for (const d of newDims) {
-    if (eff && typeof eff[d] === "number") continue;
-    if (typeof s.prediction.scores.blind?.[d] === "number") scores[d] = s.prediction.scores.blind[d];
-    else missing.push(d);
+    if (eff && reusable(eff.provenance[d]) && typeof eff.scores[d] === "number") continue;
+    if (run?.status === "ok" && typeof s.prediction.scores.blind?.[d] === "number") {
+      scores[d] = s.prediction.scores.blind[d];
+      provenance[d] = { source: "blind", ...(run.endpoint ? { endpoint: run.endpoint } : {}) };
+    } else missing.push(d);
   }
-  if (!missing.length) return { scores, backfilled: false };
-  const run = await latestBlindRun(s.prediction.blind_run_id, dataDir);
+  if (!missing.length) return { scores, provenance, backfilled: false };
   if (!run) throw new Error(`样本 ${s.prediction.id} 的稿子存档不见了，没法补打分`);
   const { rubric } = await ensureCalibration(dataDir);
   const b = await runBlindChannel(run.script_text, rubric, dataDir, { runLoopImpl: deps.blindLoop });
-  for (const d of missing) scores[d] = b.scores[d].score;
-  return { scores, backfilled: true, endpoint: b.endpoint };
+  for (const d of missing) { scores[d] = b.scores[d].score; provenance[d] = { source: "backfill", endpoint: b.endpoint }; }
+  return { scores, provenance, backfilled: true };
 }
 
-export type GateRow = GateSample & { scores: DimScores; backfilled: boolean; actualDetail: unknown };
+export type GateRow = GateSample & { scores: DimScores; provenance: Provenance; backfilled: boolean; actualDetail: unknown };
 
 export async function buildGateSamples(pool: PoolSample[], oldF: RubricFormula, newF: RubricFormula, dataDir: string | undefined, deps: BumpDeps) {
   const newDims = (Object.keys(newF.weights) as DimKey[]).filter((d) => !(d in oldF.weights));
@@ -88,13 +109,13 @@ export async function buildGateSamples(pool: PoolSample[], oldF: RubricFormula, 
   const samples: GateRow[] = [];
   const endpoints = new Set<string>();
   for (const s of pool) {
-    const r = await newDimScores(s, newDims, eff.get(s.prediction.id), dataDir, deps);
-    if (r.endpoint) endpoints.add(r.endpoint);
-    const run = await latestBlindRun(s.prediction.blind_run_id, dataDir);
-    if (run?.endpoint) endpoints.add(run.endpoint);
-    const base = eff.get(s.prediction.id) ?? s.prediction.scores.final;
+    const e = eff.get(s.prediction.id);
+    const r = await newDimScores(s, newDims, e, dataDir, deps);
+    // 审计独立性：凡是进了新公式的维度，它的分来自哪条盲评线路都要算上（含以前补打、这次复用的）
+    for (const d of Object.keys(newF.weights) as DimKey[]) { const ep = r.provenance[d]?.endpoint; if (ep) endpoints.add(ep); }
+    const base = e?.scores ?? s.prediction.scores.final;
     samples.push({ id: s.prediction.id, label: s.prediction.title, oldScore: composite(base, oldF) ?? s.prediction.composite,
-      newScore: composite(r.scores, newF) as number, actual: s.actual, weight: s.weight, scores: r.scores, backfilled: r.backfilled, actualDetail: s.retro.actual });
+      newScore: composite(r.scores, newF) as number, actual: s.actual, weight: s.weight, scores: r.scores, provenance: r.provenance, backfilled: r.backfilled, actualDetail: s.retro.actual });
   }
   return { samples, newDims, blindEndpoints: [...endpoints] };
 }

@@ -46,7 +46,7 @@ async function staleReason(snap: BumpSnapshot, dataDir?: string): Promise<string
   return null;
 }
 
-export async function applyBump(input: BumpBase & { formula: RubricFormula; newDims: DimKey[]; samples: Array<GateSample & { backfilled: boolean; scores: DimScores }>; audit: AuditVerdict; args: Obj; snapshot: BumpSnapshot }, dataDir?: string): Promise<Obj> {
+export async function applyBump(input: BumpBase & { formula: RubricFormula; newDims: DimKey[]; samples: Array<GateSample & { backfilled: boolean; scores: DimScores; provenance: Record<string, unknown> }>; audit: AuditVerdict; args: Obj; snapshot: BumpSnapshot }, dataDir?: string): Promise<Obj> {
   const absorbed = ids(input.args.absorbs_observations, "absorbs_observations"), refuted = ids(input.args.refutes_observations, "refutes_observations");
   return serializeCalibration(dataDir, async () => {
     const stale = await staleReason(input.snapshot, dataDir);
@@ -91,5 +91,5 @@ async function appendCleanup(input: BumpInput, plan: CleanupPlan, dataDir?: stri
   for (const id of absorbed) await appendLog("rubric-memo", { type: "obs_delete", id, reason: "absorbed", version, at: now }, dataDir);
   for (const id of refuted) await appendLog("rubric-memo", { type: "obs_delete", id, reason: "refuted", version, at: now }, dataDir);
   for (const o of remaining) if (o.stage === "observation" || o.stage === "cross_video") await appendLog("rubric-memo", { type: "obs_stage", id: o.id, stage: "hypothesis", reason: `升级到 ${version} 时未解决`, at: now }, dataDir);
-  for (const s of input.samples) await appendLog("predictions", { type: "rescored", prediction_id: s.id, version, from: s.oldScore, to: s.newScore, scores: s.scores, backfilled: s.backfilled, at: now }, dataDir);
+  for (const s of input.samples) await appendLog("predictions", { type: "rescored", prediction_id: s.id, version, from: s.oldScore, to: s.newScore, scores: s.scores, provenance: s.provenance, backfilled: s.backfilled, at: now }, dataDir);
 }

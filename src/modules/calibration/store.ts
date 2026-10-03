@@ -123,11 +123,7 @@ export const fingerprint = (v: unknown) => sha256(canonical(v));
 export type ChainRecord = Record<string, unknown> & { type: string; fp: string; prev: string | null };
 export interface LogRead<T> { records: T[]; integrity: { ok: boolean; problems: string[] } }
 
-export async function readLog<T = ChainRecord>(name: LogName, dataDir?: string): Promise<LogRead<T>> {
-  let raw = "";
-  try { raw = await fs.readFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), "utf-8"); } catch (err) {
-    if ((err as { code?: string }).code !== "ENOENT") throw err;
-  }
+function parseChain(raw: string): { records: ChainRecord[]; problems: string[]; last: string | null } {
   const records: ChainRecord[] = [];
   const problems: string[] = [];
   let prev: string | null = null;
@@ -140,16 +136,49 @@ export async function readLog<T = ChainRecord>(name: LogName, dataDir?: string):
     prev = fp;
     records.push(rec);
   });
-  const head = (await readHeads(dataDir))[name];
-  if (head && (head.count !== records.length || head.fp !== (prev ?? null))) {
-    problems.push(`末尾记录对不上独立记下的链头（应有 ${head.count} 行，现有 ${records.length} 行）：末尾有行被删或被改`);
-  }
-  return { records: records as unknown as T[], integrity: { ok: problems.length === 0, problems } };
+  return { records, problems, last: prev };
 }
 
-/** 唯一的写入口：追加一行（带 prev/fp）。调用方需在 serializeCalibration 内调用 */
+/**
+ * 链头对账。追加是「先写行、再写链头」，所以链头落后一行且那一行正好接在链头后面 = 有人正在追加，不是删除。
+ * 其它不一致（行比链头少、同样多但末尾指纹不同、多出不止一行）才报。
+ */
+function headProblem(records: ChainRecord[], last: string | null, head: { fp: string | null; count: number } | undefined): string | null {
+  if (!head) return null;
+  if (head.count === records.length && head.fp === last) return null;
+  const inFlight = records.length === head.count + 1 && (head.count === 0 ? head.fp === null : records[head.count - 1].fp === head.fp);
+  if (inFlight) return null;
+  return `末尾记录对不上独立记下的链头（应有 ${head.count} 行，现有 ${records.length} 行）：末尾有行被删或被改`;
+}
+
+async function readRaw(name: LogName, dataDir?: string): Promise<string> {
+  try { return await fs.readFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), "utf-8"); } catch (err) {
+    if ((err as { code?: string }).code !== "ENOENT") throw err;
+    return "";
+  }
+}
+
+/** 一致快照：链头读两遍夹住文件读，链头在中间变了（并发追加刚好写完）就重读，最多 5 次 */
+export async function readLog<T = ChainRecord>(name: LogName, dataDir?: string): Promise<LogRead<T>> {
+  for (let attempt = 0; ; attempt++) {
+    const before = (await readHeads(dataDir))[name];
+    const raw = await readRaw(name, dataDir);
+    const after = (await readHeads(dataDir))[name];
+    if (JSON.stringify(before) !== JSON.stringify(after) && attempt < 4) continue;
+    const { records, problems, last } = parseChain(raw);
+    const hp = headProblem(records, last, after);
+    if (hp) problems.push(hp);
+    return { records: records as unknown as T[], integrity: { ok: problems.length === 0, problems } };
+  }
+}
+
+/**
+ * 唯一的写入口：追加一行（带 prev/fp）。调用方需在 serializeCalibration 内调用。
+ * 链已损坏（被改、被删、末尾少了）就拒绝追加——否则新链头会把删除永久盖掉；恢复只能走 acknowledgeLogDamage。
+ */
 export async function appendLog(name: LogName, rec: Record<string, unknown> & { type: string }, dataDir?: string): Promise<ChainRecord> {
-  const { records } = await readLog(name, dataDir);
+  const { records, integrity } = await readLog(name, dataDir);
+  if (!integrity.ok) throw new Error(`${name}.jsonl 完整性校验没过（${integrity.problems[0]}）：拒绝再追加。把这件事告诉创始人；确认后用 calib_status{repair_log} 显式恢复`);
   const prev = records.length ? records[records.length - 1].fp : null;
   const body = { ...rec, prev };
   const full = { ...body, fp: fingerprint(body) } as ChainRecord;
@@ -157,6 +186,23 @@ export async function appendLog(name: LogName, rec: Record<string, unknown> & { 
   await fs.appendFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), `${JSON.stringify(full)}\n`, "utf-8");
   await writeHead(name, { fp: full.fp, count: records.length + 1 }, dataDir);
   return full;
+}
+
+/**
+ * 显式恢复：创始人确认后，只在链本身完好（逐行指纹与前后衔接都对）、只是末尾被删时，按现有文件重记链头，
+ * 并把这次恢复写进 repairs.jsonl（谁、为什么、丢了几行）。链中间坏了不给恢复。
+ */
+export async function acknowledgeLogDamage(name: LogName, reason: string, dataDir?: string): Promise<Record<string, unknown>> {
+  return serializeCalibration(dataDir, async () => {
+    const raw = await readRaw(name, dataDir);
+    const { records, problems, last } = parseChain(raw);
+    if (problems.length) throw new Error(`${name}.jsonl 链中间就坏了（${problems[0]}）：不能用重记链头掩盖，只能人工处理`);
+    const head = (await readHeads(dataDir))[name];
+    await writeHead(name, { fp: last, count: records.length }, dataDir);
+    const entry = { log: name, reason, previous_head: head ?? null, new_count: records.length, at: new Date().toISOString() };
+    await fs.appendFile(file(dataDir, "repairs.jsonl"), `${JSON.stringify(entry)}\n`, "utf-8");
+    return { ok: true, repaired: entry };
+  });
 }
 
 // ───────────── 独立链头：删掉末尾几行时哈希链本身看不出来，靠它对账 ─────────────

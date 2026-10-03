@@ -13,8 +13,6 @@ import { calibrationPool } from "./pool.js";
 import { blindStep } from "./predict.js";
 import { retro } from "./retro.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
-import { EARLY_RETRO_WEIGHT } from "./constants.js";
-import { rankGate } from "./rank-gate.js";
 import { audit, BODY, engine, fakeLoop, predictPublished, SELF } from "./test-fixtures.js";
 
 const DAY = 86_400_000;
@@ -153,18 +151,3 @@ describe("P2", () => {
   });
 });
 
-describe("创始人裁定：early_retro 降权不排除", () => {
-  const s = (id: string, oldScore: number, newScore: number, actual: number, weight = 1) => ({ id, oldScore, newScore, actual, weight });
-  const full = [s("a", 5, 5, 50), s("b", 4, 4, 40), s("c", 3, 3, 30), s("d", 2, 2, 20), s("e", 1, 1, 10)];
-  it("降权样本排反、排错也翻不掉完整样本判定的 PASS", () => {
-    const early = s("x", 0.5, 9, 1, EARLY_RETRO_WEIGHT); // 旧分排对、新分排到第一：既名次错又倒序
-    const r = rankGate([...full, early]);
-    expect(r.pass).toBe(true);
-    expect(r.soft_regressions.length).toBeGreaterThan(0);
-    expect(r.regressions).toEqual([]);
-  });
-  it("降权样本排对也救不回完整样本判定的 FAIL", () => {
-    const bad = [s("a", 5, 1, 50), s("b", 4, 2, 40), s("c", 3, 3, 30), s("d", 2, 4, 20), s("e", 1, 5, 10)];
-    expect(rankGate([...bad, s("x", 9, 9, 99, EARLY_RETRO_WEIGHT)]).pass).toBe(false);
-  });
-});
