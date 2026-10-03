@@ -35,8 +35,8 @@
 发布闭环(P0)                自动抓取(P1)                       消费(P2)
 ─────────────              ────────────────────────           ─────────────
 人工发布(clipboard)         metrics-pull-cycle (30min tick)
-  → GUI 确认已发布            → 每平台 TTL 门 + 退避状态机
-    +贴平台链接               → chrome-cdp 常驻实例
+  → GUI 确认已发布            → 每日定时门 + 退避状态机   
+    +贴平台链接               → ego lite（TaskSpace）
   → status=published           origin 内带登录态 fetch          聚合层(增量/龄期/cohort)
     +publishUrl                后台内部 JSON 接口                 → retro 周/月复盘
                              → TypedRow[]（含平台作品id）          → 代码算裁决,LLM 解释
@@ -45,12 +45,12 @@
                              → 结构化状态码,登录态过期=显式待办
 ```
 
-**抓取通道决策**：复用公众号已验证的 chrome-cdp 模式（`src/adapters/browser/wechat-mp-stats.ts`）——launchd 托管的常驻 Chrome 实例（`AUTOCREW_CHROME_CDP`，默认 `127.0.0.1:18792`），后台开标签到平台 origin，页面内 `fetch(..., {credentials:'include'})` 调内部接口。理由：
+**抓取通道决策**（2026-10-03 改，见 `docs/2026-10-03-metrics-pull-on-ego-lite-spec.md`）：走 ego lite——后端起 `ego-browser nodejs` 子进程，在 Agent 自己的 TaskSpace 里开平台后台页，`page.fetch()` 在页面内带登录态调内部接口（抖音在页面内旁听列表响应），抓完 `finish({ keep: [] })` 关页（`src/adapters/browser/ego-session.ts`）。原先的 chrome-cdp 常驻实例（`127.0.0.1:18792`，依赖 `~/.openclaw` 下的 launchd 服务）已删除。理由：
 
 - 登录态永远留在浏览器 profile，AutoCrew 不提取/不存储 cookie（仓库既有红线）；
 - 小红书若需页面内签名（`window._webmsxyw`），in-page 执行是唯一不搬运登录态的路径——**此假设在 XHS spike 中验证，验证失败则小红书降级为人工 CSV，不硬啃**（codex #2）;
 - 请求指纹与真人浏览一致，风控面最小；
-- 不引入 Playwright（Chrome 149+ `connect_over_cdp` 崩溃，`wechat-mp-stats.ts:10-12`）。
+- 发布已经在用 ego lite，平台登录态只需维护一份；不依赖本机以外的脚本（AGENTS.md「自带安装」）。
 
 **不采用**：① Chrome 扩展加 `chrome.alarms` 后台抓取——违反扩展红线（零后台轮询，`extension/background.js:5-9`）；② Playwright 独立 profile——重复造登录态管理。扩展通道保留为抖音人工兜底。
 
@@ -184,7 +184,7 @@ type PullResult = {
 - IPC channels：`flywheel:pull_status`（读状态）、`flywheel:pull_now`（手动触发，带 platform）、`flywheel:pull_toggle`（开关）；`channel-contracts.ts` 同步加契约；`ipc.ts` 接线；
 - 引擎事件：`metrics_pull` 事件（携 platform + status），SSE 驱动前端刷新；
 - **Report 页（数据回流）** 三平台状态区：每平台一行——开关、状态徽标（已连接 / 需扫码 / 风控暂停 / 接口变更 / 抓取失败 / 浏览器未连接 / 未启用）、最近成功时间、上次入库行数、「立即抓取」按钮；
-- `browser_unreachable`（chrome-cdp 连不上）三平台统一显示一条「浏览器未连接」+ 启动指引，不逐平台重复报错；
+- `browser_unreachable`（ego lite 连不上）三平台统一显示一条「浏览器未连接」+ 启动指引，不逐平台重复报错；
 - 需扫码 → 工作台待办「XX 平台登录态过期，扫码后数据继续回流」+ 平台后台 URL 指引（对齐 `wechat-pull.ts:39-42` 模式）。**视频号约 24h 登录态是社区经验，界面文案说「视频号可能需要每天扫码」，不承诺也不隐瞒**；
 - 抖音扩展通道保留人工兜底，Report 页标注两通道同源幂等。
 
@@ -245,7 +245,7 @@ outcome 是**累计快照**。retro 现按 `metricDate` 切窗（`retro.ts:101`�
 
 **状态**：
 - [ ] 0 篇已发布稿：抓取照常，行入库为 historical，Report 页明示「N 行未认领」；
-- [ ] chrome-cdp 未启动 → 统一「浏览器未连接」+ 指引；
+- [ ] ego lite 未启动 → 统一「浏览器未连接（ego lite）」+ 指引；
 - [ ] 平台已登出 → `needs_login` + 扫码待办，绝不误报为抓取失败；
 - [ ] 小红书 461/471 → `risk_control`，当日停自动抓取，界面明示；
 - [ ] 三平台部分成功部分失败 → 各自独立状态；
