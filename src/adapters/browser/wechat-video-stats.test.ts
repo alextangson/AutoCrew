@@ -13,9 +13,10 @@ import {
   pickFinderUsername,
   pickTitle,
   pullWechatVideoStats,
-  type WechatVideoCdp,
+  type WechatVideoBrowser,
 } from "./wechat-video-stats.js";
 import type { PageFetchOutcome } from "./pull-shared.js";
+import { EgoChannelError } from "./ego-session.js";
 
 const fixture = (rel: string): string => readFileSync(new URL(`./__fixtures__/${rel}`, import.meta.url), "utf8");
 const AUTH_OK = fixture("wechat-video/auth-data.json");
@@ -40,15 +41,18 @@ interface StubCfg {
   evalThrows?: Error;
 }
 
-function makeStub(cfg: StubCfg): { session: WechatVideoCdp; requests: string[] } {
+function makeStub(cfg: StubCfg): { session: WechatVideoBrowser; requests: string[] } {
   const requests: string[] = [];
-  const session: WechatVideoCdp = {
+  const session: WechatVideoBrowser = {
     async eval(expression: string) {
       if (expression.startsWith("location.host")) {
         return cfg.hostReady === false ? "about:blank|complete" : "channels.weixin.qq.com|complete";
       }
       if (cfg.evalThrows) throw cfg.evalThrows;
-      const url = /fetch\("([^"]+)"/.exec(expression)?.[1] ?? "";
+      return null;
+    },
+    async fetch(url: string) {
+      if (cfg.evalThrows) throw cfg.evalThrows;
       requests.push(url);
       for (const [fragment, out] of Object.entries(cfg.routes)) {
         if (url.includes(fragment)) return typeof out === "function" ? out() : out;
@@ -186,15 +190,15 @@ describe("pullWechatVideoStats(打桩)", () => {
   });
 
   it("拿到的 uin 进 X-WECHAT-UIN header", async () => {
-    let listExpr = "";
+    let listUin = "";
     const stub = makeStub({ routes: okRoutes() });
-    const inner = stub.session.eval.bind(stub.session);
-    stub.session.eval = async (expr: string, sid: string, awaitPromise?: boolean) => {
-      if (expr.includes("/post/post_list")) listExpr = expr;
-      return inner(expr, sid, awaitPromise);
+    const inner = stub.session.fetch.bind(stub.session);
+    stub.session.fetch = async (url, init, sid) => {
+      if (url.includes("/post/post_list")) listUin = init.headers?.["X-WECHAT-UIN"] ?? "";
+      return inner(url, init, sid);
     };
     await pullWechatVideoStats({ connect: async () => ({ session: stub.session }), navTimeoutMs: 300, delayMs: 0 });
-    expect(listExpr).toContain('"X-WECHAT-UIN":"2088888888"');
+    expect(listUin).toBe("2088888888");
   });
 
   it("uin 拿不到不阻断:退 0000000000,列表照抓", async () => {
@@ -236,13 +240,13 @@ describe("pullWechatVideoStats(打桩)", () => {
     expect(out.hasMore).toBe(true);
   });
 
-  it("chrome-cdp 连不上 → browser_unreachable", async () => {
+  it("ego lite 连不上 → browser_unreachable", async () => {
     const out = await pullWechatVideoStats({
       connect: async () => {
-        throw new Error("chrome-cdp WebSocket 已断开");
+        throw new EgoChannelError("browser_unreachable", "ego_unreachable", "连不上 ego lite");
       },
     });
-    expect(out).toMatchObject({ status: "browser_unreachable", errorCode: "cdp_unreachable" });
+    expect(out).toMatchObject({ status: "browser_unreachable", errorCode: "ego_unreachable" });
   });
 });
 

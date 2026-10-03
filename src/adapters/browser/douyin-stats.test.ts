@@ -1,10 +1,10 @@
 /**
- * douyin-stats.test.ts — 抖音 CDP 网络拦截路线。
- * 解析层吃脱敏 fixture;CDP 交互全打桩(假事件流 + 假命令通道),不真连浏览器。
+ * douyin-stats.test.ts — 抖音网络旁听路线。
+ * 解析层吃脱敏 fixture;旁听全打桩(旁听脚本本身在 ego-scripts.test.ts 里锁),不真连浏览器。
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { createEventTap, type EventTap } from "./cdp-network-tap.js";
+import { EgoChannelError } from "./ego-session.js";
 import {
   DOUYIN_MANAGE_URL,
   isDouyinListUrl,
@@ -13,7 +13,8 @@ import {
   protectBigIntIds,
   pullDouyinStats,
   coverUrlOf,
-  type DouyinCdp,
+  LIST_URL_PATTERNS,
+  type DouyinBrowser,
 } from "./douyin-stats.js";
 
 const fixture = (rel: string): string => readFileSync(new URL(`./__fixtures__/${rel}`, import.meta.url), "utf8");
@@ -23,64 +24,33 @@ const NOT_LOGGED_IN = fixture("douyin/not-logged-in.json");
 const DRIFT = fixture("douyin/schema-drift.json");
 const LEAK_MARKERS = ["FAKE_TOKEN_DO_NOT_LEAK", "FAKE_SECUID", "登录状态失效"];
 
-const responseEvent = (requestId: string, url: string) => ({
-  method: "Network.responseReceived",
-  sessionId: "s1",
-  params: { requestId, response: { url, status: 200 } },
-});
+const LIST_URL = "https://creator.douyin.com/web/api/creator/item/list?count=20";
 
 interface StubCfg {
-  bodies?: Record<string, string>;
-  events?: unknown[];
-  domText?: string;
-  evalThrows?: Error;
+  /** 页面发出的响应 URL → 响应体(undefined = 读不出) */
+  responses?: Array<{ url: string; body?: string }>;
+  domText?: string | null;
+  throws?: Error;
 }
 
-function makeStub(cfg: StubCfg): { session: DouyinCdp; tap: EventTap; calls: string[] } {
-  const tap = createEventTap();
-  const calls: string[] = [];
-  const session: DouyinCdp = {
-    async cmd(method, params) {
-      calls.push(method);
-      if (method === "Page.navigate") {
-        // 事件在导航之后异步到达 —— 与真实时序一致
-        setTimeout(() => {
-          for (const ev of cfg.events ?? []) tap.feed(JSON.stringify(ev));
-        }, 0);
-        return {};
-      }
-      if (method === "Network.getResponseBody") {
-        const rid = String((params as { requestId?: unknown } | undefined)?.requestId ?? "");
-        const body = cfg.bodies?.[rid];
-        if (body === undefined) throw new Error("No resource with given identifier found");
-        return { body, base64Encoded: false };
-      }
-      return {};
-    },
-    async eval() {
-      if (cfg.evalThrows) throw cfg.evalThrows;
-      return cfg.domText ?? "";
-    },
-    async openTab() {
-      calls.push("Target.createTarget");
-      return { targetId: "t1", sessionId: "s1" };
-    },
-    async closeTarget() {
-      calls.push("Target.closeTarget");
-    },
-    close() {
-      calls.push("close");
+/** 旁听桩:模拟 interceptScript 的产出(URL 匹配用真函数,不另写一套) */
+function makeStub(cfg: StubCfg): { browser: DouyinBrowser; calls: Array<Record<string, unknown>> } {
+  const calls: Array<Record<string, unknown>> = [];
+  const browser: DouyinBrowser = {
+    async intercept(p) {
+      calls.push(p);
+      if (cfg.throws) throw cfg.throws;
+      const hits = (cfg.responses ?? []).filter((r) => isDouyinListUrl(r.url));
+      const bodies = hits.map((r) => r.body).filter((b): b is string => b !== undefined);
+      return { matched: hits.length, bodies, domText: hits.length ? null : cfg.domText === undefined ? "" : cfg.domText };
     },
   };
-  return { session, tap, calls };
+  return { browser, calls };
 }
 
 const run = (cfg: StubCfg, over: Record<string, unknown> = {}) => {
   const stub = makeStub(cfg);
-  return {
-    stub,
-    result: pullDouyinStats({ connect: async () => ({ session: stub.session, tap: stub.tap }), waitMs: 200, settleMs: 0, ...over }),
-  };
+  return { stub, result: pullDouyinStats({ connect: () => stub.browser, waitMs: 200, settleMs: 0, ...over }) };
 };
 
 describe("列表 URL 匹配(新旧两路并存)", () => {
@@ -201,83 +171,51 @@ describe("mergeDouyinParses", () => {
   });
 });
 
-describe("pullDouyinStats(CDP 打桩)", () => {
-  it("拦到列表响应 → ok,并且导航到作品管理页、开了 Network、最后关标签", async () => {
-    const { stub, result } = run({
-      events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list?count=20")],
-      bodies: { r1: ITEM_LIST },
-    });
+describe("pullDouyinStats(旁听打桩)", () => {
+  it("拦到列表响应 → ok,旁听的是作品管理页 + 两套列表路径", async () => {
+    const { stub, result } = run({ responses: [{ url: LIST_URL, body: ITEM_LIST }] });
     const out = await result;
     expect(out.status).toBe("ok");
     expect(out.rows).toHaveLength(2);
-    expect(stub.calls).toContain("Network.enable");
-    expect(stub.calls).toContain("Target.closeTarget");
-    expect(stub.calls.indexOf("Network.enable")).toBeLessThan(stub.calls.indexOf("Page.navigate"));
+    expect(stub.calls[0]).toMatchObject({ url: DOUYIN_MANAGE_URL, patterns: LIST_URL_PATTERNS });
   });
 
   it("拦到多条列表响应 → 合并", async () => {
     const { result } = run({
-      events: [
-        responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list?count=20"),
-        responseEvent("r2", "https://creator.douyin.com/janus/douyin/creator/pc/work_list?page_size=20"),
-        responseEvent("r3", "https://creator.douyin.com/web/api/media/user/info/?aid=1128"),
+      responses: [
+        { url: LIST_URL, body: ITEM_LIST },
+        { url: "https://creator.douyin.com/janus/douyin/creator/pc/work_list?page_size=20", body: LEGACY },
+        { url: "https://creator.douyin.com/web/api/media/user/info/?aid=1128", body: "{}" },
       ],
-      bodies: { r1: ITEM_LIST, r2: LEGACY, r3: "{}" },
     });
     const out = await result;
     expect(out.status).toBe("ok");
     expect(out.rows.map((r) => r.platformItemId)).toContain("7400000000000000123");
   });
 
-  it("什么都没拦到 + 页面是登录墙 → needs_login(不是 timeout)", async () => {
-    const out = await run({ events: [], domText: "扫码登录 抖音创作者中心" }).result;
+  it("什么都没拦到 + 跳了登录页(页面是登录墙) → needs_login(不是 timeout)", async () => {
+    const out = await run({ responses: [], domText: "扫码登录 抖音创作者中心" }).result;
     expect(out).toMatchObject({ status: "needs_login", rows: [], errorCode: "dom_login_wall" });
   });
 
   it("什么都没拦到 + 页面无登录线索 → timeout(不猜 schema 变了)", async () => {
-    const out = await run({ events: [], domText: "数据概览 作品数据" }).result;
+    const out = await run({ responses: [], domText: "数据概览 作品数据" }).result;
     expect(out).toMatchObject({ status: "timeout", rows: [], errorCode: "no_list_response" });
   });
 
-  it("响应抢在 waitForEvent 订阅之前到达,也不会被当成「什么都没拦到」", async () => {
-    const stub = makeStub({ bodies: { r1: ITEM_LIST } });
-    // 在 Page.navigate 返回之前同步塞事件:收集器已订阅,等待器还没 —— 正是那道缝
-    const original = stub.session.cmd.bind(stub.session);
-    stub.session.cmd = async (method, params, sessionId) => {
-      const out = await original(method, params, sessionId);
-      if (method === "Page.navigate") {
-        stub.tap.feed(JSON.stringify(responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")));
-      }
-      return out;
-    };
-    const out = await pullDouyinStats({
-      connect: async () => ({ session: stub.session, tap: stub.tap }),
-      waitMs: 50,
-      settleMs: 0,
-    });
-    expect(out.status).toBe("ok");
-  });
-
   it("拦到了但响应体读不出 → timeout(不误报 canary)", async () => {
-    const out = await run({ events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")] }).result;
+    const out = await run({ responses: [{ url: LIST_URL }] }).result;
     expect(out).toMatchObject({ status: "timeout", errorCode: "response_body_unavailable" });
   });
 
   it("拦到了但 schema 不认 → schema_changed + 零行", async () => {
-    const out = await run({
-      events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")],
-      bodies: { r1: DRIFT },
-    }).result;
+    const out = await run({ responses: [{ url: LIST_URL, body: DRIFT }] }).result;
     expect(out).toMatchObject({ status: "schema_changed", rows: [] });
   });
 
-  it("chrome-cdp 连不上 → browser_unreachable", async () => {
-    const out = await pullDouyinStats({
-      connect: async () => {
-        throw new Error("chrome-cdp WebSocket 连接失败(http://127.0.0.1:18792)");
-      },
-    });
-    expect(out).toMatchObject({ status: "browser_unreachable", rows: [], errorCode: "cdp_unreachable" });
+  it("ego lite 连不上 → browser_unreachable", async () => {
+    const out = await run({ throws: new EgoChannelError("browser_unreachable", "ego_unreachable", "连不上 ego lite") }).result;
+    expect(out).toMatchObject({ status: "browser_unreachable", rows: [], errorCode: "ego_unreachable" });
   });
 
   it("行超上限 → 切到 limit + hasMore:true", async () => {
@@ -286,8 +224,7 @@ describe("pullDouyinStats(CDP 打桩)", () => {
       has_more: false,
       items: Array.from({ length: 5 }, (_, i) => ({ id: `x${i}`, item_title: `t${i}`, create_time: "1783600000", metrics: { view_count: "1" } })),
     });
-    const out = await run({ events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")], bodies: { r1: many } }, { limit: 2 })
-      .result;
+    const out = await run({ responses: [{ url: LIST_URL, body: many }] }, { limit: 2 }).result;
     expect(out.rows).toHaveLength(2);
     expect(out.hasMore).toBe(true);
   });
@@ -295,29 +232,25 @@ describe("pullDouyinStats(CDP 打桩)", () => {
 
 describe("脱敏红线(spec §6:lastError 永不含原始响应)", () => {
   it("未登录 fixture 里的假 token 不出现在任何返回值里", async () => {
-    const out = await run({
-      events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")],
-      bodies: { r1: NOT_LOGGED_IN },
-    }).result;
+    const out = await run({ responses: [{ url: LIST_URL, body: NOT_LOGGED_IN }] }).result;
     const dump = JSON.stringify(out);
     for (const marker of LEAK_MARKERS) expect(dump).not.toContain(marker);
     expect(out.errorCode).toBe("envelope:8");
   });
 
-  it("页面内异常把响应片段带进 message,也漏不出去", async () => {
-    const out = await run({
-      events: [],
-      evalThrows: new Error('页面内表达式抛错:{"msToken":"FAKE_TOKEN_DO_NOT_LEAK_9f3a1c"}'),
-    }).result;
+  it("脚本内异常把响应片段带进 message,也漏不出去", async () => {
+    const out = await run({ throws: new Error('ego 脚本内异常:{"msToken":"FAKE_TOKEN_DO_NOT_LEAK_9f3a1c"}') }).result;
     expect(JSON.stringify(out)).not.toContain("FAKE_TOKEN_DO_NOT_LEAK");
+    expect(out).toMatchObject({ status: "error", errorCode: "exception" });
+  });
+
+  it("页面文本取不到 → timeout(dom_probe_failed)", async () => {
+    const out = await run({ responses: [], domText: null }).result;
     expect(out).toMatchObject({ status: "timeout", errorCode: "dom_probe_failed" });
   });
 
   it("成功路径也不带原文:只有 title/publishedAt/id/metrics 四类字段", async () => {
-    const out = await run({
-      events: [responseEvent("r1", "https://creator.douyin.com/web/api/creator/item/list")],
-      bodies: { r1: ITEM_LIST },
-    }).result;
+    const out = await run({ responses: [{ url: LIST_URL, body: ITEM_LIST }] }).result;
     const dump = JSON.stringify(out);
     for (const marker of LEAK_MARKERS) expect(dump).not.toContain(marker);
     expect(Object.keys(out.rows[0]).sort()).toEqual(["metrics", "platformItemId", "publishedAt", "title"]);

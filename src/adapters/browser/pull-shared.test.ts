@@ -2,6 +2,7 @@
  * pull-shared.test.ts — 三平台抓取器共享件。
  * 锁的是三条铁律:零写入(空 rows)、errorCode 脱敏、分页上限 200 只说 hasMore。
  */
+import { EgoChannelError } from "./ego-session.js";
 import { describe, it, expect } from "vitest";
 import type { TypedRow } from "./pull-types.js";
 import {
@@ -10,7 +11,6 @@ import {
   classifyThrown,
   envelopeOf,
   failure,
-  fetchInPageWithInit,
   httpFailure,
   idOf,
   isoFromMillis,
@@ -68,8 +68,12 @@ describe("errorCode 脱敏(spec §4.1 codex #22)", () => {
   });
 
   it("连接类异常 → browser_unreachable;超时类 → timeout", () => {
-    expect(classifyThrown(new Error("chrome-cdp WebSocket 已断开")).status).toBe("browser_unreachable");
-    expect(classifyThrown(new Error("CDP Runtime.evaluate 30000ms 无响应")).status).toBe("timeout");
+    expect(classifyThrown(new Error("ego 脚本内异常:Target closed")).status).toBe("browser_unreachable");
+    expect(classifyThrown(new Error("ego 脚本内异常:page.goto timeout 30000ms")).status).toBe("timeout");
+  });
+
+  it("通道层故障原样采信状态与错误码", () => {
+    expect(classifyThrown(new EgoChannelError("error", "ego_bad_output", "x"))).toMatchObject({ status: "error", errorCode: "ego_bad_output", rows: [] });
   });
 });
 
@@ -210,28 +214,6 @@ describe("paginate", () => {
     );
     expect(calls).toBe(3);
     expect(out.hasMore).toBe(true);
-  });
-});
-
-describe("fetchInPageWithInit", () => {
-  it("把 method/headers/body 拼进页面内 fetch,并恒带 credentials:'include'", async () => {
-    let expr = "";
-    const page = {
-      async eval(e: string) {
-        expr = e;
-        return { httpStatus: 200, finalUrl: "u", contentType: "application/json", bodyText: "{}" };
-      },
-    };
-    const out = await fetchInPageWithInit(page, "https://x.test/a", { method: "POST", headers: { "X-WECHAT-UIN": "1" }, body: '{"a":1}' }, "s1");
-    expect(expr).toContain('"method":"POST"');
-    expect(expr).toContain('"X-WECHAT-UIN":"1"');
-    expect(expr).toContain('"credentials":"include"');
-    expect(out.httpStatus).toBe(200);
-  });
-
-  it("页面返回形状不对 → 抛错,不假装拿到了响应", async () => {
-    const page = { async eval() { return { oops: true }; } };
-    await expect(fetchInPageWithInit(page, "https://x.test/a", {}, "s1")).rejects.toThrow(/形状异常/);
   });
 });
 

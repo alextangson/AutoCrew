@@ -15,7 +15,7 @@
  * Referer:文档要求带,但浏览器禁止 fetch 设置 Referer——我们是在后台页 origin 内发起的,
  * Referer 由页面自身 URL 自动带上,反而比手工拼更真;所以这里不设,也不算漏项。
  */
-import { CdpSession } from "./cdp-session.js";
+import { EgoSession } from "./ego-session.js";
 import type { OutcomeMetrics } from "../../modules/flywheel/outcome-schema.js";
 import type { PullResult, TypedRow } from "./pull-types.js";
 import {
@@ -24,7 +24,6 @@ import {
   classifyThrown,
   envelopeOf,
   failure,
-  fetchInPageWithInit,
   firstString,
   idOf,
   isRecord,
@@ -89,7 +88,7 @@ async function postJson(
   body: Record<string, unknown>,
   uin: string,
 ): Promise<PageFetchOutcome> {
-  return fetchInPageWithInit(page, apiUrl(path), { method: "POST", headers: headers(uin), body: JSON.stringify(body) }, sessionId);
+  return page.fetch(apiUrl(path), { method: "POST", headers: headers(uin), body: JSON.stringify(body) }, sessionId);
 }
 
 /** finderUsername 的真实路径未确认,认几条社区里出现过的形态(**待校准**) */
@@ -159,7 +158,7 @@ export function parsePostList(res: PageFetchOutcome): PostListParse {
   return { kind: "ok", rows: data.list.map(mapPostRow), totalCount: total };
 }
 
-export interface WechatVideoCdp extends PageEvaluator, TabHost {
+export interface WechatVideoBrowser extends PageEvaluator, TabHost {
   close(): void;
 }
 
@@ -169,8 +168,8 @@ export interface PullWechatVideoOptions {
   /** 翻页间隔,默认 300ms:少打请求 = 少碰风控 */
   delayMs?: number;
   navTimeoutMs?: number;
-  /** 测试注入点:默认连常驻 chrome-cdp */
-  connect?: () => Promise<{ session: WechatVideoCdp }>;
+  /** 测试注入点:默认走 ego lite 通道 */
+  connect?: () => Promise<{ session: WechatVideoBrowser }>;
 }
 
 /** uin 拿不到不阻断:只是 header 少一个真值,列表接口照打(端点文档说未取到填 0000000000) */
@@ -225,13 +224,15 @@ async function fetchPostPage(
  * | HTML 伪装 200 / JSON 解析失败 / 缺 `errCode` / 缺 `data.list` | `schema_changed` + 空 rows |
  * | post_list `errCode !== 0` | `error`(`post_list_errcode:<码>`) |
  * | 标签页超时未落到 channels.weixin.qq.com | `timeout` |
- * | chrome-cdp 连不上/连接断开 | `browser_unreachable` |
+ * | ego lite 没开 / `ego-browser` 不在 | `browser_unreachable` |
+ * | 单次抓取总超时(子进程被杀) | `timeout` |
+ * | `ego-browser` 输出不是预期 JSON | `error`(`ego_bad_output`),零写入 |
  */
 export async function pullWechatVideoStats(opts: PullWechatVideoOptions = {}): Promise<PullResult> {
   const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
-  let session: WechatVideoCdp;
+  let session: WechatVideoBrowser;
   try {
-    session = opts.connect ? (await opts.connect()).session : await CdpSession.connect();
+    session = opts.connect ? (await opts.connect()).session : new EgoSession({ label: "wechat_video" });
   } catch (err) {
     return classifyThrown(err);
   }

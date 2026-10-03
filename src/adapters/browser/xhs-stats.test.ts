@@ -4,8 +4,9 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { XHS_PAGE, judgeLogin, mapNoteRow, parseNoteList, pullXhsStats, signUri, type XhsCdp } from "./xhs-stats.js";
+import { XHS_PAGE, judgeLogin, mapNoteRow, parseNoteList, pullXhsStats, signUri, type XhsBrowser } from "./xhs-stats.js";
 import type { PageFetchOutcome } from "./pull-shared.js";
+import { EgoChannelError } from "./ego-session.js";
 
 const fixture = (rel: string): string => readFileSync(new URL(`./__fixtures__/${rel}`, import.meta.url), "utf8");
 const USER_INFO = fixture("xhs/user-info.json");
@@ -30,11 +31,11 @@ interface StubCfg {
   sign?: "ok" | "late" | "missing";
 }
 
-function makeStub(cfg: StubCfg): { session: XhsCdp; requests: string[]; signHeaders: string[] } {
+function makeStub(cfg: StubCfg): { session: XhsBrowser; requests: string[]; signHeaders: string[] } {
   const requests: string[] = [];
   const signHeaders: string[] = [];
   let signCalls = 0;
-  const session: XhsCdp = {
+  const session: XhsBrowser = {
     async eval(expression: string) {
       if (expression.startsWith("location.host")) {
         return cfg.hostReady === false ? "about:blank|complete" : "creator.xiaohongshu.com|complete";
@@ -45,9 +46,11 @@ function makeStub(cfg: StubCfg): { session: XhsCdp; requests: string[]; signHead
         if (mode === "missing" || (mode === "late" && signCalls === 1)) return { missing: true };
         return { missing: false, xs: "XYW_fake_xs", xt: "1783600000000" };
       }
-      const url = /fetch\("([^"]+)"/.exec(expression)?.[1] ?? "";
+      return null;
+    },
+    async fetch(url: string, init) {
       requests.push(url);
-      if (expression.includes('"x-s"')) signHeaders.push(url);
+      if (init.headers?.["x-s"]) signHeaders.push(url);
       for (const [fragment, out] of Object.entries(cfg.routes)) {
         if (url.includes(fragment)) return typeof out === "function" ? out() : out;
       }
@@ -250,13 +253,13 @@ describe("pullXhsStats(打桩)", () => {
     expect(out.hasMore).toBe(true);
   });
 
-  it("chrome-cdp 连不上 → browser_unreachable", async () => {
+  it("ego lite 连不上 → browser_unreachable", async () => {
     const out = await pullXhsStats({
       connect: async () => {
-        throw new Error("chrome-cdp WebSocket 连接失败");
+        throw new EgoChannelError("browser_unreachable", "ego_unreachable", "连不上 ego lite");
       },
     });
-    expect(out).toMatchObject({ status: "browser_unreachable", errorCode: "cdp_unreachable" });
+    expect(out).toMatchObject({ status: "browser_unreachable", errorCode: "ego_unreachable" });
   });
 });
 

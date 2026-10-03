@@ -1,6 +1,6 @@
 /**
  * flywheel:wechat_pull —— 公众号后台一键拉数(GUI 数据回流页触发,有人值守低频只读)。
- * 拉取(chrome-cdp 登录态)→ statsToImportRows → 既有导入管线(校验/标题匹配/幂等全继承)。
+ * 拉取(ego lite 登录态)→ statsToImportRows → 既有导入管线(校验/标题匹配/幂等全继承)。
  * 登录态失效给明确扫码指引;瞬时超时说清可重试——都不静默(channel-poller 卡死教训)。
  */
 import { pullWechatMpStats, statsToImportRows } from "../adapters/browser/wechat-mp-stats.js";
@@ -8,13 +8,13 @@ import { rowsToCsvText } from "../bridge/ingest.js";
 import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
 import { localDateStamp } from "../modules/analytics/quality-baseline.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { EgoChannelError } from "../adapters/browser/ego-session.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
 
-const LOGIN_HINT =
-  "公众号登录态失效——扫码续期:uv run --with websocket-client " +
-  "~/.openclaw/workspace-muse-gzh/scripts/pull_wechat_stats.py --login(扫完重点一次)";
+const LOGIN_HINT = "公众号登录态失效——在 ego lite 里登录公众号后台(mp.weixin.qq.com,扫码),登录后回来再点一次";
+const BROWSER_HINT = "浏览器未连接（ego lite）——打开 ego lite 应用并保持运行，再点一次";
 
 export async function wechatPullHandler(
   payload: Payload,
@@ -31,9 +31,13 @@ export async function wechatPullHandler(
   try {
     res = await pull();
   } catch (err) {
+    if (err instanceof EgoChannelError && err.status === "browser_unreachable") {
+      emit("run_failed", "公众号拉数失败:浏览器未连接（ego lite）");
+      return { ok: false, error: BROWSER_HINT };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     emit("run_failed", `公众号拉数失败:${msg.slice(0, 80)}`);
-    return { ok: false, error: `连不上 chrome-cdp 或拉取异常:${msg}` };
+    return { ok: false, error: `公众号拉数异常(ego lite 通道):${msg}` };
   }
 
   if (res.status === "out") {
@@ -41,8 +45,8 @@ export async function wechatPullHandler(
     return { ok: false, needLogin: true, error: LOGIN_HINT };
   }
   if (res.status === "timeout") {
-    emit("run_failed", "后台页导航超时(Chrome 忙,瞬时)");
-    return { ok: false, error: "后台页导航没起来(Chrome 忙?已自动重试 3 次)——非登录问题,稍后重试即可" };
+    emit("run_failed", "后台页导航超时(ego lite 忙,瞬时)");
+    return { ok: false, error: "后台页导航没起来(ego lite 忙?已自动重试 3 次)——非登录问题,稍后重试即可" };
   }
   if (res.rows.length === 0) {
     emit("run_done", "公众号后台没有已群发文章数据");
