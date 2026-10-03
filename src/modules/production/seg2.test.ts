@@ -132,6 +132,14 @@ describe("批准即登记（§5）", () => {
     const srts = doc.facts.filter((f) => f.kind === "srt");
     expect(srts.map((f) => f.for_cut).sort()).toEqual([s.cut.sha256, v2sha].sort());
     expect((await getContent(s.c.id, env.dir))!.status).toBe("publish_ready");
+    // 发布出口 / 登记投影认的是绑新版的那份字幕：删掉旧版字幕不影响（Codex 审 P2）
+    const v1srt = srts.find((f) => f.for_cut === s.cut.sha256)!, v2srt = srts.find((f) => f.for_cut === v2sha)!;
+    expect(v2srt.path).not.toBe(v1srt.path);
+    await fs.rm(path.join(projectRoot(env, s.c.id), v1srt.path!));
+    const pkg = await registeredPackage((await getContent(s.c.id, env.dir))!, env.dir);
+    expect(pkg).toMatchObject({ ok: true });
+    expect(pkg!.ok && pkg!.files.srt).toBe(path.join(projectRoot(env, s.c.id), v2srt.path!));
+    expect((await getContent(s.c.id, env.dir))!.video?.final?.srt_path).toBe(path.join(projectRoot(env, s.c.id), v2srt.path!));
   });
 
   it("登记记录写不进去（提交点之前失败）：拷进项目的副本撤回，旧封面放回", async () => {
