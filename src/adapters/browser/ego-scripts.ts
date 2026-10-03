@@ -58,9 +58,26 @@ ${body}
 `;
 }
 
-/** 页面上可见文字（含 shadow DOM，视频号是 wujie 微前端）：只用于判登录墙 / 风控页，不用来抓数 */
-const PAGE_TEXT_EXPR =
-  "(()=>{let t=document.body?document.body.innerText:'';for(const el of document.querySelectorAll('*'))if(el.shadowRoot)t+='\\n'+(el.shadowRoot.textContent||'');return t.slice(0,6000)})()";
+/**
+ * 只看真正的验证/登录界面，不看整页文字（作品标题里有「安全验证」「扫码登录」不算）：
+ * 弹层（dialog / aria-modal）、验证码容器（class/id 含 captcha/verify/slider/geetest/secsdk/nc_）、验证 iframe 的地址，
+ * 以及登录表单 / 二维码登录容器（class/id 含 login/qrcode、密码框所在表单）。含 shadow DOM，只取可见元素。
+ */
+const GATE_SCOPE_EXPR = `(() => { /*__GATE_SCOPE__*/
+  const roots = [document];
+  for (const el of document.querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const CH = '[role=dialog],[aria-modal=true],[class*=captcha i],[id*=captcha i],[class*=verify i],[id*=verify i],[class*=slider i],[class*=geetest i],[class*=secsdk i],[class*=nc_ i]';
+  const LG = '[class*=login i],[id*=login i],[class*=qrcode i]';
+  let challenge = '', login = '';
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(CH)) if (visible(el)) challenge += ' ' + (el.innerText || el.textContent || '').slice(0, 500);
+    for (const el of root.querySelectorAll('iframe')) if (visible(el)) challenge += ' ' + String(el.src || '');
+    for (const el of root.querySelectorAll(LG)) if (visible(el)) login += ' ' + (el.innerText || el.textContent || '').slice(0, 500);
+    for (const el of root.querySelectorAll('input[type=password]')) if (visible(el)) login += ' ' + ((el.form && el.form.innerText) || '');
+  }
+  return { challenge: challenge.slice(0, 6000), login: login.slice(0, 6000) };
+})()`;
 
 /**
  * 找翻页控件（含 shadow DOM）：css 圈候选，texts 非空按文字精确匹配，为空取「无文字」的那个（图标箭头）；
@@ -112,9 +129,11 @@ const BROWSE_HELPERS = `      const page = task.page("p1");
         if (G.riskUrl && G.riskUrl.test(href)) return "risk";
         if (G.loginUrl && G.loginUrl.test(href)) return "login";
         if (!withText) return null;
-        const text = String(await page.evaluate(${JSON.stringify(PAGE_TEXT_EXPR)}).catch(() => ""));
-        if (G.riskText && G.riskText.test(text)) return "risk";
-        if (G.loginText && G.loginText.test(text)) return "login";
+        const ui = (await page.evaluate(${JSON.stringify(GATE_SCOPE_EXPR)}).catch(() => null)) || {};
+        const challenge = String(ui.challenge || ""), login = String(ui.login || "");
+        if (G.riskText && G.riskText.test(challenge)) return "risk";
+        if (G.riskUrl && G.riskUrl.test(challenge)) return "risk";
+        if (G.loginText && G.loginText.test(login)) return "login";
         return null;
       };
       const readBody = async (requestId) => {
@@ -180,22 +199,29 @@ const BROWSE_WAIT = `      const waitPage = async (ms) => {
         return "moved";
       };`;
 
-const BROWSE_MAIN = `      const clickText = async (texts) => {
+const BROWSE_MAIN = `      // 每次点菜单前都重新看一眼 URL 与验证/登录界面（停顿期间也可能弹出来）
+      const clickText = async (texts) => {
+        const g = await gate(true);
+        if (g) return g;
         const hit = await findControl({ css: P.entry.css, texts });
-        if (!hit || !hit.found || hit.disabled) return false;
+        if (!hit || !hit.found || hit.disabled) return "missing";
         await clickAt(hit);
-        return true;
+        return "clicked";
       };
       // 像人一样从官方页面的菜单点进数据页（公众号：内容管理 → 发表记录）；不手拼任何数据地址
       const enter = async () => {
         const deadline = Date.now() + P.waitMs;
         while (Date.now() < deadline) {
-          const g = await gate(false);
-          if (g) return g;
-          if (await clickText(P.entry.target)) return "ok";
-          if (P.entry.openers.length > 0 && (await clickText(P.entry.openers))) {
-            await pause();
-            if (await clickText(P.entry.target)) return "ok";
+          const t = await clickText(P.entry.target);
+          if (t !== "missing") return t === "clicked" ? "ok" : t;
+          if (P.entry.openers.length > 0) {
+            const o = await clickText(P.entry.openers);
+            if (o === "login" || o === "risk") return o;
+            if (o === "clicked") {
+              await pause();
+              const t2 = await clickText(P.entry.target);
+              if (t2 !== "missing") return t2 === "clicked" ? "ok" : t2;
+            }
           }
           await sleep(1000);
         }

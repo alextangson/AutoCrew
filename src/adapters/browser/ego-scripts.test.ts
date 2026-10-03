@@ -34,7 +34,10 @@ interface Sim {
   /** 每次「翻页动作」后页面会收到的响应（第 0 项是打开页面时） */
   bodies: Array<{ body: string; status?: number }>;
   href?: string;
+  /** 整页可见文字（含作品标题） */
   text?: string;
+  /** 真正的验证/登录界面（弹层、验证码容器、登录表单）里的文字 */
+  challenge?: { kind: "risk" | "login"; text: string };
   /** 翻页控件：undefined = 找得到且可点 */
   next?: { found: boolean; disabled?: boolean };
   /** 页面菜单上看得见的文字（入口点击用） */
@@ -70,6 +73,10 @@ function fakePage(sim: Sim) {
         const t = cfg.texts.find((x) => (sim.menu ?? []).includes(x));
         if (t) clicked.push(t);
         return t ? { found: true, disabled: false, x: 5, y: 5 } : { found: false };
+      }
+      if (expr.includes("__GATE_SCOPE__")) {
+        const c = sim.challenge;
+        return { challenge: c?.kind === "risk" ? c.text : "", login: c?.kind === "login" ? c.text : "" };
       }
       return sim.text ?? "";
     },
@@ -148,7 +155,7 @@ describe("browseScript — 只旁听页面自己的响应", () => {
   });
 
   it("P1-2 有数据但页面文字是滑块验证 → 同样收手", async () => {
-    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }], text: "请拖动滑块完成验证" });
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }], text: "请拖动滑块完成验证", challenge: { kind: "risk", text: "请拖动滑块完成验证" } });
     expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk" });
     expect(r.actions).not.toContain("click");
   });
@@ -168,7 +175,7 @@ describe("browseScript — 只旁听页面自己的响应", () => {
   });
 
   it("等不到数据、页面是滑块验证 → gate risk，立刻收手", async () => {
-    const r = await run({ bodies: [], text: "请拖动下方滑块完成拼图" });
+    const r = await run({ bodies: [], text: "请拖动下方滑块完成拼图", challenge: { kind: "risk", text: "请拖动下方滑块完成拼图" } });
     expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk" });
     expect(r.actions).toEqual(["goto"]);
   });
@@ -206,7 +213,7 @@ describe("browseScript — 只旁听页面自己的响应", () => {
 
   it("P1-1 入口：公众号没登录（菜单不出来、页面是登录页）→ gate login；菜单一直找不到 → entry_missing", async () => {
     const entry = { css: "a,span", target: ["发表记录"], openers: [] };
-    const login = await run({ bodies: [], href: "https://mp.weixin.qq.com/", text: "使用账号登录 扫码登录" }, { entry, gates: { loginText: "扫码登录" } });
+    const login = await run({ bodies: [], href: "https://mp.weixin.qq.com/", text: "使用账号登录 扫码登录", challenge: { kind: "login", text: "使用账号登录 扫码登录" } }, { entry, gates: { loginText: "扫码登录" } });
     expect(login.results[0]).toMatchObject({ end: "gate", gate: "login", pages: 0 });
     const missing = await run({ bodies: [] }, { entry });
     expect(missing.results[0]).toMatchObject({ end: "entry_missing", pages: 0 });
@@ -220,6 +227,47 @@ describe("browseScript — 只旁听页面自己的响应", () => {
     expect(r.finishes).toEqual([{ keep: [] }]);
     const c = await execScript(browseScript(params()), {}, { connectThrows: true });
     expect(c.results).toMatchObject([{ ok: false, stage: "connect" }]);
+  });
+});
+
+describe("Codex 第 2 轮", () => {
+  const entry = { css: "a,span", target: ["发表记录"], openers: ["内容管理"] };
+  const overlay = { kind: "risk" as const, text: "请完成安全验证" };
+
+  it("R2-P1 入口：URL 没变的验证弹层盖着 → 不点菜单，gate risk", async () => {
+    const r = await run({ bodies: [{ body: body(1, false) }], menu: ["发表记录"], text: overlay.text, challenge: overlay }, { entry });
+    expect(r.clicked).toEqual([]);
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk", pages: 0 });
+  });
+
+  it("R2-P1 入口：点开「内容管理」后停顿期间弹出验证 → 不再点「发表记录」", async () => {
+    const sim: Sim = { bodies: [{ body: body(1, false) }], menu: ["内容管理"] };
+    const { page, clicked } = fakePage(sim);
+    const ev = page.evaluate;
+    page.evaluate = async (expr: string) => {
+      if (clicked.includes("内容管理") && !sim.challenge) {
+        sim.challenge = overlay;
+        sim.text = overlay.text;
+        sim.menu = ["内容管理", "发表记录"];
+      }
+      return ev(expr);
+    };
+    const r = await execScript(browseScript(params({ entry })), page);
+    expect(clicked).toEqual(["内容管理"]);
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk" });
+  });
+
+  it("R2-P2 作品标题里有「安全验证」「扫码登录」不算风控/登录（只认真正的验证/登录界面）", async () => {
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2, false) }], text: "如何用AI实现安全验证 扫码登录到底安不安全 请拖动滑块完成拼图教程" });
+    expect(r.results[0]).toMatchObject({ end: "no_more", pages: 2, gate: null });
+    expect(r.actions).toContain("click");
+  });
+
+  it("R2-P2 标题无关：真正的登录表单出现才判 login", async () => {
+    const r = await run({ bodies: [], text: "教你扫码登录", challenge: { kind: "login", text: "扫码登录" } });
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "login" });
+    const none = await run({ bodies: [], text: "教你扫码登录" });
+    expect(none.results[0]).toMatchObject({ end: "no_response", gate: null });
   });
 });
 
