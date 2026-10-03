@@ -9,7 +9,7 @@
  * 登录态三分法(in/out/timeout)原样保留:后台标签导航慢是瞬时态,绝不误报"请扫码"。
  * 新抓取器统一用 pull-types 的 7 值状态码,三态映射见 wechatStatusToPullStatus。
  */
-import { EgoSession, type EgoRunner } from "./ego-session.js";
+import { EgoChannelError, EgoSession, type EgoRunner } from "./ego-session.js";
 import { withTab, type TabRef } from "./pull-shared.js";
 import type { PullStatus } from "./pull-types.js";
 
@@ -67,7 +67,11 @@ export function parsePublishPage(body: string): WechatStatRow[] {
       }
     }
     const info = pi as
-      | { sent_status?: { total?: number }; sent_info?: { time?: number }; appmsg_info?: Array<Record<string, unknown>> }
+      | {
+          sent_status?: { total?: number };
+          sent_info?: { time?: number };
+          appmsg_info?: Array<Record<string, unknown>>;
+        }
       | undefined;
     const fans = Number(info?.sent_status?.total ?? 0) || 0;
     const sentTime = Number(info?.sent_info?.time ?? 0) || 0;
@@ -159,22 +163,44 @@ async function fetchAllPages(
  * 通道故障(ego lite 没开 / 超时 / 输出不对)抛 EgoChannelError,由调用方给可见状态。
  */
 export async function pullWechatMpStats(
-  opts: { total?: number; pageSize?: number; attempts?: number; runner?: EgoRunner } = {},
+  opts: { total?: number; pageSize?: number; attempts?: number; runner?: EgoRunner; retryDelayMs?: number } = {},
 ): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
-  const { total = 100, pageSize = 20, attempts = 3 } = opts;
+  const { total = 100, pageSize = 20, attempts = 3, retryDelayMs = 1000 } = opts;
   const ego = new EgoSession({ label: "wechat_mp", runner: opts.runner });
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const res = await withTab(ego, BACKEND, async (tab) => {
+    const res = await openAndProbe(ego, total, pageSize);
+    if (res.status === "in") return res;
+    if (res.status === "out") return { status: "out", rows: [] };
+    if (!ego.hasTimeLeft()) break;
+    await new Promise((r) => setTimeout(r, retryDelayMs)); // timeout → 重开再试
+  }
+  return { status: "timeout", rows: [] };
+}
+
+/** 开页导航超时(脚本里 goto 超时)是瞬时态:当成 timeout 交给重试循环;通道故障/总超时照常抛 */
+function isRetryableNavTimeout(err: unknown): boolean {
+  return !(err instanceof EgoChannelError) && err instanceof Error && /timed? ?out|timeout/i.test(err.message);
+}
+
+async function openAndProbe(
+  ego: EgoSession,
+  total: number,
+  pageSize: number,
+): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
+  try {
+    return await withTab(ego, BACKEND, async (tab) => {
       const probe = await probeBackend(ego, tab);
       if (probe.status === "in" && probe.token) {
-        return { status: "in" as WechatSessionStatus, rows: await fetchAllPages(ego, tab, probe.token, total, pageSize) };
+        return {
+          status: "in" as WechatSessionStatus,
+          rows: await fetchAllPages(ego, tab, probe.token, total, pageSize),
+        };
       }
       // 拿不到 token 的"已登录"当瞬时态处理:重开再试,不冒充登录失效
       return { status: probe.status === "in" ? "timeout" : probe.status, rows: [] as WechatStatRow[] };
     });
-    if (res.status === "in") return res;
-    if (res.status === "out") return { status: "out", rows: [] };
-    await new Promise((r) => setTimeout(r, 1000)); // timeout → 重开再试
+  } catch (err) {
+    if (isRetryableNavTimeout(err)) return { status: "timeout", rows: [] };
+    throw err;
   }
-  return { status: "timeout", rows: [] };
 }

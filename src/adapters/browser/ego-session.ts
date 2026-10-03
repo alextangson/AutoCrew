@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   EGO_RESULT_MARKER,
+  EGO_SPACE_MARKER,
   evalScript,
   fetchScript,
   finishScript,
@@ -102,8 +103,10 @@ export function spawnEgoRunner(binary: string | null = resolveEgoBinary()): EgoR
         return;
       }
       const child = spawn(binary, ["nodejs"], { stdio: ["pipe", "pipe", "pipe"], detached: true });
-      let stdout = "";
-      let stderr = "";
+      // 按 Buffer 收、最后整体解码：逐块 String() 会把跨块的中文拆成乱码，JSON 却仍合法（静默坏数据）
+      const outChunks: Buffer[] = [];
+      const errChunks: Buffer[] = [];
+      const text = () => ({ stdout: Buffer.concat(outChunks).toString("utf8"), stderr: Buffer.concat(errChunks).toString("utf8") });
       let settled = false;
       const finish = (r: EgoRunOutput) => {
         if (settled) return;
@@ -117,20 +120,36 @@ export function spawnEgoRunner(binary: string | null = resolveEgoBinary()): EgoR
         } catch {
           child.kill("SIGKILL");
         }
-        finish({ stdout, stderr, exitCode: null, timedOut: true });
+        finish({ ...text(), exitCode: null, timedOut: true });
       }, timeoutMs);
-      child.stdout.on("data", (d) => (stdout += String(d)));
-      child.stderr.on("data", (d) => (stderr += String(d)));
+      child.stdout.on("data", (d: Buffer) => outChunks.push(d));
+      child.stderr.on("data", (d: Buffer) => errChunks.push(d));
       child.on("error", (err) =>
-        finish({ stdout, stderr, exitCode: null, timedOut: false, spawnError: (err as NodeJS.ErrnoException).code ?? "spawn_failed" }),
+        finish({ ...text(), exitCode: null, timedOut: false, spawnError: (err as NodeJS.ErrnoException).code ?? "spawn_failed" }),
       );
-      child.on("close", (code) => finish({ stdout, stderr, exitCode: code, timedOut: false }));
+      child.on("close", (code) => finish({ ...text(), exitCode: code, timedOut: false }));
       child.stdin.on("error", () => {});
       child.stdin.end(script);
     });
 }
 
 type EgoPayload = Record<string, unknown> & { spaceId?: number };
+
+/** ego-browser 非 TTY 时把脚本的 console 输出转到 stderr（0.5.1 实测），两路都找；取最后一行 */
+function findLine(out: EgoRunOutput, marker: string): string | undefined {
+  return `${out.stdout}\n${out.stderr}`.split("\n").reverse().find((l) => l.startsWith(marker));
+}
+
+/** 子进程正常跑完并给出了结果行 = 脚本自己处理了 TaskSpace 收尾 */
+function reportedCleanly(out: EgoRunOutput): boolean {
+  return !out.timedOut && !out.spawnError && out.exitCode === 0 && findLine(out, EGO_RESULT_MARKER) !== undefined;
+}
+
+function reportedSpaceId(out: EgoRunOutput): number | null {
+  const line = findLine(out, EGO_SPACE_MARKER);
+  const id = line ? Number(line.slice(EGO_SPACE_MARKER.length)) : NaN;
+  return Number.isInteger(id) ? id : null;
+}
 
 /**
  * 子进程输出 → 结果对象。判定顺序：起不来 → 超时 → 找不到结果行 → 结果行坏 → 脚本内报错。
@@ -142,8 +161,7 @@ export function parseEgoOutput(out: EgoRunOutput): EgoPayload {
     throw new EgoChannelError("browser_unreachable", missing ? "ego_missing" : "ego_spawn_failed", `ego-browser 起不来:${out.spawnError}`);
   }
   if (out.timedOut) throw new EgoChannelError("timeout", "ego_timeout", "ego lite 子进程超时,已杀掉");
-  // ego-browser 非 TTY 时把脚本的 console 输出转到 stderr（0.5.1 实测），两路都找
-  const line = `${out.stdout}\n${out.stderr}`.split("\n").reverse().find((l) => l.startsWith(EGO_RESULT_MARKER));
+  const line = findLine(out, EGO_RESULT_MARKER);
   if (!line) {
     if (out.exitCode !== 0) throw new EgoChannelError("browser_unreachable", "ego_unreachable", `ego-browser 退出码 ${out.exitCode}`);
     throw new EgoChannelError("error", "ego_bad_output", "ego-browser 没有给出结果行");
@@ -158,7 +176,11 @@ export function parseEgoOutput(out: EgoRunOutput): EgoPayload {
     throw new EgoChannelError("error", "ego_bad_output", "ego-browser 结果行缺 ok 字段");
   }
   const p = payload as EgoPayload & { ok: boolean; stage?: string; error?: string };
-  if (p.ok) return p;
+  if (p.ok) {
+    // 结果行说成功、进程却没正常退出（被杀 / 崩溃）：不采信，如实报异常（AGENTS.md：外部调用失败要可见）
+    if (out.exitCode !== 0) throw new EgoChannelError("error", "ego_abnormal_exit", `ego-browser 结果后异常退出(${out.exitCode})`);
+    return p;
+  }
   if (p.stage === "connect") throw new EgoChannelError("browser_unreachable", "ego_unreachable", `连不上 ego lite:${p.error ?? ""}`);
   throw new Error(`ego 脚本内异常:${p.error ?? "unknown"}`);
 }
@@ -208,10 +230,35 @@ export class EgoSession {
     return parseEgoOutput(await this.runner(script, timeoutMs));
   }
 
+  /** 剩余总时长是否还够再试一步（公众号导航超时重开用） */
+  hasTimeLeft(): boolean {
+    return this.deadline - this.now() > 0;
+  }
+
+  /**
+   * 会自己建 TaskSpace 的一步（开页 / 旁听）。子进程没正常收尾（被杀 / 崩溃 / 无结果行）时，
+   * 父进程按它先报出的 spaceId 另起子进程 finish（独立超时）；没报出 spaceId 就不猜，把「没能兜底」写进错误码。
+   */
+  private async execOwning(script: string, timeoutMs = this.remaining()): Promise<EgoPayload> {
+    const out = await this.runner(script, timeoutMs);
+    try {
+      return parseEgoOutput(out);
+    } catch (err) {
+      if (reportedCleanly(out) || out.spawnError) throw err;
+      const spaceId = reportedSpaceId(out);
+      if (spaceId !== null) {
+        await this.closeTarget(String(spaceId));
+        throw err;
+      }
+      if (err instanceof EgoChannelError) throw new EgoChannelError(err.status, `${err.code}:cleanup_skipped_no_space_id`, err.message);
+      throw err;
+    }
+  }
+
   async openTab(url: string): Promise<{ targetId: string; sessionId: string }> {
     const timeoutMs = this.remaining();
     this.opened += 1;
-    const out = await this.exec(openScript({ space: `${this.spaceName}-${this.opened}`, url, timeoutMs: Math.min(timeoutMs, NAV_TIMEOUT_MS) }), timeoutMs);
+    const out = await this.execOwning(openScript({ space: `${this.spaceName}-${this.opened}`, url, timeoutMs: Math.min(timeoutMs, NAV_TIMEOUT_MS) }), timeoutMs);
     if (typeof out.spaceId !== "number") throw new EgoChannelError("error", "ego_bad_output", "开页结果缺 spaceId");
     const id = String(out.spaceId);
     return { targetId: id, sessionId: id };
@@ -245,7 +292,7 @@ export class EgoSession {
 
   /** 抖音旁听：单个子进程内开页、收包、关 TaskSpace */
   async intercept(p: { url: string; patterns: string[]; waitMs: number; settleMs: number }): Promise<InterceptResult> {
-    const out = await this.exec(interceptScript({ space: this.spaceName, ...p }));
+    const out = await this.execOwning(interceptScript({ space: this.spaceName, ...p }));
     if (typeof out.matched !== "number" || !Array.isArray(out.bodies)) {
       throw new EgoChannelError("error", "ego_bad_output", "旁听结果形状异常");
     }

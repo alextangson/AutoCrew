@@ -6,7 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { EGO_RESULT_MARKER } from "./ego-scripts.js";
+import { EGO_RESULT_MARKER, EGO_SPACE_MARKER } from "./ego-scripts.js";
+import { pullWechatMpStats } from "./wechat-mp-stats.js";
 import { EgoChannelError, EgoSession, parseEgoOutput, probeEgoLite, resolveEgoBinary, spawnEgoRunner, type EgoRunner } from "./ego-session.js";
 import { pullDouyinStats } from "./douyin-stats.js";
 import { pullXhsStats } from "./xhs-stats.js";
@@ -159,7 +160,7 @@ describe("抓取器经 ego 通道的端到端判定（假执行器）", () => {
   it("ego-browser 吐乱码 → error(ego_bad_output)，零行，不当空数据", async () => {
     const runner: EgoRunner = async () => out("Segmentation fault\n");
     const r = await pullDouyinStats({ connect: () => new EgoSession({ label: "douyin", runner }) });
-    expect(r).toEqual({ status: "error", rows: [], errorCode: "ego_bad_output" });
+    expect(r).toEqual({ status: "error", rows: [], errorCode: "ego_bad_output:cleanup_skipped_no_space_id" });
   });
 
   it("ego lite 没开 → browser_unreachable(ego_unreachable)", async () => {
@@ -184,5 +185,105 @@ describe("probeEgoLite（doctor）", () => {
 
   it("EgoChannelError 是 Error（classifyThrown 认得）", () => {
     expect(new EgoChannelError("timeout", "ego_timeout", "x")).toBeInstanceOf(Error);
+  });
+});
+
+// ── Codex review 2026-10-03 的四个 P2 ────────────────────────────────────────
+
+describe("P2-1 父进程兜底关 TaskSpace", () => {
+  const spaceLine = (id: number) => `${EGO_SPACE_MARKER}${id}\n`;
+
+  it("旁听子进程建了 TaskSpace 后卡死被杀 → 父进程按 spaceId 另起子进程 finish", async () => {
+    const calls: Array<{ script: string; timeoutMs: number }> = [];
+    const runner: EgoRunner = async (script, timeoutMs) => {
+      calls.push({ script, timeoutMs });
+      if (calls.length === 1) return out(spaceLine(17), { timedOut: true, exitCode: null });
+      return out(line({ ok: true, spaceId: 17 }));
+    };
+    const s = new EgoSession({ label: "douyin", runner });
+    await expect(s.intercept({ url: "u", patterns: ["p"], waitMs: 1, settleMs: 0 })).rejects.toMatchObject({ status: "timeout" });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].script).toContain("task.finish({ keep: [] })");
+    expect(paramsOf(calls[1].script)).toEqual({ space: 17 });
+  });
+
+  it("开页子进程异常退出（无结果行）→ 也按 spaceId 兜底 finish（withTab 还没接手）", async () => {
+    const calls: string[] = [];
+    const runner: EgoRunner = async (script) => {
+      calls.push(script);
+      if (calls.length === 1) return out(spaceLine(23), { exitCode: 137 });
+      return out(line({ ok: true, spaceId: 23 }));
+    };
+    const s = new EgoSession({ label: "xhs", runner });
+    await expect(s.openTab("https://x.test")).rejects.toBeInstanceOf(EgoChannelError);
+    expect(calls).toHaveLength(2);
+    expect(paramsOf(calls[1])).toEqual({ space: 23 });
+  });
+
+  it("没报出 spaceId 就被杀 → 不猜，错误码里写明没能兜底", async () => {
+    const calls: string[] = [];
+    const runner: EgoRunner = async (script) => (calls.push(script), out("", { timedOut: true, exitCode: null }));
+    const r = await pullDouyinStats({ connect: () => new EgoSession({ label: "douyin", runner }) });
+    expect(r).toMatchObject({ status: "timeout", rows: [], errorCode: "ego_timeout:cleanup_skipped_no_space_id" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("脚本自己报了结果（已自行 finish）→ 父进程不重复关", async () => {
+    const calls: string[] = [];
+    const runner: EgoRunner = async (script) => (calls.push(script), out(spaceLine(5) + line({ ok: false, stage: "op", spaceId: 5, error: "x" })));
+    const s = new EgoSession({ label: "douyin", runner });
+    await expect(s.intercept({ url: "u", patterns: ["p"], waitMs: 1, settleMs: 0 })).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("P2-2 多字节 UTF-8 跨 chunk 不乱码", () => {
+  it("中文字被拆在两个 chunk 里也完整还原", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "autocrew-ego-utf8-"));
+    const bin = path.join(tmp, "split-ego");
+    // 「中」= e4 b8 ad：第一块只写 e4，停一下再写剩下两个字节
+    fs.writeFileSync(bin, `#!/bin/sh\ncat >/dev/null\nprintf '${EGO_RESULT_MARKER}{"ok":true,"t":"\\344'\nsleep 0.2\nprintf '\\270\\255文"}\\n'\nprintf '\\344' >&2\nsleep 0.2\nprintf '\\270\\255' >&2\n`, { mode: 0o755 });
+    const r = await spawnEgoRunner(bin)("x", 5_000);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    expect(parseEgoOutput(r)).toMatchObject({ t: "中文" });
+    expect(r.stderr).toBe("中");
+  });
+});
+
+describe("P2-3 结果行 ok:true 但进程异常退出 → 不算成功", () => {
+  it("非零退出码 / 被信号杀掉 → error(ego_abnormal_exit)", () => {
+    for (const exitCode of [1, null]) {
+      expect(() => parseEgoOutput(out(line({ ok: true, spaceId: 1 }), { exitCode }))).toThrow(
+        expect.objectContaining({ status: "error", code: "ego_abnormal_exit" }),
+      );
+    }
+  });
+});
+
+describe("P2-4 公众号开页导航超时在重试循环里重试", () => {
+  it("第一次开页 goto 超时 → 重开一次，拿到数据", async () => {
+    const ops: string[] = [];
+    let opens = 0;
+    const runner: EgoRunner = async (script) => {
+      const p = paramsOf(script);
+      if (typeof p.space === "string") {
+        ops.push("open");
+        opens += 1;
+        if (opens === 1) return out(line({ ok: false, stage: "op", spaceId: 1, error: "page.goto: Timeout 30000ms exceeded" }));
+        return out(line({ ok: true, spaceId: 2 }));
+      }
+      if ("expression" in p) return ops.push("eval"), out(line({ ok: true, spaceId: 2, value: "https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token=123" }));
+      if ("init" in p) return ops.push("fetch"), out(line({ ok: true, spaceId: 2, response: { httpStatus: 200, finalUrl: "u", contentType: "application/json", bodyText: "{}" } }));
+      ops.push("finish");
+      return out(line({ ok: true, spaceId: 2 }));
+    };
+    const r = await pullWechatMpStats({ runner, retryDelayMs: 0 });
+    expect(r.status).toBe("in");
+    expect(ops.filter((o) => o === "open")).toHaveLength(2);
+  });
+
+  it("总超时用完就不再重试，如实抛出", async () => {
+    const runner: EgoRunner = async () => out("", { timedOut: true, exitCode: null });
+    await expect(pullWechatMpStats({ runner, retryDelayMs: 0 })).rejects.toMatchObject({ status: "timeout" });
   });
 });

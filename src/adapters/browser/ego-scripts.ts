@@ -4,12 +4,15 @@
  * 每个脚本交给 `ego-browser nodejs`（stdin）执行，在 ego lite 内嵌 Node 里跑，**不是页面里**。
  * 约定：
  * - 结果只认一行 `__AUTOCREW_EGO__{json}`；其余输出（升级提示等）一律忽略；
+ * - 拿到 TaskSpace 立刻先打一行 `__AUTOCREW_EGO_SPACE__<id>`，供父进程在子进程被杀后兜底关；
  * - 参数整体 JSON 序列化进 `const P = …`，绝不把 URL/表达式拼进代码文本；
  * - 打开页、旁听抓包两类脚本自己管 TaskSpace 生命周期：异常路径也 `finish({ keep: [] })`；
  *   在已开 TaskSpace 里的单步操作（eval/fetch）失败不关——由会话收尾统一 finish。
  */
 
 export const EGO_RESULT_MARKER = "__AUTOCREW_EGO__";
+/** 一拿到 TaskSpace 就先报 spaceId：子进程之后卡死被杀，父进程也知道该关哪个 */
+export const EGO_SPACE_MARKER = "__AUTOCREW_EGO_SPACE__";
 
 /** 每个脚本共用的开头：参数、输出、错误文本 */
 function prelude(params: unknown): string {
@@ -30,6 +33,7 @@ function wrap(params: unknown, body: string, policy: { finishOnError: boolean; f
 let task = null;
 try {
   task = await taskSpace(P.space);
+  console.log(${JSON.stringify(EGO_SPACE_MARKER)} + task.spaceId);
 } catch (e) {
   emit({ ok: false, stage: "connect", error: errText(e) });
 }
