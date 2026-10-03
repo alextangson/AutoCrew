@@ -2,7 +2,8 @@ import { Type } from "@sinclair/typebox";
 import { getContent, saveContent, updateContent } from "../storage/local-store.js";
 import { type SupportedPlatform } from "../modules/writing/platform-rewrite.js";
 import { adaptPlatformLLM } from "../modules/writing/platform-adapt-llm.js";
-import { generateForPlatform } from "../modules/writing/title-hashtag.js";
+import { generateHashtags } from "../modules/writing/title-hashtag.js";
+import { titleMethodGuide } from "../modules/writing/title-methods.js";
 
 export const rewriteSchema = Type.Object({
   action: Type.Unsafe<"adapt_platform" | "batch_adapt">({
@@ -61,7 +62,7 @@ async function resolveSource(params: Record<string, unknown>) {
 }
 
 /**
- * Adapt a single platform: rewrite + generate title/hashtag + optionally save.
+ * Adapt a single platform: rewrite + title method guide + hashtags + optionally save.
  */
 async function adaptOne(
   title: string,
@@ -73,13 +74,12 @@ async function adaptOne(
   // LLM 按平台腔调重写(X 偏观点、小红书体验流…);引擎不可用自动落回机械兜底。
   const adapted = await adaptPlatformLLM(title, body, tags, platform, opts.dataDir);
 
-  // Generate title variants + hashtags
-  const titleResult = generateForPlatform(adapted.title, platform, { tags });
-  const hashtags = titleResult.hashtags.map((h) => h.tag);
+  // 标题不再由代码拼：返回方法库指引，由宿主按方法写；标签仍按平台规则给建议
+  const hashtags = generateHashtags(adapted.title, platform, tags).map((h) => h.tag);
 
   const result: Record<string, unknown> = {
     ...adapted,
-    titleVariants: titleResult.titles,
+    titleGuide: titleMethodGuide(platform),
     hashtags,
   };
 

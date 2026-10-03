@@ -106,6 +106,8 @@ export interface ReviewInput {
    * 模型自己猜哪些数字模糊，而它猜不准（精确数字已经被硬门对过账了）。
    */
   needsHumanNumbers?: string[];
+  /** 口播 / 短视频稿型（由赛道包决定）：审稿加挂口播流畅与开头诊断，并附长句/书面语提示 */
+  spoken?: boolean;
 }
 
 export interface ReviewDeps {
@@ -308,6 +310,7 @@ async function runReviewPass(
         ...(input.angle ? { angle: input.angle } : {}),
         canFindEvidence: Boolean(input.canFindEvidence),
         needsHumanNumbers: input.needsHumanNumbers ?? [],
+        spoken: Boolean(input.spoken),
       }),
       userMessage: buildReviewUserMessage({
         payload: draft.payload,
@@ -316,6 +319,7 @@ async function runReviewPass(
         ...(input.angle ? { angle: input.angle } : {}),
         voiceSamples: input.voiceSamples,
         platform: input.platform,
+        spoken: Boolean(input.spoken),
         ...(input.writingContract ? { writingContract: input.writingContract } : {}),
       }),
       tools: [buildReviewTool(capture, haystack, round)],

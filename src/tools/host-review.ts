@@ -123,7 +123,7 @@ export async function hostReviewPack(contentId: string, pack: ReadyPack, reviewe
     system: buildReviewSystemPrompt({
       hasResearch: Boolean(input.researchSlot?.trim()), hasWritingContract: Boolean(input.writingContract?.trim()),
       ...(input.angle ? { angle: input.angle } : {}), canFindEvidence: input.canFindEvidence,
-      needsHumanNumbers: input.needsHumanNumbers,
+      needsHumanNumbers: input.needsHumanNumbers, spoken: Boolean(input.spoken),
     }).replaceAll("submit_review", "autocrew_review_desk submit") + "\n\n本轮由当前宿主执行，不会另起后台模型。若你也是写作者，必须明确这是自审，不能声称独立审阅。提交issues，服务端按blocker计算结论，无需自行填verdict。受众点评是待验证的编辑判断，不是观众实验或爆款预测。",
     user: buildReviewUserMessage(input).replaceAll("submit_review", "autocrew_review_desk submit") + seriesReviewBlock(rec) +
       `\n\n【受众点评依据】\n本次任务明确受众优先：${basis.writingContract || "未提供"}\n已确认账号画像：${basis.profileSummary || "未设置；不要编造画像"}\n` +

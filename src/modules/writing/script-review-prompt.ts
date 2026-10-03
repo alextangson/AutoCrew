@@ -16,48 +16,16 @@ import { STRUCTURE_MENU } from "../research/angle-stage.js";
 import type { SubmitPayload } from "./script-payload.js";
 import { WRITING_PRIORITY } from "./script-prompt.js";
 import type { ReviewIssue } from "./script-review.js";
+import {
+  AI_CADENCE_RULES, AI_CADENCE_SEVERITY, ANGLE_DEPTH_RULES, DEPTH_RULES, STYLE_RULES, coreClaimSection, hintSectionNote, ruleLines, spokenSections,
+} from "./script-review-rules.js";
+import { spokenHintsBlock } from "./spoken-hints.js";
 
 /** 引文长度纪律：短到能定位、长到不含糊；进 prompt 也进校验口径 */
 export const QUOTE_MIN_CHARS = 6;
 export const QUOTE_MAX_CHARS = 60;
 
 const VOICE_SAMPLE_MAX_CHARS = 300;
-
-/** AI 味判据（rule 名进 issue，回看时一眼知道被判了哪一条） */
-const STYLE_RULES = [
-  "排比盖过信息：重复句式没有带来内容增量；有目的的排比不单凭句式判错",
-  "重复预告与总结：开头、正文和结尾反复说同一内容；用户选定的清单或总分结构本身不是问题",
-  "空转折：「值得一提的是」「不难发现」「换句话说」这类不带新信息的连接词",
-  "模板填充：为维持段落形式加入重复或无关内容；不以段落是否等长作为判错依据",
-  "观点对称摆放：凡事都「一方面…另一方面…」，把判断稀释成两边都对",
-  "套话堆砌：赋能/闭环/生态/全方位/多维度这类没有具体所指的词",
-  "结尾升华：最后一段脱离本文事实，拔高到时代与趋势",
-  "泛泛而谈：抽象判断缺少必要的解释或相关材料，读者无法理解具体所指；不强制第一人称或数字",
-];
-
-/** 洞察深度判据（只在给了调研材料时启用） */
-const DEPTH_RULES = [
-  "信息罗列无论点：把材料摆了一排，读完不知道作者主张什么",
-  "论点只是材料复述：所谓观点就是把调研材料换个说法说一遍，没有作者的判断",
-  "证据与论点脱节：引了数字/案例，但它并不支撑上下文那句话",
-  "关键主张裸奔：最重要的那句判断没有任何材料或经验支撑",
-];
-
-/**
- * 有选定角度卡时**加挂**的判据（角度卡 spec §1.5 / 审稿 §2.4）。
- * 写稿前定了论点与禁区，验收就该按那两样验——「有没有论点」这种通用问法这时候太软了。
- */
-const ANGLE_DEPTH_RULES = [
-  "thesis 没被论证：全文没有把【本稿切入点】里那句核心论点立住，只是绕着它说了些相关的话",
-  "论点被稀释：写着写着回到面面俱到，最后没有一个明确主张——选角度就是为了不这样",
-  "闯进禁区：写了 antiScope 里明确说不写的东西（哪怕写得不错，也是跑题）",
-  "证据没落到论点上：引了 coreEvidence，但它支撑的不是这个论点",
-  "受众痛点落空：全文没有打中 audiencePain 说的那个具体处境",
-];
-
-function ruleLines(rules: string[]): string {
-  return rules.map((r) => `- ${r}`).join("\n");
-}
 
 /** 主画像那一行：审稿人要「代入这个人」读一遍，所以画像给全（是谁 / 处境 / 要做的动作） */
 function personaLine(card: AngleCardV3): string {
@@ -122,6 +90,8 @@ export interface ReviewPromptOptions {
   canFindEvidence?: boolean;
   /** 数字硬门归一不了、放行但要人工过目的量词（§4.4）：进判据三的 advisory 清单 */
   needsHumanNumbers?: string[];
+  /** 口播 / 短视频稿型：注入口播流畅与开头诊断判据；长文不带（spec §六 prompt 预算） */
+  spoken?: boolean;
 }
 
 export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
@@ -145,6 +115,8 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
     "按已选结构、创作者要求和具体语境判断；词语命中、段落长度、没有提问或 CTA 本身不是缺陷。风格建议不得改变叙述者、事实主体、引文或专业术语的意思。",
     "事实纪律独立于风格：检查与现有材料矛盾、夸大或无来源的事实性归因；材料不足时说明缺口，不凭印象认可，也不要求为风格凑数字。",
     ruleLines(STYLE_RULES),
+    AI_CADENCE_SEVERITY,
+    ruleLines(AI_CADENCE_RULES),
     "",
     hasResearch
       ? [
@@ -169,6 +141,8 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
             : "不要凭空要求作者补数据、补案例、补出处，也不要因此给出 blocker。仍检查 AI 味与已有的写作约定。",
         ].join("\n"),
     ...(cardV3 ? angleExecutionSection(cardV3, needsHumanNumbers) : []),
+    ...coreClaimSection(!hasResearch && !hasAngle),
+    ...(opts.spoken ? [...spokenSections(), ...hintSectionNote()] : []),
     "",
     "## 严重程度",
     "- blocker：不改这一处，这稿就不该发。修订轮只处理 blocker，所以别把口味偏好塞进来。",
@@ -192,6 +166,8 @@ export interface ReviewUserInput {
   voiceSamples: string[];
   platform: string;
   writingContract?: string;
+  /** 口播稿：附代码扫出的长句 / 书面语提示（只作 advisory 参考） */
+  spoken?: boolean;
 }
 
 function clamp(text: string, max: number): string {
@@ -248,6 +224,7 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
     `标题：${input.payload.title}`,
     input.humanizedText,
     "",
+    ...(input.spoken ? spokenHintsBlock(input.humanizedText) : []),
   ];
   if (input.writingContract?.trim()) {
     parts.push("【本稿写作约定（与写手收到的同一份规划，审稿按此验收）】", input.writingContract.trim(), "");

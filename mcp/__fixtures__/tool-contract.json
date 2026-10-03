@@ -2214,7 +2214,8 @@
      "action": {
       "enum": [
        "check",
-       "video_kit"
+       "video_kit",
+       "title_methods"
       ],
       "type": "string"
      },
@@ -2240,6 +2241,13 @@
        },
        "post_title": {
         "type": "string"
+       },
+       "title_candidates": {
+        "items": {},
+        "type": "array"
+       },
+       "title_method": {
+        "type": "string"
        }
       },
       "required": [
@@ -2254,8 +2262,7 @@
      }
     },
     "required": [
-     "action",
-     "content_id"
+     "action"
     ],
     "type": "object"
    }
@@ -4777,7 +4784,8 @@
      "action": {
       "enum": [
        "check",
-       "video_kit"
+       "video_kit",
+       "title_methods"
       ],
       "type": "string"
      },
@@ -4803,6 +4811,13 @@
        },
        "post_title": {
         "type": "string"
+       },
+       "title_candidates": {
+        "items": {},
+        "type": "array"
+       },
+       "title_method": {
+        "type": "string"
        }
       },
       "required": [
@@ -4817,8 +4832,7 @@
      }
     },
     "required": [
-     "action",
-     "content_id"
+     "action"
     ],
     "type": "object"
    }

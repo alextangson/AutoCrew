@@ -235,6 +235,10 @@ export interface VideoKit {
   source?: "host" | "engine";
   /** 做包时当前登记（video.final.register_hash）：换版后旧包作废（本体 §5 发布出口） */
   registerHash?: string;
+  /** 这个平台标题用的方法 id（title-method-library），创始人自己写的记「自拟」；旧发布包没有 = 统计归「未标记」 */
+  titleMethod?: string;
+  /** 交包时的 3 个四平台通用候选（各带方法 id 和理由） */
+  titleCandidates?: Array<{ title: string; method: string; reason: string }>;
 }
 
 export interface AdoptionRecord {
