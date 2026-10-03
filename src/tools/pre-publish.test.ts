@@ -180,7 +180,12 @@ describe("发布前检查 · 阶段门", () => {
 // --- video_kit：宿主交发布包（P6 §3.6，eval video-kit-stale / pre-publish-reads-caption）---
 
 describe("video_kit 宿主发布包", () => {
-  const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了" };
+  const CANDIDATES = [
+    { title: "不写代码也能用的AI", method: "identity-call", reason: "点名不写代码的人" },
+    { title: "AI 都会用，为什么还天天加班", method: "name-the-need", reason: "说中隐性困扰" },
+    { title: "把重复活交给 AI 之后", method: "before-after", reason: "前后变化" },
+  ];
+  const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了", title_candidates: CANDIDATES, title_method: "identity-call" };
   // 「剪辑中」只能经交接进入（§13.4-C）：要 editing 的先建在已过审，再按交接的方式推进
   const mkVideo = async (platform = "xiaohongshu", extra: Record<string, unknown> = {}) => {
     const c = await saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra, ...(extra.status === "editing" ? { status: "approved" } : {}) }, dataDir);

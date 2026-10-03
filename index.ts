@@ -198,8 +198,10 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     label: "AutoCrew Pre-Publish",
     description:
       "Pre-publish gate. check: 6 checks before allowing publish (video platforms read the saved video kit, not the script). " +
-      "video_kit{content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}: the host writes the video publish kit; " +
-      "validated and saved, no model call. Editing the draft afterwards makes the kit stale (check returns kit_stale).",
+      "video_kit{content_id, platform, kit:{post_title, caption, cover_text, hashtags?, title_candidates, title_method}}: the host writes the video publish kit; " +
+      "validated and saved, no model call. Editing the draft afterwards makes the kit stale (check returns kit_stale). " +
+      "title_methods{platform?}: the publish-title method library (read it before drafting titles: 3 platform-agnostic candidates from 3 different categories, " +
+      "founder picks or writes their own = \"自拟\", then adapt per platform) plus per-method trial stats.",
     parameters: prePublishSchema,
     execute: executePrePublishTool,
   });

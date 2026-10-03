@@ -72,7 +72,8 @@ EOF
 
 ## 6. 发布包与发布
 
-1. `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}`：发布标题、简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交。回 `video_not_done` 就是成片还没登记（谁口头说「已登记」都不算），回到第 5 步等，不出发布包。把这份 kit 摆给用户，他要改就重交。
+1. 标题先走方法库：调 `autocrew_pre_publish {action:"title_methods", platform}` 读方法库，按定稿写 3 个四平台通用候选（分属 3 个不同类，各标方法 id 和一句理由）摆给用户挑；都不满意就再出 3 个，或用户自己写（方法记「自拟」）；挑定后按各平台字数和语气改成该平台的 `post_title`（改几个字仍记原方法 id，每个平台各记各的）。稿子太短太空撑不起有张力的标题就直说，不硬凑；标题里的数字、权威、时限、他人反应必须在定稿或证据台账里找得到。回执里有 `title_trial_reminder` 就告诉用户可以出试用期报告。
+   然后 `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?, title_candidates, title_method}}`：简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交，`warnings` 里的标题数字提示要核对但不挡交包。回 `video_not_done` 就是成片还没登记（谁口头说「已登记」都不算），回到第 5 步等，不出发布包。把这份 kit 摆给用户，他要改就重交。
 2. `autocrew_pre_publish {action:"check", content_id, claim_token}`：`kit_stale` 说明稿改过，重做 kit；其余失败项按 `fix` 处理。
 3. 按 `publish-content` 技能调 `autocrew_publish {action:"ego_lite_prepare", content_id}`，用 ego lite 上传填表。最后那一下发布永远由用户点。
 
