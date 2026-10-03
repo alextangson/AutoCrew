@@ -24,6 +24,15 @@ const ENVELOPE_NOT_LOGGED_IN = 8;
 /** 抖音会丢精度的 id 字段 */
 const DOUYIN_ID_KEYS = ["id", "item_id", "aweme_id", "group_id", "object_id"];
 
+/**
+ * 作品 id 取值顺序（2026-10-03 真实 work_list 抓包核实）：旧路 `aweme_list[].item_id` 在**响应原文里**
+ * 就已是被抖音截成 …000 的数字，文本层保护救不回来；完整 id 只在字符串字段 `aweme_id` / `id_str`
+ * 和主路 `items[].id`（原文完整、靠 protectBigIntIds 保位）里。所以字符串字段优先，item_id 垫底。
+ */
+function douyinItemId(base: Bag): string {
+  return idOf(base.aweme_id, base.id_str, base.id, base.item_id);
+}
+
 /** 精度保护:`"id":7412345678901234567` 过 `JSON.parse` 会变成 7412345678901234000 */
 export function protectBigIntIds(text: string): string {
   return protectLongNumbers(text, DOUYIN_ID_KEYS);
@@ -50,7 +59,7 @@ function mapItem(base: Bag, metricBags: Bag[]): TypedRow {
   assign(metrics, "completionRate", pick("completion_rate"));
   assign(metrics, "completion5s", pick("completion_rate_5s"));
   assign(metrics, "coverClickRate", pick("cover_click_rate"));
-  const id = idOf(base.id, base.item_id, base.aweme_id);
+  const id = douyinItemId(base);
   const coverUrl = coverUrlOf(base);
   return {
     title: firstString(base.item_title, base.description, base.desc, base.title),
@@ -79,11 +88,21 @@ function bagOf(v: unknown): Bag {
   return isRecord(v) ? v : {};
 }
 
-/** 旧路 work_list:`aweme_list[]` 出基础字段与计数,率类指标在同索引的 `items[].metrics` */
+/**
+ * 旧路 work_list:`aweme_list[]` 出基础字段与计数,率类指标在 `items[].metrics`。
+ * 两个数组**不同长也不同序**(2026-10-03 抓包:aweme_list 含定时未发的作品,items 只有已发的),
+ * 只按作品 id 配对;配不上就不取率类指标,绝不按索引猜(按索引会把别的作品的完播率安到这条上)。
+ */
 function rowsFromLegacy(awemeList: unknown[], items: unknown[]): TypedRow[] {
-  return awemeList.map((entry, i) => {
+  const byId = new Map<string, Bag>();
+  for (const it of items) {
+    const bag = bagOf(it);
+    const id = douyinItemId(bag);
+    if (id) byId.set(id, bag);
+  }
+  return awemeList.map((entry) => {
     const base = bagOf(entry);
-    const paired = bagOf(items[i]);
+    const paired = byId.get(douyinItemId(base)) ?? {};
     return mapItem(base, [bagOf(base.statistics), bagOf(paired.metrics), base]);
   });
 }

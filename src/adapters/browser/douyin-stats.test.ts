@@ -170,3 +170,30 @@ describe("pullDouyinStats 经假会话端到端", () => {
     expect(res).toEqual({ status: "needs_login", rows: [], errorCode: "envelope:8" });
   });
 });
+
+describe("旧路 id 精度与配对（2026-10-03 真实抓包）", () => {
+  const legacy = (aweme: string, items: string) => `{"status_code":0,"has_more":false,"aweme_list":[${aweme}],"items":[${items}]}`;
+
+  it("原文 item_id 已被截成 …000 时取字符串 aweme_id，19 位 id 原样往返", () => {
+    const body = legacy(
+      '{"aweme_id":"7681645549023497523","item_id":7681645549023497000,"desc":"买东西","create_time":1788522485,"statistics":{"play_count":15474}}',
+      "",
+    );
+    const parsed = parseDouyinItemList(r(body));
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    expect(parsed.rows[0].platformItemId).toBe("7681645549023497523");
+  });
+
+  it("items 与 aweme_list 不同序：按 id 配对；配不上的不取率类指标", () => {
+    const body = legacy(
+      '{"aweme_id":"7692283032497147179","desc":"定时未发","create_time":1791626400,"statistics":{"play_count":0}},' +
+        '{"aweme_id":"7690860367378926899","desc":"已发","create_time":1790935200,"statistics":{"play_count":45959}}',
+      '{"id":7690860367378926899,"metrics":{"completion_rate":"0.012738"}}',
+    );
+    const parsed = parseDouyinItemList(r(body));
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    expect(parsed.rows[0].metrics).not.toHaveProperty("completionRate");
+    expect(parsed.rows[1].platformItemId).toBe("7690860367378926899");
+    expect(parsed.rows[1].metrics.completionRate).toBeCloseTo(1.2738, 4);
+  });
+});
