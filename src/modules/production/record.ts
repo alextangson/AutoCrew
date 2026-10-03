@@ -488,9 +488,9 @@ async function receiptFor(content: Content, dataDir: string, core: ReceiptCore):
 
 function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectRoot: string | null, note?: string): Receipt {
   const view = exp.shadow ?? exp;
-  // 收下的成片 / 封面：认稿前创始人看不到审阅，回执先说这一句
+  // 收下的成片 / 封面：认稿前创始人看不到审阅，回执先说这一句。单张回执不知道交没交审，不承诺认稿后自动出现
   const hidden = core.state === "accepted" && (core.kind === "cut" || core.kind === "cover")
-    ? hiddenUntilScriptApproved(view, content.status, core.kind === "cut" ? "成片已收" : "封面已收") : null;
+    ? hiddenUntilScriptApproved(view, content.status, core.kind === "cut" ? "成片已收" : "封面已收", false) : null;
   return {
     ok: true, content_id: content.id, ...core,
     ...(projectRoot && core.path && !path.isAbsolute(core.path) ? { project_path: path.join(projectRoot, core.path) } : {}),

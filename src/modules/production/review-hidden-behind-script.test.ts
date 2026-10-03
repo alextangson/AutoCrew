@@ -33,6 +33,11 @@ describe("认稿前标「可以审了」/ 记封面", () => {
   it("回执明说创始人现在看不到，要先认稿；不替创始人认稿", async () => {
     const { c, cut, ready, pair } = await cutAndCoverBeforeApproval();
     expect(cut).toMatchObject({ ok: true, state: "accepted", inbox_hidden: "script_not_approved" });
+    // 没标「可以审了」的成片：认稿后也不会自己出现，不许承诺
+    expect(cut.next_action).not.toContain("自动出现");
+    expect(cut.next_action).toContain("mark_ready");
+    expect(ready.next_action).toContain("认稿后它会自动出现");
+    expect(pair.next_action).toContain("认稿后它会自动出现");
     for (const r of [ready, pair]) {
       expect(r).toMatchObject({ ok: true, inbox_hidden: "script_not_approved" });
       expect(r.next_action).toContain("稿子没问题");
@@ -68,7 +73,9 @@ describe("认稿前标「可以审了」/ 记封面", () => {
     const c = await videoContent(env, TITLE);
     const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, `${TITLE}.mp4`), "cut-1"), request_id: "c1", review: true });
     expect(cut).toMatchObject({ inbox_hidden: "script_not_approved" });
-    await record(env, { content_id: c.id, kind: "cover", path: await cover("a.png", 900, 1200), request_id: "p1" });
+    const single = await record(env, { content_id: c.id, kind: "cover", path: await cover("a.png", 900, 1200), request_id: "p1" });
+    expect(single).toMatchObject({ inbox_hidden: "script_not_approved" });
+    expect(single.next_action).not.toContain("自动出现");
     expect((await items(c.id)).find((i) => i.type === "draft")).toMatchObject({ summary: "稿子写好了，过一眼（成片剪好了，认稿后才能审）", detail: { waiting_behind: ["cut_review"] } });
   });
 

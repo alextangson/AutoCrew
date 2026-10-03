@@ -23,11 +23,13 @@ export function latestMarkedCut(doc: ProductionDoc): { fact: Fact; marked_at: st
 /**
  * 认稿前「等你拍板」只出「稿子写好了」：成片 / 封面审阅要等认稿进了制作段才出（inbox.contentItems）。
  * agent 标「可以审了」或记封面时要明说创始人现在看不到，别让它报「创始人会看到」（2026-10-03 事故）。认稿只归创始人。
+ * ready = 这件已经交审（标了「可以审了」/ 完整一组封面），认稿后会自己出现。
  */
-export function hiddenUntilScriptApproved(view: { phase: string }, status: string, what: string): string | null {
+export function hiddenUntilScriptApproved(view: { phase: string }, status: string, what: string, ready = true): string | null {
   if (view.phase !== "writing") return null;
   const how = status === "draft_ready"
     ? "请创始人先在「等你拍板」的「稿子写好了，过一眼」里点「稿子没问题」"
     : "这条稿还没交给创始人认稿：先走审稿把它交到「稿子写好了」，再请创始人点「稿子没问题」";
-  return `${what}，但稿子还没认：认稿之前「等你拍板」里不会出现它，创始人现在看不到。${how}，认稿后它会自动出现。不要替创始人认稿，也不要把候选里的导出当成片给创始人确认。`;
+  // ready=false：还没交审（成片没标「可以审了」、封面没成组），认稿后也不会自己出现，不许这么承诺
+  return `${what}，但稿子还没认：认稿之前「等你拍板」里不会出现${ready ? "它" : "成片 / 封面审阅"}，创始人现在看不到。${how}${ready ? "，认稿后它会自动出现" : ""}。不要替创始人认稿，也不要把候选里的导出当成片给创始人确认。`;
 }
