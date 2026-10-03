@@ -44,8 +44,10 @@ export interface Observation {
   check_id?: string;
   /** 写入时盖的把关结论（publish-check-link） */
   gate?: GateStamp;
-  /** 实际提交时间（只用于把关判定，不参与轮次与收敛） */
+  /** 实际提交时间（把关判定、轮次；同一条流里它变了 = 新提交） */
   submitted_at?: string;
+  /** 不落盘：把关证据时间（审核中按提交 → 核实 → 定时），也是旧版误写成发布时间的那个值 */
+  evidence_at?: string;
 }
 
 const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
@@ -55,8 +57,6 @@ const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
 /** 可信来源读出来的观察：发布计划（不含创始人「我发了」）+ 数据回流绑定 */
 export async function trustedObservations(content: Content, dataDir: string): Promise<Observation[]> {
   const out: Observation[] = [];
-  // 把关判定的证据时间（审核中按提交 / 核实时间），与写进事实的公开时间分开
-  const gateEvidence = new Map<Observation, string>();
   const record = await readPublishRecord(content.id, undefined, dataDir);
   if (record.kind !== "none") {
     for (const p of record.platforms) {
@@ -65,12 +65,11 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
       const checkId = p.checkId ?? undefined;
       // 可信观察只记真实的公开 / 定时时间（创始人 09-30）：审核中、被驳回的没有定时就不带发布时间，提交时间不冒充公开时间
       const publicAt = p.state === "reviewing" || p.state === "rejected" ? p.scheduledAt : p.time;
-      const o: Observation = { source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
-        ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
-        ...(publicAt ? { published_at: publicAt } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) };
       const evidenceAt = p.evidenceAt ?? p.time;
-      if (evidenceAt) gateEvidence.set(o, evidenceAt);
-      out.push(o);
+      out.push({ source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
+        ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
+        ...(publicAt ? { published_at: publicAt } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}),
+        ...(evidenceAt ? { evidence_at: evidenceAt } : {}) });
     }
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
@@ -86,7 +85,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
   for (const o of out) {
     if (!TRUSTED.has(o.source)) continue;
     const payload = o.source === "plan" ? await entryPayloadHash(content.id, o.platform, dataDir).catch(() => null) : null;
-    o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, gateEvidence.get(o) ?? o.published_at, payload);
+    o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, o.evidence_at ?? o.published_at, payload);
   }
   return out;
 }
@@ -110,6 +109,7 @@ export function observationsOf(doc: ProductionDoc): ObsFact[] {
     ...(f.url ? { url: f.url } : {}), ...(f.item_id ? { item_id: f.item_id } : {}), pub_state: f.pub_state ?? "reviewing",
     ...(f.published_at ? { published_at: f.published_at } : {}), ...(f.reason ? { reason: f.reason } : {}),
     ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), ...(f.gate ? { gate: f.gate } : {}), evidence: f.evidence ?? "",
+    ...(f.submitted_at ? { submitted_at: f.submitted_at } : {}),
   }]));
 }
 
@@ -142,7 +142,9 @@ function stampRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): numbe
 
 const same = (a: Observation, b: Observation) =>
   a.pub_state === b.pub_state && (a.published_at ?? "") === (b.published_at ?? "") && (a.url ?? "") === (b.url ?? "")
-  && (a.item_id ?? "") === (b.item_id ?? "") && (a.reason ?? "") === (b.reason ?? "") && (a.check_id ?? "") === (b.check_id ?? "");
+  && (a.item_id ?? "") === (b.item_id ?? "") && (a.reason ?? "") === (b.reason ?? "") && (a.check_id ?? "") === (b.check_id ?? "")
+  // 提交时间只在两边都有时比（旧事实没存它，不能因此把整条流重写一遍）
+  && (!a.submitted_at || !b.submitted_at || Date.parse(a.submitted_at) === Date.parse(b.submitted_at));
 
 export function observationFact(doc: ProductionDoc, o: Observation, round: number): Fact {
   const now = new Date().toISOString();
@@ -151,7 +153,7 @@ export function observationFact(doc: ProductionDoc, o: Observation, round: numbe
     at: o.published_at ?? now, seen_at: now, obs_source: o.source, platform: o.platform, pub_state: o.pub_state, verified: TRUSTED.has(o.source), evidence: o.evidence,
     ...(o.published_at ? { published_at: o.published_at } : {}), ...(o.url ? { url: o.url } : {}), ...(o.item_id ? { item_id: o.item_id } : {}),
     ...(o.reason ? { reason: o.reason } : {}), ...(o.account ? { account: o.account } : {}), ...(o.by ? { by: o.by } : {}), ...(o.check_id ? { check_id: o.check_id } : {}),
-    ...(o.gate ? { gate: o.gate } : {}),
+    ...(o.gate ? { gate: o.gate } : {}), ...(o.submitted_at ? { submitted_at: o.submitted_at } : {}),
   };
 }
 
@@ -175,9 +177,11 @@ function collapseBatch(doc: ProductionDoc, obs: Observation[]): Array<{ o: Obser
  * 槽在那之后被创始人纠正过的，不追加——纯时间迁移不是新的发布证据，不能把纠正盖掉。
  */
 function correctedTimeMigration(doc: ProductionDoc, last: ObsFact, raw: Observation): boolean {
-  if ((raw.pub_state !== "reviewing" && raw.pub_state !== "rejected") || !raw.submitted_at || !last.published_at) return false;
-  if (Date.parse(last.published_at) !== Date.parse(raw.submitted_at) || !same({ ...last, published_at: raw.published_at }, raw)) return false;
-  return Date.parse(last.seen_at) <= correctedAt(doc, slotId(last.round, last.platform));
+  // 旧形状：没存提交时间，发布时间 = 当时的证据时间（提交 → 核实 → 定时）
+  if ((raw.pub_state !== "reviewing" && raw.pub_state !== "rejected") || last.submitted_at || !last.published_at || !raw.evidence_at) return false;
+  if (Date.parse(last.published_at) !== Date.parse(raw.evidence_at) || !same({ ...last, published_at: raw.published_at }, raw)) return false;
+  const killed = doc.decisions.some((d) => d.type === "publish_correction" && d.target_id === last.id);
+  return killed || Date.parse(last.seen_at) <= correctedAt(doc, slotId(last.round, last.platform));
 }
 
 /** 追加观察；同（来源, 平台, 轮次）流里和最后一条完全一样的跳过。返回新增条数 */

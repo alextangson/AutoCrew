@@ -89,6 +89,8 @@ export interface Fact {
   published_at?: string;
   /** 这条观察被读到的时间（纠正按它切：纠正之前读到的作废） */
   seen_at?: string;
+  /** 计划里的实际提交时间：审核中没定时的回执没有公开时间，靠它认出新提交 */
+  submitted_at?: string;
   /** 发布前把关记录（发布审查闸门的 check_id） */
   check_id?: string;
   /** 写入时盖的把关结论 */
