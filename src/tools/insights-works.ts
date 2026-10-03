@@ -29,6 +29,7 @@ export async function executeWorkAction(action: string, raw: unknown, dir: strin
     if (action === "history_create") return await createHistoryRecord(work, dir);
     return await deleteHistoryRecord(text(work.content_id), dir);
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), next_action: "把原始错误告诉创始人；绑定和历史记录都没有写入。" };
+    // 各动作自己会把「写了一半」报成 partial + written；走到这里的是参数解析或意外异常，写没写不确定就不下结论
+    return { ok: false, error: err instanceof Error ? err.message : String(err), next_action: "把原始错误告诉创始人；先用 meeting_brief 或查绑定表核对实际状态，再决定重跑。" };
   }
 }

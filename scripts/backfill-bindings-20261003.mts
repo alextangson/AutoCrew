@@ -14,16 +14,19 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getDataDir, listContents, type Content } from "../src/storage/local-store.js";
-import { listOutcomes } from "../src/modules/flywheel/outcome-store.js";
-import { lookupPlatformItem } from "../src/modules/flywheel/platform-items.js";
+import { readJournal } from "../src/modules/flywheel/outcome-store.js";
+import { readPlatformItemsStrict, platformItemKey, type PlatformItemBinding } from "../src/modules/flywheel/platform-items.js";
 import { isTruncatedItemId, normalizeTitle, shanghaiDate, type PerformanceOutcome } from "../src/modules/flywheel/outcome-schema.js";
 import { bindWorkManually, createHistoryRecord } from "../src/modules/flywheel/work-binding.js";
 import { isImportedHistory } from "../src/storage/imported-history.js";
 
-/** 表里的一个平台作品：标题按归一化前缀比（视频号会把正文拼进标题）；multi = 同日同题允许多条（都挂上） */
-export interface ItemSpec { platform: string; date: string; title: string; multi?: boolean }
+/**
+ * 表里的一个平台作品：标题按归一化前缀比（视频号会把正文拼进标题）；time = 北京时间 HH:MM，
+ * 只在同日同题有多条、创始人指定了其中一条时用。其余任何多条命中一律停。
+ */
+export interface ItemSpec { platform: string; date: string; title: string; time?: string }
 
-const P = (platform: string, date: string, title: string, multi?: boolean): ItemSpec => ({ platform, date, title, ...(multi ? { multi } : {}) });
+const P = (platform: string, date: string, title: string, time?: string): ItemSpec => ({ platform, date, title, ...(time ? { time } : {}) });
 
 /** 表一：绑定到现有 5 篇已发布稿（稿子按 id 后缀找） */
 export const DRAFT_BINDINGS: Array<{ suffix: string; label: string; items: ItemSpec[] }> = [
@@ -61,8 +64,9 @@ export const HISTORY: Array<{ title: string; date: string; items: ItemSpec[] }> 
     P("xiaohongshu", "2026-09-14", "ChatGPT Image 2.5 实测，实现指哪改哪？"),
   ] },
   { title: "AI给自己造了个身体，接管了我家的全屋智能", date: "2026-09-16", items: [
-    // 抖音这天同题两条：10:00 那条已设私密（0 播放），22:31 是公开重发——都是这条视频，都挂上
-    P("douyin", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能", true),
+    // 抖音这天同题两条：18:00 那条已设私密（0 播放），22:31 是公开重发。协调裁定（2026-10-03）：只挂公开重发那条，
+    // 私密那条留未绑定——同标题同日的两条在现有幂等键下会合并，私密的 0 播放可能盖过真实数据
+    P("douyin", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能", "22:31"),
     P("wechat_video", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能"),
     P("xiaohongshu", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能"),
   ] },
@@ -100,28 +104,34 @@ export interface Plan {
 function resolveSpec(spec: ItemSpec, rows: PerformanceOutcome[], problems: string[]): Array<{ itemId: string; rowTitle: string }> {
   const want = normalizeTitle(spec.title);
   const hits = rows.filter((r) => r.platform === spec.platform && r.platformItemId &&
-    normalizeTitle(r.platformTitle).startsWith(want) && (!spec.date || (r.publishedAt && shanghaiDate(r.publishedAt) === spec.date)));
+    normalizeTitle(r.platformTitle).startsWith(want) && (!spec.date || (r.publishedAt && shanghaiDate(r.publishedAt) === spec.date)) &&
+    (!spec.time || (r.publishedAt && shanghaiTime(r.publishedAt) === spec.time)));
   const ids = new Map<string, string>();
   for (const h of hits) ids.set(h.platformItemId!, h.platformTitle);
   const trusted = [...ids].filter(([id]) => !isTruncatedItemId(spec.platform, id));
-  const where = `${spec.platform} ${spec.date || "(不限日期)"}「${spec.title}」`;
+  const where = `${spec.platform} ${spec.date || "(不限日期)"}${spec.time ? ` ${spec.time}` : ""}「${spec.title}」`;
   if (trusted.length === 0) {
     problems.push(ids.size > 0
       ? `${where} 只找到被截坏的抖音 id（${[...ids.keys()].join("、")}）——需要先跑一次抖音回流拿到完整 id`
       : `${where} 在已入账的回流行里没找到`);
     return [];
   }
-  if (trusted.length > 1 && !spec.multi) {
+  if (trusted.length > 1) {
     problems.push(`${where} 命中多条作品（${trusted.map(([id]) => id).join("、")}），有歧义，不猜`);
     return [];
   }
   return trusted.map(([itemId, rowTitle]) => ({ itemId, rowTitle }));
 }
 
-async function withStatus(found: Array<{ itemId: string; rowTitle: string }>, spec: ItemSpec, owner: string | null, dataDir: string): Promise<ResolvedItem[]> {
+/** 发布时间 → 北京时间 HH:MM */
+function shanghaiTime(iso: string): string {
+  return new Date(Date.parse(iso) + 8 * 3600_000).toISOString().slice(11, 16);
+}
+
+function withStatus(found: Array<{ itemId: string; rowTitle: string }>, spec: ItemSpec, owner: string | null, table: Record<string, PlatformItemBinding>): ResolvedItem[] {
   const out: ResolvedItem[] = [];
   for (const f of found) {
-    const bound = await lookupPlatformItem(spec.platform, f.itemId, dataDir);
+    const bound = table[platformItemKey(spec.platform, f.itemId)];
     const status = !bound ? "new" : bound.contentId === owner ? "already" : "conflict";
     out.push({ spec, ...f, status, ...(bound && status === "conflict" ? { owner: bound.contentId } : {}) });
   }
@@ -135,22 +145,25 @@ function findDraft(contents: Content[], suffix: string, problems: string[]): Con
   return hits[0];
 }
 
-/** 只读：算出要写什么。不写任何文件 */
+/** 只读：算出要写什么。不写任何文件。绑定表读不出 / 损坏直接抛——拿空表核对会漏掉冲突 */
 export async function planBackfill(dataDir: string): Promise<Plan> {
-  const [rows, contents] = await Promise.all([listOutcomes(dataDir), listContents(dataDir)]);
+  const table = await readPlatformItemsStrict(dataDir);
+  // 读原始账本而不是 latest-wins 视图：同标题同北京日的两条作品在视图里会被合并，多条命中就看不出来了
+  const [journal, contents] = await Promise.all([readJournal(dataDir), listContents(dataDir)]);
+  const rows = journal.filter((r) => !r.retracted);
   const problems: string[] = [];
   const plan: Plan = { drafts: [], history: [], problems };
   for (const d of DRAFT_BINDINGS) {
     const draft = findDraft(contents, d.suffix, problems);
     const items: ResolvedItem[] = [];
-    for (const spec of d.items) items.push(...await withStatus(resolveSpec(spec, rows, problems), spec, draft?.id ?? null, dataDir));
+    for (const spec of d.items) items.push(...withStatus(resolveSpec(spec, rows, problems), spec, draft?.id ?? null, table));
     if (draft) plan.drafts.push({ contentId: draft.id, label: d.label, items });
   }
   for (const h of HISTORY) {
     const norm = normalizeTitle(h.title);
     const existing = contents.find((c) => isImportedHistory(c) && normalizeTitle(c.title) === norm && (c.publishedAt ?? "").slice(0, 10) === h.date) ?? null;
     const items: ResolvedItem[] = [];
-    for (const spec of h.items) items.push(...await withStatus(resolveSpec(spec, rows, problems), spec, existing?.id ?? null, dataDir));
+    for (const spec of h.items) items.push(...withStatus(resolveSpec(spec, rows, problems), spec, existing?.id ?? null, table));
     plan.history.push({ title: h.title, date: h.date, existingId: existing?.id ?? null, items });
   }
   for (const it of [...plan.drafts.flatMap((d) => d.items), ...plan.history.flatMap((h) => h.items)]) {

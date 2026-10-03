@@ -68,19 +68,15 @@ function isBinding(value: unknown): value is PlatformItemBinding {
   return !!b && typeof b.contentId === "string" && VIAS.includes(b.via);
 }
 
-/**
- * 读全表。不存在 → 空表；损坏/版本不认 → 空表 + warn（下一次写入自然重建文件）。
- * 读路径不写盘：读不该有副作用，坏文件留在原地也方便人去看一眼。
- */
-export async function readPlatformItems(dataDir?: string): Promise<Record<string, PlatformItemBinding>> {
-  const file = itemsPath(dataDir);
+type TableRead = { items: Record<string, PlatformItemBinding> } | { error: string };
+
+async function readTable(dataDir?: string): Promise<TableRead> {
   let raw: string;
   try {
-    raw = await fs.readFile(file, "utf-8");
+    raw = await fs.readFile(itemsPath(dataDir), "utf-8");
   } catch (err) {
-    if ((err as { code?: string }).code === "ENOENT") return {};
-    console.warn(`[flywheel] 绑定表读不出(${(err as Error).message})——按空表处理，绑定退回标题匹配`);
-    return {};
+    if ((err as { code?: string }).code === "ENOENT") return { items: {} };
+    return { error: `绑定表 platform-items.json 读不出（${(err as Error).message}）` };
   }
   let parsed: PlatformItemsFile | null = null;
   try {
@@ -89,14 +85,41 @@ export async function readPlatformItems(dataDir?: string): Promise<Record<string
     parsed = null;
   }
   if (!parsed || parsed.schemaVersion !== SCHEMA_VERSION || typeof parsed.items !== "object" || !parsed.items) {
-    console.warn("[flywheel] 绑定表损坏或版本不认——重建空表，绑定退回标题匹配后重新自愈");
-    return {};
+    return { error: "绑定表 platform-items.json 损坏或版本不认" };
   }
   const items: Record<string, PlatformItemBinding> = {};
   for (const [key, value] of Object.entries(parsed.items)) {
     if (isBinding(value)) items[key] = value; // 单条坏值不废掉整张表
   }
-  return items;
+  return { items };
+}
+
+/**
+ * 读全表（自动认领用）。不存在 → 空表；损坏/版本不认 → 空表 + warn（下一次写入自然重建文件）。
+ * 读路径不写盘：读不该有副作用，坏文件留在原地也方便人去看一眼。
+ */
+export async function readPlatformItems(dataDir?: string): Promise<Record<string, PlatformItemBinding>> {
+  const r = await readTable(dataDir);
+  if ("error" in r) {
+    console.warn(`[flywheel] ${r.error}——按空表处理，绑定退回标题匹配后重新自愈`);
+    return {};
+  }
+  return r.items;
+}
+
+/**
+ * 严格读（人工绑定、删历史记录、回填核对用）：只有「文件不存在」算空表；读不出 / 坏 / 版本不认一律抛，
+ * 让调用方在写入前停下——否则会拿空表覆盖掉人确认过的绑定，还报成功。
+ */
+export async function readPlatformItemsStrict(dataDir?: string): Promise<Record<string, PlatformItemBinding>> {
+  const r = await readTable(dataDir);
+  if ("error" in r) throw new Error(`${r.error}——已停下，没有改动绑定表；请人工检查或从备份恢复后再试`);
+  return r.items;
+}
+
+/** 严格查一条（见 readPlatformItemsStrict） */
+export async function lookupPlatformItemStrict(platform: string, itemId: string, dataDir?: string): Promise<PlatformItemBinding | null> {
+  return (await readPlatformItemsStrict(dataDir))[platformItemKey(platform, itemId)] ?? null;
 }
 
 export async function lookupPlatformItem(
@@ -209,7 +232,7 @@ export async function commitManualBinding(
   dataDir?: string,
 ): Promise<ManualBindOutcome> {
   return serializeBindingWrite(dataDir, async () => {
-    const items = await readPlatformItems(dataDir);
+    const items = await readPlatformItemsStrict(dataDir);
     const key = platformItemKey(platform, itemId);
     const existing = items[key];
     if (existing && existing.contentId !== contentId) return { status: "conflict", existing };
@@ -225,7 +248,7 @@ export async function commitManualBinding(
 /** 删掉某稿件的全部绑定（删历史作品记录时用）。返回删掉的键 */
 export async function removeBindingsForContent(contentId: string, dataDir?: string): Promise<string[]> {
   return serializeBindingWrite(dataDir, async () => {
-    const items = await readPlatformItems(dataDir);
+    const items = await readPlatformItemsStrict(dataDir);
     const removed = Object.keys(items).filter((k) => items[k].contentId === contentId);
     if (removed.length === 0) return [];
     for (const k of removed) delete items[k];

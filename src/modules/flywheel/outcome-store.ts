@@ -31,7 +31,8 @@ function outcomesPath(dataDir?: string): string {
   return path.join(getDataDir(dataDir), OUTCOMES_FILE);
 }
 
-async function readJournal(dataDir?: string): Promise<PerformanceOutcome[]> {
+/** 账本原始行（不去重、不对账）。核对/回填用：同标题同日的两条作品在 latest-wins 视图里会合并成一条 */
+export async function readJournal(dataDir?: string): Promise<PerformanceOutcome[]> {
   let raw: string;
   try {
     raw = await fs.readFile(outcomesPath(dataDir), "utf-8");
@@ -426,9 +427,19 @@ export function attributedCopies(
   return out;
 }
 
+/** 账本 latest-wins 视图（含被对账隐藏的未归属行，不含已撤销键） */
+async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOutcome>> {
+  const byKey = new Map<string, PerformanceOutcome>();
+  for (const o of await readJournal(dataDir)) byKey.set(outcomeKey(o), { ...o, platform: normalizePlatform(o.platform) });
+  for (const [k, o] of byKey) if (o.retracted) byKey.delete(k);
+  return byKey;
+}
+
+const retractedCopy = (r: PerformanceOutcome, recordedAt: string): PerformanceOutcome => ({ ...r, recordedAt, retracted: true });
+
 /**
- * 人工绑定后补归属（spec ③）：该平台作品已入账、尚未归到 contentId 的每个数据日期各补一条新行。
- * 截坏 id 的行不参与（spec 边界：id 不可信）。返回补了几条。
+ * 人工绑定后补归属（spec ③）：该平台作品已入账、尚未归到 contentId 的每个数据日期各补一条新行；
+ * 原先归在别的稿名下的版本追加撤销行（改绑不双计）。截坏 id 的行不参与。返回补了几条。
  */
 export async function reattributeItem(platform: string, itemId: string, contentId: string, dataDir?: string): Promise<number> {
   if (isTruncatedItemId(platform, itemId)) return 0;
@@ -437,18 +448,29 @@ export async function reattributeItem(platform: string, itemId: string, contentI
     const taken = new Set(visible.map((o) => outcomeKey(o)));
     const target = normalizePlatform(platform);
     const rows = visible.filter((o) => o.platform === target && o.platformItemId === itemId.trim());
-    const copies = attributedCopies(rows, contentId, taken);
-    await appendOutcomes(copies, dataDir);
+    const recordedAt = new Date().toISOString();
+    const copies = attributedCopies(rows, contentId, taken, recordedAt);
+    const superseded = rows.filter((r) => r.contentId !== null && r.contentId !== contentId).map((r) => retractedCopy(r, recordedAt));
+    await appendOutcomes([...copies, ...superseded], dataDir);
     return copies.length;
   });
 }
 
-/** 删历史记录时撤掉它名下的行（追加同键 retracted 行；原始未归属行随之重新露出）。返回撤了几条 */
+/**
+ * 删历史记录时撤掉它名下的行：先给没有未归属原行的快照（绑定之后才入账的）补一条未归属副本，
+ * 再追加同键 retracted 行——回流数据一条不丢，只是回到未绑定。返回撤了几条
+ */
 export async function retractContentOutcomes(contentId: string, dataDir?: string): Promise<number> {
   return serializeOutcomeWrite(dataDir, async () => {
-    const rows = (await listOutcomes(dataDir)).filter((o) => o.contentId === contentId);
+    const latest = await latestByKey(dataDir);
+    const rows = [...latest.values()].filter((o) => o.contentId === contentId);
     const recordedAt = new Date().toISOString();
-    await appendOutcomes(rows.map((r) => ({ ...r, recordedAt, retracted: true as const })), dataDir);
+    const unbound: PerformanceOutcome[] = [];
+    for (const r of rows) {
+      const copy: PerformanceOutcome = { ...r, contentId: null, recordedAt };
+      if (!latest.has(outcomeKey(copy))) unbound.push(copy);
+    }
+    await appendOutcomes([...unbound, ...rows.map((r) => retractedCopy(r, recordedAt))], dataDir);
     return rows.length;
   });
 }

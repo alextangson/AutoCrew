@@ -33,7 +33,7 @@ async function seed(truncateFirstDouyin = false) {
   const rows = [...DRAFT_BINDINGS.flatMap((d) => d.items), ...HISTORY.flatMap((h) => h.items)].map((s, i) => {
     let itemId = idFor(s.platform, `${s.date}|${s.title}`);
     if (truncateFirstDouyin && i === 0) itemId = "7690860367378927000";
-    return JSON.stringify({ contentId: null, platform: s.platform, platformTitle: s.title, publishedAt: `${s.date || "2026-10-03"}T10:00:00+08:00`,
+    return JSON.stringify({ contentId: null, platform: s.platform, platformTitle: s.title, publishedAt: `${s.date || "2026-10-03"}T${s.time ?? "10:00"}:00+08:00`,
       metricDate: "2026-10-03", platformItemId: itemId, metrics: { views: 10 + i }, source: "auto", recordedAt: "2026-10-03T08:00:00.000Z", needsReview: false, reviewReasons: [] });
   });
   await fs.writeFile(path.join(dir, "outcomes.jsonl"), rows.join("\n") + "\n");
