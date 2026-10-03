@@ -24,12 +24,12 @@ export interface TitleChoice {
   method: string;
 }
 
-export function titleMethodIds(): string[] {
-  return TITLE_METHODS.map((m) => m.id);
+export function titleMethodIds(lib: readonly TitleMethod[] = TITLE_METHODS): string[] {
+  return lib.map((m) => m.id);
 }
 
-export function findTitleMethod(id: string): TitleMethod | undefined {
-  return TITLE_METHODS.find((m) => m.id === id);
+export function findTitleMethod(id: string, lib: readonly TitleMethod[] = TITLE_METHODS): TitleMethod | undefined {
+  return lib.find((m) => m.id === id);
 }
 
 export function categoryName(id: string): string {
@@ -37,36 +37,36 @@ export function categoryName(id: string): string {
 }
 
 /** 方法 id 规范化：去空白、大小写、下划线 / 空格当连字符；中文方法名也认。认不出回 null */
-export function normalizeMethodId(raw: unknown): string | null {
+export function normalizeMethodId(raw: unknown, lib: readonly TitleMethod[] = TITLE_METHODS): string | null {
   if (typeof raw !== "string") return null;
   const t = raw.trim();
   if (!t) return null;
   if (t === SELF_WRITTEN) return SELF_WRITTEN;
   const slug = t.toLowerCase().replace(/[\s_]+/g, "-");
-  return TITLE_METHODS.find((m) => m.id === slug || m.name === t)?.id ?? null;
+  return lib.find((m) => m.id === slug || m.name === t)?.id ?? null;
 }
 
-const idListText = () => titleMethodIds().join(" / ");
+const idListText = (lib: readonly TitleMethod[]) => titleMethodIds(lib).join(" / ");
 
 type Failure = { field: string; detail: string };
 
-function readCandidate(raw: unknown, i: number, failures: Failure[]): TitleCandidate | null {
+function readCandidate(raw: unknown, i: number, failures: Failure[], lib: readonly TitleMethod[]): TitleCandidate | null {
   const v = maybeJson(raw);
   const obj = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
   const field = `title_candidates[${i}]`;
   if (!obj) { failures.push({ field, detail: "每个候选要是 {title, method, reason}" }); return null; }
   const text = (k: string) => (typeof obj[k] === "string" ? (obj[k] as string).trim() : "");
-  const method = normalizeMethodId(obj.method);
+  const method = normalizeMethodId(obj.method, lib);
   if (!text("title")) failures.push({ field, detail: "候选缺 title" });
   if (!text("reason")) failures.push({ field, detail: "候选缺一句选这个方法的理由 reason" });
   if (!method || method === SELF_WRITTEN) {
-    failures.push({ field, detail: `方法 id「${String(obj.method ?? "")}」不在方法库里，可用：${idListText()}` });
+    failures.push({ field, detail: `方法 id「${String(obj.method ?? "")}」不在方法库里，可用：${idListText(lib)}` });
     return null;
   }
   return { title: text("title"), method, reason: text("reason") };
 }
 
-function readCandidates(raw: unknown, failures: Failure[]): TitleCandidate[] {
+function readCandidates(raw: unknown, failures: Failure[], lib: readonly TitleMethod[]): TitleCandidate[] {
   const v = maybeJson(raw);
   if (v === UNPARSABLE || !Array.isArray(v)) {
     const got = v === undefined ? "缺" : v === UNPARSABLE ? "解析不了的 JSON" : "不是数组";
@@ -76,25 +76,25 @@ function readCandidates(raw: unknown, failures: Failure[]): TitleCandidate[] {
   if (v.length !== 3) {
     failures.push({ field: "title_candidates", detail: `要正好 3 个候选（收到 ${v.length} 个）；都不满意就再出 3 个，或由创始人自己写（title_method="${SELF_WRITTEN}"）` });
   }
-  const parsed = v.map((c, i) => readCandidate(c, i, failures));
+  const parsed = v.map((c, i) => readCandidate(c, i, failures, lib));
   if (parsed.some((c) => c === null)) return [];
   const list = parsed as TitleCandidate[];
-  const cats = new Set(list.map((c) => findTitleMethod(c.method)!.category));
+  const cats = new Set(list.map((c) => findTitleMethod(c.method, lib)!.category));
   if (list.length === 3 && cats.size !== 3) {
-    const used = list.map((c) => `${c.method}（${categoryName(findTitleMethod(c.method)!.category)}）`).join("、");
+    const used = list.map((c) => `${c.method}（${categoryName(findTitleMethod(c.method, lib)!.category)}）`).join("、");
     failures.push({ field: "title_candidates", detail: `3 个候选必须分属 3 个不同类，现在是：${used}` });
   }
   return list;
 }
 
 /** 校验 kit 里的标题来源：3 个通用候选 + 这个平台最终用的方法 id（或「自拟」） */
-export function validateTitleChoice(candidatesRaw: unknown, methodRaw: unknown): { failures: Failure[]; choice: TitleChoice } {
+export function validateTitleChoice(candidatesRaw: unknown, methodRaw: unknown, lib: readonly TitleMethod[] = TITLE_METHODS): { failures: Failure[]; choice: TitleChoice } {
   const failures: Failure[] = [];
-  const candidates = readCandidates(candidatesRaw, failures);
-  const method = normalizeMethodId(methodRaw);
+  const candidates = readCandidates(candidatesRaw, failures, lib);
+  const method = normalizeMethodId(methodRaw, lib);
   if (!method) {
     const got = typeof methodRaw === "string" && methodRaw.trim() ? `「${methodRaw.trim()}」不在方法库里` : "缺";
-    failures.push({ field: "title_method", detail: `title_method ${got}：填这个平台标题用的方法 id，创始人自己写的填「${SELF_WRITTEN}」。可用：${idListText()}` });
+    failures.push({ field: "title_method", detail: `title_method ${got}：填这个平台标题用的方法 id，创始人自己写的填「${SELF_WRITTEN}」。可用：${idListText(lib)}` });
   }
   return { failures, choice: { candidates, method: method ?? "" } };
 }
@@ -123,11 +123,11 @@ const FLOW = [
 ];
 
 /** 给宿主看的完整方法库指引；带 platform 时附上该平台语气 */
-export function titleMethodGuide(platform?: string): string {
+export function titleMethodGuide(platform?: string, lib: readonly TitleMethod[] = TITLE_METHODS): string {
   const tone = platform && PLATFORM_TITLE_TONE[platform] ? [`本平台语气：${PLATFORM_TITLE_TONE[platform]}`] : Object.entries(PLATFORM_TITLE_TONE).map(([p, t]) => `${p}：${t}`);
   return [
     "【发布标题方法库】", "核心思维：", ...TITLE_CORE_THINKING.map((t) => `- ${t}`),
-    "流程：", ...FLOW, "方法：", ...TITLE_METHODS.map(methodLine),
+    "流程：", ...FLOW, "方法：", ...lib.map(methodLine),
     "检验清单（每个候选都过一遍）：", ...TITLE_CHECKLIST.map((t) => `- ${t}`),
     "真实性红线：", ...TITLE_RED_LINE.map((t) => `- ${t}`),
     "平台语气（字数上限以工具说明为准）：", ...tone.map((t) => `- ${t}`),
