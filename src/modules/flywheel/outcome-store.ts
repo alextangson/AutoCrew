@@ -323,6 +323,8 @@ export interface BindingResolution {
   reviewReasons: string[];
   /** 够格登记的新绑定；调用方**落盘成功后**再提交 */
   pending: PendingBinding | null;
+  /** 守卫留未绑定时：这条作品此前按标题猜到这篇稿上的旧归属，调用方在同一次写入里撤回 */
+  retractGuess?: { platform: string; itemId: string; contentId: string };
 }
 
 /**
@@ -384,6 +386,7 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
         contentId: null,
         reviewReasons: [`${ATTRIBUTION_REVIEW_PREFIX}按标题认到稿件 ${contentId}，但它在这个平台已精确绑定作品 ${exact.key}；本行是另一条作品 ${itemId}，没有归属，确认是不是同题的另一条（私密 / 重发）`],
         pending: null,
+        retractGuess: { platform: req.platform, itemId, contentId },
       };
     }
   }
@@ -460,26 +463,41 @@ function withoutAttributionReview(r: PerformanceOutcome): Pick<PerformanceOutcom
 }
 
 /**
- * 人工绑定后补归属（spec ③）：该作品每个数据日期先跨所有归属（未归属 / 别的稿 / 本稿）取最新的那条快照，
- * 不是本稿的就复制一份挂到本稿；别的稿名下的版本追加撤销行（改绑不双计，也不让旧快照盖掉新的）。
- * 截坏 id 不参与。返回补了几条。
+ * 人工绑定后补归属（spec ③）：该作品每个数据日期，在所有归属（未归属 / 别的稿 / 本稿目标键上已有的快照，
+ * 含不带作品 id 的手填快照）里取最新的那条；不是本稿名下的就复制一份挂到本稿，是本稿的但带着归属复核理由就清掉；
+ * 别的稿名下的版本追加撤销行（改绑不双计）。目标键已是另一条作品的快照 → 抛错不覆盖。截坏 id 不参与。返回补了几条。
  */
 export async function reattributeItem(platform: string, itemId: string, contentId: string, dataDir?: string): Promise<number> {
   if (isTruncatedItemId(platform, itemId)) return 0;
   return serializeOutcomeWrite(dataDir, async () => {
+    const latest = await latestByKey(dataDir);
     const target = normalizePlatform(platform);
-    const rows = [...(await latestByKey(dataDir)).values()].filter((o) => o.platform === target && o.platformItemId === itemId.trim());
-    const byDate = new Map<string, PerformanceOutcome>();
-    for (const r of rows) {
-      const prev = byDate.get(r.metricDate);
-      if (!prev || r.recordedAt > prev.recordedAt) byDate.set(r.metricDate, r);
-    }
+    const id = itemId.trim();
+    const rows = [...latest.values()].filter((o) => o.platform === target && o.platformItemId === id);
+    const dates = [...new Set(rows.map((r) => r.metricDate))];
     const recordedAt = new Date().toISOString();
-    const copies = [...byDate.values()].filter((r) => r.contentId !== contentId)
-      .map((r) => ({ ...r, contentId, recordedAt, ...withoutAttributionReview(r) }));
+    const out: PerformanceOutcome[] = [];
+    let copied = 0;
+    for (const date of dates) {
+      const candidates = rows.filter((r) => r.metricDate === date);
+      const dest = latest.get(outcomeKey({ ...candidates[0], contentId }));
+      const destId = dest?.platformItemId?.trim();
+      if (dest && destId && destId !== id && !isTruncatedItemId(target, destId)) {
+        throw new Error(`稿件 ${contentId} 在 ${date} 已有另一条作品 ${target}:${destId} 的数据，不覆盖——先确认这两条作品哪条属于这篇稿`);
+      }
+      const pool = dest && !candidates.includes(dest) ? [...candidates, dest] : candidates;
+      const newest = pool.reduce((a, b) => (b.recordedAt > a.recordedAt ? b : a));
+      const cleaned = withoutAttributionReview(newest);
+      if (newest.contentId !== contentId) {
+        out.push({ ...newest, contentId, platformItemId: id, recordedAt, ...cleaned });
+        copied += 1;
+      } else if (cleaned.reviewReasons.length !== (newest.reviewReasons ?? []).length) {
+        out.push({ ...newest, recordedAt, ...cleaned });
+      }
+    }
     const superseded = rows.filter((r) => r.contentId !== null && r.contentId !== contentId).map((r) => retractedCopy(r, recordedAt));
-    await appendOutcomes([...copies, ...superseded], dataDir);
-    return copies.length;
+    await appendOutcomes([...out, ...superseded], dataDir);
+    return copied;
   });
 }
 
@@ -500,4 +518,15 @@ export async function retractContentOutcomes(contentId: string, dataDir?: string
     await appendOutcomes([...unbound, ...rows.map((r) => retractedCopy(r, recordedAt))], dataDir);
     return rows.length;
   });
+}
+
+/**
+ * 撤回某作品此前按标题猜到某稿上的归属（追加撤销行，账本不改写）。只在守卫判定「这篇稿在该平台已精确绑定别的作品」
+ * 时用：该作品本身没有绑定（有绑定就不会走到守卫），所以它名下的归属都是猜的。
+ */
+export function guessRetractions(visible: PerformanceOutcome[], guesses: Array<{ platform: string; itemId: string; contentId: string }>): PerformanceOutcome[] {
+  const recordedAt = new Date().toISOString();
+  return visible
+    .filter((o) => guesses.some((g) => o.contentId === g.contentId && o.platform === normalizePlatform(g.platform) && o.platformItemId === g.itemId))
+    .map((o) => retractedCopy(o, recordedAt));
 }
