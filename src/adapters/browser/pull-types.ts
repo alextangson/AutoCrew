@@ -35,8 +35,13 @@ export interface PullResult {
   status: PullStatus;
   /** 仅 status="ok" 时非空 */
   rows: TypedRow[];
-  /** 脱敏错误码:HTTP 状态 / schema 缺失字段名。**永不含响应原文**(codex #22) */
+  /**
+   * 脱敏错误码:HTTP 状态 / schema 缺失字段名。**永不含响应原文**(codex #22)。
+   * status="ok" 时也可能有:`only_first_page`(翻页控件找不到)/ `partial:<状态>:<码>`(中途出错,已拿到的页照常交回)。
+   */
   errorCode?: string;
   /** 达到分页上限:"至少还有更多",不谎报精确丢弃数(codex #23) */
   hasMore?: boolean;
+  /** 实际拿到并通过校验的页数（旁听翻页） */
+  pages?: number;
 }
