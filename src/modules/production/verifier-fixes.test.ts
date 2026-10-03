@@ -442,7 +442,7 @@ describe("seg12 归档口径", () => {
     expect(slotOf(doc, 2, "douyin")).toMatchObject({ pub_state: "reviewing" });
   });
 
-  it("[10-03 Codex P2] 纠正过的旧形状审核中回执：修复后只是时间变了，不追加、纠正照旧有效（提交 / 核实时间、按槽 / 按事实 id 的纠正都算）", async () => {
+  it("[10-03 Codex P2] 纠正过的旧形状审核中回执：修复后只是时间变了，纠正照旧有效（提交 / 核实时间、按槽 / 按事实 id 的纠正都算）", async () => {
     const { emptyProductionDoc } = await import("../../storage/production-types.js");
     const { importObservations, slotOf } = await import("./receipts.js");
     const SUBMITTED = "2026-09-30T18:47:22+08:00", SCHEDULED = "2026-10-08T18:00:00+08:00";
@@ -450,19 +450,30 @@ describe("seg12 归档口径", () => {
       { evidence: { submitted_at: SUBMITTED }, target: (_id: string) => "slot:1:douyin" },
       { evidence: {}, target: (id: string) => id },
     ];
-    for (const { evidence, target } of cases) {
+    for (const { evidence, target } of cases) for (const scheduled of [SCHEDULED, undefined]) {
       const doc = emptyProductionDoc();
       // 旧版写下的事实：发布时间 = 当时的证据时间，没存提交时间
       doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "reviewing", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
       doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: target("old"), at: "2026-10-02T00:00:00Z", source: "founder" });
       expect(slotOf(doc, 1, "douyin")).toBeNull();
-      const base = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录", evidence_at: SUBMITTED, ...evidence };
-      expect(importObservations(doc, [{ ...base, published_at: SCHEDULED }])).toBe(0);
-      expect(importObservations(doc, [base])).toBe(0);
+      const plan = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录", evidence_at: SUBMITTED, ...evidence, ...(scheduled ? { published_at: scheduled } : {}) };
+      importObservations(doc, [plan]);
+      importObservations(doc, [plan]);
       expect(slotOf(doc, 1, "douyin")).toBeNull();
       // 真正的新状态照旧算新证据
-      expect(importObservations(doc, [{ ...base, pub_state: "public", published_at: SCHEDULED }])).toBe(1);
+      expect(importObservations(doc, [{ ...plan, pub_state: "public", published_at: SCHEDULED }])).toBe(1);
     }
+  });
+
+  it("[10-03 Codex P2] 旧形状回执的纯时间迁移不越过后来的其它来源：数据回流的已公开仍是当前状态", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const SUBMITTED = "2026-09-30T18:47:22+08:00";
+    const doc = emptyProductionDoc();
+    doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "rejected", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
+    doc.facts.push({ id: "metrics", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: "2026-10-02T00:00:00Z", seen_at: "2026-10-02T00:00:00Z", obs_source: "metrics_id", platform: "douyin", item_id: "7123", pub_state: "public", verified: true, evidence: "数据回流按作品 id 对上了这条" });
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "rejected", evidence: "发布计划里的记录", submitted_at: SUBMITTED, evidence_at: SUBMITTED }]);
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "public", fact_id: "metrics" });
   });
 
   it("[10-03 Codex P2] 同一轮、没定时的审核中重新提交：只有提交时间变了也算新回执，纠正后能重新出现", async () => {
