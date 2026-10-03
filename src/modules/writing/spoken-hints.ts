@@ -55,7 +55,8 @@ function longInParagraph(paragraph: string): string[] {
 }
 
 export function findSpokenHints(text: string): SpokenHints {
-  const body = text.replace(CODE, (m) => m.replace(/\n/g, " "));
+  // 跨行的代码与引文先压成一行，按段拆分后排除规则仍能认出完整的一对引号
+  const body = text.replace(CODE, (m) => m.replace(/\n/g, " ")).replace(QUOTED, (m) => m.replace(/\n/g, " "));
   const longSentences = body
     .split(/\n+/)
     .filter((p) => p.trim())

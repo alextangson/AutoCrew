@@ -17,7 +17,7 @@ import type { SubmitPayload } from "./script-payload.js";
 import { WRITING_PRIORITY } from "./script-prompt.js";
 import type { ReviewIssue } from "./script-review.js";
 import {
-  ANGLE_DEPTH_RULES, DEPTH_RULES, STYLE_RULES, coreClaimSection, hintSectionNote, ruleLines, spokenSections,
+  AI_CADENCE_RULES, AI_CADENCE_SEVERITY, ANGLE_DEPTH_RULES, DEPTH_RULES, STYLE_RULES, coreClaimSection, hintSectionNote, ruleLines, spokenSections,
 } from "./script-review-rules.js";
 import { spokenHintsBlock } from "./spoken-hints.js";
 
@@ -115,6 +115,8 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
     "按已选结构、创作者要求和具体语境判断；词语命中、段落长度、没有提问或 CTA 本身不是缺陷。风格建议不得改变叙述者、事实主体、引文或专业术语的意思。",
     "事实纪律独立于风格：检查与现有材料矛盾、夸大或无来源的事实性归因；材料不足时说明缺口，不凭印象认可，也不要求为风格凑数字。",
     ruleLines(STYLE_RULES),
+    AI_CADENCE_SEVERITY,
+    ruleLines(AI_CADENCE_RULES),
     "",
     hasResearch
       ? [

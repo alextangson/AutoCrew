@@ -16,6 +16,10 @@ export const STYLE_RULES = [
   "套话堆砌：赋能/闭环/生态/全方位/多维度这类没有具体所指的词",
   "结尾升华：最后一段脱离本文事实，拔高到时代与趋势",
   "泛泛而谈：抽象判断缺少必要的解释或相关材料，读者无法理解具体所指；不强制第一人称或数字",
+];
+
+/** AI 腔判据补强（所有稿型）：默认 advisory，同一模式密到影响观看才可升 blocker（spec §五） */
+export const AI_CADENCE_RULES = [
   "翻转过密：「不是 X，而是 Y」这类先否后立的句子段段都有，读起来像在纠正读者；全篇偶尔一两处不算",
   "段尾金句化：几乎每段都用一句漂亮话收尾，节奏发腻，真正要紧的那句反而没了分量",
   "稻草人：先替读者说出一个他并没有的糊涂想法，再去纠正它",
@@ -42,6 +46,9 @@ export const ANGLE_DEPTH_RULES = [
   "证据没落到论点上：引了 coreEvidence，但它支撑的不是这个论点",
   "受众痛点落空：全文没有打中 audiencePain 说的那个具体处境",
 ];
+
+export const AI_CADENCE_SEVERITY =
+  "以下几条默认给 advisory；只有同一模式在全篇反复出现、密到读者会因此走神或划走时，才可给 blocker。孤立一处不打回。";
 
 export function ruleLines(rules: string[]): string {
   return rules.map((r) => `- ${r}`).join("\n");

@@ -35,6 +35,14 @@ describe("审稿 prompt 按稿型组装", () => {
     }
   });
 
+  it("新增 AI 腔判据声明默认 advisory、密到影响观看才升 blocker", () => {
+    const p = buildReviewSystemPrompt({ hasResearch: false });
+    const sev = p.indexOf("默认给 advisory");
+    expect(sev).toBeGreaterThan(-1);
+    expect(sev).toBeLessThan(p.indexOf("翻转过密："));
+    expect(p.indexOf("泛泛而谈：")).toBeLessThan(sev);
+  });
+
   it("创作者指定写法优先、不强制反常识/反问/CTA", () => {
     const p = buildReviewSystemPrompt({ hasResearch: false, spoken: true });
     expect(p).toContain("创作者规划或原话里明确指定的写法");
@@ -75,6 +83,10 @@ describe("findSpokenHints — 长句与书面语", () => {
   it("引号内引文、英文、代码、数字串不计入", () => {
     const text = `他说「${LONG}」然后走了。Claude Code and OpenAI Codex 123456789 3.14 \`const x = 1\` 很好用。`;
     expect(findSpokenHints(text).longSentences).toEqual([]);
+  });
+
+  it("跨行引文同样不计入", () => {
+    expect(findSpokenHints(`他说「\n${LONG}\n」。`).longSentences).toEqual([]);
   });
 
   it("没有句末标点的超长段落整段只算一次", () => {
