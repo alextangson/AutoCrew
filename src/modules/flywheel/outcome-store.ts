@@ -12,13 +12,10 @@ import {
   normalizeTitle,
   normalizePlatform,
   isTruncatedItemId,
-  trustedItemId,
-  titleOutcomeKey,
   type PerformanceOutcome,
 } from "./outcome-schema.js";
 import {
   lookupPlatformItem,
-  bindingsForContent,
   commitBindings,
   platformItemKey,
   type PendingBinding,
@@ -55,45 +52,34 @@ export async function readJournal(dataDir?: string): Promise<PerformanceOutcome[
   return outcomes;
 }
 
-/**
- * 没有可信 id 的行（CSV、截坏的抖音 id）：同平台同 标题@发布日 只有一条带可信 id 的作品时，
- * 在读视图里补上那个 id——旧快照和新快照还是同一个作品，不被新键拆成两个；有歧义（多条）就不补。
- */
-function withInferredIds(journal: PerformanceOutcome[]): PerformanceOutcome[] {
-  const titleKey = (o: PerformanceOutcome) => titleOutcomeKey({ ...o, contentId: null, metricDate: "" });
-  const ids = new Map<string, Set<string>>();
-  for (const o of journal) {
-    const id = trustedItemId(o);
-    if (!id) continue;
-    const k = titleKey(o);
-    ids.set(k, (ids.get(k) ?? new Set()).add(id));
-  }
-  return journal.map((o) => {
-    if (trustedItemId(o)) return o;
-    const found = ids.get(titleKey(o));
-    return found && found.size === 1 ? { ...o, platformItemId: [...found][0] } : o;
-  });
-}
-
 /** latest-wins：同幂等键只保留 journal 中最后一条 */
 export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome[]> {
-  const journal = withInferredIds((await readJournal(dataDir)).map((o) => ({ ...o, platform: normalizePlatform(o.platform) })));
+  const journal = await readJournal(dataDir);
   const byKey = new Map<string, PerformanceOutcome>();
-  for (const o of journal) byKey.set(outcomeKey(o), o);
+  for (const o of journal) {
+    byKey.set(outcomeKey(o), { ...o, platform: normalizePlatform(o.platform) });
+  }
   // 撤销行（删历史记录）latest-wins 后整键消失
   const deduped = Array.from(byKey.values()).filter((o) => !o.retracted);
-  // 对账：同一作品存在任何打标（contentId 非空）版本时，丢弃它的全部未归属版本——跨数据日期也不双计
-  // （评审修订：否则 confirm_published 前的周一快照与之后的周二快照会被 baseline 当成两个作品）。
-  // 有可信 id 的按 id 认同一作品；没有的按 标题@发布日（同题同日的另一条带 id 的作品不受牵连）。
-  const bound = deduped.filter((o) => o.contentId !== null);
-  const matchedTitleKeys = new Set(bound.map((o) => titleOutcomeKey({ ...o, contentId: null, metricDate: "" })));
-  const matchedItemKeys = new Set(bound.flatMap((o) => (trustedItemId(o) ? [platformItemKey(o.platform, trustedItemId(o))] : [])));
-  return deduped.filter((o) => {
-    if (o.contentId !== null) return true;
-    const id = trustedItemId(o);
-    if (id) return !matchedItemKeys.has(platformItemKey(o.platform, id));
-    return !matchedTitleKeys.has(titleOutcomeKey({ ...o, metricDate: "" }));
-  });
+  // 对账：同一平台条目（标题@发布日期）存在任何打标（contentId 非空）版本时，
+  // 丢弃该条目的全部历史（contentId 为空）版本——跨数据日期也不双计（评审修订：
+  // 否则 confirm_published 前的周一快照与之后的周二快照会被 baseline 当成两个作品）。
+  const matchedTitleKeys = new Set(
+    deduped
+      .filter((o) => o.contentId !== null)
+      .map((o) => outcomeKey({ ...o, contentId: null, metricDate: "" })),
+  );
+  const matchedItemKeys = new Set(
+    deduped.flatMap((o) =>
+      o.contentId !== null && o.platformItemId ? [platformItemKey(o.platform, o.platformItemId)] : [],
+    ),
+  );
+  return deduped.filter(
+    (o) =>
+      o.contentId !== null ||
+      (!matchedTitleKeys.has(outcomeKey({ ...o, metricDate: "" })) &&
+        (!o.platformItemId || !matchedItemKeys.has(platformItemKey(o.platform, o.platformItemId)))),
+  );
 }
 
 /**
@@ -386,20 +372,6 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
     };
   }
 
-  // 按标题认到的稿，在这个平台已经有按 id 精确绑定（url/manual）的另一条作品：同标题的这条是别的作品
-  // （如同日私密原片 + 公开重发），不许靠标题挂上去——留未绑定，交人确认
-  if (matched && contentId) {
-    const exact = (await bindingsForContent(contentId, req.dataDir)).find((b) =>
-      (b.via === "url" || b.via === "manual") && b.key.startsWith(`${normalizePlatform(req.platform)}:`) && b.key !== platformItemKey(req.platform, itemId));
-    if (exact) {
-      return {
-        contentId: null,
-        reviewReasons: [`按标题认到稿件 ${contentId}，但它在这个平台已精确绑定作品 ${exact.key}；本行是另一条作品 ${itemId}，没有归属，确认是不是同题的另一条（私密 / 重发）`],
-        pending: null,
-      };
-    }
-  }
-
   // 逐条路径没走 matchDraft，取稿只为看证据（链接/标题）——绑定表已命中时这一步根本不发生
   const draft = matched ?? (req.contentId ? await getContent(req.contentId, req.dataDir) : null);
   const via = draft && contentId === draft.id ? await bindingEvidence(draft, req.platformTitle, req.platform, itemId, req.dataDir) : null;
@@ -458,8 +430,7 @@ export function attributedCopies(
 /** 账本 latest-wins 视图（含被对账隐藏的未归属行，不含已撤销键） */
 async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOutcome>> {
   const byKey = new Map<string, PerformanceOutcome>();
-  const journal = withInferredIds((await readJournal(dataDir)).map((o) => ({ ...o, platform: normalizePlatform(o.platform) })));
-  for (const o of journal) byKey.set(outcomeKey(o), o);
+  for (const o of await readJournal(dataDir)) byKey.set(outcomeKey(o), { ...o, platform: normalizePlatform(o.platform) });
   for (const [k, o] of byKey) if (o.retracted) byKey.delete(k);
   return byKey;
 }
@@ -467,22 +438,18 @@ async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOut
 const retractedCopy = (r: PerformanceOutcome, recordedAt: string): PerformanceOutcome => ({ ...r, recordedAt, retracted: true });
 
 /**
- * 人工绑定后补归属（spec ③）：该作品每个数据日期先跨所有归属（未归属 / 别的稿 / 本稿）取最新的那条快照，
- * 不是本稿的就复制一份挂到本稿；别的稿名下的版本追加撤销行（改绑不双计，也不让旧快照盖掉新的）。
- * 截坏 id 不参与。返回补了几条。
+ * 人工绑定后补归属（spec ③）：该平台作品已入账、尚未归到 contentId 的每个数据日期各补一条新行；
+ * 原先归在别的稿名下的版本追加撤销行（改绑不双计）。截坏 id 的行不参与。返回补了几条。
  */
 export async function reattributeItem(platform: string, itemId: string, contentId: string, dataDir?: string): Promise<number> {
   if (isTruncatedItemId(platform, itemId)) return 0;
   return serializeOutcomeWrite(dataDir, async () => {
+    const visible = await listOutcomes(dataDir);
+    const taken = new Set(visible.map((o) => outcomeKey(o)));
     const target = normalizePlatform(platform);
-    const rows = [...(await latestByKey(dataDir)).values()].filter((o) => o.platform === target && trustedItemId(o) === itemId.trim());
-    const byDate = new Map<string, PerformanceOutcome>();
-    for (const r of rows) {
-      const prev = byDate.get(r.metricDate);
-      if (!prev || r.recordedAt > prev.recordedAt) byDate.set(r.metricDate, r);
-    }
+    const rows = visible.filter((o) => o.platform === target && o.platformItemId === itemId.trim());
     const recordedAt = new Date().toISOString();
-    const copies = [...byDate.values()].filter((r) => r.contentId !== contentId).map((r) => ({ ...r, contentId, recordedAt }));
+    const copies = attributedCopies(rows, contentId, taken, recordedAt);
     const superseded = rows.filter((r) => r.contentId !== null && r.contentId !== contentId).map((r) => retractedCopy(r, recordedAt));
     await appendOutcomes([...copies, ...superseded], dataDir);
     return copies.length;

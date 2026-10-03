@@ -186,9 +186,7 @@ describe("impressions（曝光，与播放分列）", () => {
 });
 
 describe("outcomeKey 与 platformItemId", () => {
-  // 2026-10-03 Codex 第二轮裁定：可信 id 进键，同题同日的两条不同作品不合并；
-  // 带 / 不带 id 的同一作品由 listOutcomes 按唯一 id 并回一条（row-import.test「幂等键不分叉」锁行为）
-  it("可信 id 进键；不带 id 的键与旧键相同；截坏的抖音 id 不进键", () => {
+  it("platformItemId 不参与幂等键（带与不带同键，绝不分叉成两条）", () => {
     const base = {
       contentId: null,
       platform: "douyin",
@@ -197,9 +195,7 @@ describe("outcomeKey 与 platformItemId", () => {
       metricDate: "2026-06-08",
     };
     const withItemId = { ...base, platformItemId: "item-1" };
-    expect(outcomeKey(base)).toBe("douyin:同一作品@2026-06-01:2026-06-08");
-    expect(outcomeKey(withItemId)).toBe("douyin:同一作品@2026-06-01:2026-06-08#item-1");
-    expect(outcomeKey({ ...base, platformItemId: "7690860367378927000" })).toBe(outcomeKey(base));
+    expect(outcomeKey(withItemId)).toBe(outcomeKey(base));
   });
 });
 
