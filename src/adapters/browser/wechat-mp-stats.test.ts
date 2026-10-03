@@ -68,9 +68,10 @@ describe("发表记录响应解析", () => {
 });
 
 describe("旁听配置与翻页判定", () => {
-  it("先等首页 URL 带出 token,再打开发表记录页;翻页点「下一页」", () => {
-    expect(WECHAT_MP_PLATFORM.follow?.template).toContain("cgi-bin/appmsgpublish?sub=list");
-    expect(new RegExp(WECHAT_MP_PLATFORM.follow!.match).exec("https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token=123")?.[1]).toBe("123");
+  it("P1-1 只打开首页,从菜单「内容管理 → 发表记录」点进去;不手拼任何数据地址", () => {
+    expect(WECHAT_MP_PLATFORM.url).toBe("https://mp.weixin.qq.com/");
+    expect(WECHAT_MP_PLATFORM.entry).toEqual({ css: "a,span,li,div", target: ["发表记录"], openers: ["内容管理"] });
+    expect(JSON.stringify(WECHAT_MP_PLATFORM)).not.toMatch(/appmsgpublish\?|token=|cgi-bin\/[a-z]+\?/);
     expect(WECHAT_MP_PLATFORM.next).toMatchObject({ kind: "click", texts: ["下一页"] });
   });
 

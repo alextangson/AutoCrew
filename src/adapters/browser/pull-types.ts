@@ -33,7 +33,10 @@ export interface TypedRow {
 
 export interface PullResult {
   status: PullStatus;
-  /** 仅 status="ok" 时非空 */
+  /**
+   * status="ok" 时的行；needs_login / risk_control 也可能非空——中途碰到登录/风控前已拿到的完整页（照常入库，
+   * 状态仍是登录/风控，调度与待办按状态走）。其余失败状态恒空。
+   */
   rows: TypedRow[];
   /**
    * 脱敏错误码:HTTP 状态 / schema 缺失字段名。**永不含响应原文**(codex #22)。

@@ -15,7 +15,7 @@ const DRIFT = fixture("douyin/schema-drift.json");
 const LEAK_MARKERS = ["FAKE_TOKEN_DO_NOT_LEAK", "FAKE_SECUID", "登录状态失效"];
 const LIST_URL = "https://creator.douyin.com/web/api/creator/item/list?count=20";
 const r = (body: string, status = 200) => ({ url: LIST_URL, status, body });
-type Inspect = (rs: Array<{ url: string; body: string }>) => { oldestMs: number | null; hasMore: boolean | null };
+type Inspect = (rs: Array<{ url: string; body: string }>) => { oldestMs: number | null; hasMore: boolean | null; terminal?: string | null };
 const inspect = (0, eval)(`(${DOUYIN_INSPECT_SRC})`) as Inspect;
 
 describe("精度保护(端点文档 §1 坑 ①)", () => {
@@ -145,7 +145,12 @@ describe("旁听配置:只看作品管理页自己收到的列表响应,往下�
     expect(info.hasMore).toBe(true);
     expect(info.oldestMs).toBe(Math.min(...JSON.parse(ITEM_LIST).items.map((i: { create_time: number }) => i.create_time)) * 1000);
     expect(inspect([r(LEGACY)])).toMatchObject({ hasMore: false });
-    expect(inspect([{ url: LIST_URL, body: "{}" }])).toEqual({ oldestMs: null, hasMore: null });
+    expect(inspect([{ url: LIST_URL, body: "{}" }])).toEqual({ oldestMs: null, hasMore: null, terminal: null });
+  });
+
+  it("P2-1 inspect:信封 status_code 8 → terminal login(浏览循环里立刻停,不再滚)", () => {
+    expect(inspect([r(NOT_LOGGED_IN)]).terminal).toBe("login");
+    expect(inspect([r(ITEM_LIST)]).terminal).toBeNull();
   });
 });
 

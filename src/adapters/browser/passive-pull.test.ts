@@ -72,13 +72,55 @@ describe("边界情况(验收清单)", () => {
     expect(judge(outcome([], "error", { error: err }))).toEqual({ status: "timeout", rows: [], errorCode: "ego_timeout" });
   });
 
-  it("中途碰到风控页 → 已拿到的页交回,partial:risk_control 可见", () => {
-    expect(judge(outcome([page(0, [post(1, 1)])], "gate", { gate: "risk" }))).toMatchObject({ status: "ok", errorCode: "partial:risk_control:risk_page" });
+  it("P2-4 中途碰到风控页 → 状态就是 risk_control(调度当天不再碰),已拿到的行照样带上", () => {
+    const r = judge(outcome([page(0, [post(1, 1)])], "gate", { gate: "risk" }));
+    expect(r).toMatchObject({ status: "risk_control", errorCode: "partial:risk_page", pages: 1 });
+    expect(r.rows).toHaveLength(1);
   });
 
-  it("第 2 页风控 HTTP 码 → 第 1 页保留;第 1 页就风控 → risk_control 零行", () => {
-    expect(judge(outcome([page(0, [post(1, 1)]), page(1, [], 461)], "http_status"))).toMatchObject({ status: "ok", errorCode: "partial:risk_control:http:461" });
+  it("P2-4 中途跳到登录页 → needs_login(待办会提示登录),已拿到的行照样带上", () => {
+    const r = judge(outcome([page(0, [post(1, 1)])], "gate", { gate: "login" }));
+    expect(r).toMatchObject({ status: "needs_login", errorCode: "partial:login_page" });
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it("第 2 页风控 HTTP 码 → risk_control,第 1 页保留;第 1 页就风控 → risk_control 零行", () => {
+    const r = judge(outcome([page(0, [post(1, 1)]), page(1, [], 461)], "http_status"));
+    expect(r).toMatchObject({ status: "risk_control", errorCode: "partial:http:461" });
+    expect(r.rows).toHaveLength(1);
     expect(judge(outcome([page(0, [], 461)], "http_status"))).toMatchObject({ status: "risk_control", rows: [] });
+  });
+
+  it("P2-3 同一窗口既有可用数据又有 HTTP 461 → 风控不丢,数据保留", () => {
+    const mixed: CapturedPage = { index: 0, responses: [...page(0, [post(1, 1)]).responses, { url: URL, status: 461, body: "{}" }] };
+    const r = judge(outcome([mixed], "http_status"));
+    expect(r).toMatchObject({ status: "risk_control", errorCode: "partial:http:461" });
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it("P2-5 点了翻页却没新响应 → 前面的页保留,但标注没抓全及原因", () => {
+    expect(judge(outcome([page(0, [post(1, 1)])], "no_new_response"))).toMatchObject({ status: "ok", errorCode: "incomplete:no_new_response" });
+    expect(judge(outcome([page(0, [post(1, 1)]), page(1, [post(2, 2)])], "pagination_missing"))).toMatchObject({ errorCode: "incomplete:pagination_missing" });
+  });
+
+  it("P2-6 发布时间字段缺失/改名 → 这一页 schema_changed;前面的页保留", () => {
+    const noDate = { ...post(2, 1), createTime: undefined };
+    expect(judge(outcome([page(0, [noDate])], "no_more"))).toMatchObject({ status: "schema_changed", rows: [], errorCode: "missing:publishedAt" });
+    const r = judge(outcome([page(0, [post(1, 1)]), page(1, [noDate])], "max_pages"));
+    expect(r).toMatchObject({ status: "ok", errorCode: "partial:schema_changed:missing:publishedAt" });
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it("P2-7 解析器抛错(createTime 1e15 → Invalid time value)→ 这一页结构化失败,前面的页保留", () => {
+    const bad = { ...post(2, 1), createTime: 1e15 };
+    const r = judge(outcome([page(0, [post(1, 1)]), page(1, [bad])], "max_pages"));
+    expect(r).toMatchObject({ status: "ok", errorCode: "partial:schema_changed:parse_exception" });
+    expect(r.rows).toHaveLength(1);
+    expect(judge(outcome([page(0, [bad])], "no_more"))).toMatchObject({ status: "schema_changed", errorCode: "parse_exception" });
+  });
+
+  it("菜单入口找不到 → 失败、零行、原因可见", () => {
+    expect(judge(outcome([], "entry_missing"))).toEqual({ status: "error", rows: [], errorCode: "entry_ui_missing" });
   });
 
   it("翻满 3 页 → hasMore;跨页同作品去重", () => {
@@ -114,6 +156,22 @@ describe("只看不发(红线)", () => {
     });
     for (const banned of [".fetch(", "XMLHttpRequest", "_webmsxyw", "finger-print", "x-s", "headers", "Network.setExtraHTTPHeaders", "Fetch.enable"]) {
       expect(script).not.toContain(banned);
+    }
+  });
+
+  it("P1-1 脚本只 goto 平台入口页一次;四个平台的入口都是给人看的页面,不是接口/数据地址", async () => {
+    const script = browseScript({
+      space: "s", url: WV.url, patterns: WV.patterns, gates: WV.gates, next: WV.next, inspectSrc: WV.inspectSrc,
+      cutoffMs: 0, maxPages: 3, waitMs: 1, nextWaitMs: 1, settleMs: 0, navTimeoutMs: 1, pauseMinMs: 0, pauseMaxMs: 0,
+    });
+    expect(script.match(/page\.goto\(/g)).toEqual(["page.goto("]);
+    expect(script).toContain("page.goto(P.url,");
+    const { DOUYIN_PLATFORM } = await import("./douyin-stats.js");
+    const { XHS_PLATFORM } = await import("./xhs-stats.js");
+    const { WECHAT_MP_PLATFORM } = await import("./wechat-mp-stats.js");
+    for (const p of [DOUYIN_PLATFORM, WV, XHS_PLATFORM, WECHAT_MP_PLATFORM]) {
+      expect(p.url).not.toMatch(/\/api\/|cgi-bin|mmfinderassistant|\?|token=/);
+      expect(Object.keys(p)).not.toContain("follow");
     }
   });
 

@@ -1,9 +1,9 @@
 /**
  * 公众号后台数据回流 —— **旁听**(规格 docs/2026-10-03-metrics-pull-human-like-spec.md)。
  *
- * 打开 mp.weixin.qq.com,等它自己跳到带 token 的首页,再像人一样打开「发表记录」页
- * (`/cgi-bin/appmsgpublish?sub=list`),只读页面自己收到的响应(文档本身或页面翻页时的 JSON),
- * 要下一页就点页面上的「下一页」。代码不向公众号后台发任何请求。
+ * 打开 mp.weixin.qq.com 首页,像人一样点左侧菜单「内容管理 → 发表记录」进到发表记录页,
+ * 只读页面自己收到的响应(文档本身或页面翻页时的 JSON),要下一页就点页面上的「下一页」。
+ * 代码不向公众号后台发任何请求,也不手拼任何数据地址。
  *
  * 字段沿用 musegzh 已验证的 `publish_page.publish_list[].publish_info.appmsg_info[]`
  * (read_num / share_num / old_like_num / sent_info.time)。**旁听形态待真机校准**:2026-10-03 探查时
@@ -16,7 +16,6 @@ import { runPassivePull, type PageParse, type PassivePlatform, type PassivePullO
 import { LOGIN_TEXT_COMMON, RISK_TEXT_COMMON, RISK_URL_COMMON } from "./gates.js";
 
 const BACKEND = "https://mp.weixin.qq.com/";
-export const PUBLISH_LIST_TEMPLATE = `${BACKEND}cgi-bin/appmsgpublish?sub=list&begin=0&count=10&token=$1&lang=zh_CN`;
 export const PUBLISH_PATTERNS = ["/cgi-bin/appmsgpublish"];
 
 /** 响应 → publish_page 对象:JSON 响应直接取;HTML 文档里取 `publish_page = {...};`。取不到 = null */
@@ -95,7 +94,8 @@ export const WECHAT_MP_INSPECT_SRC = `(responses) => {
 export const WECHAT_MP_PLATFORM: PassivePlatform = {
   label: "wechat_mp",
   url: BACKEND,
-  follow: { match: "token=(\\d+)", template: PUBLISH_LIST_TEMPLATE },
+  // 菜单入口:「发表记录」直接可见就点它;否则先点「内容管理」展开(2026-10-03 未登录,菜单文字待真机校准)
+  entry: { css: "a,span,li,div", target: ["发表记录"], openers: ["内容管理"] },
   patterns: PUBLISH_PATTERNS,
   gates: { riskUrl: RISK_URL_COMMON, loginText: LOGIN_TEXT_COMMON, riskText: RISK_TEXT_COMMON },
   next: { kind: "click", css: "a,button,span", texts: ["下一页"] },

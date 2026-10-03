@@ -117,18 +117,20 @@ export function parseDouyinItemList(resp: CapturedResponse): PageParse {
 }
 
 /**
- * 在 ego 子进程里跑(自包含,不能引用外部符号):这一页最早的作品发布时间 + 平台说还有没有下一页。
+ * 在 ego 子进程里跑(自包含,不能引用外部符号):这一页最早的作品发布时间 + 平台说还有没有下一页
+ * + 信封终止态(status_code 8 = 未登录 → 立刻停,不再滚)。
  * 决定还滚不滚;判不出就返回 null,交给 3 页上限兜底。
  */
 export const DOUYIN_INSPECT_SRC = `(responses) => {
-  let oldest = null, more = null;
+  let oldest = null, more = null, terminal = null;
   for (const r of responses) {
     let j; try { j = JSON.parse(r.body); } catch { continue; }
+    if (j && j.status_code === 8) terminal = "login";
     const list = Array.isArray(j.aweme_list) ? j.aweme_list : Array.isArray(j.items) ? j.items : [];
     for (const it of list) { const t = Number(it && it.create_time); if (t > 0 && (oldest === null || t * 1000 < oldest)) oldest = t * 1000; }
     if (j.has_more === true || j.has_more === 1) more = true; else if (more === null && (j.has_more === false || j.has_more === 0)) more = false;
   }
-  return { oldestMs: oldest, hasMore: more };
+  return { oldestMs: oldest, hasMore: more, terminal };
 }`;
 
 export const DOUYIN_PLATFORM: PassivePlatform = {
