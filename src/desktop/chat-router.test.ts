@@ -300,7 +300,7 @@ describe("buildChatTools", () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({
       ok: true, platform: "xiaohongshu", title: "新标题", body: "新正文",
-      notes: [], titleVariants: [], hashtags: ["#tag"],
+      notes: [], hashtags: ["#tag"],
       content: { id: "c2", title: "新标题" },
     }));
     const tools = buildChatTools(sink, testDir, { rewrite });
