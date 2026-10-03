@@ -83,7 +83,7 @@ describe("回流状态行（§42 / §43）", () => {
   it("没开 / 开了正常 / 登录过期变红 / 读不出来变红", () => {
     expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: false, lastStatus: "never" }], null)).toEqual({ state: "自动回流没开", problem: null });
     expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "ok" }], null).problem).toBeNull();
-    expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "needs_login" }], null).problem).toMatch(/抖音.*扫码/);
+    expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "needs_login" }], null).problem).toMatch(/在 ego lite 里登录抖音后台/);
     expect(pullLine(null, "boom").problem).toMatch(/boom/);
   });
   it("封面没下载成写进状态行（§I.57）", () => {
