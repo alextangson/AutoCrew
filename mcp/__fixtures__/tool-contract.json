@@ -2308,7 +2308,9 @@
        "meeting_get",
        "meeting_save",
        "meeting_tag",
-       "calib_status"
+       "calib_status",
+       "calib_blind",
+       "calib_predict"
       ],
       "type": "string"
      },
@@ -4873,7 +4875,9 @@
        "meeting_get",
        "meeting_save",
        "meeting_tag",
-       "calib_status"
+       "calib_status",
+       "calib_blind",
+       "calib_predict"
       ],
       "type": "string"
      },

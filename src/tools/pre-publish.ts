@@ -34,6 +34,7 @@ import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/p
 import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 import { KIT_BEHIND_REGISTER, kitBehindRegister, kitRegisterHash } from "../modules/publish/kit-stale.js";
 import { ontologyApplies, registeredPackage } from "../modules/production/publish-gate.js";
+import { predictionPrompt } from "../modules/calibration/prompt.js";
 import { captionBounds, captionTags, KIT_CAPTION_MIN, mergeTags, PLATFORM_MAX_BODY, PLATFORM_MIN_BODY } from "../modules/publish/publish-limits.js";
 
 // --- Types ---
@@ -329,6 +330,7 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
     content_id: contentId,
     video_kit: { platform, post_title: kit.postTitle, caption: kit.caption, cover_text: kit.coverText, draft_hash: kit.draftHash, source: kit.source },
     next_action: { tool: "autocrew_pre_publish", params: { action: "check", content_id: contentId } },
+    calibration: predictionPrompt(contentId), // 判断要对账 §二：交发布包时先盲预测
     ...gate.grant,
   };
 }
