@@ -1,9 +1,11 @@
 {
-  "_fixture_note": "视频号 /post/post_list 一页。字段来源为社区仓库里留痕的真实抓包类型定义（端点文档 §2 标注可信度最高），但仍**未经本仓真实抓包，待校准**。objectId 是 19 位数字，用于验证精度保护。",
+  "_fixture_note": "视频号「内容管理」页自己收到的 /micro/content/cgi-bin/mmfinderassistant-bin/post/post_list 响应（2026-10-03 只读旁听实测：HTTP 201、errCode:0、data.list/totalCount/lastBuff/continueFlag）。数值与标题是手工构造的假值；objectId 是 19 位数字，用于验证精度保护。",
   "errCode": 0,
   "errMsg": "ok",
   "data": {
     "totalCount": 3,
+    "lastBuff": "export/FAKE_BUFF",
+    "continueFlag": false,
     "list": [
       {
         "objectId": 1441234567890123456,

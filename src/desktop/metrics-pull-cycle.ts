@@ -52,6 +52,8 @@ export interface PullAttempt {
   errorCode?: string;
   /** 抓到分页上限：「至少还有更多」，不谎报精确丢弃数（codex #23） */
   hasMore?: boolean;
+  /** 登录/风控前已拿到的行没入成库（状态仍是登录/风控） */
+  importError?: string;
   /** 入库成功但状态没写住：下轮会重抓，重复导入无害——如实报出来，不静默 */
   persistError?: string;
 }
@@ -127,6 +129,8 @@ interface Landing {
   batchId?: string;
   hasMore?: boolean;
   coverError?: string;
+  /** 登录/风控前已拿到的行入库失败：单独记，不覆盖登录/风控状态 */
+  importError?: string;
 }
 
 /** 结果 → 下一份平台状态。退避语义全在这里，一个 switch 看全（spec §4.3） */
@@ -147,6 +151,7 @@ export function applyPullOutcome(
   };
   if (landing.errorCode) next.lastErrorCode = landing.errorCode;
   else delete next.lastErrorCode;
+  if (landing.importError) next.lastErrorCode = `${landing.errorCode ?? landing.status}+${landing.importError}`;
 
   if (landing.status === "ok") {
     next.lastSuccessAt = now.toISOString();
@@ -184,16 +189,32 @@ function labelOf(platform: PullPlatform): string {
   return PULL_PLATFORM_LABELS[platform];
 }
 
+/** 登录/风控前已拿到的行（照常入账）——说清楚，不让人以为一条没进 */
+function keptNote(attempt: PullAttempt): string {
+  if (attempt.rowCount === 0) return "";
+  if (attempt.importError) return `（此前已拿到的 ${attempt.rowCount} 条入库失败：${attempt.importError}）`;
+  return `（此前已拿到的 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条）`;
+}
+
+/** 成功但不完整：只拿到第 1 页 / 中途出错（已拿到的完整页照常入账）——都要看得见 */
+function partialNote(errorCode: string | undefined): string {
+  if (!errorCode) return "";
+  if (errorCode === "only_first_page") return "（只拿到第 1 页）";
+  if (errorCode.startsWith("incomplete:")) return `（没抓全：${errorCode === "incomplete:no_new_response" ? "翻页后页面没返回新数据" : "后面的翻页控件找不到"}；已拿到的页照常入账）`;
+  if (errorCode.startsWith("partial:risk_control")) return "（中途出现风控提示，已停手；已拿到的页照常入账）";
+  return `（中途出错：${errorCode}，已拿到的页照常入账）`;
+}
+
 /** 事件文案：一行人话，说清发生了什么、人要不要动手（Report 页与工作日志共用） */
 function eventLabel(attempt: PullAttempt): string {
   const name = labelOf(attempt.platform);
   switch (attempt.status) {
     case "ok":
-      return `自动回流：${name} 抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条`;
+      return `自动回流：${name} 抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条${partialNote(attempt.errorCode)}`;
     case "needs_login":
-      return `${name}登录态过期——在 ego lite 里登录${name}后台，之后数据继续回流`;
+      return `${name}登录态过期——在 ego lite 里登录${name}后台，之后数据继续回流${keptNote(attempt)}`;
     case "risk_control":
-      return `${name}触发风控，今天不再自动抓取`;
+      return `${name}触发风控，已停手，今天不再自动抓取${keptNote(attempt)}`;
     case "browser_unreachable":
       return "浏览器未连接（ego lite）：打开 ego lite 并保持运行，自动回流一小时后再试";
     case "schema_changed":
@@ -201,6 +222,7 @@ function eventLabel(attempt: PullAttempt): string {
     case "timeout":
       return `${name}抓取超时，稍后重试`;
     default:
+      if (attempt.errorCode === "no_data_response") return `${name}页面没返回作品数据，本次零写入`;
       return `${name}抓取失败：${attempt.errorCode ?? "unknown"}`;
   }
 }
@@ -235,21 +257,28 @@ export async function captureCovers(platform: PullPlatform, rows: TypedRow[], op
   return `cover_download_failed:${failed}/${todo.length}:${firstError}`;
 }
 
+/** 带行的结果：ok，或中途碰到登录/风控前已拿到完整页的 needs_login / risk_control */
+function carriesRows(result: PullResult): boolean {
+  return result.status === "ok" || result.status === "needs_login" || result.status === "risk_control";
+}
+
 /** 先入库后写状态：入库失败就当整次抓取失败（零写入），不给「抓到了但没落地」留模糊地带 */
 async function land(platform: PullPlatform, result: PullResult, now: Date, opts: PullNowOptions): Promise<Landing> {
   const base: Landing = {
     status: result.status,
-    rowCount: result.status === "ok" ? result.rows.length : 0,
+    rowCount: carriesRows(result) ? result.rows.length : 0,
     ...(result.errorCode ? { errorCode: result.errorCode } : {}),
     ...(result.hasMore ? { hasMore: true } : {}),
   };
-  if (result.status !== "ok" || result.rows.length === 0) return base;
+  if (!carriesRows(result) || result.rows.length === 0) return base;
   const batchId = `pull-${platform}-${now.getTime()}`;
   try {
     const report = await (opts.importRows ?? importPerformanceRows)(platform, result.rows, {
       source: "auto",
       dataDir: opts.dataDir,
     });
+    // 中途碰到登录/风控：行照常入库，但状态保持登录/风控（调度当天不再碰、待办提示登录），入库失败不改写它
+    if (result.status !== "ok") return { ...base, imported: report.imported };
     if (report.imported === 0) {
       return {
         status: "error",
@@ -262,6 +291,8 @@ async function land(platform: PullPlatform, result: PullResult, now: Date, opts:
     return { ...base, imported: report.imported, batchId, ...(coverError ? { coverError } : {}) };
   } catch (err) {
     opts.warn?.(`[metrics-pull] ${platform} 入库失败：${err instanceof Error ? err.message : String(err)}`);
+    // 登录/风控是这次抓取的结论（决定当天碰不碰、要不要提醒登录），入库失败不能把它改写成可重试的 error
+    if (result.status !== "ok") return { ...base, imported: 0, importError: "import_failed" };
     return { status: "error", rowCount: 0, errorCode: "import_failed" };
   }
 }
@@ -289,6 +320,7 @@ async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<Pu
     ...(landing.imported !== undefined ? { imported: landing.imported } : {}),
     ...(landing.errorCode ? { errorCode: landing.errorCode } : {}),
     ...(landing.hasMore ? { hasMore: true } : {}),
+    ...(landing.importError ? { importError: landing.importError } : {}),
     ...(persistError ? { persistError } : {}),
   };
   const emit = opts.emit ?? emitEngineEvent;

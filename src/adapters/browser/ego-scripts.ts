@@ -6,13 +6,16 @@
  * - 结果只认一行 `__AUTOCREW_EGO__{json}`；其余输出（升级提示等）一律忽略；
  * - 拿到 TaskSpace 立刻先打一行 `__AUTOCREW_EGO_SPACE__<id>`，供父进程在子进程被杀后兜底关；
  * - 参数整体 JSON 序列化进 `const P = …`，绝不把 URL/表达式拼进代码文本；
- * - 打开页、旁听抓包两类脚本自己管 TaskSpace 生命周期：异常路径也 `finish({ keep: [] })`；
- *   在已开 TaskSpace 里的单步操作（eval/fetch）失败不关——由会话收尾统一 finish。
+ * - 旁听脚本（browseScript）自己管 TaskSpace 生命周期：任何路径都 `finish({ keep: [] })`；
+ * - **只看不发**：脚本只开官方页面、旁听页面自己收到的响应、像人一样滚动/点翻页；
+ *   不调用平台接口、不加请求头、不调页面签名函数（规格 2026-10-03-metrics-pull-human-like）。
  */
 
 export const EGO_RESULT_MARKER = "__AUTOCREW_EGO__";
 /** 一拿到 TaskSpace 就先报 spaceId：子进程之后卡死被杀，父进程也知道该关哪个 */
 export const EGO_SPACE_MARKER = "__AUTOCREW_EGO_SPACE__";
+/** 每拿到一页完整数据就先打一行：子进程之后出错 / 被杀，已拿到的页父进程照样能用 */
+export const EGO_PAGE_MARKER = "__AUTOCREW_EGO_PAGE__";
 
 /** 每个脚本共用的开头：参数、输出、错误文本 */
 function prelude(params: unknown): string {
@@ -55,96 +58,243 @@ ${body}
 `;
 }
 
-/** 新建一个 TaskSpace，把 p1 导航到平台后台页；导航失败就当场关掉这个 TaskSpace */
-export function openScript(p: { space: string; url: string; timeoutMs: number }): string {
-  const body = `      const page = task.page("p1");
-      await page.goto(P.url, { waitUntil: "domcontentloaded", timeout: P.timeoutMs });
-      return {};`;
-  return wrap(p, body, { finishOnError: true, finishAlways: false });
-}
+/**
+ * 只看真正的验证/登录界面，不看整页文字（作品标题里有「安全验证」「扫码登录」不算）：
+ * 弹层（dialog / aria-modal）、验证码容器（class/id 含 captcha/verify/slider/geetest/secsdk/nc_）、验证 iframe 的地址，
+ * 以及登录表单 / 二维码登录容器（class/id 含 login/qrcode、密码框所在表单）。含 shadow DOM，只取可见元素。
+ */
+const GATE_SCOPE_EXPR = `(() => { /*__GATE_SCOPE__*/
+  const roots = [document];
+  for (const el of document.querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+  const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const CH = '[role=dialog],[aria-modal=true],[class*=captcha i],[id*=captcha i],[class*=verify i],[id*=verify i],[class*=slider i],[class*=geetest i],[class*=secsdk i],[class*=nc_ i]';
+  const LG = '[class*=login i],[id*=login i],[class*=qrcode i]';
+  let challenge = '', login = '';
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(CH)) if (visible(el)) challenge += ' ' + (el.innerText || el.textContent || '').slice(0, 500);
+    for (const el of root.querySelectorAll('iframe')) if (visible(el)) challenge += ' ' + String(el.src || '');
+    for (const el of root.querySelectorAll(LG)) if (visible(el)) login += ' ' + (el.innerText || el.textContent || '').slice(0, 500);
+    for (const el of root.querySelectorAll('input[type=password]')) if (visible(el)) login += ' ' + ((el.form && el.form.innerText) || '');
+  }
+  return { challenge: challenge.slice(0, 6000), login: login.slice(0, 6000) };
+})()`;
 
-/** 在已开 TaskSpace 的 p1 里求值（页面内表达式；Promise 会被等完） */
-export function evalScript(p: { space: number; expression: string }): string {
-  const body = `      const value = await task.page("p1").evaluate(P.expression);
-      return { value: value === undefined ? null : value };`;
-  return wrap(p, body, { finishOnError: false, finishAlways: false });
-}
+/**
+ * 找翻页控件（含 shadow DOM）：css 圈候选，texts 非空按文字精确匹配，为空取「无文字」的那个（图标箭头）；
+ * 多个命中取最后一个（最内层 / 最靠后）。返回是否禁用与屏幕坐标，点击走原生鼠标。
+ */
+const FIND_NEXT_FN = `(cfg) => {
+  const roots = [document];
+  for (const el of document.querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+  let hit = null;
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(cfg.css)) {
+      const t = (el.innerText || el.textContent || '').trim();
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (cfg.texts.length ? cfg.texts.includes(t) : t === '') hit = el;
+    }
+  }
+  if (!hit) return { found: false };
+  const off = (el) => !!el && (el.disabled === true || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(String(el.className || '')));
+  if (off(hit) || off(hit.parentElement)) return { found: true, disabled: true };
+  hit.scrollIntoView({ block: 'center' });
+  const r = hit.getBoundingClientRect();
+  return { found: true, disabled: false, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+}`;
 
-/** 在已开 TaskSpace 的 p1 里 page.fetch（window.fetch，带页面 cookie），交回 PageFetchResponse 形状 */
-export function fetchScript(p: {
-  space: number;
+const BROWSE_HELPERS = `      const page = task.page("p1");
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const rand = (a, b) => a + Math.random() * (b - a);
+      const pause = () => sleep(rand(P.pauseMinMs, P.pauseMaxMs));
+      const inspect = (0, eval)("(" + P.inspectSrc + ")");
+      const rx = (s) => (s ? new RegExp(s, "i") : null);
+      const G = { loginUrl: rx(P.gates.loginUrl), riskUrl: rx(P.gates.riskUrl), loginText: rx(P.gates.loginText), riskText: rx(P.gates.riskText) };
+      const seen = new Set();
+      const pending = [];
+      const collect = (events) => {
+        for (const ev of events || []) {
+          if (!ev || ev.method !== "Network.responseReceived") continue;
+          const r = (ev.params && ev.params.response) || {};
+          const url = String(r.url || "");
+          const id = ev.params.requestId;
+          if (id && !seen.has(id) && P.patterns.some((x) => url.includes(x))) {
+            seen.add(id);
+            pending.push({ requestId: id, url, status: Number(r.status) || 0 });
+          }
+        }
+      };
+      const gate = async (withText) => {
+        const href = String(await page.evaluate("location.href").catch(() => ""));
+        if (G.riskUrl && G.riskUrl.test(href)) return "risk";
+        if (G.loginUrl && G.loginUrl.test(href)) return "login";
+        if (!withText) return null;
+        const ui = (await page.evaluate(${JSON.stringify(GATE_SCOPE_EXPR)}).catch(() => null)) || {};
+        const challenge = String(ui.challenge || ""), login = String(ui.login || "");
+        if (G.riskText && G.riskText.test(challenge)) return "risk";
+        if (G.riskUrl && G.riskUrl.test(challenge)) return "risk";
+        if (G.loginText && G.loginText.test(login)) return "login";
+        return null;
+      };
+      const readBody = async (requestId) => {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            const r = await page.cdp("Network.getResponseBody", { requestId });
+            const raw = typeof r.body === "string" ? r.body : "";
+            return r.base64Encoded === true ? Buffer.from(raw, "base64").toString("utf8") : raw;
+          } catch {
+            await sleep(400);
+          }
+        }
+        return null;
+      };`;
+
+const BROWSE_WAIT = `      const waitPage = async (ms) => {
+        const deadline = Date.now() + ms;
+        let lastGate = Date.now();
+        collect(await page.events());
+        while (pending.length === 0 && Date.now() < deadline) {
+          await sleep(250);
+          collect(await page.events());
+          if (Date.now() - lastGate > 1000) {
+            lastGate = Date.now();
+            const g = await gate(false);
+            if (g) return { gate: g, responses: [] };
+          }
+        }
+        if (pending.length === 0) return { gate: await gate(true), responses: [] };
+        await sleep(P.settleMs);
+        collect(await page.events());
+        const responses = [];
+        for (const p of pending.splice(0)) {
+          const body = await readBody(p.requestId);
+          if (body !== null) responses.push({ url: p.url, status: p.status, body });
+        }
+        return { gate: null, responses };
+      };
+      const findControl = (cfg) => page.evaluate("(" + ${JSON.stringify(FIND_NEXT_FN)} + ")(" + JSON.stringify(cfg) + ")");
+      const clickAt = async (hit) => {
+        await sleep(rand(300, 800));
+        await page.mouse.move(hit.x + rand(-3, 3), hit.y + rand(-2, 2), { steps: 8 + Math.floor(rand(0, 8)) });
+        await page.mouse.click(hit.x, hit.y);
+      };
+      const advance = async () => {
+        const info = await page.info().catch(() => ({ w: 1280, h: 800 }));
+        if (P.next.kind === "scroll") {
+          await page.mouse.move(rand(0.35, 0.65) * (info.w || 1280), rand(0.45, 0.7) * (info.h || 800), { steps: 6 + Math.floor(rand(0, 6)) });
+          const n = 3 + Math.floor(rand(0, 4));
+          for (let i = 0; i < n; i += 1) {
+            await page.mouse.wheel(0, rand(400, 900));
+            await sleep(rand(250, 700));
+            // 新的一页一到就停手：一串滚轮不能一口气吞下好几页（30 天截止与 2–6 秒停顿要逐页生效）
+            collect(await page.events());
+            if (pending.length > 0) break;
+          }
+          return "moved";
+        }
+        const hit = await findControl(P.next);
+        if (!hit || !hit.found) return "pagination_missing";
+        if (hit.disabled) return "no_more";
+        await clickAt(hit);
+        return "moved";
+      };`;
+
+const BROWSE_MAIN = `      // 每次点菜单前都重新看一眼 URL 与验证/登录界面（停顿期间也可能弹出来）
+      const clickText = async (texts) => {
+        const g = await gate(true);
+        if (g) return g;
+        const hit = await findControl({ css: P.entry.css, texts });
+        if (!hit || !hit.found || hit.disabled) return "missing";
+        await clickAt(hit);
+        return "clicked";
+      };
+      // 像人一样从官方页面的菜单点进数据页（公众号：内容管理 → 发表记录）；不手拼任何数据地址
+      const enter = async () => {
+        const deadline = Date.now() + P.waitMs;
+        while (Date.now() < deadline) {
+          const t = await clickText(P.entry.target);
+          if (t !== "missing") return t === "clicked" ? "ok" : t;
+          if (P.entry.openers.length > 0) {
+            const o = await clickText(P.entry.openers);
+            if (o === "login" || o === "risk") return o;
+            if (o === "clicked") {
+              await pause();
+              const t2 = await clickText(P.entry.target);
+              if (t2 !== "missing") return t2 === "clicked" ? "ok" : t2;
+            }
+          }
+          await sleep(1000);
+        }
+        return (await gate(true)) || "entry_missing";
+      };
+      await page.cdp("Network.enable", {});
+      await page.events();
+      await page.goto(P.url, { waitUntil: "domcontentloaded", timeout: P.navTimeoutMs }).catch(() => {});
+      if (P.entry) {
+        const entered = await enter();
+        if (entered === "entry_missing") return { pages: 0, end: "entry_missing", gate: null };
+        if (entered !== "ok") return { pages: 0, end: "gate", gate: entered };
+      }
+      let pages = 0;
+      for (let i = 0; i < P.maxPages; i += 1) {
+        const got = await waitPage(i === 0 ? P.waitMs : P.nextWaitMs);
+        if (got.gate) return { pages, end: "gate", gate: got.gate };
+        if (got.responses.length === 0) return { pages, end: i === 0 ? "no_response" : "no_new_response", gate: null };
+        console.log(${JSON.stringify("__PAGE__")} + JSON.stringify({ index: i, responses: got.responses }));
+        pages += 1;
+        // 有数据也要先看页面是不是已经跳到登录/验证页，再决定下一步（拿到响应 ≠ 没被风控）
+        const after = await gate(true);
+        if (after) return { pages, end: "gate", gate: after };
+        if (got.responses.some((r) => r.status < 200 || r.status >= 300)) return { pages, end: "http_status", gate: null };
+        let seenInfo = { oldestMs: null, hasMore: null, terminal: null };
+        try { seenInfo = inspect(got.responses) || seenInfo; } catch { /* 判不出就按「还有」处理，翻页上限兜底 */ }
+        if (seenInfo.terminal === "login" || seenInfo.terminal === "risk") return { pages, end: "gate", gate: seenInfo.terminal };
+        if (typeof seenInfo.oldestMs === "number" && seenInfo.oldestMs < P.cutoffMs) return { pages, end: "cutoff", gate: null };
+        if (seenInfo.hasMore === false) return { pages, end: "no_more", gate: null };
+        if (i === P.maxPages - 1) break;
+        await pause();
+        const before = await gate(true);
+        if (before) return { pages, end: "gate", gate: before };
+        const moved = await advance();
+        if (moved !== "moved") return { pages, end: moved, gate: null };
+      }
+      return { pages, end: "max_pages", gate: null };`;
+
+/** 旁听一次抓取的参数（平台差异全在这里，脚本本身不认平台） */
+export interface BrowseParams {
+  space: string;
   url: string;
-  init: { method: string; headers: Record<string, string>; body?: string; timeout: number };
-}): string {
-  const body = `      const r = await task.page("p1").fetch(P.url, { ...P.init, credentials: "include" });
-      const headers = r.headers || {};
-      const ct = typeof headers.get === "function" ? headers.get("content-type") : (headers["content-type"] || headers["Content-Type"]);
-      return { response: { httpStatus: r.status, finalUrl: r.url || P.url, contentType: String(ct || ""), bodyText: String(r.body ?? "") } };`;
-  return wrap(p, body, { finishOnError: false, finishAlways: false });
+  /** 打开 url 后先从页面菜单点进数据页：找 target 文字的链接点它；找不到先点 openers 展开菜单 */
+  entry?: { css: string; target: string[]; openers: string[] };
+  patterns: string[];
+  gates: { loginUrl?: string; riskUrl?: string; loginText?: string; riskText?: string };
+  next: { kind: "scroll" } | { kind: "click"; css: string; texts: string[] };
+  /** 自包含 JS 函数源码：(responses) => { oldestMs, hasMore, terminal? } —— 决定还翻不翻；terminal=login/risk 立刻收手 */
+  inspectSrc: string;
+  cutoffMs: number;
+  maxPages: number;
+  waitMs: number;
+  nextWaitMs: number;
+  settleMs: number;
+  navTimeoutMs: number;
+  pauseMinMs: number;
+  pauseMaxMs: number;
 }
 
-/** 关掉 TaskSpace（不保留任何 Agent 页；用户自己的标签受 ego lite 保护，不会被关） */
+/**
+ * 旁听抓取：一个子进程走完「开 Network → 打开官方页 → 收页面自己的数据响应 → 像人一样翻页 → 关 TaskSpace」。
+ * 每页先打一行 EGO_PAGE_MARKER；翻页前随机停 pauseMin–pauseMax；碰到登录页 / 风控页立刻收手（不绕过）。
+ */
+export function browseScript(p: BrowseParams): string {
+  const body = [BROWSE_HELPERS, BROWSE_WAIT, BROWSE_MAIN].join("\n").replace(JSON.stringify("__PAGE__"), JSON.stringify(EGO_PAGE_MARKER));
+  return wrap(p, body, { finishOnError: true, finishAlways: true });
+}
+
+/** 关掉 TaskSpace（不保留任何 Agent 页；用户自己的标签受 ego lite 保护，不会被关）——父进程兜底收尾用 */
 export function finishScript(p: { space: number }): string {
   const body = `      await task.finish({ keep: [] });
       return {};`;
   return wrap(p, body, { finishOnError: false, finishAlways: false });
-}
-
-const INTERCEPT_BODY = `      const page = task.page("p1");
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const ids = [];
-      const collect = (events) => {
-        for (const ev of events || []) {
-          const params = (ev && ev.params) || {};
-          if (!ev || ev.method !== "Network.responseReceived") continue;
-          const url = String((params.response && params.response.url) || "");
-          const id = params.requestId;
-          if (id && P.patterns.some((x) => url.includes(x)) && !ids.includes(id)) ids.push(id);
-        }
-      };
-      await page.cdp("Network.enable", {});
-      await page.events();
-      await page.goto(P.url, { waitUntil: "domcontentloaded", timeout: P.waitMs }).catch(() => {});
-      const deadline = Date.now() + P.waitMs;
-      collect(await page.events());
-      while (ids.length === 0 && Date.now() < deadline) {
-        await sleep(250);
-        collect(await page.events());
-      }
-      if (ids.length === 0) {
-        const domText = await page.evaluate("document.body ? document.body.innerText.slice(0,4000) : ''").catch(() => null);
-        return { matched: 0, bodies: [], domText: typeof domText === "string" ? domText : null };
-      }
-      await sleep(P.settleMs);
-      collect(await page.events());
-      const bodies = [];
-      for (const requestId of ids) {
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          try {
-            const r = await page.cdp("Network.getResponseBody", { requestId });
-            const raw = typeof r.body === "string" ? r.body : "";
-            bodies.push(r.base64Encoded === true ? Buffer.from(raw, "base64").toString("utf8") : raw);
-            break;
-          } catch {
-            await sleep(300);
-          }
-        }
-      }
-      return { matched: ids.length, bodies, domText: null };`;
-
-/**
- * 抖音旁听：一个子进程走完「开 Network → 导航作品管理页 → 收列表响应体 → 关 TaskSpace」。
- * 抖音接口带页面自己算的签名，只能让页面自己发请求、我们接响应（同旧 CDP 路线）。
- * 什么都没拦到时顺手取页面文本前 4000 字，交给调用方判登录墙——文本只用于判定，不出这个进程以外的日志。
- */
-export function interceptScript(p: {
-  space: string;
-  url: string;
-  patterns: string[];
-  waitMs: number;
-  settleMs: number;
-}): string {
-  return wrap(p, INTERCEPT_BODY, { finishOnError: true, finishAlways: true });
 }
 
 /** doctor 用：只连一下 ego lite（列 TaskSpace），不开任何页 */

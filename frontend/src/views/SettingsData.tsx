@@ -33,8 +33,8 @@ function ImportSection() {
     const r = await invoke("flywheel:wechat_pull", {});
     setPulling(false);
     if (!r.ok) return setLast(`公众号拉取失败：${r.error ?? "原因不明"}`);
-    const rep = (r as unknown as { data: ImportReport }).data;
-    setLast(`公众号回填：入账 ${rep.imported} 条（匹配稿件 ${rep.matched} · 历史 ${rep.historical}）`);
+    const { data: rep, note } = r as unknown as { data: ImportReport; note?: string };
+    setLast(`公众号回填：入账 ${rep.imported} 条（匹配稿件 ${rep.matched} · 历史 ${rep.historical}）${note ?? ""}`);
   };
 
   return (

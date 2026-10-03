@@ -1,27 +1,41 @@
 {
-  "_fixture_note": "小红书 /api/galaxy/creator/datacenter/note/analyze/list（是否免签**未确认**，第一版以它为主路）。note_infos[] 字段按端点文档 §3。未发现曝光/完播字段——不映射 impressions/completionRate，不猜。**未经真实抓包，待校准**。",
-  "success": true,
+  "_fixture_note": "小红书笔记数据页（/statistics/data-analysis）自己收到的 /api/galaxy/creator/datacenter/note/analyze/list 响应。键集合按 2026-10-03 只读旁听实测（HTTP 200，data.result/note_infos/total）；数值与标题是手工构造的假值。",
   "code": 0,
+  "success": true,
   "msg": "成功",
   "data": {
+    "result": { "success": true, "code": 0, "message": "success" },
     "note_infos": [
       {
         "id": "65f1a2b3000000001203e4d5",
+        "type": 1,
         "title": "做一人公司的第 30 天：把复盘交给代码",
         "post_time": 1783600000000,
         "read_count": 18422,
         "like_count": 902,
         "fav_count": 431,
-        "comment_count": 66
+        "comment_count": 66,
+        "share_count": 37,
+        "imp_count": 90211,
+        "coverClickRate": 0.12,
+        "view_time_avg": 21,
+        "increase_fans_count": 9,
+        "danmaku_count": 0,
+        "audit_status": 1,
+        "cover_url": "https://example.invalid/c.jpg",
+        "user_update_time": 1783600000000,
+        "update_time": 1783600000000
       },
       {
         "id": "65f1a2b3000000001203e4d6",
+        "type": 2,
         "title": "AI 帮我剪了一条片子",
         "post_time": 1783510000000,
         "read_count": 3120,
         "like_count": 77,
         "fav_count": 40,
-        "comment_count": 5
+        "comment_count": 5,
+        "share_count": 2
       },
       {
         "id": "65f1a2b3000000001203e4d7",
@@ -30,6 +44,6 @@
         "read_count": 10
       }
     ],
-    "has_more": false
+    "total": 3
   }
 }

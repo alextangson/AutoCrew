@@ -1,134 +1,32 @@
 /**
- * wechat-video-stats.test.ts — 视频号 in-page fetch 路线。
- * 解析层吃脱敏 fixture;页面内 fetch 全打桩(按 URL 路由假响应),不真连浏览器。
+ * wechat-video-stats.test.ts — 视频号旁听:解析层吃 fixture(字段形状按 2026-10-03 实测 post_list),
+ * 翻页判定 inspect 真跑;端到端判定在 passive-pull.test.ts。
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
+  WECHAT_VIDEO_INSPECT_SRC,
   WECHAT_VIDEO_PAGE,
-  commonBody,
+  WECHAT_VIDEO_PLATFORM,
   mapPostRow,
-  parseAuthData,
   parsePostList,
-  pickFinderUsername,
   pickTitle,
   pullWechatVideoStats,
-  type WechatVideoBrowser,
 } from "./wechat-video-stats.js";
-import type { PageFetchOutcome } from "./pull-shared.js";
-import { EgoChannelError } from "./ego-session.js";
 
 const fixture = (rel: string): string => readFileSync(new URL(`./__fixtures__/${rel}`, import.meta.url), "utf8");
-const AUTH_OK = fixture("wechat-video/auth-data.json");
-const AUTH_OUT = fixture("wechat-video/auth-data-logged-out.json");
-const UPLOAD_PARAMS = fixture("wechat-video/helper-upload-params.json");
 const POST_LIST = fixture("wechat-video/post-list.json");
 const POST_LIST_DRIFT = fixture("wechat-video/post-list-drift.json");
-const LEAK_MARKERS = ["FAKE_SESSIONID_DO_NOT_LEAK", "FAKE_FINDER_USERNAME", "session expired"];
-
-const res = (bodyText: string, over: Partial<PageFetchOutcome> = {}): PageFetchOutcome => ({
-  httpStatus: 200,
-  finalUrl: WECHAT_VIDEO_PAGE,
-  contentType: "application/json; charset=UTF-8",
-  bodyText,
-  ...over,
-});
-
-/** 页面内 fetch 桩:按 URL 里的路径片段路由假响应 */
-interface StubCfg {
-  routes: Record<string, PageFetchOutcome | (() => PageFetchOutcome)>;
-  hostReady?: boolean;
-  evalThrows?: Error;
-}
-
-function makeStub(cfg: StubCfg): { session: WechatVideoBrowser; requests: string[] } {
-  const requests: string[] = [];
-  const session: WechatVideoBrowser = {
-    async eval(expression: string) {
-      if (expression.startsWith("location.host")) {
-        return cfg.hostReady === false ? "about:blank|complete" : "channels.weixin.qq.com|complete";
-      }
-      if (cfg.evalThrows) throw cfg.evalThrows;
-      return null;
-    },
-    async fetch(url: string) {
-      if (cfg.evalThrows) throw cfg.evalThrows;
-      requests.push(url);
-      for (const [fragment, out] of Object.entries(cfg.routes)) {
-        if (url.includes(fragment)) return typeof out === "function" ? out() : out;
-      }
-      return res("{}", { httpStatus: 404 });
-    },
-    async openTab() {
-      return { targetId: "t1", sessionId: "s1" };
-    },
-    async closeTarget() {},
-    close() {},
-  };
-  return { session, requests };
-}
-
-const run = (cfg: StubCfg, over: Record<string, unknown> = {}) => {
-  const stub = makeStub(cfg);
-  return {
-    stub,
-    result: pullWechatVideoStats({ connect: async () => ({ session: stub.session }), navTimeoutMs: 300, delayMs: 0, ...over }),
-  };
-};
-
-const okRoutes = (postList = POST_LIST) => ({
-  "/auth/auth_data": res(AUTH_OK),
-  "/helper/helper_upload_params": res(UPLOAD_PARAMS),
-  "/post/post_list": res(postList),
-});
-
-describe("公共 body(端点文档 §2)", () => {
-  it("timestamp 是毫秒字符串,_log_finder_id 带 finderUsername", () => {
-    const body = commonBody("v2_abc@finder");
-    expect(typeof body.timestamp).toBe("string");
-    expect(Number(body.timestamp)).toBeGreaterThan(1_700_000_000_000);
-    expect(body).toMatchObject({ _log_finder_id: "v2_abc@finder", _log_finder_uin: "", rawKeyBuff: "", pluginSessionId: null, scene: 7, reqScene: 7 });
-  });
-});
-
-describe("登录判定(正向证据)", () => {
-  it("errCode:0 且拿得到 finderUsername → 在线", () => {
-    const out = parseAuthData(res(AUTH_OK));
-    expect(out).toMatchObject({ ok: true, finderUsername: "v2_FAKE_FINDER_USERNAME_do_not_leak@finder" });
-  });
-
-  it("errCode 非 0 → needs_login,errorCode 只带数字码", () => {
-    expect(parseAuthData(res(AUTH_OUT))).toEqual({ ok: false, result: { status: "needs_login", rows: [], errorCode: "auth_errcode:300110" } });
-  });
-
-  it("errCode:0 但没有 finderUsername → 仍判 needs_login(不当成功)", () => {
-    expect(parseAuthData(res('{"errCode":0,"data":{}}'))).toMatchObject({ ok: false, result: { status: "needs_login", errorCode: "auth_no_finder_username" } });
-  });
-
-  it("连 errCode 都没有 → schema_changed(接口换形状,不是没登录)", () => {
-    expect(parseAuthData(res('{"ok":true}'))).toMatchObject({ ok: false, result: { status: "schema_changed", errorCode: "missing:auth_data.errCode" } });
-  });
-
-  it("HTML 伪装 200 → schema_changed", () => {
-    expect(parseAuthData(res("<html>登录</html>", { contentType: "text/html" }))).toMatchObject({
-      ok: false,
-      result: { status: "schema_changed", rows: [] },
-    });
-  });
-
-  it("finderUsername 认几条常见路径(路径未确认,待校准)", () => {
-    expect(pickFinderUsername({ finderUser: { finderUsername: "a" } })).toBe("a");
-    expect(pickFinderUsername({ finderUsername: "b" })).toBe("b");
-    expect(pickFinderUsername({ user: { finderUsername: "c" } })).toBe("c");
-    expect(pickFinderUsername(null)).toBe("");
-  });
-});
+const LIVE_URL = "https://channels.weixin.qq.com/micro/content/cgi-bin/mmfinderassistant-bin/post/post_list?_aid=x&_rid=y";
+/** 官方页面自己收到的 post_list 恒是 HTTP 201(2026-10-03 实测) */
+const res = (body: string, status = 201) => ({ url: LIVE_URL, status, body });
+type Inspect = (rs: Array<{ url: string; body: string }>) => { oldestMs: number | null; hasMore: boolean | null };
+const inspect = (0, eval)(`(${WECHAT_VIDEO_INSPECT_SRC})`) as Inspect;
 
 describe("parsePostList(fixture 锚定)", () => {
   it("字段映射:readCount→views / forwardCount→shares / favCount→favorites / followCount→follows", () => {
     const parsed = parsePostList(res(POST_LIST));
     if (parsed.kind !== "ok") throw new Error("应解析成功");
-    expect(parsed.totalCount).toBe(3);
     expect(parsed.rows[0]).toMatchObject({
       title: "一个人做公司第 30 天",
       platformItemId: "1441234567890123456",
@@ -178,96 +76,34 @@ describe("parsePostList(fixture 锚定)", () => {
   });
 });
 
-describe("pullWechatVideoStats(打桩)", () => {
-  it("完整顺序:auth_data → helper_upload_params → post_list", async () => {
-    const { stub, result } = run({ routes: okRoutes() });
-    const out = await result;
-    expect(out.status).toBe("ok");
-    expect(out.rows).toHaveLength(2); // 第三条标题空+无指标 → 行级丢弃
-    expect(stub.requests[0]).toContain("/auth/auth_data");
-    expect(stub.requests[1]).toContain("/helper/helper_upload_params");
-    expect(stub.requests[2]).toContain("/post/post_list");
+
+describe("旁听配置(2026-10-03 实测)", () => {
+  it("旁听带 /micro/content 前缀的真实路径;翻页点「下一页」;登录页 URL 特征", () => {
+    expect(WECHAT_VIDEO_PLATFORM.url).toBe(WECHAT_VIDEO_PAGE);
+    expect(WECHAT_VIDEO_PLATFORM.patterns.every((p) => LIVE_URL.includes(p))).toBe(true);
+    expect(WECHAT_VIDEO_PLATFORM.next).toEqual({ kind: "click", css: "a,button,span", texts: ["下一页"] });
+    expect(new RegExp(WECHAT_VIDEO_PLATFORM.gates.loginUrl!, "i").test("https://channels.weixin.qq.com/login.html")).toBe(true);
+    expect(new RegExp(WECHAT_VIDEO_PLATFORM.gates.loginUrl!, "i").test(WECHAT_VIDEO_PAGE)).toBe(false);
   });
 
-  it("拿到的 uin 进 X-WECHAT-UIN header", async () => {
-    let listUin = "";
-    const stub = makeStub({ routes: okRoutes() });
-    const inner = stub.session.fetch.bind(stub.session);
-    stub.session.fetch = async (url, init, sid) => {
-      if (url.includes("/post/post_list")) listUin = init.headers?.["X-WECHAT-UIN"] ?? "";
-      return inner(url, init, sid);
-    };
-    await pullWechatVideoStats({ connect: async () => ({ session: stub.session }), navTimeoutMs: 300, delayMs: 0 });
-    expect(listUin).toBe("2088888888");
+  it("HTTP 201 是正常(不再误判失败);401 → needs_login", () => {
+    expect(parsePostList(res(POST_LIST, 201)).kind).toBe("ok");
+    expect(parsePostList(res(POST_LIST, 401))).toMatchObject({ kind: "stop", result: { status: "needs_login" } });
   });
 
-  it("uin 拿不到不阻断:退 0000000000,列表照抓", async () => {
-    const { result } = run({ routes: { ...okRoutes(), "/helper/helper_upload_params": res("{}", { httpStatus: 500 }) } });
-    expect((await result).status).toBe("ok");
-  });
-
-  it("未登录 → needs_login,且不会去打 post_list", async () => {
-    const { stub, result } = run({ routes: { "/auth/auth_data": res(AUTH_OUT) } });
-    expect(await result).toMatchObject({ status: "needs_login", rows: [] });
-    expect(stub.requests.some((u) => u.includes("post_list"))).toBe(false);
-  });
-
-  it("HTTP 401 → needs_login;HTTP 500 → error", async () => {
-    expect(await run({ routes: { "/auth/auth_data": res("{}", { httpStatus: 401 }) } }).result).toMatchObject({ status: "needs_login" });
-    expect(await run({ routes: { "/auth/auth_data": res("{}", { httpStatus: 500 }) } }).result).toMatchObject({ status: "error", errorCode: "http:500" });
-  });
-
-  it("列表 schema 漂移 → schema_changed + 零行(零写入)", async () => {
-    const out = await run({ routes: okRoutes(POST_LIST_DRIFT) }).result;
-    expect(out).toMatchObject({ status: "schema_changed", rows: [] });
-  });
-
-  it("标签页没落到 channels 域 → timeout(不误报未登录)", async () => {
-    const out = await run({ routes: okRoutes(), hostReady: false }).result;
-    expect(out).toMatchObject({ status: "timeout", rows: [], errorCode: "page_not_ready" });
-  });
-
-  it("分页:满页就翻,超上限 → hasMore:true", async () => {
-    const page = (n: number) =>
-      res(
-        JSON.stringify({
-          errCode: 0,
-          data: { totalCount: 999, list: Array.from({ length: n }, (_, i) => ({ objectId: `p${Math.random()}${i}`, readCount: 5, desc: { description: `t${i}` } })) },
-        }),
-      );
-    const out = await run({ routes: { ...okRoutes(), "/post/post_list": () => page(4) } }, { pageSize: 4, limit: 10 }).result;
-    expect(out.rows).toHaveLength(10);
-    expect(out.hasMore).toBe(true);
-  });
-
-  it("ego lite 连不上 → browser_unreachable", async () => {
-    const out = await pullWechatVideoStats({
-      connect: async () => {
-        throw new EgoChannelError("browser_unreachable", "ego_unreachable", "连不上 ego lite");
-      },
-    });
-    expect(out).toMatchObject({ status: "browser_unreachable", errorCode: "ego_unreachable" });
+  it("inspect:continueFlag 决定还翻不翻,createTime 秒 → 毫秒", () => {
+    const body = JSON.stringify({ errCode: 0, data: { list: [{ createTime: 1783600000 }, { createTime: 1783000000 }], continueFlag: true } });
+    expect(inspect([res(body)])).toEqual({ oldestMs: 1783000000_000, hasMore: true });
+    expect(inspect([res(JSON.stringify({ errCode: 0, data: { list: [], continueFlag: false } }))])).toEqual({ oldestMs: null, hasMore: false });
   });
 });
 
-describe("脱敏红线", () => {
-  it("成功路径:fixture 里的 sessionid / finderUsername 不出现在返回值里", async () => {
-    const dump = JSON.stringify(await run({ routes: okRoutes() }).result);
-    for (const marker of LEAK_MARKERS) expect(dump).not.toContain(marker);
-  });
-
-  it("未登录路径:errMsg 原文不出现在返回值里", async () => {
-    const out = await run({ routes: { "/auth/auth_data": res(AUTH_OUT) } }).result;
-    const dump = JSON.stringify(out);
-    for (const marker of LEAK_MARKERS) expect(dump).not.toContain(marker);
-  });
-
-  it("页面内异常把响应片段带进 message,也漏不出去(只归类,不转录)", async () => {
-    const out = await run({
-      routes: {},
-      evalThrows: new Error('页面内表达式抛错:{"sessionid":"FAKE_SESSIONID_DO_NOT_LEAK_77aa"}'),
-    }).result;
-    expect(out).toMatchObject({ status: "error", rows: [], errorCode: "exception" });
-    expect(JSON.stringify(out)).not.toContain("FAKE_SESSIONID_DO_NOT_LEAK");
+describe("pullWechatVideoStats 经假会话", () => {
+  it("一页 201 响应 → ok,行带作品 id 与指标", async () => {
+    const now = () => new Date(1783600000_000 + 86_400_000);
+    const session = { browse: async () => ({ pages: [{ index: 0, responses: [res(POST_LIST)] }], end: "no_more" as const, gate: null }) };
+    const r = await pullWechatVideoStats({ now, session });
+    expect(r.status).toBe("ok");
+    expect(r.rows[0]).toMatchObject({ platformItemId: "1441234567890123456", metrics: { views: 20431 } });
   });
 });

@@ -295,6 +295,58 @@ describe("pullPlatformNow — 入库与状态", () => {
     expect(String(event.label)).toContain("视频号");
   });
 
+  it("P2-4 中途风控：已拿到的行入库，状态记 risk_control，手动抓也锚到次日 09:00（今天不再碰）", async () => {
+    await seed("douyin");
+    const importRows = vi.fn(async () => report());
+    const before9 = new Date(2026, 7, 23, 7, 0, 0);
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => ({ status: "risk_control", rows: ROWS, errorCode: "partial:risk_page" }) }, importRows, now: () => before9 }),
+    });
+    expect(importRows).toHaveBeenCalledTimes(1);
+    expect(attempt).toMatchObject({ status: "risk_control", rowCount: ROWS.length, imported: 1 });
+    const st = await stateOf("douyin");
+    expect(st.lastStatus).toBe("risk_control");
+    expect(st.nextEligibleAt).toBe(nextDayAtNine(before9));
+  });
+
+  it("R2-P2 风控前的行入库抛错 → 状态仍是 risk_control(次日 09:00),入库失败单独可见", async () => {
+    await seed("douyin");
+    const importRows = vi.fn(async () => Promise.reject(new Error("disk full")));
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => ({ status: "risk_control", rows: ROWS, errorCode: "partial:risk_page" }) }, importRows }),
+    });
+    expect(attempt).toMatchObject({ status: "risk_control", importError: "import_failed" });
+    const st = await stateOf("douyin");
+    expect(st.lastStatus).toBe("risk_control");
+    expect(st.nextEligibleAt).toBe(nextDayAtNine(NOW));
+    expect(st.lastErrorCode).toBe("partial:risk_page+import_failed");
+  });
+
+  it("P2-4 中途跳登录页：行入库，状态记 needs_login（登录待办的来源）", async () => {
+    await seed("wechat_video");
+    const importRows = vi.fn(async () => report());
+    await pullPlatformNow("wechat_video", {
+      dataDir: dir,
+      ...deps({ registry: { wechat_video: async () => ({ status: "needs_login", rows: ROWS, errorCode: "partial:login_page" }) }, importRows }),
+    });
+    expect(importRows).toHaveBeenCalledTimes(1);
+    expect((await stateOf("wechat_video")).lastStatus).toBe("needs_login");
+  });
+
+  it("旁听的不完整结果都看得见：只拿到第 1 页 / 中途风控 / 页面没返回数据", async () => {
+    const labelOf = async (result: PullResult) => {
+      const emit = vi.fn(async () => ({ ts: "", role: "analyst" as const, kind: "metrics_pull", label: "" }));
+      await pullPlatformNow("xiaohongshu", { dataDir: dir, ...deps({ registry: { xiaohongshu: async () => result }, emit }) });
+      return String((emit.mock.calls[0][0] as unknown as Record<string, unknown>).label);
+    };
+    expect(await labelOf({ ...okResult(), errorCode: "only_first_page" })).toContain("只拿到第 1 页");
+    expect(await labelOf({ ...okResult(), errorCode: "partial:risk_control:risk_page" })).toContain("风控");
+    expect(await labelOf(fail("error", "no_data_response"))).toContain("页面没返回作品数据");
+    expect(await labelOf({ ...okResult(), errorCode: "incomplete:no_new_response" })).toContain("没抓全");
+  });
+
   it("single-flight：同平台并发只真抓一次，后到的直接拿 in_flight", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));

@@ -1,13 +1,13 @@
 /**
  * ego lite 通道 —— 数据回流的唯一浏览器连接层（规格 docs/2026-10-03-metrics-pull-on-ego-lite-spec.md）。
  *
- * 机制：后端起 `ego-browser nodejs` 子进程（脚本走 stdin），在 Agent 自己的 TaskSpace 里打开平台后台页，
- * `page.fetch()` 在页面里带登录态请求内部接口，响应原样交回（PageFetchResponse 形状）。
+ * 机制：后端起 `ego-browser nodejs` 子进程（脚本走 stdin），在 Agent 自己的 TaskSpace 里打开平台官方数据页，
+ * 只旁听页面自己收到的数据响应、像人一样翻页（规格 docs/2026-10-03-metrics-pull-human-like-spec.md）。
+ * **不向平台后台发任何请求**：没有页面内主动请求、没有自造请求头、不调页面签名函数。
  * 登录态永远留在 ego lite 的 profile，AutoCrew 不提取/不存储 cookie。
  *
- * 一次抓取 = 一个 EgoSession = 一个 TaskSpace；每步一个短命子进程（约 0.1s 启动），按 spaceId 续用同一个
- * TaskSpace。会话有总超时：任何一步超出就杀子进程、记失败；收尾（closeTarget）不受总超时约束，
- * 超时/异常路径也照样 `finish({ keep: [] })`。
+ * 一次抓取 = 一个 EgoSession = 一个子进程 = 一个 TaskSpace。会话有总超时：超出就杀子进程、记失败；
+ * 子进程没正常收尾时父进程按它报出的 spaceId 另起子进程 finish（独立超时）。
  *
  * 输出不是预期 JSON = 通道故障（EgoChannelError），调用方零写入、状态可见，绝不当空数据。
  */
@@ -16,40 +16,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  EGO_PAGE_MARKER,
   EGO_RESULT_MARKER,
   EGO_SPACE_MARKER,
-  evalScript,
-  fetchScript,
+  browseScript,
   finishScript,
-  interceptScript,
-  openScript,
   pingScript,
+  type BrowseParams,
 } from "./ego-scripts.js";
 import type { PullStatus } from "./pull-types.js";
 
-/** 单次抓取总超时：开页 + 登录探测 + 翻页（≤20 页 × 间隔）都在这里面 */
-export const EGO_RUN_TIMEOUT_MS = 120_000;
+/** 单个平台一次抓取的总时长上限：开页 + 等数据 + 最多 3 页翻页（含 2–6s 停顿）都在这里面 */
+export const EGO_RUN_TIMEOUT_MS = 180_000;
 /** 收尾关 TaskSpace 的独立超时：总超时用完了也要关得掉 */
 const FINISH_TIMEOUT_MS = 15_000;
-/** 单次页面内 fetch 的超时（ego 侧），总超时仍是硬上限 */
-const FETCH_TIMEOUT_MS = 30_000;
-const NAV_TIMEOUT_MS = 30_000;
-
-/** 页面内 fetch 的原始结果——判定权归调用方，这里不替它解析 JSON */
-export interface PageFetchResponse {
-  httpStatus: number;
-  /** 跟随重定向后的最终 URL（登录跳转的正向证据） */
-  finalUrl: string;
-  contentType: string;
-  bodyText: string;
-}
-
-export interface PageFetchInit {
-  method?: "GET" | "POST";
-  headers?: Record<string, string>;
-  /** 已序列化的请求体（JSON 字符串） */
-  body?: string;
-}
 
 /** 通道层故障：状态码与脱敏错误码在抛出处就定好，classifyThrown 原样采信 */
 export class EgoChannelError extends Error {
@@ -194,24 +174,63 @@ export interface EgoSessionOptions {
   now?: () => number;
 }
 
-/** 抖音旁听结果 */
-export interface InterceptResult {
-  matched: number;
-  bodies: string[];
-  domText: string | null;
+/** 页面自己收到的一条数据响应（原文交给平台解析器判定） */
+export interface CapturedResponse {
+  url: string;
+  status: number;
+  body: string;
 }
 
-/**
- * 一次抓取的会话。能力面与旧 CDP 会话对齐：openTab / eval / fetch / closeTarget / close，
- * 抓取器的判定逻辑不用改。tab 的 targetId/sessionId 都是 TaskSpace 的 spaceId。
- */
+/** 一页 = 一次「等数据」窗口里收到的全部匹配响应 */
+export interface CapturedPage {
+  index: number;
+  responses: CapturedResponse[];
+}
+
+/** 旁听结束的原因（脚本给出）；error = 通道故障，pages 里仍是故障前已完整拿到的页 */
+export type BrowseEnd =
+  | "no_response"
+  | "no_new_response"
+  | "gate"
+  | "http_status"
+  | "cutoff"
+  | "no_more"
+  | "max_pages"
+  | "pagination_missing"
+  | "entry_missing"
+  | "error";
+
+export interface BrowseOutcome {
+  pages: CapturedPage[];
+  end: BrowseEnd;
+  gate: "login" | "risk" | null;
+  /** end="error" 时的通道故障（EgoChannelError 或脚本内异常） */
+  error?: unknown;
+}
+
+const BROWSE_ENDS: readonly string[] = ["no_response", "no_new_response", "gate", "http_status", "cutoff", "no_more", "max_pages", "pagination_missing", "entry_missing"];
+
+/** 每页一行；被杀时最后一行可能是半截，解析不了就丢（不完整的页不算拿到） */
+export function parsePageLines(out: EgoRunOutput): CapturedPage[] {
+  const pages: CapturedPage[] = [];
+  for (const l of out.stdout.split("\n").concat(out.stderr.split("\n"))) {
+    if (!l.startsWith(EGO_PAGE_MARKER)) continue;
+    try {
+      const v = JSON.parse(l.slice(EGO_PAGE_MARKER.length)) as CapturedPage;
+      if (typeof v.index === "number" && Array.isArray(v.responses) && !pages.some((p) => p.index === v.index)) pages.push(v);
+    } catch {
+      // 半截行
+    }
+  }
+  return pages.sort((x, y) => x.index - y.index);
+}
+
+/** 一次抓取的会话：一个旁听子进程 + 必要时父进程兜底关 TaskSpace */
 export class EgoSession {
   private readonly runner: EgoRunner;
   private readonly deadline: number;
   private readonly now: () => number;
   private readonly spaceName: string;
-  /** 同一会话多次开页(公众号超时重开)各用一个新名字:taskSpace(name) 遇同名会复用 */
-  private opened = 0;
 
   constructor(opts: EgoSessionOptions) {
     this.runner = opts.runner ?? spawnEgoRunner();
@@ -226,88 +245,46 @@ export class EgoSession {
     return left;
   }
 
-  private async exec(script: string, timeoutMs = this.remaining()): Promise<EgoPayload> {
-    return parseEgoOutput(await this.runner(script, timeoutMs));
-  }
-
-  /** 剩余总时长是否还够再试一步（公众号导航超时重开用） */
-  hasTimeLeft(): boolean {
-    return this.deadline - this.now() > 0;
-  }
-
   /**
-   * 会自己建 TaskSpace 的一步（开页 / 旁听）。子进程没正常收尾（被杀 / 崩溃 / 无结果行）时，
-   * 父进程按它先报出的 spaceId 另起子进程 finish（独立超时）；没报出 spaceId 就不猜，把「没能兜底」写进错误码。
+   * 子进程没正常收尾（被杀 / 崩溃 / 无结果行）时，按它先报出的 spaceId 另起子进程 finish；
+   * 没报出 spaceId 就不猜，把「没能兜底」写进错误码。
    */
-  private async execOwning(script: string, timeoutMs = this.remaining()): Promise<EgoPayload> {
-    const out = await this.runner(script, timeoutMs);
-    try {
-      return parseEgoOutput(out);
-    } catch (err) {
-      if (reportedCleanly(out) || out.spawnError) throw err;
-      const spaceId = reportedSpaceId(out);
-      if (spaceId !== null) {
-        await this.closeTarget(String(spaceId));
-        throw err;
-      }
-      if (err instanceof EgoChannelError) throw new EgoChannelError(err.status, `${err.code}:cleanup_skipped_no_space_id`, err.message);
-      throw err;
+  private async cleanupOrphan(out: EgoRunOutput, err: unknown): Promise<unknown> {
+    if (reportedCleanly(out) || out.spawnError) return err;
+    const spaceId = reportedSpaceId(out);
+    if (spaceId !== null) {
+      await this.closeTarget(String(spaceId));
+      return err;
     }
+    if (err instanceof EgoChannelError) return new EgoChannelError(err.status, `${err.code}:cleanup_skipped_no_space_id`, err.message);
+    return err;
   }
 
-  async openTab(url: string): Promise<{ targetId: string; sessionId: string }> {
+  /** 旁听抓取：通道故障不抛，连同已拿到的页一起交回（每页独立校验由调用方做） */
+  async browse(p: Omit<BrowseParams, "space">): Promise<BrowseOutcome> {
     const timeoutMs = this.remaining();
-    this.opened += 1;
-    const out = await this.execOwning(openScript({ space: `${this.spaceName}-${this.opened}`, url, timeoutMs: Math.min(timeoutMs, NAV_TIMEOUT_MS) }), timeoutMs);
-    if (typeof out.spaceId !== "number") throw new EgoChannelError("error", "ego_bad_output", "开页结果缺 spaceId");
-    const id = String(out.spaceId);
-    return { targetId: id, sessionId: id };
-  }
-
-  async eval(expression: string, sessionId: string, _awaitPromise = false): Promise<unknown> {
-    const out = await this.exec(evalScript({ space: Number(sessionId), expression }));
-    return out.value;
-  }
-
-  async fetch(url: string, init: PageFetchInit, sessionId: string): Promise<PageFetchResponse> {
-    const timeout = Math.min(this.remaining(), FETCH_TIMEOUT_MS);
-    const out = await this.exec(
-      fetchScript({
-        space: Number(sessionId),
-        url,
-        init: { method: init.method ?? "GET", headers: init.headers ?? {}, ...(init.body === undefined ? {} : { body: init.body }), timeout },
-      }),
-    );
-    const r = out.response as Partial<PageFetchResponse> | undefined;
-    if (!r || typeof r.httpStatus !== "number" || typeof r.bodyText !== "string") {
-      throw new EgoChannelError("error", "ego_bad_output", "页面内 fetch 返回形状异常(缺 httpStatus/bodyText)");
+    const out = await this.runner(browseScript({ space: this.spaceName, ...p }), timeoutMs);
+    const pages = parsePageLines(out);
+    try {
+      const payload = parseEgoOutput(out);
+      const end = String(payload.end);
+      if (!BROWSE_ENDS.includes(end)) throw new EgoChannelError("error", "ego_bad_output", "旁听结果缺 end");
+      const gate = payload.gate === "login" || payload.gate === "risk" ? payload.gate : null;
+      return { pages, end: end as BrowseEnd, gate };
+    } catch (err) {
+      return { pages, end: "error", gate: null, error: await this.cleanupOrphan(out, err) };
     }
-    return { httpStatus: r.httpStatus, finalUrl: String(r.finalUrl ?? url), contentType: String(r.contentType ?? ""), bodyText: r.bodyText };
   }
 
   /** 关 TaskSpace：独立超时，不吃总超时（超时路径更要关）；关失败不掩盖抓取结论 */
   async closeTarget(targetId: string): Promise<void> {
-    await this.exec(finishScript({ space: Number(targetId) }), FINISH_TIMEOUT_MS).catch(() => {});
-  }
-
-  /** 抖音旁听：单个子进程内开页、收包、关 TaskSpace */
-  async intercept(p: { url: string; patterns: string[]; waitMs: number; settleMs: number }): Promise<InterceptResult> {
-    const out = await this.execOwning(interceptScript({ space: this.spaceName, ...p }));
-    if (typeof out.matched !== "number" || !Array.isArray(out.bodies)) {
-      throw new EgoChannelError("error", "ego_bad_output", "旁听结果形状异常");
+    try {
+      parseEgoOutput(await this.runner(finishScript({ space: Number(targetId) }), FINISH_TIMEOUT_MS));
+    } catch {
+      // 关失败不掩盖抓取结论
     }
-    return {
-      matched: out.matched,
-      bodies: out.bodies.filter((b): b is string => typeof b === "string"),
-      domText: typeof out.domText === "string" ? out.domText : null,
-    };
-  }
-
-  close(): void {
-    // 子进程都是一步一个、跑完即退；TaskSpace 由 closeTarget 关。这里无事可做，保留与旧会话一致的收尾口
   }
 }
-
 /** doctor 用：`ego-browser` 在不在、连不连得上 ego lite */
 export async function probeEgoLite(
   runner: EgoRunner = spawnEgoRunner(),

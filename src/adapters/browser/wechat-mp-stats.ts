@@ -1,98 +1,121 @@
 /**
- * 公众号后台运营数据拉取 —— musegzh pull_wechat_stats.py 的 TS 移植(PRD §9 收编已验证路径)。
+ * 公众号后台数据回流 —— **旁听**(规格 docs/2026-10-03-metrics-pull-human-like-spec.md)。
  *
- * 机制:ego lite 通道(ego-session.ts)在 Agent 自己的 TaskSpace 里开 mp.weixin.qq.com → 页面内 fetch
- * 后台自己的 appmsgpublish JSON 接口(带页面 cookie)→ 阅读/分享/在看/
- * 送达数/群发时刻。只读、低频、有人值守(GUI 一键触发)——合规口径与 PRD §6 红线同构。
- * 个人主体订阅号无 datacube 权限(实测 48001),这条是公众号回填的主路。
+ * 打开 mp.weixin.qq.com 首页,像人一样点左侧菜单「内容管理 → 发表记录」进到发表记录页,
+ * 只读页面自己收到的响应(文档本身或页面翻页时的 JSON),要下一页就点页面上的「下一页」。
+ * 代码不向公众号后台发任何请求,也不手拼任何数据地址。
  *
- * 登录态三分法(in/out/timeout)原样保留:后台标签导航慢是瞬时态,绝不误报"请扫码"。
- * 新抓取器统一用 pull-types 的 7 值状态码,三态映射见 wechatStatusToPullStatus。
+ * 字段沿用 musegzh 已验证的 `publish_page.publish_list[].publish_info.appmsg_info[]`
+ * (read_num / share_num / old_like_num / sent_info.time)。**旁听形态待真机校准**:2026-10-03 探查时
+ * ego lite 里公众号未登录,没看到发表记录页的真实响应——页面首屏若把数据嵌在 HTML 里,按 `publish_page = {...};` 取。
  */
-import { EgoChannelError, EgoSession, type EgoRunner } from "./ego-session.js";
-import { withTab, type TabRef } from "./pull-shared.js";
-import type { PullStatus } from "./pull-types.js";
-
-export interface WechatStatRow {
-  title: string;
-  /** 阅读次数(read_num) */
-  read: number;
-  /** 分享次数(share_num) */
-  share: number;
-  /** 在看(old_like_num) */
-  like: number;
-  /** 群发那刻送达粉丝数(sent_status.total,打开率分母) */
-  fans: number;
-  /** 群发时刻(unix 秒) */
-  sentTime: number;
-}
-
-/** 公众号后台登录态三分法(历史契约,pullWechatMpStats 的返回语义) */
-export type WechatSessionStatus = "in" | "out" | "timeout";
+import type { CapturedResponse } from "./ego-session.js";
+import type { PullResult, TypedRow } from "./pull-types.js";
+import { assign, failure, httpFailure, isRecord, isoFromSeconds, parseJsonSafe } from "./pull-shared.js";
+import { runPassivePull, type PageParse, type PassivePlatform, type PassivePullOptions } from "./passive-pull.js";
+import { LOGIN_TEXT_COMMON, RISK_TEXT_COMMON, RISK_URL_COMMON } from "./gates.js";
 
 const BACKEND = "https://mp.weixin.qq.com/";
+export const PUBLISH_PATTERNS = ["/cgi-bin/appmsgpublish"];
 
-/** 三态 → 结构化状态码(spec §4.1:公众号通道行为不变,只在状态语言上并轨) */
-export function wechatStatusToPullStatus(status: WechatSessionStatus): PullStatus {
-  if (status === "in") return "ok";
-  if (status === "out") return "needs_login";
-  return "timeout";
+/** 响应 → publish_page 对象:JSON 响应直接取;HTML 文档里取 `publish_page = {...};`。取不到 = null */
+export function extractPublishPage(body: string): Record<string, unknown> | null {
+  let raw: unknown;
+  const json = parseJsonSafe(body);
+  if (json.ok && isRecord(json.value)) raw = json.value.publish_page;
+  else {
+    const m = /publish_page\s*=\s*(\{[\s\S]*?\})\s*;\s*(?:\n|<\/script>|var |window)/.exec(body);
+    if (!m) return null;
+    raw = m[1];
+  }
+  if (typeof raw === "string") {
+    const inner = parseJsonSafe(raw);
+    raw = inner.ok ? inner.value : null;
+  }
+  return isRecord(raw) ? raw : null;
 }
 
-/** 解析 appmsgpublish 响应(纯函数,单测锚定):publish_page 与 publish_info 都可能是 JSON 字符串 */
-export function parsePublishPage(body: string): WechatStatRow[] {
-  let j: unknown;
-  try {
-    j = JSON.parse(body);
-  } catch {
-    return [];
+function rowsOfEntry(entry: unknown): TypedRow[] {
+  let info: unknown = isRecord(entry) ? entry.publish_info : null;
+  if (typeof info === "string") {
+    const p = parseJsonSafe(info);
+    info = p.ok ? p.value : null;
   }
-  let pp = (j as { publish_page?: unknown }).publish_page;
-  if (typeof pp === "string") {
-    try {
-      pp = JSON.parse(pp);
-    } catch {
-      return [];
-    }
-  }
-  const list = ((pp as { publish_list?: unknown[] } | undefined)?.publish_list ?? []) as Array<Record<string, unknown>>;
-  const out: WechatStatRow[] = [];
-  for (const entry of list) {
-    let pi = entry.publish_info;
-    if (typeof pi === "string") {
-      try {
-        pi = JSON.parse(pi);
-      } catch {
-        continue;
-      }
-    }
-    const info = pi as
-      | {
-          sent_status?: { total?: number };
-          sent_info?: { time?: number };
-          appmsg_info?: Array<Record<string, unknown>>;
-        }
-      | undefined;
-    const fans = Number(info?.sent_status?.total ?? 0) || 0;
-    const sentTime = Number(info?.sent_info?.time ?? 0) || 0;
-    for (const a of info?.appmsg_info ?? []) {
-      const title = String(a.title ?? "");
-      if (!title) continue;
-      out.push({
-        title,
-        read: Number(a.read_num ?? 0) || 0,
-        share: Number(a.share_num ?? 0) || 0,
-        like: Number(a.old_like_num ?? 0) || 0,
-        fans,
-        sentTime,
-      });
-    }
-  }
-  return out;
+  if (!isRecord(info)) return [];
+  const sent = isRecord(info.sent_info) ? info.sent_info : {};
+  const publishedAt = isoFromSeconds(sent.time);
+  const articles = Array.isArray(info.appmsg_info) ? info.appmsg_info : [];
+  return articles.filter(isRecord).map((a) => {
+    const metrics: TypedRow["metrics"] = {};
+    assign(metrics, "views", a.read_num);
+    assign(metrics, "shares", a.share_num);
+    assign(metrics, "likes", a.old_like_num);
+    return { title: String(a.title ?? "").trim(), publishedAt, metrics };
+  });
 }
 
-function fmtSentTime(ts: number): string {
-  if (!ts) return "";
+/** 页面收到的一条发表记录响应的解析(纯函数) */
+export function parsePublishResponse(res: CapturedResponse): PageParse {
+  if (res.status < 200 || res.status >= 300) return { kind: "stop", result: httpFailure(res.status) };
+  const pp = extractPublishPage(res.body);
+  if (!pp) return { kind: "stop", result: failure("schema_changed", "missing:publish_page") };
+  if (!Array.isArray(pp.publish_list)) return { kind: "stop", result: failure("schema_changed", "missing:publish_page.publish_list") };
+  return { kind: "ok", rows: pp.publish_list.flatMap(rowsOfEntry) };
+}
+
+/** ego 子进程里跑(自包含):本页最早群发时间 + begin+count 是否已到 total_count */
+export const WECHAT_MP_INSPECT_SRC = `(responses) => {
+  let oldest = null, more = null;
+  const pick = (body) => {
+    let pp = null;
+    try { pp = JSON.parse(body).publish_page; } catch {
+      const m = /publish_page\\s*=\\s*(\\{[\\s\\S]*?\\})\\s*;\\s*(?:\\n|<\\/script>|var |window)/.exec(body);
+      pp = m ? m[1] : null;
+    }
+    if (typeof pp === "string") { try { pp = JSON.parse(pp); } catch { pp = null; } }
+    return pp && typeof pp === "object" ? pp : null;
+  };
+  for (const r of responses) {
+    const pp = pick(r.body);
+    if (!pp) continue;
+    for (const e of Array.isArray(pp.publish_list) ? pp.publish_list : []) {
+      let info = e && e.publish_info;
+      if (typeof info === "string") { try { info = JSON.parse(info); } catch { info = null; } }
+      const t = Number(info && info.sent_info && info.sent_info.time);
+      if (t > 0 && (oldest === null || t * 1000 < oldest)) oldest = t * 1000;
+    }
+    const q = new URL(r.url).searchParams;
+    const begin = Number(q.get("begin") || 0), count = Number(q.get("count") || 0), total = Number(pp.total_count);
+    if (count > 0 && Number.isFinite(total)) more = more === true || begin + count < total;
+  }
+  return { oldestMs: oldest, hasMore: more };
+}`;
+
+export const WECHAT_MP_PLATFORM: PassivePlatform = {
+  label: "wechat_mp",
+  url: BACKEND,
+  // 菜单入口:「发表记录」直接可见就点它;否则先点「内容管理」展开(2026-10-03 未登录,菜单文字待真机校准)
+  entry: { css: "a,span,li,div", target: ["发表记录"], openers: ["内容管理"] },
+  patterns: PUBLISH_PATTERNS,
+  gates: { riskUrl: RISK_URL_COMMON, loginText: LOGIN_TEXT_COMMON, riskText: RISK_TEXT_COMMON },
+  next: { kind: "click", css: "a,button,span", texts: ["下一页"] },
+  inspectSrc: WECHAT_MP_INSPECT_SRC,
+  parseResponse: parsePublishResponse,
+};
+
+/** 抓取公众号近 30 天已发表文章的数据(状态判定同 passive-pull.judgeBrowse;同标题后者覆盖前者) */
+export async function pullWechatMpStats(opts: PassivePullOptions = {}): Promise<PullResult> {
+  const r = await runPassivePull(WECHAT_MP_PLATFORM, opts);
+  if (r.status !== "ok") return r;
+  const byTitle = new Map<string, TypedRow>();
+  for (const row of r.rows) byTitle.set(normTitle(row.title), row);
+  return { ...r, rows: [...byTitle.values()] };
+}
+
+const normTitle = (t: string): string => (t || "").toLowerCase().replace(/[^\w一-鿿]/g, "");
+
+function fmtSentTime(iso: string | null): string {
+  if (!iso) return "";
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -101,106 +124,18 @@ function fmtSentTime(ts: number): string {
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date(ts * 1000));
+  }).formatToParts(new Date(iso));
   const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}`;
 }
 
-/** 行 → 导入管线列(键名对齐 PLATFORM_MAPPINGS.wechat_mp 别名;fans 不入指标,仅留在标题匹配之外) */
-export function statsToImportRows(rows: WechatStatRow[]): Array<Record<string, string>> {
+/** 行 → 导入管线列(键名对齐 PLATFORM_MAPPINGS.wechat_mp 别名;与旧拉数口径一致,走同一条 CSV 导入) */
+export function statsToImportRows(rows: TypedRow[]): Array<Record<string, string>> {
   return rows.map((r) => ({
     标题: r.title,
-    发表时间: fmtSentTime(r.sentTime),
-    阅读次数: String(r.read),
-    分享次数: String(r.share),
-    在看次数: String(r.like),
+    发表时间: fmtSentTime(r.publishedAt),
+    阅读次数: String(r.metrics.views ?? 0),
+    分享次数: String(r.metrics.shares ?? 0),
+    在看次数: String(r.metrics.likes ?? 0),
   }));
-}
-
-const normTitle = (t: string): string => (t || "").toLowerCase().replace(/[^\w一-鿿]/g, "");
-
-/** 后台页导航探测:token= 落到 /cgi-bin/home = 已登录;真落到登录页 = out;还卡 about:blank = 瞬时 */
-async function probeBackend(
-  ego: EgoSession,
-  tab: TabRef,
-  secs = 25,
-): Promise<{ status: WechatSessionStatus; token: string | null }> {
-  let href = "";
-  for (let i = 0; i < secs * 2; i += 1) {
-    href = String((await ego.eval("location.href", tab.sessionId).catch(() => "")) ?? "");
-    if (href.includes("token=")) break;
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  const m = /token=(\d+)/.exec(href);
-  if (href.includes("token=") && href.includes("/cgi-bin/home")) return { status: "in", token: m?.[1] ?? null };
-  if (href.includes("mp.weixin.qq.com")) return { status: "out", token: null };
-  return { status: "timeout", token: null };
-}
-
-async function fetchAllPages(
-  ego: EgoSession,
-  tab: TabRef,
-  token: string,
-  total: number,
-  pageSize: number,
-): Promise<WechatStatRow[]> {
-  const byTitle = new Map<string, WechatStatRow>();
-  for (let begin = 0; begin < total; begin += pageSize) {
-    const url =
-      `${BACKEND}cgi-bin/appmsgpublish?sub=list&begin=${begin}&count=${pageSize}` +
-      `&token=${token}&lang=zh_CN&f=json&ajax=1`;
-    const res = await ego.fetch(url, { method: "GET" }, tab.sessionId);
-    if (res.httpStatus !== 200) break;
-    const rows = parsePublishPage(res.bodyText);
-    if (rows.length === 0) break; // 拉到底
-    for (const r of rows) byTitle.set(normTitle(r.title), r);
-  }
-  return [...byTitle.values()];
-}
-
-/**
- * 拉全量已发文数据。timeout 自动重开 TaskSpace 重试;out 明确返回(调用方给登录指引)。
- * 通道故障(ego lite 没开 / 超时 / 输出不对)抛 EgoChannelError,由调用方给可见状态。
- */
-export async function pullWechatMpStats(
-  opts: { total?: number; pageSize?: number; attempts?: number; runner?: EgoRunner; retryDelayMs?: number } = {},
-): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
-  const { total = 100, pageSize = 20, attempts = 3, retryDelayMs = 1000 } = opts;
-  const ego = new EgoSession({ label: "wechat_mp", runner: opts.runner });
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const res = await openAndProbe(ego, total, pageSize);
-    if (res.status === "in") return res;
-    if (res.status === "out") return { status: "out", rows: [] };
-    if (!ego.hasTimeLeft()) break;
-    await new Promise((r) => setTimeout(r, retryDelayMs)); // timeout → 重开再试
-  }
-  return { status: "timeout", rows: [] };
-}
-
-/** 开页导航超时(脚本里 goto 超时)是瞬时态:当成 timeout 交给重试循环;通道故障/总超时照常抛 */
-function isRetryableNavTimeout(err: unknown): boolean {
-  return !(err instanceof EgoChannelError) && err instanceof Error && /timed? ?out|timeout/i.test(err.message);
-}
-
-async function openAndProbe(
-  ego: EgoSession,
-  total: number,
-  pageSize: number,
-): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
-  try {
-    return await withTab(ego, BACKEND, async (tab) => {
-      const probe = await probeBackend(ego, tab);
-      if (probe.status === "in" && probe.token) {
-        return {
-          status: "in" as WechatSessionStatus,
-          rows: await fetchAllPages(ego, tab, probe.token, total, pageSize),
-        };
-      }
-      // 拿不到 token 的"已登录"当瞬时态处理:重开再试,不冒充登录失效
-      return { status: probe.status === "in" ? "timeout" : probe.status, rows: [] as WechatStatRow[] };
-    });
-  } catch (err) {
-    if (isRetryableNavTimeout(err)) return { status: "timeout", rows: [] };
-    throw err;
-  }
 }
