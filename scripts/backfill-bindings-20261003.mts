@@ -20,13 +20,18 @@ import { isTruncatedItemId, normalizeTitle, shanghaiDate, type PerformanceOutcom
 import { bindWorkManually, createHistoryRecord } from "../src/modules/flywheel/work-binding.js";
 import { isImportedHistory } from "../src/storage/imported-history.js";
 
-/**
- * 表里的一个平台作品：标题按归一化前缀比（视频号会把正文拼进标题）；time = 北京时间 HH:MM，
- * 只在同日同题有多条、创始人指定了其中一条时用。其余任何多条命中一律停。
- */
-export interface ItemSpec { platform: string; date: string; title: string; time?: string }
+/** 表里的一个平台作品：标题按归一化前缀比（视频号会把正文拼进标题）。任何多条命中一律停 */
+export interface ItemSpec { platform: string; date: string; title: string }
 
-const P = (platform: string, date: string, title: string, time?: string): ItemSpec => ({ platform, date, title, ...(time ? { time } : {}) });
+const P = (platform: string, date: string, title: string): ItemSpec => ({ platform, date, title });
+
+/**
+ * 刻意不回填的条目（主会话 2026-10-03 裁定）：09-16 抖音同题同日两条（私密原片 + 公开重发），
+ * 现有作品键下会合并、私密的 0 播放可能盖掉真实数据——两条都不绑，等创始人删掉私密那条再说。
+ */
+export const SKIPPED_NOTES = [
+  "09-16 抖音「AI给自己造了个身体，接管了我家的全屋智能」刻意跳过：同日同题有私密原片 + 公开重发两条，等创始人删掉私密那条后再单独绑定；历史记录 #5 只挂视频号 + 小红书。",
+];
 
 /** 表一：绑定到现有 5 篇已发布稿（稿子按 id 后缀找） */
 export const DRAFT_BINDINGS: Array<{ suffix: string; label: string; items: ItemSpec[] }> = [
@@ -64,9 +69,7 @@ export const HISTORY: Array<{ title: string; date: string; items: ItemSpec[] }> 
     P("xiaohongshu", "2026-09-14", "ChatGPT Image 2.5 实测，实现指哪改哪？"),
   ] },
   { title: "AI给自己造了个身体，接管了我家的全屋智能", date: "2026-09-16", items: [
-    // 抖音这天同题两条：18:00 那条已设私密（0 播放），22:31 是公开重发。协调裁定（2026-10-03）：只挂公开重发那条，
-    // 私密那条留未绑定——同标题同日的两条在现有幂等键下会合并，私密的 0 播放可能盖过真实数据
-    P("douyin", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能", "22:31"),
+    // 抖音这天刻意不绑（见 SKIPPED_NOTES）
     P("wechat_video", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能"),
     P("xiaohongshu", "2026-09-16", "AI给自己造了个身体，接管了我家的全屋智能"),
   ] },
@@ -104,12 +107,11 @@ export interface Plan {
 function resolveSpec(spec: ItemSpec, rows: PerformanceOutcome[], problems: string[]): Array<{ itemId: string; rowTitle: string }> {
   const want = normalizeTitle(spec.title);
   const hits = rows.filter((r) => r.platform === spec.platform && r.platformItemId &&
-    normalizeTitle(r.platformTitle).startsWith(want) && (!spec.date || (r.publishedAt && shanghaiDate(r.publishedAt) === spec.date)) &&
-    (!spec.time || (r.publishedAt && shanghaiTime(r.publishedAt) === spec.time)));
+    normalizeTitle(r.platformTitle).startsWith(want) && (!spec.date || (r.publishedAt && shanghaiDate(r.publishedAt) === spec.date)));
   const ids = new Map<string, string>();
   for (const h of hits) ids.set(h.platformItemId!, h.platformTitle);
   const trusted = [...ids].filter(([id]) => !isTruncatedItemId(spec.platform, id));
-  const where = `${spec.platform} ${spec.date || "(不限日期)"}${spec.time ? ` ${spec.time}` : ""}「${spec.title}」`;
+  const where = `${spec.platform} ${spec.date || "(不限日期)"}「${spec.title}」`;
   if (trusted.length === 0) {
     problems.push(ids.size > 0
       ? `${where} 只找到被截坏的抖音 id（${[...ids.keys()].join("、")}）——需要先跑一次抖音回流拿到完整 id`
@@ -121,11 +123,6 @@ function resolveSpec(spec: ItemSpec, rows: PerformanceOutcome[], problems: strin
     return [];
   }
   return trusted.map(([itemId, rowTitle]) => ({ itemId, rowTitle }));
-}
-
-/** 发布时间 → 北京时间 HH:MM */
-function shanghaiTime(iso: string): string {
-  return new Date(Date.parse(iso) + 8 * 3600_000).toISOString().slice(11, 16);
 }
 
 function withStatus(found: Array<{ itemId: string; rowTitle: string }>, spec: ItemSpec, owner: string | null, table: Record<string, PlatformItemBinding>): ResolvedItem[] {
@@ -212,6 +209,8 @@ export function describePlan(plan: Plan): string {
     ...plan.drafts.flatMap((d) => [`  ${d.label}（${d.contentId}）`, ...d.items.map(line)]),
     "== 历史作品记录 ==",
     ...plan.history.flatMap((h) => [`  ${h.date}「${h.title}」${h.existingId ? `已存在 ${h.existingId}` : "将新建"}`, ...h.items.map(line)]),
+    "== 刻意跳过 ==",
+    ...SKIPPED_NOTES.map((n) => `  - ${n}`),
     plan.problems.length ? `== 问题（${plan.problems.length}），不会写入 ==\n${plan.problems.map((p) => `  - ${p}`).join("\n")}` : "== 无问题 ==",
   ].join("\n");
 }

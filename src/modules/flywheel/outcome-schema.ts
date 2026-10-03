@@ -123,6 +123,12 @@ export function isTruncatedItemId(platform: string, itemId: string): boolean {
   return n > Number.MAX_SAFE_INTEGER && String(n) === id;
 }
 
+/**
+ * 只关归属、不关指标的复核理由前缀：按标题认到的稿在该平台已精确绑定了另一条作品，本行留未归属。
+ * 指标级复核（metric-review.reasonMetric）据此保留全部指标；人工绑定认领这一行时清掉。
+ */
+export const ATTRIBUTION_REVIEW_PREFIX = "归属待确认：";
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()

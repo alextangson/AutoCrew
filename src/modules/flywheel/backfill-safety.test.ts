@@ -17,7 +17,7 @@ import { trustedObservations } from "../production/receipts.js";
 import { reconcileAll, reconcileContent } from "../production/reconcile.js";
 import { readInbox } from "../production/inbox-read.js";
 import { makeEnv, type Env } from "../production/testkit.js";
-import { planBackfill } from "../../../scripts/backfill-bindings-20261003.mjs";
+import { planBackfill, describePlan } from "../../../scripts/backfill-bindings-20261003.mjs";
 
 const DY = "7686140658221976866";
 const SPH = "export/abc";
@@ -71,11 +71,11 @@ describe("P1-2 删历史记录不丢绑定之后才入账的快照", () => {
   });
 });
 
-describe("P1-3 回填脚本：同日同题多条一律停；09-16 抖音只认公开重发那条", () => {
+describe("P1-3 回填脚本：同日同题多条一律停；09-16 抖音整条跳过", () => {
   async function seed(dir: string, douyinRows: PerformanceOutcome[]) {
     await appendOutcomes(douyinRows, dir);
   }
-  it("09-16 抖音私密 10:00 + 公开 22:31 两条：计划只挂 22:31 那条，不报歧义", async () => {
+  it("09-16 抖音私密 + 公开重发：两条都不绑、不报问题，dry-run 输出写明刻意跳过", async () => {
     const dir = await plainDir();
     const title = "AI给自己造了个身体，接管了我家的全屋智能";
     await seed(dir, [
@@ -84,8 +84,9 @@ describe("P1-3 回填脚本：同日同题多条一律停；09-16 抖音只认�
     ]);
     const plan = await planBackfill(dir);
     const h = plan.history.find((x) => x.date === "2026-09-16")!;
-    expect(h.items.filter((i) => i.spec.platform === "douyin").map((i) => i.itemId)).toEqual([DY]);
+    expect(h.items.filter((i) => i.spec.platform === "douyin")).toEqual([]);
     expect(plan.problems.filter((x) => x.startsWith("douyin 2026-09-16"))).toEqual([]);
+    expect(describePlan(plan)).toContain("09-16 抖音「AI给自己造了个身体，接管了我家的全屋智能」刻意跳过");
   });
   it("别的表项命中多条 → 报歧义，不猜", async () => {
     const dir = await plainDir();

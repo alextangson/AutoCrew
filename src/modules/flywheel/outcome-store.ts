@@ -12,10 +12,12 @@ import {
   normalizeTitle,
   normalizePlatform,
   isTruncatedItemId,
+  ATTRIBUTION_REVIEW_PREFIX,
   type PerformanceOutcome,
 } from "./outcome-schema.js";
 import {
   lookupPlatformItem,
+  bindingsForContent,
   commitBindings,
   platformItemKey,
   type PendingBinding,
@@ -372,6 +374,20 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
     };
   }
 
+  // 按标题认到的稿，在这个平台已经有按 id 精确绑定（url/manual）的另一条作品：同标题的这条是别的作品
+  // （如同日私密原片 + 公开重发），不许靠标题挂上去——留未绑定，交人确认（指标照常进统计）
+  if (matched && contentId) {
+    const exact = (await bindingsForContent(contentId, req.dataDir)).find((b) =>
+      (b.via === "url" || b.via === "manual") && b.key.startsWith(`${normalizePlatform(req.platform)}:`) && b.key !== platformItemKey(req.platform, itemId));
+    if (exact) {
+      return {
+        contentId: null,
+        reviewReasons: [`${ATTRIBUTION_REVIEW_PREFIX}按标题认到稿件 ${contentId}，但它在这个平台已精确绑定作品 ${exact.key}；本行是另一条作品 ${itemId}，没有归属，确认是不是同题的另一条（私密 / 重发）`],
+        pending: null,
+      };
+    }
+  }
+
   // 逐条路径没走 matchDraft，取稿只为看证据（链接/标题）——绑定表已命中时这一步根本不发生
   const draft = matched ?? (req.contentId ? await getContent(req.contentId, req.dataDir) : null);
   const via = draft && contentId === draft.id ? await bindingEvidence(draft, req.platformTitle, req.platform, itemId, req.dataDir) : null;
@@ -437,19 +453,30 @@ async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOut
 
 const retractedCopy = (r: PerformanceOutcome, recordedAt: string): PerformanceOutcome => ({ ...r, recordedAt, retracted: true });
 
+/** 人工绑定认领了这一行：归属复核理由作废，其余理由原样留着 */
+function withoutAttributionReview(r: PerformanceOutcome): Pick<PerformanceOutcome, "needsReview" | "reviewReasons"> {
+  const reviewReasons = (r.reviewReasons ?? []).filter((x) => !x.startsWith(ATTRIBUTION_REVIEW_PREFIX));
+  return { reviewReasons, needsReview: reviewReasons.length > 0 };
+}
+
 /**
- * 人工绑定后补归属（spec ③）：该平台作品已入账、尚未归到 contentId 的每个数据日期各补一条新行；
- * 原先归在别的稿名下的版本追加撤销行（改绑不双计）。截坏 id 的行不参与。返回补了几条。
+ * 人工绑定后补归属（spec ③）：该作品每个数据日期先跨所有归属（未归属 / 别的稿 / 本稿）取最新的那条快照，
+ * 不是本稿的就复制一份挂到本稿；别的稿名下的版本追加撤销行（改绑不双计，也不让旧快照盖掉新的）。
+ * 截坏 id 不参与。返回补了几条。
  */
 export async function reattributeItem(platform: string, itemId: string, contentId: string, dataDir?: string): Promise<number> {
   if (isTruncatedItemId(platform, itemId)) return 0;
   return serializeOutcomeWrite(dataDir, async () => {
-    const visible = await listOutcomes(dataDir);
-    const taken = new Set(visible.map((o) => outcomeKey(o)));
     const target = normalizePlatform(platform);
-    const rows = visible.filter((o) => o.platform === target && o.platformItemId === itemId.trim());
+    const rows = [...(await latestByKey(dataDir)).values()].filter((o) => o.platform === target && o.platformItemId === itemId.trim());
+    const byDate = new Map<string, PerformanceOutcome>();
+    for (const r of rows) {
+      const prev = byDate.get(r.metricDate);
+      if (!prev || r.recordedAt > prev.recordedAt) byDate.set(r.metricDate, r);
+    }
     const recordedAt = new Date().toISOString();
-    const copies = attributedCopies(rows, contentId, taken, recordedAt);
+    const copies = [...byDate.values()].filter((r) => r.contentId !== contentId)
+      .map((r) => ({ ...r, contentId, recordedAt, ...withoutAttributionReview(r) }));
     const superseded = rows.filter((r) => r.contentId !== null && r.contentId !== contentId).map((r) => retractedCopy(r, recordedAt));
     await appendOutcomes([...copies, ...superseded], dataDir);
     return copies.length;

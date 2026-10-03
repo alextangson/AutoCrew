@@ -7,7 +7,7 @@
  * 另外一张「可回流指标表」：自动回流在各平台实际映射了哪些指标（以适配器代码为准），
  * 下注的 watch.metric 只能从表里选；将来有量纲没核过的指标就在表里标 unverified（「未核」），只能参考。
  */
-import { normalizePlatform, type OutcomeMetrics, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { ATTRIBUTION_REVIEW_PREFIX, normalizePlatform, type OutcomeMetrics, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
 import type { MetricFocus } from "../retro/hypotheses.js";
 
 export interface PullableMetric { metric: MetricFocus; label: string; unverified?: true }
@@ -51,6 +51,7 @@ function reasonMetric(reason: string, platform: string): keyof OutcomeMetrics | 
   if (reason.startsWith("封面点击率")) return "coverClickRate";
   if (reason.startsWith("播放为 0 但有互动") || reason.startsWith("播放量 ")) return "views";
   if (reason.startsWith("平台作品 ") && reason.includes("已绑定稿件")) return null;
+  if (reason.startsWith(ATTRIBUTION_REVIEW_PREFIX)) return null;
   return undefined;
 }
 

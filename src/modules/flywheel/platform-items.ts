@@ -68,14 +68,14 @@ function isBinding(value: unknown): value is PlatformItemBinding {
   return !!b && typeof b.contentId === "string" && VIAS.includes(b.via);
 }
 
-type TableRead = { items: Record<string, PlatformItemBinding> } | { error: string };
+type TableRead = { items: Record<string, PlatformItemBinding>; malformed: string[] } | { error: string };
 
 async function readTable(dataDir?: string): Promise<TableRead> {
   let raw: string;
   try {
     raw = await fs.readFile(itemsPath(dataDir), "utf-8");
   } catch (err) {
-    if ((err as { code?: string }).code === "ENOENT") return { items: {} };
+    if ((err as { code?: string }).code === "ENOENT") return { items: {}, malformed: [] };
     return { error: `绑定表 platform-items.json 读不出（${(err as Error).message}）` };
   }
   let parsed: PlatformItemsFile | null = null;
@@ -84,14 +84,16 @@ async function readTable(dataDir?: string): Promise<TableRead> {
   } catch {
     parsed = null;
   }
-  if (!parsed || parsed.schemaVersion !== SCHEMA_VERSION || typeof parsed.items !== "object" || !parsed.items) {
+  if (!parsed || parsed.schemaVersion !== SCHEMA_VERSION || typeof parsed.items !== "object" || !parsed.items || Array.isArray(parsed.items)) {
     return { error: "绑定表 platform-items.json 损坏或版本不认" };
   }
   const items: Record<string, PlatformItemBinding> = {};
+  const malformed: string[] = [];
   for (const [key, value] of Object.entries(parsed.items)) {
-    if (isBinding(value)) items[key] = value; // 单条坏值不废掉整张表
+    if (isBinding(value)) items[key] = value;
+    else malformed.push(key);
   }
-  return { items };
+  return { items, malformed };
 }
 
 /**
@@ -113,8 +115,10 @@ export async function readPlatformItems(dataDir?: string): Promise<Record<string
  */
 export async function readPlatformItemsStrict(dataDir?: string): Promise<Record<string, PlatformItemBinding>> {
   const r = await readTable(dataDir);
-  if ("error" in r) throw new Error(`${r.error}——已停下，没有改动绑定表；请人工检查或从备份恢复后再试`);
-  return r.items;
+  const error = "error" in r ? r.error : r.malformed.length ? `绑定表 platform-items.json 里有格式不对的条目（${r.malformed.slice(0, 5).join("、")}）` : null;
+  // 宽松读会把坏条目静默丢掉、下一次写就把它们抹了；严格路径一条不认就停
+  if (error) throw new Error(`${error}——已停下，没有改动绑定表；请人工检查或从备份恢复后再试`);
+  return (r as { items: Record<string, PlatformItemBinding> }).items;
 }
 
 /** 严格查一条（见 readPlatformItemsStrict） */
