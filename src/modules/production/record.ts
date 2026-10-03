@@ -24,6 +24,7 @@ import { arollOwnerElsewhere } from "./sha-index.js";
 import { isWithin } from "../../storage/storage-roots.js";
 import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
+import { hiddenUntilScriptApproved } from "./ready.js";
 import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
 import { canonPlatform, observationFact } from "./receipts.js";
@@ -161,10 +162,16 @@ export async function executeMarkReady(params: Record<string, unknown>): Promise
       const events = addReadyMark(d, fact, { host, ...(session ? { session } : {}) });
       return { value: events.length > 0, events };
     });
+    const exp = await explainContent(content, dataDir);
+    const hidden = hiddenUntilScriptApproved(exp.shadow ?? exp, content.status, "已标「可以审了」");
     return { ok: true, content_id: contentId, fact_id: factId, marked: true, ...(r.value ? {} : { note: "这版之前已经标过，这次没有新动作" }),
-      next_action: "已标「可以审了」：创始人会在「等你拍板」里看到它。不要替创始人通过；用 autocrew_content summary 看结果。" };
+      ...(hidden ? { inbox_hidden: SCRIPT_NOT_APPROVED } : {}),
+      next_action: hidden ?? "已标「可以审了」：创始人会在「等你拍板」里看到它。不要替创始人通过；用 autocrew_content summary 看结果。" };
   });
 }
+
+/** 回执里的 inbox_hidden：审阅暂时进不了「等你拍板」的原因 */
+export const SCRIPT_NOT_APPROVED = "script_not_approved";
 
 export const ONTOLOGY_NOT_ENABLED =
   "本体还没启用（或这条在启用时被排除了）：record 现在不写事实、不搬文件。请创始人先在看板顶部看差异清单并确认启用；在那之前照旧流程走。";
@@ -363,8 +370,10 @@ async function pairReceiptNow(content: Content, doc: ProductionDoc, dataDir: str
   const shared = hint && common.includes(hint) ? hint : common.at(-1) ?? null;
   const exp = await explainContent(content, dataDir);
   const view = exp.shadow ?? exp;
+  const hidden = shared ? hiddenUntilScriptApproved(view, content.status, "这一组封面已记下（3:4 + 4:3）") : null;
   return { ok: true, content_id: content.id, kind: "cover", facts, group_id: shared, stage: view.stage ?? view.column, missing: view.missing,
-    next_action: shared ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "这一对还没成组（候选等创始人确认，或其中一张没收下）：看「等你拍板」。" };
+    ...(hidden ? { inbox_hidden: SCRIPT_NOT_APPROVED } : {}),
+    next_action: hidden ?? (shared ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "这一对还没成组（候选等创始人确认，或其中一张没收下）：看「等你拍板」。") };
 }
 
 // ---- 封面一次记一组（review-inbox §6.1）：两张都先核完再落位；同一组、同一版本号 ----
@@ -479,12 +488,15 @@ async function receiptFor(content: Content, dataDir: string, core: ReceiptCore):
 
 function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectRoot: string | null, note?: string): Receipt {
   const view = exp.shadow ?? exp;
+  // 收下的成片 / 封面：认稿前创始人看不到审阅，回执先说这一句
+  const hidden = core.state === "accepted" && (core.kind === "cut" || core.kind === "cover")
+    ? hiddenUntilScriptApproved(view, content.status, core.kind === "cut" ? "成片已收" : "封面已收") : null;
   return {
     ok: true, content_id: content.id, ...core,
     ...(projectRoot && core.path && !path.isAbsolute(core.path) ? { project_path: path.join(projectRoot, core.path) } : {}),
     stage: view.stage ?? view.column, missing: view.missing, badges: view.badges, candidates: view.candidates,
-    ...(exp.shadow ? { shadow: true } : {}), ...(note ? { note } : {}),
-    next_action: nextAction(core, view),
+    ...(exp.shadow ? { shadow: true } : {}), ...(note ? { note } : {}), ...(hidden ? { inbox_hidden: SCRIPT_NOT_APPROVED } : {}),
+    next_action: hidden ? `${hidden}\n${nextAction(core, view)}` : nextAction(core, view),
   };
 }
 
