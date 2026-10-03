@@ -5,6 +5,7 @@
  *
  * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
  */
+import { isImportedHistory } from "../../storage/imported-history.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { readLibraryLocation } from "../../storage/storage-roots.js";
 import path from "node:path";
@@ -266,7 +267,7 @@ async function attachAroll(ctx: Ctx): Promise<Result> {
   if (!dur.ok) return fail(dur.code, dur.error);
   if (ctx.params.confirm_other !== true) {
     const name = path.basename(at.value);
-    const other = (await listContents(ctx.dataDir)).find((c) => c.id !== ctx.content.id && isVideoPlatform(c.platform) && !c.deletedAt
+    const other = (await listContents(ctx.dataDir)).find((c) => c.id !== ctx.content.id && isVideoPlatform(c.platform) && !c.deletedAt && !isImportedHistory(c)
       && c.status !== "archived" && exportMatchesTitle(name, c.title) && !exportMatchesTitle(name, ctx.content.title));
     if (other) return { ok: false, code: "looks_like_other", error: `这个视频更像《${other.title}》，确定挂到这条？`, other_id: other.id };
   }

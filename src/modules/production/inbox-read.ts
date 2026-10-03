@@ -2,6 +2,7 @@
  * 「等你拍板」的读方（review-inbox §3）：收集每条稿的输入交给纯函数 `contentItems`，外加全库的条目
  * （收件箱没对上的视频、写作规则 / 发布偏好提案）。只读，零写入（看板读零写入沿用）。
  */
+import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { listContents, type Content } from "../../storage/local-store.js";
@@ -130,11 +131,12 @@ export interface InboxView { ok: true; items: InboxItem[]; count: number; agent_
 /** 全库「等你拍板」（contentId 给了就只算那一条稿，给 summary / 单一入口用） */
 export async function readInbox(dataDir: string, opts: { contentId?: string; now?: number } = {}): Promise<InboxView> {
   const ctx = await explainContext(dataDir);
-  const all = await listContents(dataDir);
+  // 历史作品记录不进「等你拍板」
+  const all = (await listContents(dataDir)).filter((c) => !isImportedHistory(c));
   const contents = opts.contentId ? all.filter((c) => c.id === opts.contentId) : all;
   const items: InboxItem[] = [];
   for (const c of contents) {
-    if (c.deletedAt || c.status === "archived") continue;
+    if (c.deletedAt || c.status === "archived" || isImportedHistory(c)) continue;
     items.push(...contentItems(await contentInput(c, dataDir, ctx), opts.now));
   }
   if (!opts.contentId) items.push(...(await inboxFileItems(dataDir, all)), ...(await otherItems(dataDir)));

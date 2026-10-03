@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { historyGuard } from "./history-guard.js";
 import { contentSummary } from "./content-summary.js";
 import { gateClaimWrite, redactClaim, type WriteGate } from "../storage/claims.js";
 import {
@@ -42,6 +43,9 @@ const ALL_STATUSES = [
   "draft", "review",
 ] as const;
 
+
+/** autocrew_content 里会写稿件的动作（对 imported_history 一律不受理） */
+const HISTORY_WRITE_ACTIONS: ReadonlySet<string> = new Set(["update", "record", "mark_ready", "ask", "answer_ask", "withdraw_ask", "delete", "restore", "adoption", "transition", "create_variant"]);
 export const contentSaveSchema = Type.Object({
   action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record" | "check_slivers" | "mark_ready" | "ask" | "answer_ask" | "withdraw_ask">({
     type: "string",
@@ -243,6 +247,12 @@ export async function executeContentSave(
 
   // 只读进度摘要（v1.3）：查「这篇到哪了」不用拉 16KB 的整篇
   if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir, Date.now(), params.since_seq, params.aroll_offset, params.asks_offset);
+
+  // 历史作品记录：所有写动作不受理（改正文、报制作事实、推进、删除……）；删除只走 autocrew_insights history_delete
+  if (HISTORY_WRITE_ACTIONS.has(String(action))) {
+    const history = await historyGuard(params.id ?? params.content_id, dataDir);
+    if (history) return history;
+  }
 
   // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
   if (action === "record") return executeRecord(params);
