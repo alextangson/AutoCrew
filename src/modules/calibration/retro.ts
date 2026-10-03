@@ -10,7 +10,7 @@ import { normalizePlatform, type OutcomeMetrics } from "../flywheel/outcome-sche
 import { metricsNearAge } from "../flywheel/metrics-window.js";
 import { reviewedRow } from "../insights/metric-review.js";
 import { decodeArg } from "../meetings/meeting-args.js";
-import { FOLLOWUP_READING_DAY, RETRO_WINDOW_DAYS } from "./constants.js";
+import { EARLY_RETRO_WEIGHT, FOLLOWUP_READING_DAY, RETRO_WINDOW_DAYS } from "./constants.js";
 import { bucketOf } from "./derive.js";
 import { activePredictions, readPredictions, type PredictionRecord } from "./pool.js";
 import { requireText } from "./predict-input.js";
@@ -37,10 +37,17 @@ export async function readActual(p: PredictionRecord, publishedAt: string | null
     .filter((r) => normalizePlatform(r.platform) === normalizePlatform(p.platform)).map(reviewedRow).filter((r) => r !== null);
   const at = metricsNearAge(rows, publishedAt, day);
   if (at && typeof at.metrics.views === "number") return pick(at.metrics, "回流", at.ageDays, at.metricDate);
-  const m = decodeArg(manual) as OutcomeMetrics | undefined;
-  if (m && typeof m === "object" && Number.isFinite(Number(m.views)) && Number(m.views) >= 0) {
-    return pick({ ...m, views: Number(m.views) }, "手填", null);
-  }
+  const m = decodeArg(manual) as Record<string, unknown> | undefined;
+  const views = m && typeof m === "object" ? strictCount(m.views) : null;
+  if (views === null) return null;
+  const extra = Object.fromEntries(["likes", "comments", "shares"].map((k) => [k, strictCount(m![k]) ?? undefined]));
+  return pick({ ...extra, views } as OutcomeMetrics, "手填", null);
+}
+
+/** 手填计数只收有限非负数或纯数字串；null / 空串 / 布尔 / 其它一律当没填（不当 0） */
+export function strictCount(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) && v >= 0 ? v : null;
+  if (typeof v === "string" && /^\s*\d+(\.\d+)?\s*$/.test(v)) return Number(v);
   return null;
 }
 function pick(m: OutcomeMetrics, source: string, age: number | null, date?: string): Actual {
@@ -75,7 +82,7 @@ export async function retro(args: Obj, dataDir?: string, now = new Date()): Prom
   if (args.reading === "d7") return d7Reading(p, main, publishedAt, args, dataDir, now);
   if (main) return { ok: false, code: "retro_exists", error: "这条已经复盘过：复盘只追加一次；后续读数用 reading:\"d7\"，笔误用 correction" };
   const early = age < RETRO_WINDOW_DAYS;
-  if (early && args.force_early !== true) return { ok: false, code: "too_early", error: `还差 ${(RETRO_WINDOW_DAYS - age).toFixed(1)} 天到 T+3；创始人坚持现在复盘就带 force_early:true（标 early_retro，不进校准池）` };
+  if (early && args.force_early !== true) return { ok: false, code: "too_early", error: `还差 ${(RETRO_WINDOW_DAYS - age).toFixed(1)} 天到 T+3；创始人坚持现在复盘就带 force_early:true（标 early_retro，升级时降权）` };
   const actual = await readActual(p, publishedAt, RETRO_WINDOW_DAYS, args.manual_metrics, dataDir);
   if (!actual) return noData();
   return writeRetro(p, actual, early, args, dataDir, now);
@@ -108,6 +115,8 @@ async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, a
     hypothesis_conclusion: requireText(args.hypothesis_conclusion, "hypothesis_conclusion"), observations, at: now.toISOString(),
   };
   return serializeCalibration(dataDir, async () => {
+    // 唯一性在排队内再查一次：并发两次复盘不能都落盘、都 +1
+    if ((await readPredictions(dataDir)).retros.some((r) => r.prediction_id === p.id)) return { ok: false, code: "retro_exists", error: "这条刚被另一次复盘落过盘" };
     const { fp: ownFp, ...rest } = p;
     const cached = fingerprint(p.body) === p.body_fp && fingerprint(rest) === ownFp ? p.body_fp : null;
     await appendLog("predictions", rec, dataDir);
@@ -121,7 +130,7 @@ async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, a
     }
     if (observations.length > blocked.length) await reproject(dataDir);
     const { state } = await ensureCalibration(dataDir);
-    const counted = !early && !p.reconstructed && intact;
+    const counted = (!early || EARLY_RETRO_WEIGHT > 0) && !p.reconstructed && intact;
     const upd = retroStateUpdate(state, p.id, ratio, counted, now);
     await writeState(upd.state, dataDir);
     return { ok: true, landed_bucket: landed, predicted_bucket: p.body.bucket, center_deviation_pct: rec.center_deviation, actual,

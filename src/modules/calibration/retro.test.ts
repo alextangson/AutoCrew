@@ -8,6 +8,7 @@ import { calibrationPool } from "./pool.js";
 import { blindStep } from "./predict.js";
 import { BODY, fakeLoop, predictPublished, SELF } from "./test-fixtures.js";
 import { retro } from "./retro.js";
+import { EARLY_RETRO_WEIGHT } from "./constants.js";
 import { bumpSuggestion, directionOf, retroStateUpdate } from "./retro-state.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
 
@@ -17,14 +18,14 @@ let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-r-")); });
 
 describe("§三 复盘", () => {
-  it("T+3 复盘：数据取回流、算落档与偏差、样本 +1、观察进 memo，只有抽象的投影进 rubric.json", async () => {
+  it("T+3 复盘：数据取回流、算落档与偏差、样本 +1、观察只进 memo、不进 rubric.json", async () => {
     const { p, later } = await predictPublished(dir, 2000);
     const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "钩子撑住了", observations: ["具体场景开头比概念开头留人", "这条播放 2000 比上条高"] }, dir, later);
     expect(r).toMatchObject({ ok: true, landed_bucket: "命中", counted_as_calibration_sample: true, integrity_warning: false });
     const { state, rubric } = await ensureCalibration(dir);
     expect(state.calibration_samples).toBe(1);
     expect(state.pending_retros).toEqual([]);
-    expect(rubric.observations.map((o) => o.text)).toEqual(["具体场景开头比概念开头留人"]);
+    expect(rubric.observations).toEqual([]);
     expect((await readLog<{ type: string }>("rubric-memo", dir)).records.map((x) => x.type)).toEqual(["observation", "observation"]);
     expect(await calibrationPool(dir)).toHaveLength(1);
   });
@@ -40,13 +41,16 @@ describe("§三 复盘", () => {
     const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x", manual_metrics: "{\"views\": 300}" }, dir, later);
     expect(r).toMatchObject({ ok: true, actual: { views: 300, source: "手填" } });
   });
-  it("不到 3 天：拒绝；force_early 标 early_retro、不计样本、不进池", async () => {
+  it("不到 3 天：拒绝；force_early 标 early_retro、留在池里但降权", async () => {
     const { p } = await predictPublished(dir, 800);
     const now = new Date();
     expect(await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x", manual_metrics: { views: 1 } }, dir, now)).toMatchObject({ code: "too_early" });
     const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x", force_early: true, manual_metrics: { views: 100 } }, dir, now);
-    expect(r).toMatchObject({ ok: true, early_retro: true, counted_as_calibration_sample: false });
-    expect(await calibrationPool(dir)).toHaveLength(0);
+    expect(r).toMatchObject({ ok: true, early_retro: true, counted_as_calibration_sample: true });
+    const pool = await calibrationPool(dir);
+    expect(pool).toHaveLength(1);
+    expect(pool[0].weight).toBe(EARLY_RETRO_WEIGHT);
+    expect(EARLY_RETRO_WEIGHT).toBeLessThan(1);
   });
   it("预测主体被改过 → 追加 Integrity warning，不计样本、不进池", async () => {
     const { p, later } = await predictPublished(dir, 800);

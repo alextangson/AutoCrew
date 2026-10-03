@@ -41,3 +41,9 @@ export const COLD_START_MAX_PROB = 50;
 export const BLIND_LEAK_RE = /\d+\s*[wWmMkK万]|播放|实绩|实际/;
 
 export const STATE_SCHEMA_VERSION = "1.4";
+
+/**
+ * 没到 T+3 就复盘的样本（early_retro）：照规格留在校准池、升级时降权（cheat-retro：「bump 时这种样本权重降级」）。
+ * cheat-on 没给具体数字，取 0.5；改成 0 即退回「排除」。
+ */
+export const EARLY_RETRO_WEIGHT = 0.5;

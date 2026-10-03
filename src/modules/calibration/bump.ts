@@ -9,9 +9,9 @@ import { decodeArg } from "../meetings/meeting-args.js";
 import type { runLoop } from "../../engine/loop.js";
 import { runAudit } from "./audit.js";
 import { runBlindChannel } from "./blind.js";
-import { applyBump, recordRejection } from "./bump-cleanup.js";
+import { applyBump, ids, recordRejection } from "./bump-cleanup.js";
 import { SOFT_MIN_NEW_SAMPLES, SOFT_MIN_POOL } from "./constants.js";
-import { calibrationPool, type PoolSample } from "./pool.js";
+import { calibrationPool, readPredictions, type PoolSample } from "./pool.js";
 import { latestBlindRun } from "./predict.js";
 import { rankGate, type GateSample, type RankGateResult } from "./rank-gate.js";
 import { ALL_DIMS, composite, formulaText, type DimKey, type DimScores, type RubricFormula } from "./rubric.js";
@@ -52,34 +52,57 @@ export function proposalGate(state: CalibrationState, poolSize: number, args: Ob
   return null;
 }
 
-/** 新增维度（旧公式没用到）的分：有盲评分用盲评分，没有就对存档稿子补跑一次盲评通道 */
-async function newDimScores(s: PoolSample, newDims: DimKey[], dataDir: string | undefined, deps: BumpDeps): Promise<{ scores: DimScores; backfilled: boolean }> {
-  const missing = newDims.filter((d) => typeof s.prediction.scores.blind?.[d] !== "number");
-  const scores: DimScores = { ...s.prediction.scores.final };
-  for (const d of newDims) if (typeof s.prediction.scores.blind?.[d] === "number") scores[d] = s.prediction.scores.blind[d];
+/** 每个样本按版本生效的维度分：最近一次升级追加的 rescored.scores（含补打分），没有就用预测时的终分 */
+export async function effectiveScores(dataDir?: string): Promise<Map<string, DimScores>> {
+  const { records, selfOk } = await readPredictions(dataDir);
+  const out = new Map<string, DimScores>();
+  for (const r of records) if (r.type === "rescored" && r.scores && selfOk(r)) out.set(String(r.prediction_id), r.scores as DimScores);
+  return out;
+}
+
+type SampleScores = { scores: DimScores; backfilled: boolean; endpoint?: string };
+
+/** 新增维度（旧公式没用到）的分：已有生效分 > 预测时盲评分 > 对存档稿子补跑一次盲评通道 */
+async function newDimScores(s: PoolSample, newDims: DimKey[], eff: DimScores | undefined, dataDir: string | undefined, deps: BumpDeps): Promise<SampleScores> {
+  const scores: DimScores = { ...(eff ?? s.prediction.scores.final) };
+  const missing: DimKey[] = [];
+  for (const d of newDims) {
+    if (eff && typeof eff[d] === "number") continue;
+    if (typeof s.prediction.scores.blind?.[d] === "number") scores[d] = s.prediction.scores.blind[d];
+    else missing.push(d);
+  }
   if (!missing.length) return { scores, backfilled: false };
   const run = await latestBlindRun(s.prediction.blind_run_id, dataDir);
   if (!run) throw new Error(`样本 ${s.prediction.id} 的稿子存档不见了，没法补打分`);
   const { rubric } = await ensureCalibration(dataDir);
   const b = await runBlindChannel(run.script_text, rubric, dataDir, { runLoopImpl: deps.blindLoop });
   for (const d of missing) scores[d] = b.scores[d].score;
-  return { scores, backfilled: true };
+  return { scores, backfilled: true, endpoint: b.endpoint };
 }
+
+export type GateRow = GateSample & { scores: DimScores; backfilled: boolean; actualDetail: unknown };
 
 export async function buildGateSamples(pool: PoolSample[], oldF: RubricFormula, newF: RubricFormula, dataDir: string | undefined, deps: BumpDeps) {
   const newDims = (Object.keys(newF.weights) as DimKey[]).filter((d) => !(d in oldF.weights));
-  const samples: Array<GateSample & { scores: DimScores; backfilled: boolean }> = [];
+  const eff = await effectiveScores(dataDir);
+  const samples: GateRow[] = [];
+  const endpoints = new Set<string>();
   for (const s of pool) {
-    const { scores, backfilled } = await newDimScores(s, newDims, dataDir, deps);
-    samples.push({ id: s.prediction.id, label: s.prediction.title, oldScore: composite(s.prediction.scores.final, oldF) ?? s.prediction.composite,
-      newScore: composite(scores, newF) as number, actual: s.actual, scores, backfilled });
+    const r = await newDimScores(s, newDims, eff.get(s.prediction.id), dataDir, deps);
+    if (r.endpoint) endpoints.add(r.endpoint);
+    const run = await latestBlindRun(s.prediction.blind_run_id, dataDir);
+    if (run?.endpoint) endpoints.add(run.endpoint);
+    const base = eff.get(s.prediction.id) ?? s.prediction.scores.final;
+    samples.push({ id: s.prediction.id, label: s.prediction.title, oldScore: composite(base, oldF) ?? s.prediction.composite,
+      newScore: composite(r.scores, newF) as number, actual: s.actual, weight: s.weight, scores: r.scores, backfilled: r.backfilled, actualDetail: s.retro.actual });
   }
-  return { samples, newDims };
+  return { samples, newDims, blindEndpoints: [...endpoints] };
 }
 
-export function auditPayload(oldText: string, newText: string, pool: PoolSample[], gate: RankGateResult): string {
-  const rows = pool.map((s) => ({ id: s.prediction.id, title: s.prediction.title, scores: s.prediction.scores.final, actual: s.retro.actual }));
-  return `旧公式：${oldText}\n新公式：${newText}\n\n校准池（维度分、实绩）：\n${JSON.stringify(rows)}\n\n排序对照：\n${JSON.stringify({ table: gate.table, spearman: gate.spearman, consistency: gate.consistency, regressions: gate.regressions })}`;
+/** 交给审计的是门里实际用的生效分（含补打分），不是预测时的原始分 */
+export function auditPayload(oldText: string, newText: string, samples: GateRow[], gate: RankGateResult): string {
+  const rows = samples.map((s) => ({ id: s.id, title: s.label, scores: s.scores, weight: s.weight ?? 1, composite_old: s.oldScore, composite_new: s.newScore, actual: s.actualDetail }));
+  return `旧公式：${oldText}\n新公式：${newText}\n\n校准池（维度分、实绩）：\n${JSON.stringify(rows)}\n\n排序对照：\n${JSON.stringify({ table: gate.table, spearman: gate.spearman, consistency: gate.consistency, regressions: gate.regressions, soft_regressions: gate.soft_regressions })}`;
 }
 
 export async function proposeBump(args: Obj, dataDir?: string, deps: BumpDeps = {}): Promise<Obj> {
@@ -88,12 +111,15 @@ export async function proposeBump(args: Obj, dataDir?: string, deps: BumpDeps = 
   const blocked = proposalGate(state, pool.length, args);
   if (blocked) return { ok: false, code: "bump_not_allowed", error: blocked };
   const formula = readFormula(args.formula);
+  ids(args.absorbs_observations, "absorbs_observations"); // 坏参数在调模型前就打回
+  ids(args.refutes_observations, "refutes_observations");
   const newText = formulaText(formula);
-  const { samples, newDims } = await buildGateSamples(pool, rubric.formula, formula, dataDir, deps);
+  const { samples, newDims, blindEndpoints } = await buildGateSamples(pool, rubric.formula, formula, dataDir, deps);
   const gate = rankGate(samples);
   const base = { from: rubric.version, old_formula: rubric.formula_text, new_formula: newText, kind: args.kind, rationale: args.rationale, gate };
   if (!gate.pass) return recordRejection({ ...base, step: 3, reason: gate.reasons.join("；") }, dataDir);
-  const audit = await runAudit(auditPayload(rubric.formula_text, newText, pool, gate), dataDir, { runLoopImpl: deps.auditLoop });
+  const audit = await runAudit(auditPayload(rubric.formula_text, newText, samples, gate), dataDir, { runLoopImpl: deps.auditLoop, blindEndpoints });
   if (audit.verdict !== "PASS") return recordRejection({ ...base, step: 4, reason: audit.verdict === "REJECT" ? "本地 PASS + 审计 REJECT，视为 REJECT" : audit.reason, audit }, dataDir);
-  return applyBump({ ...base, formula, newDims, samples, audit, args }, dataDir);
+  const snapshot = { version: rubric.version, samples: state.calibration_samples, atLastBump: state.calibration_samples_at_last_bump, poolIds: pool.map((p) => p.prediction.id).sort() };
+  return applyBump({ ...base, formula, newDims, samples, audit, args, snapshot }, dataDir);
 }

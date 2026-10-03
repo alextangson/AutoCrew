@@ -1,7 +1,8 @@
 /**
- * 校准池：有完整复盘、实绩可用的预测。以下一律不进池（规格 §二/§三）：
- * Reconstructed retrospective、early_retro（没到 T+3 就复盘）、带 Integrity warning、自身指纹对不上的记录。
+ * 校准池：有完整复盘、实绩可用的预测。early_retro 留在池里但带降权（EARLY_RETRO_WEIGHT）。以下一律不进池（规格 §二/§三）：
+ * Reconstructed retrospective、带 Integrity warning、自身指纹对不上的记录。
  */
+import { EARLY_RETRO_WEIGHT } from "./constants.js";
 import { fingerprint, readLog, type ChainRecord } from "./store.js";
 import type { DimScores } from "./rubric.js";
 import type { BucketScheme } from "./derive.js";
@@ -33,7 +34,7 @@ export interface RetroRecord extends ChainRecord {
   center_deviation: number;
 }
 
-export interface PoolSample { prediction: PredictionRecord; retro: RetroRecord; actual: number }
+export interface PoolSample { prediction: PredictionRecord; retro: RetroRecord; actual: number; weight: number }
 
 const selfOk = (r: ChainRecord) => { const { fp, ...body } = r; return fingerprint(body) === fp; };
 
@@ -56,9 +57,11 @@ export async function calibrationPool(dataDir?: string): Promise<PoolSample[]> {
   const out: PoolSample[] = [];
   for (const p of predictions) {
     if (p.reconstructed || warned.has(p.id) || !selfOk(p)) continue;
-    const retro = retros.find((r) => r.prediction_id === p.id && !r.early_retro && selfOk(r));
+    const retro = retros.find((r) => r.prediction_id === p.id && selfOk(r));
     if (!retro || !(retro.actual.views >= 0)) continue;
-    out.push({ prediction: p, retro, actual: retro.actual.views });
+    const weight = retro.early_retro ? EARLY_RETRO_WEIGHT : 1;
+    if (weight <= 0) continue;
+    out.push({ prediction: p, retro, actual: retro.actual.views, weight });
   }
   return out;
 }

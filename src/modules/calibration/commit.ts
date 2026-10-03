@@ -5,7 +5,9 @@
 import crypto from "node:crypto";
 import { ALL_DIMS, composite, type DimScores } from "./rubric.js";
 import { applyDecisions, disagreementTable, readCounterfactuals, readFactors, readPredictionBody, requireText } from "./predict-input.js";
-import { bucketsFor, confidenceFor, formMismatch, latestBlindRun, type BlindRunRecord } from "./predict.js";
+import { ageDays, bucketsFor, confidenceFor, formMismatch, guardActive, latestBlindRun, type BlindRunRecord } from "./predict.js";
+import { getContent } from "../../storage/local-store.js";
+import { RETRO_WINDOW_DAYS } from "./constants.js";
 import { calibrationPool, readPredictions, type PoolSample } from "./pool.js";
 import { appendLog, ensureCalibration, fingerprint, serializeCalibration, writeState, type CalibrationState } from "./store.js";
 
@@ -37,8 +39,24 @@ function predictionId(run: BlindRunRecord, existing: string[]): string {
   return id;
 }
 
-export async function commitPrediction(args: Obj, dataDir?: string): Promise<Obj> {
-  const run = await loadRun(args, dataDir);
+/**
+ * 落盘那一刻再查一次盲度：盲评时没满 3 天、落盘时满了，或落盘前看过数据 → 只能记 reconstructed。
+ * 已发布且不满 3 天的，落盘时也要再明确 seen_data:false。
+ */
+async function stillBlind(run: BlindRunRecord, args: Obj, now: Date, dataDir?: string): Promise<{ blind: boolean; why?: string }> {
+  if (run.status === "reconstructed") return { blind: false, why: "盲评时已标 reconstructed" };
+  const content = await getContent(run.content_id, dataDir);
+  const age = ageDays(content?.publishedAt, now);
+  if (args.seen_data === true) return { blind: false, why: "落盘前已看过这条的数据" };
+  if (age !== null && age >= RETRO_WINDOW_DAYS) return { blind: false, why: `落盘时已发布 ${age.toFixed(1)} 天（≥${RETRO_WINDOW_DAYS} 天）` };
+  if (age !== null && args.seen_data !== false) throw new Error("这条已发布：落预测前再问一次创始人有没有看过数据，没看过才带 seen_data:false");
+  return { blind: true };
+}
+
+export async function commitPrediction(args: Obj, dataDir?: string, now = new Date()): Promise<Obj> {
+  const run0 = await loadRun(args, dataDir);
+  const blindness = await stillBlind(run0, args, now, dataDir);
+  const run: BlindRunRecord = blindness.blind ? run0 : { ...run0, status: "reconstructed" };
   const { state, rubric } = await ensureCalibration(dataDir);
   const blind: DimScores | null = run.blind ? Object.fromEntries(ALL_DIMS.map((d) => [d, run.blind![d].score])) : null;
   const decided = applyDecisions(disagreementTable(blind, run.self_scores), args.decisions);
@@ -47,8 +65,8 @@ export async function commitPrediction(args: Obj, dataDir?: string): Promise<Obj
   const score = composite(decided.final, rubric.formula) as number;
   const record = {
     type: "prediction", id: "", content_id: run.content_id, platform: run.platform, title: run.title,
-    reconstructed: run.status === "reconstructed", ...(run.redo_of ? { redo_of: run.redo_of } : {}),
-    rubric_version: rubric.version, predicted_at: new Date().toISOString(), blind_run_id: run.id,
+    reconstructed: run.status === "reconstructed", ...(blindness.why ? { reconstructed_reason: blindness.why } : {}), ...(run.redo_of ? { redo_of: run.redo_of } : {}),
+    rubric_version: rubric.version, predicted_at: now.toISOString(), blind_run_id: run.id,
     header: {
       script_fp: run.script_fp, calibration_samples: state.calibration_samples, confidence: confidenceFor(state.calibration_samples),
       basis: args.basis === "post_shoot_rejudge" ? "拍后改稿重判" : "发布前", scored_by: "host",
@@ -68,6 +86,8 @@ export async function commitPrediction(args: Obj, dataDir?: string): Promise<Obj
   return serializeCalibration(dataDir, async () => {
     const { predictions } = await readPredictions(dataDir);
     if (predictions.some((p) => p.blind_run_id === run.id)) throw new Error("这次盲评已经落过预测");
+    const activeErr = await guardActive(run.content_id, run.redo_of, dataDir);
+    if (activeErr) throw new Error(activeErr);
     record.id = predictionId(run, predictions.map((p) => p.id));
     await appendLog("predictions", record, dataDir);
     const fresh = (await ensureCalibration(dataDir)).state;

@@ -25,6 +25,7 @@ describe("§五 观察生命周期", () => {
   });
   it("删除留墓碑，同一条不能重提；rubric.json 观察区同步去掉", async () => {
     const id = await add("开头用问句更留人");
+    await observe({ op: "publish", id, rule: "开头用问句更留人" }, dir);
     expect((await ensureCalibration(dir)).rubric.observations).toHaveLength(1);
     await observe({ op: "retire", id, reason: "refuted" }, dir);
     expect((await ensureCalibration(dir)).rubric.observations).toHaveLength(0);

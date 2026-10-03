@@ -25,12 +25,12 @@ export interface BlindRunRecord extends ChainRecord {
   type: "blind_run"; id: string; content_id: string; platform: string; title: string;
   script_text: string; script_fp: string; rubric_version: string;
   self_scores: DimScores; blind: BlindScores | null;
-  status: "ok" | "failed" | "skipped" | "reconstructed"; model: string | null; error?: string; used_fallback?: string;
+  status: "ok" | "failed" | "skipped" | "reconstructed"; model: string | null; endpoint?: string; error?: string; used_fallback?: string;
   published_before_prediction: boolean; redo_of?: string; created_at: string;
 }
 
 export const scriptTextOf = (c: { title: string; body: string }) => `标题：${c.title}\n\n${c.body}`;
-const ageDays = (publishedAt: string | null | undefined, now: Date) =>
+export const ageDays = (publishedAt: string | null | undefined, now: Date) =>
   publishedAt ? (now.getTime() - Date.parse(publishedAt)) / 86_400_000 : null;
 
 /** 盲度检查（BLIND_CHECK=strict）。返回 null = 可盲预测；否则拒绝原因 */
@@ -42,7 +42,7 @@ export function blindCheck(age: number | null, seenData: unknown): { code: strin
   return null;
 }
 
-async function guardActive(contentId: string, redoOf: unknown, dataDir?: string): Promise<string | null> {
+export async function guardActive(contentId: string, redoOf: unknown, dataDir?: string): Promise<string | null> {
   const { predictions } = await readPredictions(dataDir);
   const active = activePredictions(predictions).filter((p) => p.content_id === contentId);
   if (typeof redoOf === "string" && redoOf) {
@@ -77,6 +77,7 @@ export async function blindStep(args: Obj, dataDir?: string, deps: Deps = {}): P
       .then((r) => ({ status: "ok" as const, ...r }), (err: unknown) => ({ status: "failed" as const, error: err instanceof Error ? err.message : String(err) }));
   const rec = { ...base, status: outcome.status, blind: "scores" in outcome ? outcome.scores : null,
     model: "model" in outcome ? outcome.model : null, ...("error" in outcome ? { error: outcome.error } : {}),
+    ...("endpoint" in outcome ? { endpoint: outcome.endpoint } : {}),
     ...("usedFallback" in outcome && outcome.usedFallback ? { used_fallback: outcome.usedFallback } : {}) };
   await serializeCalibration(dataDir, async () => {
     await appendLog("blind-runs", rec, dataDir);
@@ -108,8 +109,14 @@ export async function bucketsFor(platform: string, dataDir?: string, now = new D
 }
 
 export async function latestBlindRun(id: string, dataDir?: string): Promise<BlindRunRecord | null> {
-  const { records } = await readLog<BlindRunRecord>("blind-runs", dataDir);
-  return records.find((r) => r.id === id) ?? null;
+  const { records, integrity } = await readLog<BlindRunRecord>("blind-runs", dataDir);
+  const run = records.find((r) => r.id === id) ?? null;
+  if (!run) return null;
+  const { fp, ...body } = run;
+  if (!integrity.ok || fingerprint(body) !== fp) {
+    throw new Error(`盲评记录完整性校验没过（${integrity.problems[0] ?? "这条记录内容与指纹不符"}）：不能拿被改过的输入落预测或补打分`);
+  }
+  return run;
 }
 
 export const formMismatch = (platform: string) => rubricFormMismatch(platform, VIDEO_PLATFORMS);

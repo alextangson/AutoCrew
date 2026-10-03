@@ -3,15 +3,17 @@
  * 评分表升级、以后的标题方法库留删改都过同一道门。
  *   一致性 = |新排名 − 实绩排名| ≤ 1 的样本占比，≥ 80%（写死）；
  *   逐对不倒序 = 旧分排对的任一对，新分不能排反（新分打平也算没守住——从严）；
+ *   降权样本：一致性按权重算；牵涉降权样本的倒序只列出（soft_regressions）不单独否决——降权样本不能独自翻转结论；
  *   另报 Spearman 供审计参考。
  */
 import { BUMP_RULES } from "./constants.js";
 
-export interface GateSample { id: string; label?: string; oldScore: number; newScore: number; actual: number }
+/** weight：1 = 完整样本；<1 = 降权样本（如 early_retro） */
+export interface GateSample { id: string; label?: string; oldScore: number; newScore: number; actual: number; weight?: number }
 export interface RankRow { id: string; label?: string; old_score: number; new_score: number; rank_new: number; actual: number; rank_actual: number; delta: number }
 export interface RankGateResult {
   pass: boolean; spearman: number | null; consistency: number; threshold: number;
-  regressions: Array<[string, string]>; table: RankRow[]; reasons: string[];
+  regressions: Array<[string, string]>; soft_regressions: Array<[string, string]>; table: RankRow[]; reasons: string[];
 }
 
 /** 降序排名，并列取平均名次 */
@@ -58,11 +60,16 @@ export function rankGate(samples: GateSample[]): RankGateResult {
   const rn = ranks(samples.map((s) => s.newScore));
   const ra = ranks(samples.map((s) => s.actual));
   const table = samples.map((s, i) => ({ id: s.id, label: s.label, old_score: s.oldScore, new_score: s.newScore, rank_new: rn[i], actual: s.actual, rank_actual: ra[i], delta: Math.abs(rn[i] - ra[i]) }));
-  const consistency = samples.length ? table.filter((r) => r.delta <= BUMP_RULES.RANK_DELTA_TOLERANCE).length / samples.length : 0;
-  const regressions = pairwiseRegressions(samples);
+  const w = (s: GateSample) => s.weight ?? 1;
+  const total = samples.reduce((a, s) => a + w(s), 0);
+  const consistency = total ? table.reduce((a, r, i) => a + (r.delta <= BUMP_RULES.RANK_DELTA_TOLERANCE ? w(samples[i]) : 0), 0) / total : 0;
+  const full = new Set(samples.filter((s) => w(s) >= 1).map((s) => s.id));
+  const all = pairwiseRegressions(samples);
+  const regressions = all.filter(([a, b]) => full.has(a) && full.has(b));
+  const soft_regressions = all.filter(([a, b]) => !(full.has(a) && full.has(b)));
   const reasons: string[] = [];
   if (samples.length < 2) reasons.push("样本不足 2 个，排不了序");
   if (consistency < BUMP_RULES.THRESHOLD) reasons.push(`排序一致性 ${(consistency * 100).toFixed(0)}% < ${BUMP_RULES.THRESHOLD * 100}%`);
   if (regressions.length) reasons.push(`旧公式排对的 ${regressions.length} 对被新公式排反或打平`);
-  return { pass: reasons.length === 0, spearman: spearman(samples.map((s) => s.newScore), samples.map((s) => s.actual)), consistency, threshold: BUMP_RULES.THRESHOLD, regressions, table, reasons };
+  return { pass: reasons.length === 0, spearman: spearman(samples.map((s) => s.newScore), samples.map((s) => s.actual)), consistency, threshold: BUMP_RULES.THRESHOLD, regressions, soft_regressions, table, reasons };
 }

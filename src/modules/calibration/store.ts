@@ -140,6 +140,10 @@ export async function readLog<T = ChainRecord>(name: LogName, dataDir?: string):
     prev = fp;
     records.push(rec);
   });
+  const head = (await readHeads(dataDir))[name];
+  if (head && (head.count !== records.length || head.fp !== (prev ?? null))) {
+    problems.push(`末尾记录对不上独立记下的链头（应有 ${head.count} 行，现有 ${records.length} 行）：末尾有行被删或被改`);
+  }
   return { records: records as unknown as T[], integrity: { ok: problems.length === 0, problems } };
 }
 
@@ -151,7 +155,18 @@ export async function appendLog(name: LogName, rec: Record<string, unknown> & { 
   const full = { ...body, fp: fingerprint(body) } as ChainRecord;
   await fs.mkdir(calibrationDir(dataDir), { recursive: true });
   await fs.appendFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), `${JSON.stringify(full)}\n`, "utf-8");
+  await writeHead(name, { fp: full.fp, count: records.length + 1 }, dataDir);
   return full;
+}
+
+// ───────────── 独立链头：删掉末尾几行时哈希链本身看不出来，靠它对账 ─────────────
+
+type Heads = Partial<Record<LogName, { fp: string | null; count: number }>>;
+async function readHeads(dataDir?: string): Promise<Heads> {
+  return (await readJson<Heads>(file(dataDir, "heads.json"))) ?? {};
+}
+async function writeHead(name: LogName, head: { fp: string | null; count: number }, dataDir?: string): Promise<void> {
+  await writeJsonAtomic(file(dataDir, "heads.json"), { ...(await readHeads(dataDir)), [name]: head });
 }
 
 /** 升级清算失败时回滚用：记下各文件长度，失败后截回去 */
@@ -166,5 +181,15 @@ export async function truncateTo(sizes: Record<string, number>, dataDir?: string
   for (const [n, size] of Object.entries(sizes)) {
     const p = path.join(calibrationDir(dataDir), `${n}.jsonl`);
     try { await fs.truncate(p, size); } catch { /* 文件原本不存在 */ }
+    await resetHeadAfterRollback(n as LogName, dataDir);
   }
+}
+
+/** 唯一合法改链头的路径：回滚把文件截回去之后，按截后的文件重记链头 */
+async function resetHeadAfterRollback(name: LogName, dataDir?: string): Promise<void> {
+  let raw = "";
+  try { raw = await fs.readFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), "utf-8"); } catch { /* 空 */ }
+  const lines = raw.split("\n").filter((l) => l.trim());
+  const last = lines.length ? (JSON.parse(lines[lines.length - 1]) as { fp: string }).fp : null;
+  await writeHead(name, { fp: last, count: lines.length }, dataDir);
 }

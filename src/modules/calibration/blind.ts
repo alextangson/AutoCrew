@@ -62,7 +62,8 @@ function submitTool(captured: { scores: BlindScores | null }): LoopTool {
   };
 }
 
-export interface BlindOutcome { scores: BlindScores; model: string; usedFallback?: string }
+/** endpoint：这次盲评**实际**打到的线路（切了备用就是备用的 baseUrl），审计通道据此保证不同源 */
+export interface BlindOutcome { scores: BlindScores; model: string; endpoint: string; usedFallback?: string }
 
 export async function runBlindChannel(scriptText: string, rubric: Rubric, dataDir?: string, deps?: { runLoopImpl?: typeof runLoop }): Promise<BlindOutcome> {
   const leaks = rubricLeaks(rubric);
@@ -75,5 +76,6 @@ export async function runBlindChannel(scriptText: string, rubric: Rubric, dataDi
     { model: config.fastModel, ...req, tools: [submitTool(captured)], maxTurns: 3, logMeta: { agent: "calibration_blind" } },
   );
   if (!captured.scores) throw new Error("盲评通道没有交回分数（模型未调用 submit_blind_scores）");
-  return { scores: captured.scores, model: result.usedFallback?.to ?? config.fastModel, ...(result.usedFallback ? { usedFallback: result.usedFallback.to } : {}) };
+  const endpoint = result.usedFallback ? (config.fallback?.baseUrl ?? "unknown-fallback") : config.baseUrl;
+  return { scores: captured.scores, model: result.usedFallback?.to ?? config.fastModel, endpoint, ...(result.usedFallback ? { usedFallback: result.usedFallback.to } : {}) };
 }

@@ -7,8 +7,8 @@
 import crypto from "node:crypto";
 import { addWritingRule, loadProfile } from "../profile/creator-profile.js";
 import { decodeArg } from "../meetings/meeting-args.js";
-import { BLIND_LEAK_RE, CROSS_VIDEO_MIN_SAMPLES } from "./constants.js";
-import { normText, projectObservations, readObservations, type Observation } from "./obs-store.js";
+import { CROSS_VIDEO_MIN_SAMPLES } from "./constants.js";
+import { abstractRuleProblem, normText, projectObservations, readObservations, type Observation } from "./obs-store.js";
 import { requireText } from "./predict-input.js";
 import { appendLog, ensureCalibration, serializeCalibration, writeRubric, writeState } from "./store.js";
 
@@ -41,7 +41,7 @@ function thresholdNote(o: Observation, extra: string[], soft: unknown, label: st
 export async function reproject(dataDir?: string): Promise<void> {
   const { rubric } = await ensureCalibration(dataDir);
   const { live } = await readObservations(dataDir);
-  await writeRubric({ ...rubric, observations: projectObservations(live, (t) => BLIND_LEAK_RE.test(t)) }, dataDir);
+  await writeRubric({ ...rubric, observations: projectObservations(live) }, dataDir);
 }
 
 async function add(args: Obj, dataDir?: string): Promise<Obj> {
@@ -51,7 +51,7 @@ async function add(args: Obj, dataDir?: string): Promise<Obj> {
   if (dead) return { ok: false, code: "tombstoned", error: `这条观察以前已${dead.reason === "refuted" ? "被推翻" : "被吸收/沉淀"}（${dead.id}），不重提` };
   const id = `obs-${crypto.randomUUID().slice(0, 8)}`;
   await appendLog("rubric-memo", { type: "observation", id, stage: "observation", text, sample_ids: samples(args.sample_ids), source: String(args.source ?? "host"), at: new Date().toISOString() }, dataDir);
-  return { ok: true, id, stage: "observation", in_rubric: !BLIND_LEAK_RE.test(text) };
+  return { ok: true, id, stage: "observation", in_rubric: false, note: "原始观察只留在 memo；要进评分表用 op:publish 提炼成抽象规则" };
 }
 
 async function promote(args: Obj, dataDir?: string): Promise<Obj> {
@@ -91,7 +91,17 @@ async function ruleConflict(args: Obj, dataDir?: string): Promise<Obj> {
     next_action: founder ? "这条是创始人原话定的规则：数据不自动删，把冲突摆给创始人裁定" : "数据只提示冲突，不自动改规则：摆给创始人决定是否停用或改写" };
 }
 
-const OPS: Record<string, (a: Obj, d?: string) => Promise<Obj>> = { add, promote, settle, retire, rule_conflict: ruleConflict };
+/** 把一条观察提炼成抽象规则发布进 rubric.json：不带标题、数字指标、链接、评论原话、样本 id */
+async function publish(args: Obj, dataDir?: string): Promise<Obj> {
+  const o = await findLive(args.id, dataDir);
+  const rule = requireText(args.rule, "rule");
+  const problem = abstractRuleProblem(rule);
+  if (problem) throw new Error(`${problem}：rubric.json 是盲评白名单，只收抽象规则`);
+  await appendLog("rubric-memo", { type: "obs_publish", id: o.id, rule, at: new Date().toISOString() }, dataDir);
+  return { ok: true, id: o.id, published: rule };
+}
+
+const OPS: Record<string, (a: Obj, d?: string) => Promise<Obj>> = { add, promote, settle, retire, publish, rule_conflict: ruleConflict };
 
 export async function observe(args: Obj, dataDir?: string): Promise<Obj> {
   const op = String(args.op ?? "list");
@@ -107,7 +117,7 @@ export async function observe(args: Obj, dataDir?: string): Promise<Obj> {
     });
   }
   const fn = OPS[op];
-  if (!fn) throw new Error(`op 只能是 list / add / promote / settle / retire / rule_conflict / cleanup_done`);
+  if (!fn) throw new Error(`op 只能是 list / add / promote / settle / retire / publish / rule_conflict / cleanup_done`);
   return serializeCalibration(dataDir, async () => {
     const r = await fn(args, dataDir);
     if (r.ok && op !== "rule_conflict") await reproject(dataDir);

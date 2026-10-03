@@ -2,29 +2,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { getConfigDir } from "../../storage/storage-roots.js";
 import { proposalGate, proposeBump, readFormula } from "./bump.js";
 import { nextVersion } from "./bump-cleanup.js";
 import { readObservations } from "./obs-store.js";
 import { pairwiseRegressions, rankGate, ranks, spearman } from "./rank-gate.js";
 import { retro } from "./retro.js";
 import { ensureCalibration, readLog } from "./store.js";
-import { predictPublished, SELF } from "./test-fixtures.js";
+import { audit, engine as engineIn, predictPublished, SELF } from "./test-fixtures.js";
+const engine = (withReviewer: boolean) => engineIn(dir, withReviewer);
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-b-")); });
-
-async function engine(withReviewer: boolean) {
-  const cfg = { apiKey: "k", baseUrl: "https://main.example", strongModel: "s", fastModel: "f", protocol: "openai",
-    ...(withReviewer ? { routes: { reviewer: { baseUrl: "https://api.deepseek.com", apiKey: "k2", model: "deepseek-v4-pro", protocol: "openai" } } } : {}) };
-  await fs.mkdir(getConfigDir(dir), { recursive: true });
-  await fs.writeFile(path.join(getConfigDir(dir), "engine.json"), JSON.stringify(cfg));
-}
-const audit = (verdict: string, calls: unknown[] = []) => (async (config: unknown, opts: { tools: Array<{ execute: (a: Record<string, unknown>) => unknown }> }) => {
-  calls.push(config);
-  await opts.tools[0].execute({ verdict, reason: "理由".repeat(60) });
-  return { finalMessage: "", turns: 1, totalTokens: 1, toolCallCount: 1, stopReason: "no_tool_calls" };
-}) as never;
 
 /** n 个样本：ER 越高实绩越高；SR 与实绩无关 */
 async function seedPool(n: number, opts: { skipBlindFirst?: boolean } = {}) {

@@ -78,7 +78,7 @@ export async function learnPrepare(args: Obj, dataDir?: string, deps: { transcri
   if (samples.length < LEARN_MIN_SAMPLES) return { ok: false, code: "too_few_usable", error: `可用样本只剩 ${samples.length} 条（<${LEARN_MIN_SAMPLES}）`, failed };
   const id = `bench-${crypto.randomUUID().slice(0, 8)}`;
   await serializeCalibration(dataDir, () => appendLog("benchmark-imports", { type: "benchmark_samples", id, account, samples, failed, at: new Date().toISOString() }, dataDir));
-  return { ok: true, import_id: id, account, samples: samples.map((s) => ({ title: s.title, way: s.way, impression: s.impression, chars: String(s.script).length })), failed,
+  return { ok: true, import_id: id, account, samples: samples.map((s) => ({ title: s.title, way: s.way, impression: s.impression, why: s.why, metrics: s.metrics, script: s.script })), failed,
     next_action: "拆套路（script_patterns）+ 派生 rubric 信号（只定性），给创始人过目改完，再 calib_learn op:save 带 founder_reviewed:true" };
 }
 

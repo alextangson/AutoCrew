@@ -32,11 +32,14 @@ function submitTool(captured: { v: Omit<AuditVerdict, "model"> | null }): LoopTo
   };
 }
 
-export async function runAudit(payload: string, dataDir?: string, deps?: { runLoopImpl?: typeof runLoop }): Promise<AuditVerdict> {
+export async function runAudit(payload: string, dataDir?: string, deps?: { runLoopImpl?: typeof runLoop; blindEndpoints?: string[] }): Promise<AuditVerdict> {
   const config = await loadEngineConfig(dataDir);
   const route = resolveEngineRoute(config, "reviewer", config.strongModel);
   if (!config.assignments?.reviewer || route.config.baseUrl === config.baseUrl) {
     return { verdict: "UNAVAILABLE", reason: "审计通道 C 没有另一条模型线路（reviewer 线路未配置，或与主线路相同）：不能自审代替，本次升级不放行", model: null };
+  }
+  if ((deps?.blindEndpoints ?? []).includes(route.config.baseUrl)) {
+    return { verdict: "UNAVAILABLE", reason: `有样本的盲评实际走的就是审计线路（${route.config.baseUrl}，主线路失败时切了备用）：审计不独立，本次升级不放行`, model: null };
   }
   const captured = { v: null as Omit<AuditVerdict, "model"> | null };
   try {
