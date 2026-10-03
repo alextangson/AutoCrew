@@ -66,8 +66,9 @@ export function parsePage(platform: PassivePlatform, page: CapturedPage): PagePa
   const oks = parses.filter((p): p is Extract<PageParse, { kind: "ok" }> => p.kind === "ok");
   if (oks.length === 0) return risk ?? login ?? stops[0] ?? { kind: "stop", result: failure("error", "no_data_response") };
   const rows = oks.flatMap((p) => p.rows);
-  if (rows.some((r) => !r.publishedAt)) return { kind: "stop", result: schemaChanged("publishedAt") };
   const terminal = (risk ?? login)?.result;
+  // 这页拒收（日期缺失），但同窗口的登录/风控信号优先，否则会被当成普通失败、当天反复重试
+  if (rows.some((r) => !r.publishedAt)) return { kind: "stop", result: terminal ?? schemaChanged("publishedAt") };
   return { kind: "ok", rows, ...(terminal ? { terminal } : {}) };
 }
 
@@ -102,6 +103,10 @@ function finalizeRows(rows: TypedRow[], cutoffMs: number, limit: number): { rows
   return { rows: kept.slice(0, limit), over: kept.length > limit };
 }
 
+function isTerminal(r: PullResult | null): r is PullResult {
+  return !!r && (r.status === "needs_login" || r.status === "risk_control");
+}
+
 function collectPages(platform: PassivePlatform, o: BrowseOutcome): { rows: TypedRow[]; good: number; failed: PullResult | null } {
   const rows: TypedRow[] = [];
   let good = 0;
@@ -122,7 +127,9 @@ function collectPages(platform: PassivePlatform, o: BrowseOutcome): { rows: Type
  */
 export function judgeBrowse(platform: PassivePlatform, o: BrowseOutcome, cutoffMs: number, limit = PAGE_ROW_LIMIT): PullResult {
   const { rows, good, failed } = collectPages(platform, o);
-  const tail = failed ?? endingFailure(o);
+  const ending = endingFailure(o);
+  // 登录/风控信号优先于普通页失败（schema_changed 等），无论它来自页内响应还是旁听的结束原因
+  const tail = isTerminal(failed) ? failed : isTerminal(ending) ? ending : (failed ?? ending);
   if (good === 0) return tail ?? failure("error", "no_data_response");
   const done = finalizeRows(rows, cutoffMs, limit);
   if (tail && (tail.status === "needs_login" || tail.status === "risk_control")) {

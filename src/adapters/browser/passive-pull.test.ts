@@ -119,6 +119,20 @@ describe("边界情况(验收清单)", () => {
     expect(judge(outcome([page(0, [bad])], "no_more"))).toMatchObject({ status: "schema_changed", errorCode: "parse_exception" });
   });
 
+  it("R2-P2 同页无日期行 + HTTP 461 → 风控优先(页仍拒收),不降成 schema_changed", () => {
+    const noDate = { ...post(2, 1), createTime: undefined };
+    const mixed: CapturedPage = { index: 0, responses: [...page(0, [noDate]).responses, { url: URL, status: 461, body: "{}" }] };
+    expect(judge(outcome([mixed], "http_status"))).toMatchObject({ status: "risk_control", rows: [] });
+  });
+
+  it("R2-P2 无日期页 + 旁听因风控/登录页结束 → 终止信号优先", () => {
+    const noDate = { ...post(2, 1), createTime: undefined };
+    expect(judge(outcome([page(0, [noDate])], "gate", { gate: "risk" }))).toMatchObject({ status: "risk_control", rows: [] });
+    const r = judge(outcome([page(0, [post(1, 1)]), page(1, [noDate])], "gate", { gate: "login" }));
+    expect(r).toMatchObject({ status: "needs_login" });
+    expect(r.rows).toHaveLength(1);
+  });
+
   it("菜单入口找不到 → 失败、零行、原因可见", () => {
     expect(judge(outcome([], "entry_missing"))).toEqual({ status: "error", rows: [], errorCode: "entry_ui_missing" });
   });
