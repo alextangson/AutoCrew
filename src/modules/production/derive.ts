@@ -194,8 +194,10 @@ export function matchingRegistration(doc: ProductionDoc, body: string, cut: Deci
 
 /** 登记绑的文件都在（availability=present）才可发布；缺了阶段不退，只拦发布 */
 function registrationFilesPresent(doc: ProductionDoc, reg: Registration): boolean {
-  const shas = [reg.cut_sha, reg.cover_3x4_sha, reg.cover_4x3_sha, reg.srt_sha].filter((s): s is string => Boolean(s));
-  return shas.every((sha) => accepted(doc).some((f) => f.sha256 === sha && f.availability === "present"));
+  const shas = [reg.cut_sha, reg.cover_3x4_sha, reg.cover_4x3_sha].filter((s): s is string => Boolean(s));
+  // 字幕按登记绑的那条看：同 sha 但绑别版成片的字幕不算数
+  const srtOk = !reg.srt_sha || registeredSrt(doc, reg)?.availability === "present";
+  return srtOk && shas.every((sha) => accepted(doc).some((f) => f.sha256 === sha && f.availability === "present"));
 }
 
 function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decision | null): { missing: string[]; badges: string[] } {
