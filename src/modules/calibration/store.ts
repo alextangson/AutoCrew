@@ -198,9 +198,10 @@ export async function acknowledgeLogDamage(name: LogName, reason: string, dataDi
     const { records, problems, last } = parseChain(raw);
     if (problems.length) throw new Error(`${name}.jsonl 链中间就坏了（${problems[0]}）：不能用重记链头掩盖，只能人工处理`);
     const head = (await readHeads(dataDir))[name];
-    await writeHead(name, { fp: last, count: records.length }, dataDir);
     const entry = { log: name, reason, previous_head: head ?? null, new_count: records.length, at: new Date().toISOString() };
+    // 先留痕再改链头：恢复记录写不进去，链头就不动
     await fs.appendFile(file(dataDir, "repairs.jsonl"), `${JSON.stringify(entry)}\n`, "utf-8");
+    await writeHead(name, { fp: last, count: records.length }, dataDir);
     return { ok: true, repaired: entry };
   });
 }
@@ -215,27 +216,32 @@ async function writeHead(name: LogName, head: { fp: string | null; count: number
   await writeJsonAtomic(file(dataDir, "heads.json"), { ...(await readHeads(dataDir)), [name]: head });
 }
 
-/** 升级清算失败时回滚用：记下各文件长度，失败后截回去 */
-export async function snapshotSizes(dataDir?: string): Promise<Record<string, number>> {
-  const out: Record<string, number> = {};
-  for (const n of ["predictions", "rubric-memo", "blind-runs"]) {
-    try { out[n] = (await fs.stat(path.join(calibrationDir(dataDir), `${n}.jsonl`))).size; } catch { out[n] = 0; }
+/** 多文件操作前的整体校验：碰到的每份日志都要完好，任何一份坏了就在第一次写之前整体拒绝 */
+export async function assertLogsIntact(names: LogName[], dataDir?: string): Promise<void> {
+  for (const n of names) {
+    const { integrity } = await readLog(n, dataDir);
+    if (!integrity.ok) throw new LogsDamagedError(`${n}.jsonl 完整性校验没过（${integrity.problems[0]}）：这次操作一行都没写。把这件事告诉创始人；确认后用 calib_status{repair_log} 显式恢复`);
   }
-  return out;
 }
-export async function truncateTo(sizes: Record<string, number>, dataDir?: string): Promise<void> {
-  for (const [n, size] of Object.entries(sizes)) {
-    const p = path.join(calibrationDir(dataDir), `${n}.jsonl`);
-    try { await fs.truncate(p, size); } catch { /* 文件原本不存在 */ }
-    await resetHeadAfterRollback(n as LogName, dataDir);
+export class LogsDamagedError extends Error {}
+
+export interface LogSnapshot { sizes: Record<string, number>; heads: Heads }
+
+/** 升级清算前的快照：各文件长度 + 当时可信的链头 */
+export async function snapshotSizes(dataDir?: string): Promise<LogSnapshot> {
+  const sizes: Record<string, number> = {};
+  for (const n of ["predictions", "rubric-memo", "blind-runs"]) {
+    try { sizes[n] = (await fs.stat(path.join(calibrationDir(dataDir), `${n}.jsonl`))).size; } catch { sizes[n] = 0; }
   }
+  return { sizes, heads: await readHeads(dataDir) };
 }
 
-/** 唯一合法改链头的路径：回滚把文件截回去之后，按截后的文件重记链头 */
-async function resetHeadAfterRollback(name: LogName, dataDir?: string): Promise<void> {
-  let raw = "";
-  try { raw = await fs.readFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), "utf-8"); } catch { /* 空 */ }
-  const lines = raw.split("\n").filter((l) => l.trim());
-  const last = lines.length ? (JSON.parse(lines[lines.length - 1]) as { fp: string }).fp : null;
-  await writeHead(name, { fp: last, count: lines.length }, dataDir);
+/** 回滚：文件截回快照长度，链头还原成快照里保存的值——绝不按（可能已坏的）文件重算 */
+export async function truncateTo(snap: LogSnapshot, dataDir?: string): Promise<void> {
+  for (const [n, size] of Object.entries(snap.sizes)) {
+    const p = path.join(calibrationDir(dataDir), `${n}.jsonl`);
+    try { await fs.truncate(p, size); } catch { /* 文件原本不存在 */ }
+  }
+  await writeJsonAtomic(file(dataDir, "heads.json"), snap.heads);
 }
+

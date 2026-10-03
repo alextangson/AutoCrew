@@ -18,7 +18,7 @@ import { LEARN_MAX_SAMPLES_PER_RUN, LEARN_MIN_SAMPLES } from "./constants.js";
 import { normText, readObservations } from "./obs-store.js";
 import { reproject } from "./observations.js";
 import { requireText } from "./predict-input.js";
-import { appendLog, calibrationDir, ensureCalibration, readLog, serializeCalibration, writeState } from "./store.js";
+import { appendLog, assertLogsIntact, calibrationDir, ensureCalibration, readLog, serializeCalibration, writeState } from "./store.js";
 
 type Obj = Record<string, unknown>;
 export type Transcribe = (videoPath: string, workDir: string) => Promise<{ ok: true; text: string } | { ok: false; reason: string; notReady?: boolean }>;
@@ -94,6 +94,7 @@ export async function learnSave(args: Obj, dataDir?: string): Promise<Obj> {
 }
 
 async function persist(imp: Obj & { id: string; account: string; samples: Obj[] }, patterns: Obj[], signals: string[], dataDir?: string): Promise<Obj> {
+  await assertLogsIntact(["script-patterns", "rubric-memo", "benchmark-imports"], dataDir);
   const now = new Date().toISOString();
   const slug = imp.account.replace(/[\\/:*?"<>|\s]+/g, "_");
   const notePath = path.join(calibrationDir(dataDir), "benchmarks", `${slug}.json`);

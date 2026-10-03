@@ -9,7 +9,7 @@ import type { GateSample, RankGateResult } from "./rank-gate.js";
 import { rubricLeaks, type DimKey, type DimScores, type Rubric, type RubricFormula } from "./rubric.js";
 import { decodeArg } from "../meetings/meeting-args.js";
 import { calibrationPool } from "./pool.js";
-import { appendLog, ensureCalibration, serializeCalibration, snapshotSizes, truncateTo, writeRubric, writeState } from "./store.js";
+import { appendLog, assertLogsIntact, ensureCalibration, serializeCalibration, snapshotSizes, truncateTo, writeRubric, writeState } from "./store.js";
 
 type Obj = Record<string, unknown>;
 interface BumpBase { from: string; old_formula: string; new_formula: string; kind: unknown; rationale: unknown; gate: RankGateResult }
@@ -65,6 +65,9 @@ export async function applyBump(input: BumpBase & { formula: RubricFormula; newD
       changelog: [...rubric.changelog, { version, date: now.slice(0, 10), formula_text: input.new_formula }] };
     const leaks = rubricLeaks(next);
     if (leaks.length) return { ok: false, code: "rubric_leak", error: `新 rubric.json 混进了数据：${leaks[0]}，回滚` };
+    try { await assertLogsIntact(["predictions", "rubric-memo"], dataDir); } catch (err) {
+      return { ok: false, code: "logs_damaged", error: (err as Error).message };
+    }
     const sizes = await snapshotSizes(dataDir);
     try {
       await appendCleanup(input, { version, absorbed, refuted, remaining, now }, dataDir);

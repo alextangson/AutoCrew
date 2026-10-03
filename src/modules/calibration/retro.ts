@@ -17,7 +17,7 @@ import { requireText } from "./predict-input.js";
 import { retroStateUpdate } from "./retro-state.js";
 import { normText, readObservations } from "./obs-store.js";
 import { reproject } from "./observations.js";
-import { appendLog, ensureCalibration, fingerprint, serializeCalibration, writeState } from "./store.js";
+import { appendLog, assertLogsIntact, ensureCalibration, fingerprint, serializeCalibration, writeState } from "./store.js";
 
 type Obj = Record<string, unknown>;
 export interface Actual { views: number; likes?: number; comments?: number; shares?: number; source: string; age_days: number | null; metric_date?: string }
@@ -117,6 +117,7 @@ async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, a
   return serializeCalibration(dataDir, async () => {
     // 唯一性在排队内再查一次：并发两次复盘不能都落盘、都 +1
     if ((await readPredictions(dataDir)).retros.some((r) => r.prediction_id === p.id)) return { ok: false, code: "retro_exists", error: "这条刚被另一次复盘落过盘" };
+    await assertLogsIntact(["predictions", "rubric-memo"], dataDir); // 全有或全无：第一次写之前把要碰的日志都核一遍
     const { fp: ownFp, ...rest } = p;
     const cached = fingerprint(p.body) === p.body_fp && fingerprint(rest) === ownFp ? p.body_fp : null;
     await appendLog("predictions", rec, dataDir);
