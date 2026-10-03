@@ -2307,10 +2307,12 @@
        "meeting_brief",
        "meeting_get",
        "meeting_save",
-       "meeting_tag"
+       "meeting_tag",
+       "calib_status"
       ],
       "type": "string"
      },
+     "calib": {},
      "date": {
       "type": "string"
      },
@@ -4870,10 +4872,12 @@
        "meeting_brief",
        "meeting_get",
        "meeting_save",
-       "meeting_tag"
+       "meeting_tag",
+       "calib_status"
       ],
       "type": "string"
      },
+     "calib": {},
      "date": {
       "type": "string"
      },
