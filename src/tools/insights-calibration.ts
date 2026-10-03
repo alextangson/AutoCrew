@@ -9,6 +9,7 @@ import { blindStep } from "../modules/calibration/predict.js";
 import { commitPrediction } from "../modules/calibration/commit.js";
 import { retro } from "../modules/calibration/retro.js";
 import { proposeBump } from "../modules/calibration/bump.js";
+import { titleLibraryAction } from "../modules/calibration/title-bump.js";
 import { observe } from "../modules/calibration/observations.js";
 import { learnPrepare, learnSave } from "../modules/calibration/learn-from.js";
 
@@ -19,7 +20,7 @@ export const CALIB_DESCRIPTION = [
   "calib_blind{content_id, self_scores:{ER,SR,HP,QL,NA,AB,SAT,MS,TS 各 0–5}, seen_data?, skip_blind?, reconstructed?, redo_of?}：盲度检查，先封存你的自评，再起盲评通道（只喂稿子+rubric），返回分歧表。",
   "calib_predict{blind_run_id, seen_data?(已发布必填 false), decisions?:{维度:\"blind\"|\"self\"|0–5}, prediction:{bucket, distribution:{5 档百分比合计 100}, center, reason}, factors:[{factor,direction:+|-,confidence:高|中|低,note}], counterfactuals:{每档一段}, hypothesis, basis?}：落预测（不可改）。",
   "calib_retro{prediction_id|content_id, hypothesis_conclusion, verified_factors?:[{factor,verdict:验证|推翻|无法判断,note}], observations?:[一句话], manual_metrics?:{views,likes,comments,shares}, force_early?} T+3 复盘（只追加一次，数据取回流、缺了手填不编）；reading:\"d7\" 追加 D+7 读数；correction 追加修正。",
-  "calib_bump{formula:{weights,divisor,multiplier}, kind:default-aligned|judgment-driven, rationale, absorbs_observations?, refutes_observations?, known_limitations?, soft_violation_reason?}：5 步升级（重算→排序门 80%+逐对不倒序→跨模型审计→清算），不收阈值参数。",
+  "calib_bump{formula:{weights,divisor,multiplier}, kind:default-aligned|judgment-driven, rationale, absorbs_observations?, refutes_observations?, known_limitations?, soft_violation_reason?}：5 步升级（重算→排序门 80%+逐对不倒序→跨模型审计→清算），不收阈值参数。标题方法库留/删/改也走这道门：{target:\"title_library\", op:propose|apply|revert|status, composition:{keep,remove,change:[{id,字段}],restore?}, kind, rationale, new_evidence?, proposal_id?, change_id?, confirm?, reason?}；没到终版或样本不够只出「判断」不改库。",
   "calib_observe{op:list|add|promote|settle|retire|publish|rule_conflict|cleanup_done, id?, text?, to?:cross_video|hypothesis, sample_ids?, soft_reason?, reason?:absorbed|refuted|settled, rule?, rule_id?}：观察生命周期；原始观察只留 memo，publish{id, rule} 把它提炼成抽象规则（无标题/数字/链接/评论原话）才进评分表；settle 只建待批写作规则，规则从不被数据自动改。",
   "calib_learn{op:prepare, account, samples:[3–15 条 {title, script 或 video_path(资料库「对标视频」文件夹), metrics:{views,…}, impression:高|中|低, why}]} → 拆套路给创始人过目 → {op:save, import_id, founder_reviewed:true, patterns:[{name,description,example}], rubric_signals:[一句话]}。对标原话不能当事实引用。",
 ].join("\n");
@@ -48,7 +49,7 @@ export async function executeCalibrationAction(action: string, raw: unknown, dir
     if (action === "calib_blind") return await blindStep(args, dir);
     if (action === "calib_predict") return await commitPrediction(args, dir);
     if (action === "calib_retro") return await retro(args, dir);
-    if (action === "calib_bump") return await proposeBump(args, dir);
+    if (action === "calib_bump") return args.target === "title_library" ? await titleLibraryAction(args, dir) : await proposeBump(args, dir);
     if (action === "calib_observe") return await observe(args, dir);
     if (action === "calib_learn") return args.op === "save" ? await learnSave(args, dir) : await learnPrepare(args, dir);
     if (action === "calib_status" && args.repair_log !== undefined) return await repairLog(args, dir);
