@@ -310,6 +310,20 @@ describe("pullPlatformNow — 入库与状态", () => {
     expect(st.nextEligibleAt).toBe(nextDayAtNine(before9));
   });
 
+  it("R2-P2 风控前的行入库抛错 → 状态仍是 risk_control(次日 09:00),入库失败单独可见", async () => {
+    await seed("douyin");
+    const importRows = vi.fn(async () => Promise.reject(new Error("disk full")));
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => ({ status: "risk_control", rows: ROWS, errorCode: "partial:risk_page" }) }, importRows }),
+    });
+    expect(attempt).toMatchObject({ status: "risk_control", importError: "import_failed" });
+    const st = await stateOf("douyin");
+    expect(st.lastStatus).toBe("risk_control");
+    expect(st.nextEligibleAt).toBe(nextDayAtNine(NOW));
+    expect(st.lastErrorCode).toBe("partial:risk_page+import_failed");
+  });
+
   it("P2-4 中途跳登录页：行入库，状态记 needs_login（登录待办的来源）", async () => {
     await seed("wechat_video");
     const importRows = vi.fn(async () => report());
