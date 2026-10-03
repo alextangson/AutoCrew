@@ -94,7 +94,7 @@ export const prePublishSchema = Type.Object({
       "产品只校验并保存，不调模型；稿件之后再改，发布包作废，check 报 kit_stale。" +
       "title_methods = 读发布标题方法库（写 post_title 前先读）与按方法汇总的试用期统计。",
   }),
-  content_id: Type.String({ description: "AutoCrew content id." }),
+  content_id: Type.Optional(Type.String({ description: "AutoCrew content id；check、video_kit 必填，title_methods 不需要。" })),
   platform: Type.Optional(Type.String({ description: "video_kit 必填，须等于稿件平台。" })),
   kit: Type.Optional(Type.Object({
     post_title: Type.String({ description: "平台发布标题，独立于口播稿标题，按平台习惯重拟、自带钩子。" }),

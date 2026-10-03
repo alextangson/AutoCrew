@@ -8,6 +8,7 @@
 import { listContents, normalizeLegacyStatus, type Content } from "../../storage/local-store.js";
 import { listLatestOutcomes } from "../flywheel/outcome-store.js";
 import { normalizePlatform, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { reviewedRow } from "../insights/metric-review.js";
 import { findTitleMethod, SELF_WRITTEN, titleMethodGuide, titleMethodIds, titleNumberWarnings } from "./title-methods.js";
 
 export const UNTAGGED = "未标记";
@@ -40,7 +41,9 @@ function methodOf(c: Content): string {
 }
 
 /** 点击率（百分比）：平台给的封面点击率优先，没有时用 播放 ÷ 曝光；都缺 = undefined，不当 0 */
-export function clickRateOf(o: PerformanceOutcome | undefined): number | undefined {
+export function clickRateOf(raw: PerformanceOutcome | undefined): number | undefined {
+  // 被复核理由点名的指标先剔掉（与洞察统计同口径），待复核的数不进方法均值
+  const o = raw ? reviewedRow(raw) : null;
   if (!o) return undefined;
   const m = o.metrics;
   if (typeof m.coverClickRate === "number" && Number.isFinite(m.coverClickRate)) return m.coverClickRate;

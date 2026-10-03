@@ -94,6 +94,11 @@ describe("titleNumberWarnings：只提示不拦", () => {
     expect(w[0]).toContain("30");
     expect(w[0]).toContain("不拦");
   });
+  it("按完整数字比：正文的 130、13 不能当标题 30、3 的依据", () => {
+    const w = titleNumberWarnings("省30分钟的3个技巧", "花了130分钟，试了13种方法");
+    expect(w).toHaveLength(1);
+    expect(w[0]).toContain("30、3");
+  });
   it("标题没有数字 → 无提示", () => {
     expect(titleNumberWarnings("不写代码也能用的 AI", "正文")).toEqual([]);
   });

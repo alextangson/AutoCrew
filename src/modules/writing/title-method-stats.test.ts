@@ -30,6 +30,15 @@ describe("aggregateTitleMethods", () => {
     expect(row(r, "a-or-b")!.clickRate).toBe(NO_DATA);
   });
 
+  it("待复核的点击率不进均值：被复核理由点名的指标剔掉，剩不下 = 无数据", () => {
+    const a = post("douyin", "twist"), b = post("douyin", "twist");
+    const flagged = { ...outcome(a, { coverClickRate: 0.325 }), needsReview: true, reviewReasons: ["封面点击率 0.325 疑似把百分比写成小数"] };
+    const r = aggregateTitleMethods([a, b], [flagged, outcome(b, { coverClickRate: 6 })]);
+    expect(row(r, "twist")).toMatchObject({ published: 2, withData: 1, avgClickRate: 6 });
+    const only = aggregateTitleMethods([a], [flagged]);
+    expect(row(only, "twist")!.clickRate).toBe(NO_DATA);
+  });
+
   it("旧稿没有方法 id → 「未标记」，自拟单列；两者都不计入试用期条数", () => {
     const r = aggregateTitleMethods([post("douyin"), post("douyin", "自拟"), post("douyin", "twist")], []);
     expect(row(r, UNTAGGED)).toMatchObject({ published: 1, name: UNTAGGED });

@@ -2262,8 +2262,7 @@
      }
     },
     "required": [
-     "action",
-     "content_id"
+     "action"
     ],
     "type": "object"
    }
@@ -4833,8 +4832,7 @@
      }
     },
     "required": [
-     "action",
-     "content_id"
+     "action"
     ],
     "type": "object"
    }

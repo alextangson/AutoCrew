@@ -102,7 +102,9 @@ export function validateTitleChoice(candidatesRaw: unknown, methodRaw: unknown):
 /** 标题里的阿拉伯数字在正文里找不到：只提示（§七.4），提醒核对是否编了数 */
 export function titleNumberWarnings(title: string, body: string): string[] {
   const nums = [...new Set(title.match(/\d+(?:\.\d+)?/g) ?? [])];
-  const missing = nums.filter((n) => !body.includes(n));
+  // 按完整数字比：正文「130 分钟」不能当成标题「30 分钟」的依据
+  const bodyNums = new Set(body.match(/\d+(?:\.\d+)?/g) ?? []);
+  const missing = nums.filter((n) => !bodyNums.has(n));
   if (missing.length === 0) return [];
   return [`标题里的数字 ${missing.join("、")} 在正文里没找到（正文写成汉字数字的也会报）：确认它在定稿或证据台账里有依据，没有就换个不靠数字的方法。仅提示，不拦。`];
 }
