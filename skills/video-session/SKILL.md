@@ -73,10 +73,17 @@ EOF
 ## 6. 发布包与发布
 
 1. `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}`：发布标题、简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交。回 `video_not_done` 就是成片还没登记（谁口头说「已登记」都不算），回到第 5 步等，不出发布包。把这份 kit 摆给用户，他要改就重交。
-2. `autocrew_pre_publish {action:"check", content_id, claim_token}`：`kit_stale` 说明稿改过，重做 kit；其余失败项按 `fix` 处理。
-3. 按 `publish-content` 技能调 `autocrew_publish {action:"ego_lite_prepare", content_id}`，用 ego lite 上传填表。最后那一下发布永远由用户点。
+2. 盲预测（判断要对账）：`video_kit` 回执里的 `calibration` 就是提示。先问创始人有没有看过这条的任何数据；已发布满 3 天或看过数据就不做盲预测（只能记 `reconstructed:true`，不进校准池）。
+   - 你先独立逐维自评（9 维 0–5，rubric 见 `calib_status`），**再** `autocrew_insights {action:"calib_blind", calib:{content_id, self_scores, seen_data?}}`；盲评通道只看稿子和评分表。回 `blind_failed` 照实告诉创始人，重试或经他同意 `skip_blind:true`（会被晨报持续提醒）。
+   - `needs_decision` 里每一维摆给创始人选「信盲评 / 信主通道 / 自己给分」，然后 `calib_predict` 交 bucket + 5 档概率（合计 100，冷启动更平）+ 中枢 + 一句理由、推理因素、每档反事实、关键校准假设。预测落盘后不可改，要重做只能 `redo_of`。
+3. `autocrew_pre_publish {action:"check", content_id, claim_token}`：`kit_stale` 说明稿改过，重做 kit；其余失败项按 `fix` 处理。
+4. 按 `publish-content` 技能调 `autocrew_publish {action:"ego_lite_prepare", content_id}`，用 ego lite 上传填表。最后那一下发布永远由用户点。
 
-## 7. 失败态
+## 7. 发布后复盘（T+3）
+
+发布满 3 天（晨报「N 条预测等复盘」）回到这个会话：`autocrew_insights {action:"calib_retro", calib:{content_id, hypothesis_conclusion, verified_factors, observations}}`。数据只取回流；回 `no_data` 就请创始人开回流或手填 `manual_metrics`，不编。不到 3 天别复盘（创始人坚持才 `force_early:true`，不进校准池）；D+7 用 `reading:"d7"` 追加读数；回执里提示可以升级或该清算时，转告创始人，升级走 `calib_bump`，不自己改评分表。
+
+## 8. 失败态
 
 - 主线路 / 中转挂了：与这条路无关，主路不调后台引擎。哪一步要你配 engine，就是走偏了，退回宿主路径。
 - `claim_held`：另一个会话握着这篇（回执给出持有者）。告诉用户并问这条视频归哪个会话；产品只在持有会话 10 分钟没写入后才接受 `takeover:true`，在那之前只能等它 release，不要反复试。持有者是 codex 说明正在剪，不是争抢。

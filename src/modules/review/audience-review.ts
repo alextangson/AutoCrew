@@ -9,6 +9,7 @@ import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
+import { TS_LENS_HINT } from "../calibration/ts-lens.js";
 import type { AudiencePersona } from "../profile/creator-profile.js";
 
 export interface TierStayVerdict {
@@ -124,6 +125,7 @@ export async function reviewAudienceStay(
       "判断必须锚定画像的焦虑与停留触发器,不允许泛泛而谈;指出会让 TA 划走的具体原文位置。" +
       "本次创作任务优先于长期画像；若任务明确指定了不同受众，应说明差异并按本次受众点评。观点是编辑建议，不是假装实际观众测试或预测爆款。" +
       "必须提交audienceBasis。按本次任务指定的新受众审时source=current_task并逐字引用任务受众说明，只返回core判定；按档案审时source=profile并覆盖档案实际各层。" +
+      TS_LENS_HINT + // 判断要对账 §七：转发尴尬尺子，只提醒
       "完成后调用 submit_audience_review 提交。",
     userMessage: `${input.writingContract ? `本次创作任务（最高优先级）:\n${input.writingContract}\n\n` : ""}受众画像:\n${tiers}\n\n待审稿件${input.platform ? `(${input.platform})` : ""}:\n标题:${input.title}\n\n${input.body}`,
     tools: [buildSubmitTool(captured, `${input.title}\n${input.body}`, ["core", ...(persona.adjacent ? ["adjacent"] : []), ...(persona.surprise ? ["surprise"] : [])], input.writingContract ?? "")],
