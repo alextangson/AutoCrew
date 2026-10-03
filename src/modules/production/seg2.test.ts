@@ -117,6 +117,23 @@ describe("批准即登记（§5）", () => {
     expect((await getContent(s.c.id, env.dir))!.status).toBe("publish_ready");
   });
 
+  it("新一版成片的字幕和上一版字节相同：照样绑上新版，批新版后登记成功，旧版绑定不动", async () => {
+    const s = await edited();
+    const v2 = await record(env, { content_id: s.c.id, kind: "cut", path: await put(path.join(env.chatcut, "cut-v002.mp4"), "cut-v2"), request_id: "c2", review: true });
+    const srt = await record(env, { content_id: s.c.id, kind: "srt", path: await put(path.join(env.chatcut, "cut-v002.srt"), SRT), for_cut: v2.fact_id, request_id: "s2" });
+    expect(srt).toMatchObject({ ok: true, state: "accepted" });
+    const before = (await readProductionDoc(s.c.id, env.dir))!;
+    const v2sha = before.facts.find((f) => f.id === v2.fact_id)!.sha256!;
+    expect(await decide(s.c.id, "approve_cut", { fact_id: v2.fact_id, sha256: v2sha })).toMatchObject({ ok: true });
+    const r = await pick(s, "字");
+    expect(r.missing ?? []).not.toContain("缺这版成片的字幕");
+    const doc = (await readProductionDoc(s.c.id, env.dir))!;
+    expect(doc.registrations).toMatchObject([{ source: "commit", cut_sha: v2sha, srt_for_cut: v2sha }]);
+    const srts = doc.facts.filter((f) => f.kind === "srt");
+    expect(srts.map((f) => f.for_cut).sort()).toEqual([s.cut.sha256, v2sha].sort());
+    expect((await getContent(s.c.id, env.dir))!.status).toBe("publish_ready");
+  });
+
   it("登记记录写不进去（提交点之前失败）：拷进项目的副本撤回，旧封面放回", async () => {
     const s = await edited();
     const root = projectRoot(env, s.c.id);

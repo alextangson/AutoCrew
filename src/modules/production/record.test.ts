@@ -116,6 +116,29 @@ describe("record：克隆（§3-7，§13-B）", () => {
     const doc = (await readProductionDoc(c.id, env.dir))!;
     expect(doc.facts.find((f) => f.kind === "srt")!.for_cut).toBe(doc.facts.find((f) => f.kind === "cut")!.sha256);
   });
+
+  it("两版成片的字幕字节相同：各记一条、各绑各的成片；同成片换 request_id 重报不再多记，同 request_id 重放回原事实", async () => {
+    const c = await videoContent(env, TITLE);
+    const v1 = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "cut-v001.mp4"), "cut-v1"), request_id: "c1" });
+    const v2 = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "cut-v002.mp4"), "cut-v2"), request_id: "c2" });
+    const s1 = await record(env, { content_id: c.id, kind: "srt", path: await put(path.join(env.chatcut, "cut-v001.srt"), SRT), for_cut: v1.fact_id, request_id: "s1" });
+    const s2Path = await put(path.join(env.chatcut, "cut-v002.srt"), SRT);
+    const s2 = await record(env, { content_id: c.id, kind: "srt", path: s2Path, for_cut: v2.fact_id, request_id: "s2" });
+    expect(s2).toMatchObject({ ok: true, state: "accepted" });
+    expect(s2.fact_id).not.toBe(s1.fact_id);
+    expect(String(s2.next_action ?? "")).not.toContain("同一文件已经记过");
+    const doc = (await readProductionDoc(c.id, env.dir))!;
+    const sha = (id: unknown) => doc.facts.find((f) => f.id === id)!.sha256;
+    const srts = doc.facts.filter((f) => f.kind === "srt");
+    expect(srts).toHaveLength(2);
+    expect(new Set(srts.map((f) => f.sha256)).size).toBe(1);
+    expect(srts.find((f) => f.id === s1.fact_id)!.for_cut).toBe(sha(v1.fact_id));
+    expect(srts.find((f) => f.id === s2.fact_id)!.for_cut).toBe(sha(v2.fact_id));
+    const again = await record(env, { content_id: c.id, kind: "srt", path: s2Path, for_cut: v2.fact_id, request_id: "s2-retry" });
+    expect(again).toMatchObject({ ok: true, fact_id: s2.fact_id });
+    expect(await record(env, { content_id: c.id, kind: "srt", path: s2Path, for_cut: v2.fact_id, request_id: "s2" })).toMatchObject({ ok: true, fact_id: s2.fact_id });
+    expect((await readProductionDoc(c.id, env.dir))!.facts.filter((f) => f.kind === "srt")).toHaveLength(2);
+  });
 });
 
 describe("record：检查先于副作用（§3，E5/E7/E21/E24）", () => {
