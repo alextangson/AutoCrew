@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { calibrationReminders } from "../modules/calibration/status.js";
 import { listTopics, listContents, getDataDir } from "../storage/local-store.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { cutOpts, deskInbox, dispatchedInbox } from "./desk.js";
@@ -65,7 +66,8 @@ export async function executeStatus(params: Record<string, unknown>) {
     const result = await briefStatus(dataDir, cutOpts(params));
     // 有新版本时晨报带一句（self-update §2-5）；读的是本机目录里最近一次检查的结果，不现查网络
     const update = briefLine(programRoot(), getMachineDir(params._machineDir as string | undefined));
-    return update ? { ...result, update } : result;
+    const calibration = await calibrationReminders(dataDir); // 判断要对账：上次预测没走盲评要持续提醒
+    return { ...result, ...(update ? { update } : {}), ...(calibration.length ? { calibration } : {}) };
   }
   const [topics, contents, engine] = await Promise.all([listTopics(dataDir), listContents(dataDir), engineFallbackStats(dataDir)]);
 

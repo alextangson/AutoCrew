@@ -2314,10 +2314,18 @@
        "meeting_brief",
        "meeting_get",
        "meeting_save",
-       "meeting_tag"
+       "meeting_tag",
+       "calib_status",
+       "calib_blind",
+       "calib_predict",
+       "calib_retro",
+       "calib_bump",
+       "calib_observe",
+       "calib_learn"
       ],
       "type": "string"
      },
+     "calib": {},
      "date": {
       "type": "string"
      },
@@ -4884,10 +4892,18 @@
        "meeting_brief",
        "meeting_get",
        "meeting_save",
-       "meeting_tag"
+       "meeting_tag",
+       "calib_status",
+       "calib_blind",
+       "calib_predict",
+       "calib_retro",
+       "calib_bump",
+       "calib_observe",
+       "calib_learn"
       ],
       "type": "string"
      },
+     "calib": {},
      "date": {
       "type": "string"
      },

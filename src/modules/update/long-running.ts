@@ -106,7 +106,7 @@ export const LONG_RUNNING_TOOL_ACTIONS: Readonly<Record<string, "*" | ReadonlySe
   autocrew_review: "*",
   autocrew_review_desk: new Set(["submit"]),
   autocrew_init: "*",
-  autocrew_insights: new Set(["prepare"]),
+  autocrew_insights: new Set(["prepare", "calib_blind", "calib_bump", "calib_learn"]), // calib_*：盲评/审计模型调用、本机转写
   autocrew_flywheel: new Set(["report"]),
   // 视频：转写、粗剪、渲染、交接搬文件、原片比对
   autocrew_video: new Set(["start", "cut_preview", "rough_cut_rerun", "transcribe_rerun", "editor_rerun", "reassemble", "retry", "handoff", "match"]),

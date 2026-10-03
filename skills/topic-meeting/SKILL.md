@@ -20,6 +20,7 @@ description: |
    - 数据依据：引简报里具体作品和数字；没有就写「无数据依据，纯判断」
    - 赌什么：一句可证伪的话，落成 `watch{platform, metric, day: 3|7}`，metric 只能从 `brief.availableMetrics` 该平台里选
    - 事前验尸：到期没中最可能的一个原因，给最强的那个
+   - 转发尴尬（只提醒、不扣分）：观众把这条转给同事或朋友，会不会暴露 TA 不想暴露的处境？转发本身是安全吐槽或表态的，标出来；这是评分表的候选维度 TS，攒够证据前不进任何分数
 5. **拍板**：创作者选中、改或毙。每个选中位由他给「高于基线中位数」的概率（具体百分数），你不代填。
 6. **落库**：先 `autocrew_insights {action:"meeting_get"}` 拿 `revision`（新会为 0），再
    `autocrew_insights {action:"meeting_save", meeting:{expected_revision, slots, rejected, reviews}}`；slot 字段见工具说明 `autocrew://tool-guide/autocrew_insights`。一个都没选也要存（空片单 + 毙题理由）。报 `conflict` 说明别的会话刚存过：重读、给创作者看差异，再存。

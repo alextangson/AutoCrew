@@ -31,6 +31,8 @@ async function toolsFor(host: string) {
 /*
  * 2026-10-03 发布标题方法库：autocrew_pre_publish 加 title_methods 动作与 kit.title_candidates / title_method（候选不展开嵌套），
  * 工具说明补一句三个动作；实测 29,232，上限随之从 29,200 提到 29,400。
+ * 2026-10-03 判断要对账：autocrew_insights 加 calib_* 动作（status/blind/predict/retro/bump/observe/learn）与一个 calib 参数，
+ * 用法全放 tool-guide 资源、工具说明只加一句；实测 29,088 → 约 29,230，上限随之从 29,200 提到 29,400。
  */
 export const BUDGET = { total: 29_400, perTool: 4_000, instructions: 1_500 };
 
