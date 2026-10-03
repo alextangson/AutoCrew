@@ -442,6 +442,28 @@ describe("seg12 归档口径", () => {
     expect(slotOf(doc, 2, "douyin")).toMatchObject({ pub_state: "reviewing" });
   });
 
+  it("[10-03 Codex P2] 纠正过的审核中回执：修复后只是时间从提交时间改成定时，不追加、纠正照旧有效", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    const SUBMITTED = "2026-09-30T18:47:22+08:00";
+    const base = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, submitted_at: SUBMITTED, evidence: "发布计划里的记录" };
+    importObservations(doc, [{ ...base, published_at: SUBMITTED }]);
+    doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: "slot:1:douyin", at: new Date(Date.now() + 1000).toISOString(), source: "founder" });
+    expect(slotOf(doc, 1, "douyin")).toBeNull();
+    expect(importObservations(doc, [{ ...base, published_at: "2026-10-08T18:00:00+08:00" }])).toBe(0);
+    expect(importObservations(doc, [base])).toBe(0);
+    expect(slotOf(doc, 1, "douyin")).toBeNull();
+    // 真正的新状态（比如转成已公开）照旧算新证据
+    expect(importObservations(doc, [{ ...base, pub_state: "public", published_at: "2026-10-08T18:00:00+08:00" }])).toBe(1);
+  });
+
+  it("[10-03 Codex P2] 审核中只有核实时间、有定时：发布时间取定时，把关证据仍取核实时间", async () => {
+    const { parsePlatformEntry } = await import("../../storage/publish-record.js");
+    const p = parsePlatformEntry({ platform: "douyin", publication: { status: "reviewing", verified_at: "2026-09-01T00:00:00Z", scheduled_at: "2026-10-08T10:00:00Z" } }, Date.parse("2026-10-03T00:00:00Z"));
+    expect(p).toMatchObject({ time: "2026-10-08T10:00:00Z", evidenceAt: "2026-09-01T00:00:00Z", submittedAt: null });
+  });
+
   it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");

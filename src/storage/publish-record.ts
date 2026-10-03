@@ -42,6 +42,8 @@ export interface PlatformPublication {
   submittedAt?: string | null;
   /** 计划里写的定时公开时间（publication.scheduled_at 或条目 scheduled_at） */
   scheduledAt?: string | null;
+  /** 把关判定用的证据时间：审核中 / 被驳回的按提交 → 核实 → 定时取最早能证明投出的那个，其余同 time */
+  evidenceAt?: string | null;
 }
 
 export type PublishRecord =
@@ -102,6 +104,7 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
     submittedAt: validTime(pub?.submitted_at),
     scheduledAt,
+    evidenceAt: state === "reviewing" || state === "rejected" ? validTime(pub?.submitted_at) ?? validTime(pub?.verified_at) ?? scheduledAt : time,
   };
 }
 

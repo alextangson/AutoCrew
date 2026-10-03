@@ -55,7 +55,7 @@ const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
 /** 可信来源读出来的观察：发布计划（不含创始人「我发了」）+ 数据回流绑定 */
 export async function trustedObservations(content: Content, dataDir: string): Promise<Observation[]> {
   const out: Observation[] = [];
-  // 把关判定的证据时间照旧用计划里的时间（含审核中的提交时间），与写进事实的公开时间分开
+  // 把关判定的证据时间（审核中按提交 / 核实时间），与写进事实的公开时间分开
   const gateEvidence = new Map<Observation, string>();
   const record = await readPublishRecord(content.id, undefined, dataDir);
   if (record.kind !== "none") {
@@ -68,7 +68,8 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
       const o: Observation = { source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
         ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
         ...(publicAt ? { published_at: publicAt } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) };
-      if (p.time) gateEvidence.set(o, p.time);
+      const evidenceAt = p.evidenceAt ?? p.time;
+      if (evidenceAt) gateEvidence.set(o, evidenceAt);
       out.push(o);
     }
   }
@@ -169,6 +170,16 @@ function collapseBatch(doc: ProductionDoc, obs: Observation[]): Array<{ o: Obser
   return [...last.values()];
 }
 
+/**
+ * 旧版把审核中条目的提交时间写成了发布时间（2026-10-03 修）。修复后再读同一份计划，只是这个时间变了：
+ * 槽在那之后被创始人纠正过的，不追加——纯时间迁移不是新的发布证据，不能把纠正盖掉。
+ */
+function correctedTimeMigration(doc: ProductionDoc, last: ObsFact, raw: Observation): boolean {
+  if ((raw.pub_state !== "reviewing" && raw.pub_state !== "rejected") || !raw.submitted_at || !last.published_at) return false;
+  if (Date.parse(last.published_at) !== Date.parse(raw.submitted_at) || !same({ ...last, published_at: raw.published_at }, raw)) return false;
+  return Date.parse(last.seen_at) <= correctedAt(doc, slotId(last.round, last.platform));
+}
+
 /** 追加观察；同（来源, 平台, 轮次）流里和最后一条完全一样的跳过。返回新增条数 */
 export function importObservations(doc: ProductionDoc, obs: Observation[]): number {
   let added = 0;
@@ -176,6 +187,7 @@ export function importObservations(doc: ProductionDoc, obs: Observation[]): numb
     const known = observationsOf(doc);
     const lastInStream = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round === round).at(-1);
     if (lastInStream && same(lastInStream, raw)) continue;
+    if (lastInStream && correctedTimeMigration(doc, lastInStream, raw)) continue;
     // 没有发布时间、也没有实际提交时间，又和上一轮流里最后一条一模一样：是重开前那份旧记录被再读到，不算进新一轮。
     // 带 submitted_at 的已按提交时间定了轮次（审核中没定时的条目没有公开时间，靠它区分新一轮提交）
     const lastEarlier = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round < round).at(-1);
