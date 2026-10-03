@@ -184,10 +184,16 @@ function labelOf(platform: PullPlatform): string {
   return PULL_PLATFORM_LABELS[platform];
 }
 
+/** 登录/风控前已拿到的行（照常入账）——说清楚，不让人以为一条没进 */
+function keptNote(attempt: PullAttempt): string {
+  return attempt.rowCount > 0 ? `（此前已拿到的 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条）` : "";
+}
+
 /** 成功但不完整：只拿到第 1 页 / 中途出错（已拿到的完整页照常入账）——都要看得见 */
 function partialNote(errorCode: string | undefined): string {
   if (!errorCode) return "";
   if (errorCode === "only_first_page") return "（只拿到第 1 页）";
+  if (errorCode.startsWith("incomplete:")) return `（没抓全：${errorCode === "incomplete:no_new_response" ? "翻页后页面没返回新数据" : "后面的翻页控件找不到"}；已拿到的页照常入账）`;
   if (errorCode.startsWith("partial:risk_control")) return "（中途出现风控提示，已停手；已拿到的页照常入账）";
   return `（中途出错：${errorCode}，已拿到的页照常入账）`;
 }
@@ -199,9 +205,9 @@ function eventLabel(attempt: PullAttempt): string {
     case "ok":
       return `自动回流：${name} 抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条${partialNote(attempt.errorCode)}`;
     case "needs_login":
-      return `${name}登录态过期——在 ego lite 里登录${name}后台，之后数据继续回流`;
+      return `${name}登录态过期——在 ego lite 里登录${name}后台，之后数据继续回流${keptNote(attempt)}`;
     case "risk_control":
-      return `${name}触发风控，今天不再自动抓取`;
+      return `${name}触发风控，已停手，今天不再自动抓取${keptNote(attempt)}`;
     case "browser_unreachable":
       return "浏览器未连接（ego lite）：打开 ego lite 并保持运行，自动回流一小时后再试";
     case "schema_changed":
@@ -244,21 +250,28 @@ export async function captureCovers(platform: PullPlatform, rows: TypedRow[], op
   return `cover_download_failed:${failed}/${todo.length}:${firstError}`;
 }
 
+/** 带行的结果：ok，或中途碰到登录/风控前已拿到完整页的 needs_login / risk_control */
+function carriesRows(result: PullResult): boolean {
+  return result.status === "ok" || result.status === "needs_login" || result.status === "risk_control";
+}
+
 /** 先入库后写状态：入库失败就当整次抓取失败（零写入），不给「抓到了但没落地」留模糊地带 */
 async function land(platform: PullPlatform, result: PullResult, now: Date, opts: PullNowOptions): Promise<Landing> {
   const base: Landing = {
     status: result.status,
-    rowCount: result.status === "ok" ? result.rows.length : 0,
+    rowCount: carriesRows(result) ? result.rows.length : 0,
     ...(result.errorCode ? { errorCode: result.errorCode } : {}),
     ...(result.hasMore ? { hasMore: true } : {}),
   };
-  if (result.status !== "ok" || result.rows.length === 0) return base;
+  if (!carriesRows(result) || result.rows.length === 0) return base;
   const batchId = `pull-${platform}-${now.getTime()}`;
   try {
     const report = await (opts.importRows ?? importPerformanceRows)(platform, result.rows, {
       source: "auto",
       dataDir: opts.dataDir,
     });
+    // 中途碰到登录/风控：行照常入库，但状态保持登录/风控（调度当天不再碰、待办提示登录），入库失败不改写它
+    if (result.status !== "ok") return { ...base, imported: report.imported };
     if (report.imported === 0) {
       return {
         status: "error",

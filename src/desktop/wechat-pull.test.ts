@@ -70,4 +70,18 @@ describe("flywheel:wechat_pull", () => {
     })) as { ok: boolean; error?: string };
     expect(String(none.error)).toContain("没返回文章数据");
   });
+
+  it("P2-4 中途风控:已拿到的行照常入账,但结论仍是风控失败提示", async () => {
+    const r = (await wechatPullHandler({ _dataDir: dir }, undefined, {
+      pull: vi.fn(async () => ({
+        status: "risk_control" as const,
+        rows: [{ title: "风控前那篇", publishedAt: new Date(1783600000_000).toISOString(), metrics: { views: 9 } }],
+        errorCode: "partial:risk_page",
+      })),
+    })) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toContain("风控");
+    expect(String(r.error)).toContain("入账 1 条");
+    expect((await listOutcomes(dir)).some((o) => o.metrics.views === 9)).toBe(true);
+  });
 });

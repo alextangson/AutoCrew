@@ -30,14 +30,22 @@ export function wechatFailureText(r: PullResult): string {
     case "timeout":
       return "公众号抓取超时,已关页,稍后重试";
     default:
+      if (r.errorCode === "entry_ui_missing") return "公众号后台菜单里没找到「发表记录」,本次零写入";
       return r.errorCode === "no_data_response" ? "公众号发表记录页没返回文章数据,本次零写入" : `公众号拉数失败:${r.errorCode ?? "unknown"}`;
   }
+}
+
+/** 走既有 CSV 导入(与旧拉数口径一致)。source: "auto" —— 浏览器登录态自动拉取，不是人手导出的 CSV */
+function importRows(rows: PullResult["rows"], dataDir?: string) {
+  return importPerformanceCsv("wechat_mp", rowsToCsvText(statsToImportRows(rows)), localDateStamp(), dataDir, "auto");
 }
 
 /** ok 但不完整时的说明(只拿到第 1 页 / 中途出错) */
 function partialText(r: PullResult): string {
   if (!r.errorCode) return "";
-  return r.errorCode === "only_first_page" ? "(只拿到第 1 页)" : `(中途出错:${r.errorCode},已拿到的页照常入账)`;
+  if (r.errorCode === "only_first_page") return "(只拿到第 1 页)";
+  if (r.errorCode.startsWith("incomplete:")) return `(没抓全:${r.errorCode},已拿到的页照常入账)`;
+  return `(中途出错:${r.errorCode},已拿到的页照常入账)`;
 }
 
 export async function wechatPullHandler(
@@ -52,6 +60,13 @@ export async function wechatPullHandler(
 
   emit("work", "分析师去公众号后台看近 30 天的文章数据…");
   const res = await pull();
+  // 中途碰到登录/风控：已拿到的行照常入账，但结论仍是失败提示（要人去登录 / 今天别再碰）
+  if ((res.status === "needs_login" || res.status === "risk_control") && res.rows.length > 0) {
+    const kept = await importRows(res.rows, dataDir).catch(() => null);
+    const text = `${wechatFailureText(res)}(此前已拿到的 ${res.rows.length} 条${kept ? `入账 ${kept.imported} 条` : "入账失败"})`;
+    emit("run_failed", text.slice(0, 80));
+    return { ok: false, error: text, status: res.status, ...(res.status === "needs_login" ? { needLogin: true } : {}) };
+  }
   if (res.status !== "ok") {
     const text = wechatFailureText(res);
     emit("run_failed", text.slice(0, 80));
@@ -62,10 +77,8 @@ export async function wechatPullHandler(
     emit("run_done", `公众号近 30 天没有已发表文章数据${note}`);
     return { ok: true, note, data: { total: 0, imported: 0, replaced: 0, matched: 0, historical: 0, needsReview: [], rejected: [] } };
   }
-  const csv = rowsToCsvText(statsToImportRows(res.rows));
   try {
-    // source: "auto" —— 这条是浏览器登录态自动拉取，不是人手导出的 CSV（口径要分得清）
-    const report = await importPerformanceCsv("wechat_mp", csv, localDateStamp(), dataDir, "auto");
+    const report = await importRows(res.rows, dataDir);
     emit("run_done", `公众号回填入账 ${report.imported} 条(匹配稿件 ${report.matched} · 历史 ${report.historical})${note}`);
     return { ok: true, note, data: report };
   } catch (err) {
