@@ -91,6 +91,17 @@ function resolveForCut(a: RecordArgs, doc: ProductionDoc): Parsed<string | undef
 }
 
 /**
+ * 同一文件已记过的那条事实。字幕按「文件 + 所属成片」认：两版成片字幕字节相同（同一段口播）时，
+ * 绑给别的成片的那条不算记过，另记一条给这版——否则一份字幕只能属于一版成片，新版永远缺字幕。
+ * 没绑成片的同 sha 字幕照旧复用（commitFile 补上绑定）。
+ */
+function sameFileFact(doc: ProductionDoc, kind: Fact["kind"], sha: string, forCut: string | undefined): Fact | undefined {
+  const same = inRound(doc).filter((f) => f.kind === kind && f.sha256 === sha);
+  if (kind !== "srt") return same[0];
+  return same.find((f) => f.for_cut === forCut) ?? same.find((f) => !f.for_cut) ?? same.find((f) => f.state === "rejected");
+}
+
+/**
  * 封面落到哪一组（review-inbox §6.1）：显式成对才同组——pair_with 进那条事实的组、带 version 进那一版；
  * 都没有 = 自成一组（新版本号），不再凭「最新一版缺哪个比例」猜。同组同比例已有活成员 → 拒。
  */
@@ -196,10 +207,10 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
   const library = readLibraryLocation()?.root;
   const file = await inspectFile(a, [contentRoot(content.id, dataDir), ...(library ? [library] : [])]);
   if (!file.ok) return file;
-  const existing = inRound(doc).find((f) => f.kind === a.kind && f.sha256 === file.value.sha256);
-  if (existing?.state === "rejected") return deny("rejected_before", "创始人已经说过这个文件「不是这条」，不再收");
   const forCut = resolveForCut(a, doc);
   if (!forCut.ok) return forCut;
+  const existing = sameFileFact(doc, a.kind, file.value.sha256, forCut.value);
+  if (existing?.state === "rejected") return deny("rejected_before", "创始人已经说过这个文件「不是这条」，不再收");
   const target = coverTarget(a, doc, file.value.ratio);
   if (!target.ok) return target;
   const version = { value: target.value?.version };

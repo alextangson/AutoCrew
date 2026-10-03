@@ -108,6 +108,15 @@ function overwrittenAlerts(doc: ProductionDoc): string[] {
   return out;
 }
 
+/**
+ * 登记绑的那份字幕：sha 和所属成片都对上。同一份字幕字节可以分别绑给几版成片（同一段口播），
+ * 只按 sha 找会拿到绑旧版的那条；早期登记没存 srt_for_cut 的退回只按 sha。
+ */
+export function registeredSrt(doc: ProductionDoc, reg: Pick<Registration, "srt_sha" | "srt_for_cut">): Fact | undefined {
+  const same = accepted(doc).filter((f) => f.kind === "srt" && f.sha256 === reg.srt_sha && !f.replaced_at);
+  return reg.srt_for_cut ? same.find((f) => f.for_cut === reg.srt_for_cut) : same[0];
+}
+
 /** 某版成片的字幕：for_cut = 成片 sha 的最近一条 accepted srt */
 export function srtFor(doc: ProductionDoc, cutSha: string | undefined): Fact | null {
   if (!cutSha) return null;
@@ -185,8 +194,10 @@ export function matchingRegistration(doc: ProductionDoc, body: string, cut: Deci
 
 /** 登记绑的文件都在（availability=present）才可发布；缺了阶段不退，只拦发布 */
 function registrationFilesPresent(doc: ProductionDoc, reg: Registration): boolean {
-  const shas = [reg.cut_sha, reg.cover_3x4_sha, reg.cover_4x3_sha, reg.srt_sha].filter((s): s is string => Boolean(s));
-  return shas.every((sha) => accepted(doc).some((f) => f.sha256 === sha && f.availability === "present"));
+  const shas = [reg.cut_sha, reg.cover_3x4_sha, reg.cover_4x3_sha].filter((s): s is string => Boolean(s));
+  // 字幕按登记绑的那条看：同 sha 但绑别版成片的字幕不算数
+  const srtOk = !reg.srt_sha || registeredSrt(doc, reg)?.availability === "present";
+  return srtOk && shas.every((sha) => accepted(doc).some((f) => f.sha256 === sha && f.availability === "present"));
 }
 
 function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decision | null): { missing: string[]; badges: string[] } {

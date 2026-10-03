@@ -113,6 +113,15 @@ describe("latest-wins", () => {
 
     expect((await listItems(dataDir)).map((i) => i.id)).toEqual(["inbox-a", "inbox-b"]);
   });
+
+  it("same receivedAt (same millisecond) keeps arrival order, not id order", async () => {
+    const at = "2026-07-25T01:00:00.000Z";
+    await appendItem({ ...tgItem, id: "inbox-z", receivedAt: at }, dataDir);
+    await appendItem({ ...tgItem, id: "inbox-a", receivedAt: at }, dataDir);
+    await updateItem("inbox-z", { status: "fetching" }, dataDir);
+
+    expect((await listItems(dataDir)).map((i) => i.id)).toEqual(["inbox-z", "inbox-a"]);
+  });
 });
 
 describe("state machine", () => {
