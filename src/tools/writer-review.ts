@@ -40,6 +40,7 @@ import {
   type SubmitStatus,
 } from "./writer-pack.js";
 import { describeWriterFailure } from "./writer-failure.js";
+import { isSpokenTrackPack } from "../modules/writing/script-review-rules.js";
 
 export type AudienceAssessment =
   | { status: "reviewed"; result: AudienceReviewResult }
@@ -207,6 +208,7 @@ export function reviewInput(pack: ReadyPack, job: ReviewJob): ReviewInput {
     platform: ctx.platform,
     canFindEvidence: ctx.canFindEvidence,
     needsHumanNumbers: job.pending.needsHuman,
+    spoken: isSpokenTrackPack(ctx.trackPackId),
   };
 }
 

@@ -52,6 +52,7 @@ import {
   type ResearchSnapshot,
 } from "./input-budget.js";
 import { reviewAndConverge } from "./script-review.js";
+import { isSpokenTrackPack } from "./script-review-rules.js";
 import type { ReviewDeps, ReviewMeta, ReviewOutcome } from "./script-review.js";
 import { transitionStatus } from "../../storage/local-store.js";
 import { scanText } from "../filter/sensitive-words.js";
@@ -859,7 +860,7 @@ function reviewDraft(
   written: WriterRun,
   // 审稿要跑模型，所以这里的 config 是**必填**——`GenerationInputs.config` 可缺席，
   // 调用方（内部写手）已经在入口处硬性检查过（P5 §1.6）
-  inputs: Pick<GenerationInputs, "profile" | "snapshot" | "angle" | "ledger" | "writingContract"> & { config: EngineConfig },
+  inputs: Pick<GenerationInputs, "pack" | "profile" | "snapshot" | "angle" | "ledger" | "writingContract"> & { config: EngineConfig },
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
@@ -885,6 +886,7 @@ function reviewDraft(
       canFindEvidence: Boolean(evidenceTool),
       // 硬门放行但要人工过目的模糊量词（§4.5 判据三 advisory）：审稿人替创始人先点一遍名
       needsHumanNumbers: written.needsHumanNumbers,
+      spoken: isSpokenTrackPack(inputs.pack.id),
     },
     inputs.config,
     {
@@ -1004,7 +1006,7 @@ async function writeAndFinalize(args: {
 
   const reviewed = await reviewDraft(
     written,
-    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger, writingContract: inputs.writingContract },
+    { config, pack: inputs.pack, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger, writingContract: inputs.writingContract },
     prompts,
     gate,
     req.platform,
