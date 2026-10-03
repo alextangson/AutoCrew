@@ -7,6 +7,7 @@
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import { getCachedTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { listContents, normalizeLegacyStatus, type Content, type ContentStatus } from "../storage/local-store.js";
+import { isImportedHistory } from "../storage/imported-history.js";
 import { buildBaseline } from "../modules/analytics/quality-baseline.js";
 
 const STALE_DAYS = 2;
@@ -77,7 +78,8 @@ export async function buildTodaySummary(
   let lastOutcome: TodaySummary["lastOutcome"] = null;
   let contents: Content[] = [];
   try {
-    contents = await deps.listContents(dataDir);
+    // 历史作品记录不算生产进度、不出待办
+    contents = (await deps.listContents(dataDir)).filter((c) => !isImportedHistory(c));
   } catch { contents = []; }
 
   let staleBest: { id: string; title: string; days: number } | null = null;

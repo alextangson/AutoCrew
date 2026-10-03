@@ -1,4 +1,5 @@
 import { isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
+import { historyGuard } from "./history-guard.js";
 import { isOntologyActive, isOntologyEnabled } from "../storage/production-store.js";
 import { recordPublishClaim } from "../modules/production/record.js";
 import { founderDecision } from "../modules/production/decisions.js";
@@ -116,6 +117,8 @@ export async function executePublish(
   // getDataDir 统一解析(session-8 收编私有副本的第七处漏网):认 AUTOCREW_DATA_DIR 重定向,
   // 否则隔离工作区/smoke 里 clipboard 会去真实 ~/.autocrew 找稿件
   const dataDir = getDataDir((params._dataDir as string) || undefined);
+  const history = await historyGuard(params.content_id, dataDir);
+  if (history) return history;
 
   // --- check: 发布前把关（只写检查留档，不改业务状态）；propose_preference: 只记提议，创始人在网页确认 ---
   if (action === "check") return executePublishCheck({ ...params, _dataDir: dataDir }, deps?.check);

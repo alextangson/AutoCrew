@@ -1,4 +1,5 @@
 import { updateContent } from "../storage/local-store.js";
+import { historyGuard } from "./history-guard.js";
 import { Value } from "@sinclair/typebox/value";
 import { outlineSchema, techniqueRefsSchema, gapSchema, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
 import { findCard, techniqueCatalog } from "../modules/writing/technique-store.js";
@@ -262,6 +263,8 @@ export async function executeWriter(
   // 宿主身份由 MCP 层按命名 token 注入（§4.1）；没有它的调用一律记 local-user
   const host = str(params._host) || DEFAULT_HOST;
   const action = str(params.action);
+  const history = await historyGuard(params.content_id, dataDir);
+  if (history) return history;
   try {
     switch (action) {
       case "pack": {

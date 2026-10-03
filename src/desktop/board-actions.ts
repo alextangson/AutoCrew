@@ -12,6 +12,7 @@ import {
   getContent, getTopic, listContents, saveContent, transitionStatus, updateContent,
   type Content, type ManualPublication,
 } from "../storage/local-store.js";
+import { historyRefusal } from "../storage/imported-history.js";
 import { isContentId, isTopicId } from "../storage/entity-id.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { anySubmitted, readPublishRecord } from "../storage/publish-record.js";
@@ -95,6 +96,8 @@ export async function markPublished(id: string, platform: string, url: unknown, 
   if (link === null) return { ok: false, code: "bad_request", error: "链接要是 http(s) 地址" };
   const content = await getContent(id, dataDir);
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
+  const history = historyRefusal(content);
+  if (history) return { ok: false, code: "wrong_stage", error: history };
   if (await ontologyVideo(content, dataDir)) return ontologyMark(content, platform, link, dataDir);
   // 非视频稿认过（approved）就在「待发布」列，也能记「我发了」；视频稿仍要走完剪辑与封面
   const markable = MARKABLE.has(content.status) || (content.status === "approved" && !isVideoPlatform(content.platform));
@@ -113,6 +116,8 @@ export async function unmarkPublished(id: string, platform: string, dataDir: str
   if (!isContentId(id) || !/^[a-z_]{2,32}$/.test(platform)) return { ok: false, code: "bad_request", error: "参数不对" };
   const content = await getContent(id, dataDir);
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
+  const history = historyRefusal(content);
+  if (history) return { ok: false, code: "wrong_stage", error: history };
   if (await ontologyVideo(content, dataDir)) return ontologyUnmark(content, platform, dataDir);
   const rest = (content.manualPublications ?? []).filter((m) => m.platform !== platform);
   const record = await readPublishRecord(id, rest, dataDir);

@@ -9,6 +9,7 @@
  */
 import { loadProfile, personaSummary, isRuleActive } from "../modules/profile/creator-profile.js";
 import { listContents, listTopics, normalizeLegacyStatus, type Content } from "../storage/local-store.js";
+import { isImportedHistory } from "../storage/imported-history.js";
 import { listOutcomes } from "../modules/flywheel/outcome-store.js";
 import type { PerformanceOutcome } from "../modules/flywheel/outcome-schema.js";
 import {
@@ -181,7 +182,7 @@ export async function buildDashboardSummary(dataDir?: string, now = Date.now()):
   try { profile = await loadProfile(dataDir); } catch { /* 降级 */ }
 
   let contents: Content[] = [];
-  try { contents = await listContents(dataDir); } catch { /* 降级 */ }
+  try { contents = (await listContents(dataDir)).filter((c) => !isImportedHistory(c)); } catch { /* 降级 */ }
 
   let topics: Awaited<ReturnType<typeof listTopics>> = [];
   try { topics = await listTopics(dataDir); } catch { /* 降级 */ }

@@ -1,4 +1,5 @@
 import { contentFile, contentRoot, projectFile } from "../storage/content-project.js";
+import { historyGuard } from "./history-guard.js";
 /**
  * Cover Review Tool — generate, review, and approve cover images.
  *
@@ -209,6 +210,8 @@ export async function executeCoverReview(params: Record<string, unknown>) {
   const dataDir = getDataDir(params);
 
   if (!contentId) return { ok: false, error: "content_id is required" };
+  const history = await historyGuard(contentId, dataDir);
+  if (history) return history;
 
   // --- GET ---（只读，不过令牌门）
   if (action === "get") {

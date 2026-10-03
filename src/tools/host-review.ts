@@ -1,4 +1,5 @@
 import { seriesTransaction } from "../storage/series-transaction.js";
+import { historyGuard } from "./history-guard.js";
 import {
   SERIES_REVIEW_RULES, SERIES_STATES, loadSeriesSnapshot, mergeSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
   type SeriesReview, type SeriesSnapshot,
@@ -277,6 +278,8 @@ export async function executeReviewDesk(params: Record<string, unknown>): Promis
   const publicArgs = Object.fromEntries(Object.entries(params).filter(([key]) => !key.startsWith("_")));
   if (!Value.Check(reviewDeskSchema, publicArgs)) return fail("审稿台参数不符合工具契约");
   const contentId = String(params.content_id);
+  const history = await historyGuard(contentId, dataDir);
+  if (history) return history;
   const reviewerHost = typeof params._host === "string" && params._host.trim() ? params._host : DEFAULT_HOST;
   // submit 改审稿结论、推进稿件状态，过令牌门（门在 submitReview 里）；pack 只读不设卡。
   // 令牌只进回执不进写作包：存下来的审稿结果会被重放给别人
