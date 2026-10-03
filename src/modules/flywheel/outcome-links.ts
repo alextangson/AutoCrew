@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getDataDir } from "../../storage/local-store.js";
+import { writeJsonAtomic } from "../../storage/json-atomic.js";
 
 export type LinkOp = "link" | "merge" | "split";
 
@@ -50,10 +51,7 @@ export async function readDecisions(dataDir?: string): Promise<LinkDecision[]> {
 }
 
 async function writeDecisions(decisions: LinkDecision[], dataDir?: string): Promise<void> {
-  const file = filePath(dataDir);
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify({ version: 1, decisions }, null, 2), "utf-8");
-  await fs.rename(tmp, file);
+  await writeJsonAtomic(filePath(dataDir), { version: 1, decisions });
 }
 
 let chain: Promise<unknown> = Promise.resolve();

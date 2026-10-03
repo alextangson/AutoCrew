@@ -16,6 +16,7 @@ import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { getDataDir } from "../../storage/local-store.js";
+import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { gatherFacts, type RetroFacts } from "./retro-facts.js";
 import { appendHypotheses, parseHypothesisProposals, METRIC_FOCUS_KEYS, type Hypothesis } from "./hypotheses.js";
 import { applyJudgement } from "./hypothesis-judge.js";
@@ -187,6 +188,7 @@ async function persist(
   captured: Captured,
   dataDir?: string,
 ): Promise<{ file: string; markdown: string; hypotheses: RetroHypothesisResult; experiments: RetroResult["experiments"] }> {
+  assertDataDirWritable(dataDir); // 报告+假设+实验多文件，先整体核写入权
   const dir = path.join(getDataDir(dataDir), "reports");
   await fs.mkdir(dir, { recursive: true });
   const file = `${runId}.md`;

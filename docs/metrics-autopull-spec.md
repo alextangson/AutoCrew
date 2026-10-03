@@ -54,6 +54,8 @@
 
 **不采用**：① Chrome 扩展加 `chrome.alarms` 后台抓取——违反扩展红线（零后台轮询，`extension/background.js:5-9`）；② Playwright 独立 profile——重复造登录态管理。扩展通道保留为抖音人工兜底。
 
+> 2026-10-04：浏览器扩展通道（`extension/` + native host）已退役，由自动回流 + CSV 导入替代。
+
 **数据通路决策**（codex #9）：抓取器产出 **TypedRow**（结构化行，含平台作品 id），不再绕 `rows → CSV 文本 → 再 parse` 的有损弯路。新增 `importPerformanceRows(platform, rows: TypedRow[], opts)` 作为唯一入库漏斗；CSV 导入改写为「解析 CSV → TypedRow」的 adapter，扩展桥沿用 CSV adapter。
 
 ```ts

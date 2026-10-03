@@ -9,6 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
+import { assertManagedPathAvailable } from "../../storage/storage-roots.js";
 import type { OutcomeMetrics } from "../flywheel/outcome-schema.js";
 
 const HYPOTHESES_FILE = "hypotheses.jsonl";
@@ -284,6 +285,7 @@ export async function appendHypotheses(items: Hypothesis[], dataDir?: string): P
     if (!checked.ok) throw new Error(`假设不合 schema:${checked.errors.join("；")}`);
   }
   await serializeHypothesisWrite(dataDir, async () => {
+    assertManagedPathAvailable(hypothesesPath(dataDir));
     await fs.mkdir(getDataDir(dataDir), { recursive: true });
     const payload = items.map((h) => JSON.stringify(h) + "\n").join("");
     await fs.appendFile(hypothesesPath(dataDir), payload, "utf-8");
@@ -299,6 +301,7 @@ export async function bindContentToHypothesis(hypothesisId: string, contentId: s
     const current = (await listHypotheses(dataDir)).find((h) => h.id === hypothesisId);
     if (!current || current.status !== "open" || current.contentIds.includes(contentId)) return false;
     const next = { ...current, contentIds: [...current.contentIds, contentId] };
+    assertManagedPathAvailable(hypothesesPath(dataDir));
     await fs.appendFile(hypothesesPath(dataDir), JSON.stringify(next) + "\n", "utf-8");
     return true;
   });
