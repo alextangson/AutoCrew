@@ -675,6 +675,11 @@ switch (command) {
     const tsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "typesafe-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
     try { typesafe = JSON.parse((tsResult.stdout || "").trim().split("\n").pop() || "{}"); } catch { typesafe = { configured: false, reachable: false, error: "检查脚本没跑成" }; }
 
+    // 数据回流的浏览器通道（ego lite）：命令在不在、连不连得上。可选项，不影响退出码（不开回流照样能用）
+    let ego = { binary: null, reachable: false, reason: "检查脚本没跑成", fix: "重跑 autocrew doctor；还不行看 autocrew logs" };
+    const egoResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "ego-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { ego = JSON.parse((egoResult.stdout || "").trim().split("\n").pop() || "{}"); } catch {}
+
     // 宿主接没接（与 autocrew connect --list 同一套检测，不花额度）；查不了就如实写「查不了」
     let hosts = [];
     let hostsError = "";
@@ -706,6 +711,8 @@ switch (command) {
       asrMatchReady: asrEnv.ready === true,
       typesafeKey: typesafe.configured === true,
       typesafeReachable: typesafe.reachable === true,
+      egoBrowser: Boolean(ego.binary),
+      egoLiteReachable: ego.reachable === true,
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -732,6 +739,7 @@ switch (command) {
       + (typesafe.configured
         ? (typesafe.reachable ? `\n  发布前把关语义检查（TypeSafe，密钥来自 ${typesafe.source === "env" ? "环境变量" : "本机设置"}）可用` : `\n  → TypeSafe 调不通：${typesafe.error ?? "未知原因"}（发布前把关的语义检查会标「没跑成」，确定性检查照常）`)
         : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")
+      + (ego.reachable ? "" : `\n  → 数据自动回流需要 ego lite：${ego.reason}。${ego.fix}`)
       + (checks.asrModelReady
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),
