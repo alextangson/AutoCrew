@@ -29,7 +29,7 @@ export const PULL_PLATFORM_LABELS: Record<PullPlatform, string> = {
   xiaohongshu: "小红书",
 };
 
-/** 登录态过期时给人的扫码地址（各平台创作者后台） */
+/** 登录态过期时给人的后台地址（在 ego lite 里打开登录） */
 export const PULL_PLATFORM_CONSOLES: Record<PullPlatform, string> = {
   douyin: "https://creator.douyin.com",
   wechat_video: "https://channels.weixin.qq.com",
@@ -53,7 +53,7 @@ export interface PlatformPullState {
   /** 最近一次成功抓取里封面下载失败的情况（如 cover_download_failed:2/12）；数据页规格 §I.57，不静默 */
   lastCoverError?: string;
   /**
-   * 「单平台自动抓取 ≤2 次/天」红线的当日计数锚（spec §4.3）。
+   * 「单平台自动尝试 ≤3 次/天」红线的当日计数锚（1 次定时 + 退避重试）。
    * 手动触发不计入——人明确要抓的时候，红线不该拦人。
    */
   autoAttemptDate: string | null;
