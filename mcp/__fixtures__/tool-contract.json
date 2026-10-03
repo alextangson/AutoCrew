@@ -2311,7 +2311,8 @@
        "calib_status",
        "calib_blind",
        "calib_predict",
-       "calib_retro"
+       "calib_retro",
+       "calib_bump"
       ],
       "type": "string"
      },
@@ -4879,7 +4880,8 @@
        "calib_status",
        "calib_blind",
        "calib_predict",
-       "calib_retro"
+       "calib_retro",
+       "calib_bump"
       ],
       "type": "string"
      },

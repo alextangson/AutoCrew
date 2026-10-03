@@ -3,11 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { saveContent } from "../../storage/local-store.js";
-import { appendOutcomes } from "../flywheel/outcome-store.js";
 import { commitPrediction } from "./commit.js";
 import { calibrationPool } from "./pool.js";
 import { blindStep } from "./predict.js";
-import { BODY, fakeLoop, SELF } from "./test-fixtures.js";
+import { BODY, fakeLoop, predictPublished, SELF } from "./test-fixtures.js";
 import { retro } from "./retro.js";
 import { bumpSuggestion, directionOf, retroStateUpdate } from "./retro-state.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
@@ -16,17 +15,6 @@ const NAMES = ["底部", "基础盘", "命中", "小爆", "大爆"];
 const DAY = 86_400_000;
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-r-")); });
-
-export async function predictPublished(d: string, views: number | null, title = "AI 周报") {
-  const published = new Date(Date.now() - 1 * DAY);
-  const c = await saveContent({ title, body: "下班前领导一句明早给我……", platform: "douyin", status: "draft_ready", tags: [], publishedAt: published.toISOString() } as never, d);
-  const b = await blindStep({ content_id: c.id, self_scores: SELF, seen_data: false }, d, { runLoopImpl: fakeLoop(SELF) });
-  const p = await commitPrediction({ blind_run_id: b.blind_run_id, ...BODY(NAMES) }, d);
-  if (views !== null) {
-    await appendOutcomes([{ contentId: c.id, platform: "douyin", platformTitle: title, publishedAt: published.toISOString(), metricDate: new Date(published.getTime() + 3 * DAY).toISOString().slice(0, 10), metrics: { views, likes: 3 }, source: "auto", recordedAt: "", needsReview: false, reviewReasons: [] }], d);
-  }
-  return { c, p, later: new Date(Date.now() + 3 * DAY) };
-}
 
 describe("§三 复盘", () => {
   it("T+3 复盘：数据取回流、算落档与偏差、样本 +1、观察进 memo 不进 rubric.json", async () => {
@@ -64,7 +52,7 @@ describe("§三 复盘", () => {
     const { p, later } = await predictPublished(dir, 800);
     const file = path.join(calibrationDir(dir), "predictions.jsonl");
     const raw = await fs.readFile(file, "utf-8");
-    await fs.writeFile(file, raw.replace("\"center\":500", "\"center\":900"));
+    await fs.writeFile(file, raw.replace(/"center":\d+/, "\"center\":901"));
     const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x" }, dir, later);
     expect(r).toMatchObject({ integrity_warning: true, counted_as_calibration_sample: false });
     expect(await calibrationPool(dir)).toHaveLength(0);
