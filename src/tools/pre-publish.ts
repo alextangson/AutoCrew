@@ -38,6 +38,8 @@ import { predictionPrompt } from "../modules/calibration/prompt.js";
 import { captionBounds, captionTags, KIT_CAPTION_MIN, mergeTags, PLATFORM_MAX_BODY, PLATFORM_MIN_BODY } from "../modules/publish/publish-limits.js";
 import { SELF_WRITTEN, validateTitleChoice, type TitleChoice } from "../modules/writing/title-methods.js";
 import { kitTitleAdvisories, titleMethodsAction } from "../modules/writing/title-method-stats.js";
+import type { TitleMethod } from "../modules/writing/title-method-library.js";
+import { activeTitleMethods } from "../modules/calibration/title-library.js";
 import { maybeJson } from "../modules/publish/review-gate/plan.js";
 
 // --- Types ---
@@ -265,7 +267,7 @@ function readTags(raw: unknown, failures: KitFailure[]): string[] {
   return bad.length > 0 ? [] : [...new Set(tags)];
 }
 
-function validateKit(raw: unknown, platform: string): { failures: KitFailure[]; fields: KitFields; title: TitleChoice } {
+function validateKit(raw: unknown, platform: string, lib: TitleMethod[]): { failures: KitFailure[]; fields: KitFields; title: TitleChoice } {
   const parsed = maybeJson(raw);
   const obj = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   const text = (key: string) => (typeof obj[key] === "string" ? (obj[key] as string).trim() : "");
@@ -284,7 +286,7 @@ function validateKit(raw: unknown, platform: string): { failures: KitFailure[]; 
   const coverText = text("cover_text");
   if (!coverText) failures.push({ field: "cover_text", detail: "缺封面大字：一眼能读完的一句话" });
   else if (coverText.length > COVER_TEXT_MAX) failures.push({ field: "cover_text", detail: `${coverText.length} 字，超出 ${COVER_TEXT_MAX}：封面大字要一眼读完，压缩后重交` });
-  const title = validateTitleChoice(obj.title_candidates, obj.title_method);
+  const title = validateTitleChoice(obj.title_candidates, obj.title_method, lib);
   return { failures: [...failures, ...title.failures], fields: { postTitle, caption, coverText }, title: title.choice };
 }
 
@@ -317,7 +319,7 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
     };
   }
   const platform = content.platform as string;
-  const { failures, fields, title } = validateKit(params.kit, platform);
+  const { failures, fields, title } = validateKit(params.kit, platform, await activeTitleMethods(dataDir));
   if (failures.length > 0) {
     return { ok: false, code: "kit_invalid", error: `发布包有 ${failures.length} 处要改：按 failures 逐条改完整包重交`, failures };
   }

@@ -9,6 +9,7 @@ import { listContents, normalizeLegacyStatus, type Content } from "../../storage
 import { listLatestOutcomes } from "../flywheel/outcome-store.js";
 import { normalizePlatform, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
 import { reviewedRow } from "../insights/metric-review.js";
+import { activeTitleMethods } from "../calibration/title-library.js";
 import { findTitleMethod, SELF_WRITTEN, titleMethodGuide, titleMethodIds, titleNumberWarnings } from "./title-methods.js";
 
 export const UNTAGGED = "未标记";
@@ -66,22 +67,34 @@ export function trialStage(n: number): TitleMethodReport["stage"] {
 function reminderFor(stage: TitleMethodReport["stage"], n: number): string | undefined {
   if (stage === "none") return undefined;
   const which = stage === "final" ? "终版" : "中期";
-  return `标题方法试用期：已有 ${n} 条带方法 id 的稿发布，可以给创始人出${which}报告（autocrew_pre_publish action="title_methods" 拿统计），按数据决定方法留、改、删。`;
+  return `标题方法试用期：已有 ${n} 条带方法 id 的稿发布，可以给创始人出${which}报告（autocrew_pre_publish action="title_methods" 拿统计）。方法留、改、删要走升级门：autocrew_insights calib_bump{target:"title_library"}${stage === "final" ? "（终版可能过门成「已验证」）" : "（中期只能出「判断」，不改库）"}。`;
+}
+
+/** 一条已发布稿在试用期里的样本：点击率剔掉待复核指标；flagged = 有回流但点击率被复核剔掉 */
+export interface TitlePostSample { id: string; title: string; method: string; clickRate: number | undefined; flagged: boolean }
+
+export function titlePostSamples(contents: Content[], outcomes: PerformanceOutcome[]): TitlePostSample[] {
+  const published = contents.filter((c) => normalizeLegacyStatus(c.status) === "published");
+  return published.map((c) => {
+    const o = outcomes.find((x) => x.contentId === c.id && x.platform === normalizePlatform(c.platform || ""));
+    const clickRate = clickRateOf(o);
+    return { id: c.id, title: c.videoKit?.postTitle || c.title, method: methodOf(c), clickRate, flagged: !!o?.needsReview && clickRate === undefined };
+  });
 }
 
 /** 纯函数：已发布稿 + 回流数据 → 按方法汇总 */
 export function aggregateTitleMethods(contents: Content[], outcomes: PerformanceOutcome[]): TitleMethodReport {
-  const published = contents.filter((c) => normalizeLegacyStatus(c.status) === "published");
   const groups = new Map<string, Array<number | undefined>>();
-  for (const c of published) {
-    const o = outcomes.find((x) => x.contentId === c.id && x.platform === normalizePlatform(c.platform || ""));
-    const method = methodOf(c);
-    groups.set(method, [...(groups.get(method) ?? []), clickRateOf(o)]);
-  }
+  for (const p of titlePostSamples(contents, outcomes)) groups.set(p.method, [...(groups.get(p.method) ?? []), p.clickRate]);
   const rows = [...groups.entries()].map(([m, rates]) => rowFor(m, rates));
   const n = rows.filter((r) => r.method !== UNTAGGED && r.method !== SELF_WRITTEN).reduce((a, r) => a + r.published, 0);
   const stage = trialStage(n);
   return { publishedWithMethod: n, stage, rows, reminder: reminderFor(stage, n) };
+}
+
+export async function loadTitlePosts(dataDir?: string): Promise<{ report: TitleMethodReport; posts: TitlePostSample[] }> {
+  const [contents, outcomes] = await Promise.all([listContents(dataDir), listLatestOutcomes(dataDir)]);
+  return { report: aggregateTitleMethods(contents, outcomes), posts: titlePostSamples(contents, outcomes) };
 }
 
 export async function titleMethodReport(dataDir?: string): Promise<TitleMethodReport> {
@@ -92,11 +105,12 @@ export async function titleMethodReport(dataDir?: string): Promise<TitleMethodRe
 /** autocrew_pre_publish action=title_methods：方法库指引 + 试用期统计 */
 export async function titleMethodsAction(params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const platform = typeof params.platform === "string" ? params.platform.trim() : undefined;
-  const report = await titleMethodReport((params._dataDir as string) || undefined);
+  const dataDir = (params._dataDir as string) || undefined;
+  const [report, lib] = await Promise.all([titleMethodReport(dataDir), activeTitleMethods(dataDir)]);
   return {
     ok: true,
-    guide: titleMethodGuide(platform),
-    method_ids: titleMethodIds(),
+    guide: titleMethodGuide(platform, lib),
+    method_ids: titleMethodIds(lib),
     self_written: SELF_WRITTEN,
     trial_report: report,
   };

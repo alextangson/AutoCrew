@@ -4,6 +4,7 @@ import { type SupportedPlatform } from "../modules/writing/platform-rewrite.js";
 import { adaptPlatformLLM } from "../modules/writing/platform-adapt-llm.js";
 import { generateHashtags } from "../modules/writing/title-hashtag.js";
 import { titleMethodGuide } from "../modules/writing/title-methods.js";
+import { activeTitleMethods } from "../modules/calibration/title-library.js";
 
 export const rewriteSchema = Type.Object({
   action: Type.Unsafe<"adapt_platform" | "batch_adapt">({
@@ -79,7 +80,7 @@ async function adaptOne(
 
   const result: Record<string, unknown> = {
     ...adapted,
-    titleGuide: titleMethodGuide(platform),
+    titleGuide: titleMethodGuide(platform, await activeTitleMethods(opts.dataDir)),
     hashtags,
   };
 

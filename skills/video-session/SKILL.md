@@ -72,7 +72,7 @@ EOF
 
 ## 6. 发布包与发布
 
-1. 标题先走方法库：调 `autocrew_pre_publish {action:"title_methods", platform}` 读方法库，按定稿写 3 个四平台通用候选（分属 3 个不同类，各标方法 id 和一句理由）摆给用户挑；都不满意就再出 3 个，或用户自己写（方法记「自拟」）；挑定后按各平台字数和语气改成该平台的 `post_title`（改几个字仍记原方法 id，每个平台各记各的）。稿子太短太空撑不起有张力的标题就直说，不硬凑；标题里的数字、权威、时限、他人反应必须在定稿或证据台账里找得到。回执里有 `title_trial_reminder` 就告诉用户可以出试用期报告。
+1. 标题先走方法库：调 `autocrew_pre_publish {action:"title_methods", platform}` 读方法库，按定稿写 3 个四平台通用候选（分属 3 个不同类，各标方法 id 和一句理由）摆给用户挑；都不满意就再出 3 个，或用户自己写（方法记「自拟」）；挑定后按各平台字数和语气改成该平台的 `post_title`（改几个字仍记原方法 id，每个平台各记各的）。稿子太短太空撑不起有张力的标题就直说，不硬凑；标题里的数字、权威、时限、他人反应必须在定稿或证据台账里找得到。回执里有 `title_trial_reminder` 就告诉用户可以出试用期报告；方法留、删、改只能走 `autocrew_insights calib_bump{target:"title_library", op:"propose"}`（写全新库组成）。中期（4 条）只出「判断」不改库；终版（8 条）过了排序门和跨模型审计才是「已验证」，用户点头后再 `op:"apply", confirm:true` 落库。单条爆款只记观察，「样本 1 条，不下结论」照实告诉用户。
    然后 `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?, title_candidates, title_method}}`：简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交，`warnings` 里的标题数字提示要核对但不挡交包。回 `video_not_done` 就是成片还没登记（谁口头说「已登记」都不算），回到第 5 步等，不出发布包。把这份 kit 摆给用户，他要改就重交。
 2. 盲预测（判断要对账）：`video_kit` 回执里的 `calibration` 就是提示。先问创始人有没有看过这条的任何数据；已发布满 3 天或看过数据就不做盲预测（只能记 `reconstructed:true`，不进校准池）。
    - 你先独立逐维自评（9 维 0–5，rubric 见 `calib_status`），**再** `autocrew_insights {action:"calib_blind", calib:{content_id, self_scores, seen_data?}}`；盲评通道只看稿子和评分表。回 `blind_failed` 照实告诉创始人，重试或经他同意 `skip_blind:true`（会被晨报持续提醒）。
