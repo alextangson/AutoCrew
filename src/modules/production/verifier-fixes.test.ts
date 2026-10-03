@@ -390,6 +390,129 @@ describe("seg12 归档口径", () => {
     expect(real?.submittedAt).toBe("2026-09-30T09:30:00Z");
   });
 
+  it("[10-03] 抖音审核中但已定时：本轮发布时间取定时时间，不取提交时间；NAS 目录按定时的月份", async () => {
+    const SUBMITTED = "2026-09-30T18:47:22+08:00", SCHEDULED = "2026-10-08T18:00:00+08:00";
+    await enable();
+    const r = await registeredVideo(env);
+    // 修复前写下的错事实：审核中的抖音带着提交时间当发布时间
+    const { mutateProduction } = await import("./service.js");
+    await mutateProduction(r.id, env.dir, (d) => { d.facts.push({ id: "old-douyin", kind: "publish", round: d.round, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "reviewing", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED }); return { value: null, events: [] }; });
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
+      { platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED, scheduled_at: SCHEDULED } },
+      ...["bilibili", "xiaohongshu", "wechat_video"].map((platform) => ({ platform, publication: { status: "scheduled", submitted_at: SUBMITTED, scheduled_at: SCHEDULED } })),
+    ] }));
+    const { reconcileAll } = await import("./reconcile.js");
+    await reconcileAll(env.dir);
+    const { roundPublishTime } = await import("../../storage/round-publish-time.js");
+    const { archiveTarget } = await import("../../storage/nas-archive.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const c = (await getContent(r.id, env.dir))!;
+    const at = await roundPublishTime(c, env.dir);
+    expect(at && Date.parse(at)).toBe(Date.parse(SCHEDULED));
+    const doc = (await readProductionDoc(r.id, env.dir))!;
+    expect(doc.facts.filter((f) => f.kind === "publish" && f.platform === "douyin").at(-1)).toMatchObject({ pub_state: "reviewing", published_at: SCHEDULED });
+    expect(archiveTarget("/nas", { ...c, publishedAt: at }, r.root)).toBe(path.join("/nas", "2026", "October", path.basename(r.root)));
+  });
+
+  it("[10-03] 审核中、没有定时：提交时间不算公开时间，只有它时本轮发布时间定不出（列「待确认发布时间」），有别的平台公开就取那个", async () => {
+    const SUBMITTED = "2026-09-30T18:47:22+08:00";
+    const { roundPublishTime } = await import("../../storage/round-publish-time.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const alone = await publishedWithPlan("只审核中", { status: "reviewing", submitted_at: SUBMITTED });
+    expect(await roundPublishTime((await getContent(alone.id, env.dir))!, env.dir)).toBeNull();
+    const r = await registeredVideo(env, "审核中加已公开");
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
+      { platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED } },
+      { platform: "bilibili", publication: { status: "public", submitted_at: SUBMITTED, published_at: "2026-10-02T09:00:00+08:00" } },
+    ] }));
+    const { reconcileAll } = await import("./reconcile.js");
+    await reconcileAll(env.dir);
+    const at = await roundPublishTime((await getContent(r.id, env.dir))!, env.dir);
+    expect(at && Date.parse(at)).toBe(Date.parse("2026-10-02T09:00:00+08:00"));
+  });
+
+  it("[10-03 Codex P2] 重开后审核中、没定时的新提交：没有公开时间也要进新一轮，不被当成旧记录去重", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "reviewing", submitted_at: "2026-09-10T00:00:00Z", evidence: "发布计划里的记录" }]);
+    doc.decisions.push({ id: "r1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
+    doc.round = 2;
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "reviewing", submitted_at: "2026-09-25T00:00:00Z", evidence: "发布计划里的记录" }]);
+    expect(slotOf(doc, 2, "douyin")).toMatchObject({ pub_state: "reviewing" });
+  });
+
+  it("[10-03 Codex P2] 纠正过的旧形状审核中回执：修复后只是时间变了，纠正照旧有效（提交 / 核实时间、按槽 / 按事实 id 的纠正都算）", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const SUBMITTED = "2026-09-30T18:47:22+08:00", SCHEDULED = "2026-10-08T18:00:00+08:00";
+    const cases = [
+      { evidence: { submitted_at: SUBMITTED }, target: (_id: string) => "slot:1:douyin" },
+      { evidence: {}, target: (id: string) => id },
+    ];
+    for (const { evidence, target } of cases) for (const scheduled of [SCHEDULED, undefined]) {
+      const doc = emptyProductionDoc();
+      // 旧版写下的事实：发布时间 = 当时的证据时间，没存提交时间
+      doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "reviewing", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
+      doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: target("old"), at: "2026-10-02T00:00:00Z", source: "founder" });
+      expect(slotOf(doc, 1, "douyin")).toBeNull();
+      const plan = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录", evidence_at: SUBMITTED, ...evidence, ...(scheduled ? { published_at: scheduled } : {}) };
+      importObservations(doc, [plan]);
+      importObservations(doc, [plan]);
+      expect(slotOf(doc, 1, "douyin")).toBeNull();
+      // 真正的新状态照旧算新证据
+      expect(importObservations(doc, [{ ...plan, pub_state: "public", published_at: SCHEDULED }])).toBe(1);
+    }
+  });
+
+  it("[10-03 Codex P2] 旧形状回执的纯时间迁移不越过后来的其它来源：数据回流的已公开仍是当前状态", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const SUBMITTED = "2026-09-30T18:47:22+08:00";
+    // 第二组：旧形状没有观察时间（都按 1970 排，只剩写入顺序）
+    for (const [planSeen, metricsSeen] of [["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"], [undefined, undefined]]) {
+      const doc = emptyProductionDoc();
+      doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, ...(planSeen ? { seen_at: planSeen } : {}), obs_source: "plan", platform: "douyin", pub_state: "rejected", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
+      doc.facts.push({ id: "metrics", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: "2026-10-02T00:00:00Z", ...(metricsSeen ? { seen_at: metricsSeen } : {}), obs_source: "metrics_id", platform: "douyin", item_id: "7123", pub_state: "public", verified: true, evidence: "数据回流按作品 id 对上了这条" });
+      importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "rejected", evidence: "发布计划里的记录", submitted_at: SUBMITTED, evidence_at: SUBMITTED }]);
+      expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "public", fact_id: "metrics" });
+      expect(doc.facts).toHaveLength(2);
+      expect(doc.facts[0]).toMatchObject({ id: "old", submitted_at: SUBMITTED });
+      expect(doc.facts[0].published_at).toBeUndefined();
+    }
+  });
+
+  it("[10-03 Codex P2] 同一轮、没定时的审核中重新提交：只有提交时间变了也算新回执，纠正后能重新出现", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    const base = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录" };
+    importObservations(doc, [{ ...base, submitted_at: "2026-09-30T10:00:00Z", evidence_at: "2026-09-30T10:00:00Z" }]);
+    doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: "slot:1:douyin", at: new Date(Date.now() + 1000).toISOString(), source: "founder" });
+    expect(importObservations(doc, [{ ...base, submitted_at: "2026-09-30T10:00:00Z", evidence_at: "2026-09-30T10:00:00Z" }])).toBe(0);
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(importObservations(doc, [{ ...base, submitted_at: "2026-10-02T10:00:00Z", evidence_at: "2026-10-02T10:00:00Z" }])).toBe(1);
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "reviewing" });
+  });
+
+  it("[10-03 Codex P2] 上一条既没有公开时间也没有提交时间，新计划带上提交时间：算新提交，纠正后能重新出现", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    const base = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录" };
+    importObservations(doc, [base]);
+    doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: "slot:1:douyin", at: new Date(Date.now() + 1000).toISOString(), source: "founder" });
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(importObservations(doc, [{ ...base, submitted_at: "2026-10-02T10:00:00Z", evidence_at: "2026-10-02T10:00:00Z" }])).toBe(1);
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "reviewing" });
+  });
+
+  it("[10-03 Codex P2] 审核中只有核实时间、有定时：发布时间取定时，把关证据仍取核实时间", async () => {
+    const { parsePlatformEntry } = await import("../../storage/publish-record.js");
+    const p = parsePlatformEntry({ platform: "douyin", publication: { status: "reviewing", verified_at: "2026-09-01T00:00:00Z", scheduled_at: "2026-10-08T10:00:00Z" } }, Date.parse("2026-10-03T00:00:00Z"));
+    expect(p).toMatchObject({ time: "2026-10-08T10:00:00Z", evidenceAt: "2026-09-01T00:00:00Z", submittedAt: null });
+  });
+
   it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");

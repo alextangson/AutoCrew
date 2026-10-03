@@ -64,7 +64,7 @@ export async function planSubmission(contentId: string, platform: string, dataDi
   const { entryPayloadHash } = await import("../publish/review-gate/check.js");
   const record = await readPublishRecord(contentId, undefined, dataDir).catch(() => ({ kind: "none" as const }));
   const p = record.kind === "none" ? undefined : record.platforms.find((x) => (normalizePlatform(x.platform) ?? x.platform) === platform);
-  return { ...(p?.submittedAt ? { submittedAt: p.submittedAt } : {}), ...(p?.checkId ? { checkId: p.checkId } : {}), ...(p?.time ? { evidenceAt: p.time } : {}),
+  return { ...(p?.submittedAt ? { submittedAt: p.submittedAt } : {}), ...(p?.checkId ? { checkId: p.checkId } : {}), ...(p?.evidenceAt ?? p?.time ? { evidenceAt: (p.evidenceAt ?? p.time)! } : {}),
     payload: p ? await entryPayloadHash(contentId, platform, dataDir).catch(() => null) : null };
 }
 
