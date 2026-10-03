@@ -182,9 +182,8 @@ export async function listItems(dataDir: string): Promise<InboxItem[]> {
   const journal = await readJournal(dataDir);
   const byId = new Map<string, InboxItem>();
   for (const item of journal) byId.set(item.id, item);
-  return [...byId.values()].sort(
-    (a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.id.localeCompare(b.id),
-  );
+  // 同一毫秒收到的按进台账的先后（Map 保留首次插入序，sort 稳定）；id 带随机后缀，拿它破平局顺序就是随机的
+  return [...byId.values()].sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
 }
 
 export async function getItem(id: string, dataDir: string): Promise<InboxItem | null> {
