@@ -16,7 +16,8 @@ import { observe } from "./observations.js";
 import { readObservations, normText } from "./obs-store.js";
 import { rankGate, type RankGateResult } from "./rank-gate.js";
 import { appendLog, assertLogsIntact, readLog, serializeCalibration } from "./store.js";
-import { readTitleLibrary, type TitleLibraryState } from "./title-library.js";
+import { categoryCount, foldTitleLibrary, readTitleLibrary, type TitleLibraryState } from "./title-library.js";
+import { fingerprint } from "./store.js";
 import {
   backtestSamples, eligiblePosts, findOutliers, newLibraryIds, ONE_SAMPLE_NOTE, outlierOnlyMethods, readComposition, remainingCategories,
   type Composition, type Eligibility, type Outlier,
@@ -59,8 +60,6 @@ function judgmentReason(report: TitleMethodReport, el: Eligibility): string | nu
 interface Ctx { state: TitleLibraryState; comp: Composition; el: Eligibility; outliers: Outlier[]; observationIds: string[]; base: Obj }
 
 async function judgmentPath(ctx: Ctx, reason: string, kind: string, dataDir?: string): Promise<Obj> {
-  const sole = outlierOnlyMethods(ctx.comp, ctx.el.withData, ctx.outliers);
-  if (sole.length) return reject({ ...ctx.base, kind: "judgment-driven", label: "判断" }, "outlier_sole_basis", `方法 ${sole.join("、")} 除了单条异常稿没有别的数据：单条异常只能记观察，不能改库`, dataDir);
   const id = `tlp-${crypto.randomUUID().slice(0, 8)}`;
   const forced = kind !== "judgment-driven" ? `提议标的是 ${kind}，没到终版门槛一律按 judgment-driven 处理` : undefined;
   await serializeCalibration(dataDir, () => appendLog("rubric-memo", { type: "title_proposal", id, ...ctx.base, kind: "judgment-driven", label: "判断", reason, applicable: false, at: new Date().toISOString() }, dataDir));
@@ -108,13 +107,21 @@ export async function proposeTitleChange(args: Obj, dataDir?: string, deps: Titl
   const comp = readComposition(args.composition, state, args.new_evidence);
   if (remainingCategories(state.methods, [...TITLE_METHODS], comp) < 3) return { ok: false, code: "library_too_small", error: "改完剩下的方法不到 3 个类：标题候选要分属 3 个不同类" };
   const { report, posts } = await loadTitlePosts(dataDir);
-  const el = eligiblePosts(posts, [...state.methods.map((m) => m.id), ...comp.restore]);
+  const eligibleIds = [...state.methods.map((m) => m.id), ...comp.restore];
+  const el = eligiblePosts(posts, eligibleIds);
   const outliers = findOutliers(el.withData);
   const observationIds = await recordOutliers(outliers, dataDir);
-  const base = { composition: comp, rationale, ...(args.new_evidence ? { new_evidence: String(args.new_evidence) } : {}), library_version: state.version, stage: report.stage, sample_ids: el.samples.map((p) => p.id), outliers };
+  const base = { composition: comp, rationale, ...(args.new_evidence ? { new_evidence: String(args.new_evidence) } : {}), library_version: state.version, eligible_ids: eligibleIds, evidence_fp: evidenceFp(el), stage: report.stage, sample_ids: el.samples.map((p) => p.id), outliers };
   const ctx: Ctx = { state, comp, el, outliers, observationIds, base };
+  const sole = outlierOnlyMethods(comp, el.withData, outliers);
+  if (sole.length) return reject({ ...base, kind }, "outlier_sole_basis", `方法 ${sole.join("、")} 除了单条异常稿没有别的数据：单条异常只能记观察，不能改库`, dataDir);
   const reason = judgmentReason(report, el);
   return reason ? judgmentPath(ctx, reason, kind, dataDir) : gatedPath(ctx, kind, dataDir, deps);
+}
+
+/** 过门时用的证据：样本 id + 点击率；apply 时重算对不上 = 证据变了 */
+function evidenceFp(el: Eligibility): string {
+  return fingerprint(el.samples.map((p) => [p.id, p.clickRate]));
 }
 
 async function memoRecords(dataDir?: string) {
@@ -132,6 +139,8 @@ async function applyTitleChange(args: Obj, dataDir?: string): Promise<Obj> {
     if (records.some((r) => r.type === "title_change" && r.proposal_id === p.id)) return { ok: false, code: "already_applied", error: "这条提议已经落过库" };
     const state = await readTitleLibrary(dataDir);
     if (state.version !== p.library_version) return { ok: false, code: "stale", error: "提议之后方法库已经变过：重新提议、重新过门" };
+    const now = eligiblePosts((await loadTitlePosts(dataDir)).posts, p.eligible_ids as string[]);
+    if (evidenceFp(now) !== p.evidence_fp) return { ok: false, code: "stale_evidence", error: "提议之后回测样本变了（新发布、数据复核剔除或改了数）：过门时的证据已不是现在的证据，重新提议、重新过门" };
     const comp = p.composition as Composition;
     const change = { type: "title_change", id: `tlc-${crypto.randomUUID().slice(0, 8)}`, proposal_id: p.id, removed: comp.remove, changed: comp.change, restored: comp.restore, at: new Date().toISOString() };
     await appendLog("rubric-memo", change, dataDir);
@@ -147,6 +156,8 @@ async function revertTitleChange(args: Obj, dataDir?: string): Promise<Obj> {
     await assertLogsIntact(["rubric-memo"], dataDir);
     const state = await readTitleLibrary(dataDir);
     if (!state.applied.some((c) => c.id === args.change_id)) return { ok: false, code: "not_found", error: `改动 ${String(args.change_id)} 不在生效中（不存在或已撤销）` };
+    const after = foldTitleLibrary([...(await memoRecords(dataDir)), { type: "title_revert", change_id: String(args.change_id), fp: "", prev: null }]);
+    if (categoryCount(after.methods) < 3) return { ok: false, code: "revert_invalid", error: `撤销这次改动后方法库只剩 ${categoryCount(after.methods)} 个类（候选要分属 3 个不同类）：先撤销后来依赖它的改动` };
     await appendLog("rubric-memo", { type: "title_revert", change_id: String(args.change_id), reason, at: new Date().toISOString() }, dataDir);
     return { ok: true, reverted: args.change_id, methods: (await readTitleLibrary(dataDir)).methods.map((m) => m.id) };
   });

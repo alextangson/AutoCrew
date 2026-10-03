@@ -53,8 +53,19 @@ export function foldTitleLibrary(records: ChainRecord[]): TitleLibraryState {
   return { methods, tombstones: [...tombs.values()], applied, version };
 }
 
+export class TitleLibraryDamagedError extends Error {}
+
+/** 链被改、被删时不叠加任何改动，也不悄悄退回内置库：明确报错，交给创始人修 */
 export async function readTitleLibrary(dataDir?: string): Promise<TitleLibraryState> {
-  return foldTitleLibrary((await readLog("rubric-memo", dataDir)).records);
+  const { records, integrity } = await readLog("rubric-memo", dataDir);
+  if (!integrity.ok) {
+    throw new TitleLibraryDamagedError(`标题方法库的改动历史（calibration/rubric-memo.jsonl）完整性校验没过（${integrity.problems[0]}）：不能确定当前该用哪版方法库，标题指引和发布包校验都先停下。把这件事告诉创始人；确认后用 autocrew_insights calib_status{repair_log:"rubric-memo", confirm:true, reason} 显式恢复`);
+  }
+  return foldTitleLibrary(records);
+}
+
+export function categoryCount(methods: TitleMethod[]): number {
+  return new Set(methods.map((m) => m.category)).size;
 }
 
 /** 写标题、校验发布包时读的方法列表 */

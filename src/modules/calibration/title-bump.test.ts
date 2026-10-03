@@ -190,3 +190,59 @@ describe("工具入口", () => {
     expect(await executeCalibrationAction("calib_bump", { target: "title_library", op: "nope" }, dir, "h")).toMatchObject({ ok: false });
   });
 });
+
+describe("Codex 审查回归", () => {
+  it("P1：改动历史被篡改 → 明确报错，不叠加也不退回内置库", async () => {
+    const { appendLog, serializeCalibration, calibrationDir } = await import("./store.js");
+    const { TitleLibraryDamagedError } = await import("./title-library.js");
+    await serializeCalibration(dir, () => appendLog("rubric-memo", { type: "title_change", id: "tlc-1", proposal_id: "x", removed: ["twist"], changed: [], restored: [], at: "" }, dir));
+    const f = path.join(calibrationDir(dir), "rubric-memo.jsonl");
+    await fs.writeFile(f, (await fs.readFile(f, "utf-8")).replace('["twist"]', '["candid-talk"]'));
+    await expect(activeTitleMethods(dir)).rejects.toBeInstanceOf(TitleLibraryDamagedError);
+    const { titleMethodsAction } = await import("../writing/title-method-stats.js");
+    await expect(titleMethodsAction({ _dataDir: dir })).rejects.toThrow(/repair_log/);
+  });
+
+  it("P2：终版路径上，只靠一条异常单样本删方法 → outlier_sole_basis", async () => {
+    await engine(dir, true);
+    posts.list = [...pairs(SPREAD), P("insider-view", 30)] as never;
+    const r = await propose({ composition: removeOne("insider-view") }, audit("PASS"));
+    expect(r.code).toBe("outlier_sole_basis");
+  });
+
+  it("P2：提议后证据变了（样本被复核剔掉）→ apply 拒绝 stale_evidence", async () => {
+    await engine(dir, true);
+    posts.list = pairs(SPREAD) as never;
+    const r = await propose({ composition: reword("twist") }, audit("PASS"));
+    expect(r.label).toBe("已验证");
+    const list = [...(posts.list as unknown as TitlePostSample[])];
+    list[0] = { ...list[0], clickRate: undefined, flagged: true };
+    posts.list = list as never;
+    expect((await titleLibraryAction({ op: "apply", proposal_id: r.proposal_id, confirm: true }, dir)).code).toBe("stale_evidence");
+  });
+
+  it("P2：撤销较早的改动会让库不到 3 个类 → 拒绝 revert_invalid", async () => {
+    const { appendLog, serializeCalibration } = await import("./store.js");
+    const all = foldTitleLibrary([]).methods;
+    const twistCat = all.find((m) => m.id === "twist")!.category;
+    const otherCat = all.find((m) => m.category !== twistCat)!.category;
+    const dropMost = all.filter((m) => m.id !== "twist" && m.category !== otherCat && m.category !== twistCat).map((m) => m.id)
+      .concat(all.filter((m) => m.category === twistCat && m.id !== "twist").map((m) => m.id));
+    const add = (rec: Record<string, unknown>) => serializeCalibration(dir, () => appendLog("rubric-memo", { type: "title_change", proposal_id: "x", changed: [], removed: [], restored: [], at: "", ...rec }, dir));
+    await add({ id: "c0", removed: ["twist"] });
+    await add({ id: "c1", restored: ["twist"] });
+    await add({ id: "c2", removed: dropMost });
+    const r = await titleLibraryAction({ op: "revert", change_id: "c1", confirm: true, reason: "试试" }, dir);
+    expect(r.code).toBe("revert_invalid");
+    expect((await activeTitleMethods(dir)).some((m) => m.id === "twist")).toBe(true);
+  });
+
+  it("P2：方法 id 优先于显示名；改名撞别的方法 id → 打回", async () => {
+    const { normalizeMethodId } = await import("../writing/title-methods.js");
+    const lib = foldTitleLibrary([]).methods.map((m) => (m.id === "candid-talk" ? { ...m, name: "twist" } : m));
+    expect(normalizeMethodId("twist", lib)).toBe("twist");
+    const state = foldTitleLibrary([]);
+    const comp = { keep: ALL_IDS.filter((x) => x !== "candid-talk"), remove: [], change: [{ id: "candid-talk", name: "Twist" }] };
+    expect(() => readComposition(comp, state, undefined)).toThrow(/撞/);
+  });
+});

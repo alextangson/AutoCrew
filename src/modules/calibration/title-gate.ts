@@ -5,7 +5,7 @@
  *   - 单条异常（≥3× 基线）只能记观察，不能单独撑起一次改库。
  */
 import { decodeArg } from "../meetings/meeting-args.js";
-import type { TitleMethod } from "../writing/title-method-library.js";
+import { TITLE_METHODS, type TitleMethod } from "../writing/title-method-library.js";
 import { SELF_WRITTEN } from "../writing/title-methods.js";
 import { UNTAGGED, type TitlePostSample } from "../writing/title-method-stats.js";
 import type { GateSample } from "./rank-gate.js";
@@ -60,6 +60,9 @@ export function readComposition(raw: unknown, state: TitleLibraryState, newEvide
     throw new Error(`${c.restore.join("、")} 被删过（留了墓碑）：没有新证据 new_evidence 不能加回来`);
   }
   if (!c.remove.length && !c.change.length && !c.restore.length) throw new Error("这个提议什么都没改");
+  const allIds = new Set([...current, ...state.tombstones.map((t) => t.method), ...TITLE_METHODS.map((m) => m.id)]);
+  const clash = c.change.filter((p) => p.name !== undefined && allIds.has(p.name.trim().toLowerCase().replace(/[\s_]+/g, "-")));
+  if (clash.length) throw new Error(`新名字不能和方法 id 撞（${clash.map((p) => p.name).join("、")}）：会让 id 认错方法`);
   return c;
 }
 

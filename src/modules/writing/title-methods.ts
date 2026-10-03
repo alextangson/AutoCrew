@@ -43,7 +43,8 @@ export function normalizeMethodId(raw: unknown, lib: readonly TitleMethod[] = TI
   if (!t) return null;
   if (t === SELF_WRITTEN) return SELF_WRITTEN;
   const slug = t.toLowerCase().replace(/[\s_]+/g, "-");
-  return lib.find((m) => m.id === slug || m.name === t)?.id ?? null;
+  // 先认规范 id，再认显示名：改过名的方法不能把别的方法的 id 抢走
+  return (lib.find((m) => m.id === slug) ?? lib.find((m) => m.name === t))?.id ?? null;
 }
 
 const idListText = (lib: readonly TitleMethod[]) => titleMethodIds(lib).join(" / ");
