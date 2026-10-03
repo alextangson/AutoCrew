@@ -469,11 +469,17 @@ describe("seg12 归档口径", () => {
     const { emptyProductionDoc } = await import("../../storage/production-types.js");
     const { importObservations, slotOf } = await import("./receipts.js");
     const SUBMITTED = "2026-09-30T18:47:22+08:00";
-    const doc = emptyProductionDoc();
-    doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "rejected", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
-    doc.facts.push({ id: "metrics", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: "2026-10-02T00:00:00Z", seen_at: "2026-10-02T00:00:00Z", obs_source: "metrics_id", platform: "douyin", item_id: "7123", pub_state: "public", verified: true, evidence: "数据回流按作品 id 对上了这条" });
-    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "rejected", evidence: "发布计划里的记录", submitted_at: SUBMITTED, evidence_at: SUBMITTED }]);
-    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "public", fact_id: "metrics" });
+    // 第二组：旧形状没有观察时间（都按 1970 排，只剩写入顺序）
+    for (const [planSeen, metricsSeen] of [["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"], [undefined, undefined]]) {
+      const doc = emptyProductionDoc();
+      doc.facts.push({ id: "old", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, ...(planSeen ? { seen_at: planSeen } : {}), obs_source: "plan", platform: "douyin", pub_state: "rejected", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED });
+      doc.facts.push({ id: "metrics", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: "2026-10-02T00:00:00Z", ...(metricsSeen ? { seen_at: metricsSeen } : {}), obs_source: "metrics_id", platform: "douyin", item_id: "7123", pub_state: "public", verified: true, evidence: "数据回流按作品 id 对上了这条" });
+      importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "rejected", evidence: "发布计划里的记录", submitted_at: SUBMITTED, evidence_at: SUBMITTED }]);
+      expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "public", fact_id: "metrics" });
+      expect(doc.facts).toHaveLength(2);
+      expect(doc.facts[0]).toMatchObject({ id: "old", submitted_at: SUBMITTED });
+      expect(doc.facts[0].published_at).toBeUndefined();
+    }
   });
 
   it("[10-03 Codex P2] 同一轮、没定时的审核中重新提交：只有提交时间变了也算新回执，纠正后能重新出现", async () => {
@@ -484,6 +490,18 @@ describe("seg12 归档口径", () => {
     importObservations(doc, [{ ...base, submitted_at: "2026-09-30T10:00:00Z", evidence_at: "2026-09-30T10:00:00Z" }]);
     doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: "slot:1:douyin", at: new Date(Date.now() + 1000).toISOString(), source: "founder" });
     expect(importObservations(doc, [{ ...base, submitted_at: "2026-09-30T10:00:00Z", evidence_at: "2026-09-30T10:00:00Z" }])).toBe(0);
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(importObservations(doc, [{ ...base, submitted_at: "2026-10-02T10:00:00Z", evidence_at: "2026-10-02T10:00:00Z" }])).toBe(1);
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "reviewing" });
+  });
+
+  it("[10-03 Codex P2] 上一条既没有公开时间也没有提交时间，新计划带上提交时间：算新提交，纠正后能重新出现", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    const base = { source: "plan" as const, platform: "douyin", pub_state: "reviewing" as const, evidence: "发布计划里的记录" };
+    importObservations(doc, [base]);
+    doc.decisions.push({ id: "c1", type: "publish_correction", round: 1, target_id: "slot:1:douyin", at: new Date(Date.now() + 1000).toISOString(), source: "founder" });
     await new Promise((r) => setTimeout(r, 1100));
     expect(importObservations(doc, [{ ...base, submitted_at: "2026-10-02T10:00:00Z", evidence_at: "2026-10-02T10:00:00Z" }])).toBe(1);
     expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "reviewing" });
