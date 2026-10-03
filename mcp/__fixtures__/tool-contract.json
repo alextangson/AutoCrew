@@ -2310,7 +2310,8 @@
        "meeting_tag",
        "calib_status",
        "calib_blind",
-       "calib_predict"
+       "calib_predict",
+       "calib_retro"
       ],
       "type": "string"
      },
@@ -4877,7 +4878,8 @@
        "meeting_tag",
        "calib_status",
        "calib_blind",
-       "calib_predict"
+       "calib_predict",
+       "calib_retro"
       ],
       "type": "string"
      },

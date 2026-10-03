@@ -85,6 +85,12 @@ export async function ensureCalibration(dataDir?: string): Promise<{ state: Cali
   return { state, rubric };
 }
 
+/** 只读：没初始化过就返回 null（晨报不该顺手建目录） */
+export async function readStateIfExists(dataDir?: string): Promise<CalibrationState | null> {
+  const raw = await readJson<Partial<CalibrationState>>(file(dataDir, "state.json"));
+  return raw ? ({ ...freshState(), ...raw } as CalibrationState) : null;
+}
+
 export async function writeState(state: CalibrationState, dataDir?: string): Promise<void> {
   await writeJsonAtomic(path.join(calibrationDir(dataDir), "state.json"), state);
 }
