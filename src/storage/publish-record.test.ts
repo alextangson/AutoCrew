@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anySubmitted, parsePublishPlan, recordTime, withManual } from "./publish-record.js";
+import { anySubmitted, firstPublishTime, parsePublishPlan, recordTime, withManual } from "./publish-record.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00+08:00");
 const plan = (platforms: unknown) => JSON.stringify({ schema_version: 1, platforms });
@@ -56,5 +56,26 @@ describe("withManual", () => {
     const r = withManual(parsePublishPlan("{", NOW), [mark]);
     expect(r).toMatchObject({ kind: "unreadable", platforms: [{ state: "manual" }] });
     expect(anySubmitted(r)).toBe(true);
+  });
+});
+
+describe("审核中的发布时间（2026-10-03 抖音审核中被按提交时间算成 9 月发布）", () => {
+  const SUBMITTED = "2026-09-30T18:47:22+08:00";
+  const SCHEDULED = "2026-10-08T18:00:00+08:00";
+
+  it("审核中但已知定时：时间 = 定时公开时间，提交时间只进 submittedAt", () => {
+    const r = parsePublishPlan(plan([
+      { platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED, scheduled_at: SCHEDULED } },
+      { platform: "bilibili", scheduled_at: SCHEDULED, publication: { status: "reviewing", submitted_at: SUBMITTED } },
+      { platform: "xiaohongshu", publication: { status: "scheduled", scheduled_at: SCHEDULED, submitted_at: SUBMITTED } },
+    ]), NOW);
+    if (r.kind !== "ok") throw new Error("expected ok");
+    for (const p of r.platforms.slice(0, 2)) expect(p).toMatchObject({ state: "reviewing", time: SCHEDULED, scheduledAt: SCHEDULED, submittedAt: SUBMITTED });
+    expect(firstPublishTime(r)).toBe(SCHEDULED);
+  });
+
+  it("审核中、没有定时：显示时间仍是提交时间，但没有定时公开时间", () => {
+    const r = parsePublishPlan(plan([{ platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED } }]), NOW);
+    expect(r).toMatchObject({ kind: "ok", platforms: [{ state: "reviewing", submitted: true, time: SUBMITTED, scheduledAt: null, submittedAt: SUBMITTED }] });
   });
 });

@@ -390,6 +390,47 @@ describe("seg12 归档口径", () => {
     expect(real?.submittedAt).toBe("2026-09-30T09:30:00Z");
   });
 
+  it("[10-03] 抖音审核中但已定时：本轮发布时间取定时时间，不取提交时间；NAS 目录按定时的月份", async () => {
+    const SUBMITTED = "2026-09-30T18:47:22+08:00", SCHEDULED = "2026-10-08T18:00:00+08:00";
+    await enable();
+    const r = await registeredVideo(env);
+    // 修复前写下的错事实：审核中的抖音带着提交时间当发布时间
+    const { mutateProduction } = await import("./service.js");
+    await mutateProduction(r.id, env.dir, (d) => { d.facts.push({ id: "old-douyin", kind: "publish", round: d.round, state: "accepted", availability: "present", source: "reconcile", at: SUBMITTED, seen_at: "2026-10-01T00:00:00Z", obs_source: "plan", platform: "douyin", pub_state: "reviewing", verified: true, evidence: "发布计划里的记录", published_at: SUBMITTED }); return { value: null, events: [] }; });
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
+      { platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED, scheduled_at: SCHEDULED } },
+      ...["bilibili", "xiaohongshu", "wechat_video"].map((platform) => ({ platform, publication: { status: "scheduled", submitted_at: SUBMITTED, scheduled_at: SCHEDULED } })),
+    ] }));
+    const { reconcileAll } = await import("./reconcile.js");
+    await reconcileAll(env.dir);
+    const { roundPublishTime } = await import("../../storage/round-publish-time.js");
+    const { archiveTarget } = await import("../../storage/nas-archive.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const c = (await getContent(r.id, env.dir))!;
+    const at = await roundPublishTime(c, env.dir);
+    expect(at && Date.parse(at)).toBe(Date.parse(SCHEDULED));
+    const doc = (await readProductionDoc(r.id, env.dir))!;
+    expect(doc.facts.filter((f) => f.kind === "publish" && f.platform === "douyin").at(-1)).toMatchObject({ pub_state: "reviewing", published_at: SCHEDULED });
+    expect(archiveTarget("/nas", { ...c, publishedAt: at }, r.root)).toBe(path.join("/nas", "2026", "October", path.basename(r.root)));
+  });
+
+  it("[10-03] 审核中、没有定时：提交时间不算公开时间，只有它时本轮发布时间定不出（列「待确认发布时间」），有别的平台公开就取那个", async () => {
+    const SUBMITTED = "2026-09-30T18:47:22+08:00";
+    const { roundPublishTime } = await import("../../storage/round-publish-time.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const alone = await publishedWithPlan("只审核中", { status: "reviewing", submitted_at: SUBMITTED });
+    expect(await roundPublishTime((await getContent(alone.id, env.dir))!, env.dir)).toBeNull();
+    const r = await registeredVideo(env, "审核中加已公开");
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
+      { platform: "douyin", publication: { status: "reviewing", submitted_at: SUBMITTED } },
+      { platform: "bilibili", publication: { status: "public", submitted_at: SUBMITTED, published_at: "2026-10-02T09:00:00+08:00" } },
+    ] }));
+    const { reconcileAll } = await import("./reconcile.js");
+    await reconcileAll(env.dir);
+    const at = await roundPublishTime((await getContent(r.id, env.dir))!, env.dir);
+    expect(at && Date.parse(at)).toBe(Date.parse("2026-10-02T09:00:00+08:00"));
+  });
+
   it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");

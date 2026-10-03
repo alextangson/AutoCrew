@@ -55,15 +55,21 @@ const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
 /** 可信来源读出来的观察：发布计划（不含创始人「我发了」）+ 数据回流绑定 */
 export async function trustedObservations(content: Content, dataDir: string): Promise<Observation[]> {
   const out: Observation[] = [];
+  // 把关判定的证据时间照旧用计划里的时间（含审核中的提交时间），与写进事实的公开时间分开
+  const gateEvidence = new Map<Observation, string>();
   const record = await readPublishRecord(content.id, undefined, dataDir);
   if (record.kind !== "none") {
     for (const p of record.platforms) {
       const state = STATE[p.state];
       if (!state || (!p.submitted && p.state !== "rejected")) continue;
       const checkId = p.checkId ?? undefined;
-      out.push({ source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
+      // 可信观察只记真实的公开 / 定时时间（创始人 09-30）：审核中、被驳回的没有定时就不带发布时间，提交时间不冒充公开时间
+      const publicAt = p.state === "reviewing" || p.state === "rejected" ? p.scheduledAt : p.time;
+      const o: Observation = { source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
         ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
-        ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) });
+        ...(publicAt ? { published_at: publicAt } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) };
+      if (p.time) gateEvidence.set(o, p.time);
+      out.push(o);
     }
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
@@ -79,7 +85,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
   for (const o of out) {
     if (!TRUSTED.has(o.source)) continue;
     const payload = o.source === "plan" ? await entryPayloadHash(content.id, o.platform, dataDir).catch(() => null) : null;
-    o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, o.published_at, payload);
+    o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, gateEvidence.get(o) ?? o.published_at, payload);
   }
   return out;
 }
