@@ -17,6 +17,8 @@ import {
   serializeOutcomeWrite,
   collectPeerViews,
   spikeReviewReason,
+  sameWork,
+  attributedCopies,
 } from "./outcome-store.js";
 import type { PendingBinding } from "./platform-items.js";
 import {
@@ -110,6 +112,21 @@ async function prepareRow(row: TypedRow, ctx: RowContext): Promise<PreparedRow> 
   };
 }
 
+/**
+ * 这一批新认出归属的作品，把它此前未归属的快照一并补挂过去（spec ③ 同一规则用在自动认领上）：
+ * 否则 listOutcomes 的对账会因为出现了已归属版本而丢掉早期快照，D+3/D+7 就没了。
+ */
+function carryOverSnapshots(existing: PerformanceOutcome[], staged: PerformanceOutcome[]): PerformanceOutcome[] {
+  const taken = new Set([...existing, ...staged].map((o) => outcomeKey(o)));
+  const out: PerformanceOutcome[] = [];
+  for (const row of staged) {
+    if (!row.contentId) continue;
+    const earlier = existing.filter((e) => e.contentId === null && sameWork(e, row));
+    out.push(...attributedCopies(earlier, row.contentId, taken));
+  }
+  return out;
+}
+
 function emptyReport(total: number): ImportReport {
   return { total, imported: 0, replaced: 0, matched: 0, historical: 0, needsReview: [], rejected: [] };
 }
@@ -149,7 +166,7 @@ export async function importPerformanceRows(
       staged.set(key, prepared.outcome);
     }
 
-    const finals = [...staged.values()];
+    const finals = [...staged.values(), ...carryOverSnapshots(existing, [...staged.values()])];
     report.needsReview = finals.filter((o) => o.needsReview); // 只报真正落盘的那条
     await appendOutcomes(finals, opts.dataDir);
     // 先 outcomes 后绑定：绑定是索引，写序反了会出现「指着不存在的行」的绑定

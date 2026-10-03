@@ -18,8 +18,15 @@ import { resolvePublishUrl } from "./publish-url.js";
 const ITEMS_FILE = "platform-items.json";
 const SCHEMA_VERSION = 1;
 
-/** 绑定证据：url = 链接解析出的 id 对上；title = 归一化标题精确命中 */
-export type BindingVia = "url" | "title";
+/**
+ * 绑定证据：url = 链接解析出的 id 对上；title = 归一化标题精确命中；
+ * manual = 创始人确认的人工绑定（和 url 一样当精确事实）。
+ */
+export type BindingVia = "url" | "title" | "manual";
+
+const VIAS: readonly BindingVia[] = ["url", "title", "manual"];
+/** 精确事实级证据：只有它们能顶替 title，彼此之间谁也不顶替谁（改归属要先解绑） */
+const STRONG: ReadonlySet<BindingVia> = new Set(["url", "manual"]);
 
 export interface PlatformItemBinding {
   contentId: string;
@@ -58,7 +65,7 @@ export function platformItemKey(platform: string, itemId: string): string {
 
 function isBinding(value: unknown): value is PlatformItemBinding {
   const b = value as PlatformItemBinding | null;
-  return !!b && typeof b.contentId === "string" && (b.via === "url" || b.via === "title");
+  return !!b && typeof b.contentId === "string" && VIAS.includes(b.via);
 }
 
 /**
@@ -121,11 +128,11 @@ function serializeBindingWrite<T>(dataDir: string | undefined, fn: () => Promise
   return next;
 }
 
-/** 已有绑定只被更强证据顶替：url（人贴的链接/解析出的 id）> title（精确标题命中） */
+/** 已有绑定只被更强证据顶替：url / manual（人贴的链接、人确认的绑定）> title（精确标题命中） */
 function shouldOverwrite(existing: PlatformItemBinding | undefined, next: PendingBinding): boolean {
   if (!existing) return true;
   if (existing.contentId === next.contentId && existing.via === next.via) return false;
-  return next.via === "url" && existing.via === "title";
+  return STRONG.has(next.via) && existing.via === "title";
 }
 
 /**
@@ -184,6 +191,47 @@ export async function setWorkTag(key: string, patch: { format?: string; personaK
     await fs.mkdir(getDataDir(dataDir), { recursive: true });
     await writeJsonAtomic(itemsPath(dataDir), { schemaVersion: SCHEMA_VERSION, items, tags } satisfies PlatformItemsFile);
     return tag;
+  });
+}
+
+export type ManualBindOutcome =
+  | { status: "bound" | "already"; binding: PlatformItemBinding }
+  | { status: "conflict"; existing: PlatformItemBinding };
+
+/**
+ * 人工绑定（via=manual）：查与写在同一把锁里。已绑给别的稿 → conflict（不覆盖，要改先解绑）；
+ * 已是同一稿的 manual/url → already（幂等）；同一稿的 title 绑定 → 升级成 manual。
+ */
+export async function commitManualBinding(
+  platform: string,
+  itemId: string,
+  contentId: string,
+  dataDir?: string,
+): Promise<ManualBindOutcome> {
+  return serializeBindingWrite(dataDir, async () => {
+    const items = await readPlatformItems(dataDir);
+    const key = platformItemKey(platform, itemId);
+    const existing = items[key];
+    if (existing && existing.contentId !== contentId) return { status: "conflict", existing };
+    if (existing && STRONG.has(existing.via)) return { status: "already", binding: existing };
+    const binding: PlatformItemBinding = { contentId, boundAt: new Date().toISOString(), via: "manual" };
+    items[key] = binding;
+    await fs.mkdir(getDataDir(dataDir), { recursive: true });
+    await writeJsonAtomic(itemsPath(dataDir), { schemaVersion: SCHEMA_VERSION, items, ...await tagsBlock(dataDir) } satisfies PlatformItemsFile);
+    return { status: "bound", binding };
+  });
+}
+
+/** 删掉某稿件的全部绑定（删历史作品记录时用）。返回删掉的键 */
+export async function removeBindingsForContent(contentId: string, dataDir?: string): Promise<string[]> {
+  return serializeBindingWrite(dataDir, async () => {
+    const items = await readPlatformItems(dataDir);
+    const removed = Object.keys(items).filter((k) => items[k].contentId === contentId);
+    if (removed.length === 0) return [];
+    for (const k of removed) delete items[k];
+    const file: PlatformItemsFile = { schemaVersion: SCHEMA_VERSION, items, ...await tagsBlock(dataDir) };
+    await writeJsonAtomic(itemsPath(dataDir), file);
+    return removed;
   });
 }
 
