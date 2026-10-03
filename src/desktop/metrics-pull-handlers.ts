@@ -17,7 +17,7 @@ import {
   type PullPlatform,
 } from "../modules/flywheel/pull-state.js";
 import {
-  PULL_TTL_MS,
+  DAILY_PULL_HOUR,
   inFlightPlatforms,
   pullPlatformNow,
 } from "./metrics-pull-cycle.js";
@@ -42,7 +42,7 @@ export async function pullStatusHandler(payload: Payload): Promise<HandlerResult
     return {
       ok: true,
       data: {
-        ttlHours: Math.round(PULL_TTL_MS / 3_600_000),
+        dailyPullHour: DAILY_PULL_HOUR,
         platforms: PULL_PLATFORMS.map((platform) => ({
           platform,
           label: PULL_PLATFORM_LABELS[platform],

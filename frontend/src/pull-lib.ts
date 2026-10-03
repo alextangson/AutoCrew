@@ -33,7 +33,7 @@ export function pullBadge(row: PullPlatformStatus): { text: string; tone: PullTo
     case "ok":
       return { text: "已连接", tone: "ok" };
     case "needs_login":
-      return { text: "需扫码", tone: "warn" };
+      return { text: "需登录", tone: "warn" };
     case "risk_control":
       return { text: "风控暂停", tone: "warn" };
     case "schema_changed":
@@ -58,10 +58,10 @@ export function formatPullTime(iso: string | null | undefined): string {
 export function pullHint(row: PullPlatformStatus): string | null {
   if (!row.enabled) return "打开开关后，AutoCrew 会定期从创作者后台把数据接回来。";
   // 刚开开关最容易以为「没反应」：说清最多等多久，想立刻看就有按钮
-  if (row.lastStatus === "never") return "已开启——最多 30 分钟内自动抓一次；想立刻看结果就点「立即抓取」。";
+  if (row.lastStatus === "never") return "已开启——每天 9:00 自动抓一次（那会儿电脑没开就在开机后补抓）；想立刻看结果就点「立即抓取」。";
   switch (row.lastStatus) {
     case "needs_login":
-      return "登录态过期——去后台扫码，之后数据继续自己回来。";
+      return `登录态过期——在 ego lite 里登录${row.label}后台，之后数据继续自己回来。`;
     case "risk_control":
       return "平台触发了风控，今天不再自动抓取，明早再试。";
     case "schema_changed":
@@ -74,7 +74,7 @@ export function pullHint(row: PullPlatformStatus): string | null {
   }
 }
 
-/** chrome-cdp 连不上是环境问题：三行合并成一条提示，不逐平台重复报错（spec §4.4） */
+/** ego lite 连不上是环境问题：三行合并成一条提示，不逐平台重复报错（spec §4.4） */
 export function browserUnreachable(rows: PullPlatformStatus[]): boolean {
   return rows.some((r) => r.enabled && r.lastStatus === "browser_unreachable");
 }
@@ -101,11 +101,11 @@ export function attemptMessage(label: string, attempt: PullAttemptView): string 
         attempt.hasMore ? "（作品数到上限，还有更多没抓完）" : ""
       }${persistTail}`;
     case "needs_login":
-      return `${label}登录态过期——去创作者后台扫码后再抓一次`;
+      return `${label}登录态过期——在 ego lite 里登录${label}后台后再抓一次`;
     case "risk_control":
       return `${label}触发风控，今天先停，明早自动再试`;
     case "browser_unreachable":
-      return "浏览器未连接：先启动常驻 Chrome（chrome-cdp）再试";
+      return "浏览器未连接（ego lite）：先打开 ego lite 再试";
     case "schema_changed":
       return `${label}后台接口变了（${attempt.errorCode ?? "schema"}），这次一行都没写入`;
     case "timeout":

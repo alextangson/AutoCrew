@@ -1,9 +1,9 @@
 /**
- * 抖音创作者后台数据拉取 —— **CDP 网络拦截**路线(spec §4.2 传输策略总表)。
+ * 抖音创作者后台数据拉取 —— **网络旁听**路线(spec §4.2 传输策略总表;通道是 ego lite,页内 CDP)。
  *
  * 为什么不像视频号那样 in-page fetch:抖音接口带 `msToken`/`a_bogus` 签名,裸 fetch 缺参
  * 会被风控打回 `status_code: 8`。所以改成旁听——打开作品管理页,让页面自己带齐签名去请求,
- * 我们只在 `Network.responseReceived` 上接住它的 JSON 响应,解析后关页。
+ * 我们只在 `Network.responseReceived` 上接住它的 JSON 响应,解析后关页(旁听在 ego-scripts.interceptScript 里)。
  *
  * 三个坑(端点文档 §1,来源为社区仓库,**待真实抓包校准**):
  * ① `items[].id` 是超长 JSON number,`JSON.parse` 直接丢精度 → 解析前先把它包成字符串;
@@ -13,7 +13,7 @@
  *
  * 状态判定矩阵见文件末 `pullDouyinStats` 的注释。
  */
-import { connectWithEventTap, waitForEvent, type CdpEvent, type EventTap } from "./cdp-network-tap.js";
+import { EgoSession, type InterceptResult } from "./ego-session.js";
 import type { OutcomeMetrics } from "../../modules/flywheel/outcome-schema.js";
 import type { PullResult, TypedRow } from "./pull-types.js";
 import {
@@ -31,14 +31,12 @@ import {
   parseJsonSafe,
   protectLongNumbers,
   schemaChanged,
-  sleep,
-  withTab,
 } from "./pull-shared.js";
 
 /** 作品管理页:页面自己会去打列表接口,我们只旁听 */
 export const DOUYIN_MANAGE_URL = "https://creator.douyin.com/creator-micro/content/manage";
 /** 现行主路 + 旧路(端点文档说两套并存,社区仓库互相矛盾 → 都认) */
-const LIST_URL_PATTERNS = ["/web/api/creator/item/list", "/janus/douyin/creator/pc/work_list"];
+export const LIST_URL_PATTERNS = ["/web/api/creator/item/list", "/janus/douyin/creator/pc/work_list"];
 /** 拦截等待窗口:页面加载 + 首个列表响应 */
 const DEFAULT_WAIT_MS = 20_000;
 /** 首个响应命中后再等一会儿,接住页面自己发的后续分页请求 */
@@ -183,96 +181,36 @@ export function mergeDouyinParses(parses: DouyinParse[], limit = PAGE_ROW_LIMIT)
   return { ...okResult(merged.slice(0, limit), hasMore || merged.length > limit), rejected };
 }
 
-/** CDP 能力面(结构上由 CdpSession 满足);测试塞桩,不连浏览器 */
-export interface DouyinCdp {
-  cmd(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<Record<string, unknown>>;
-  eval(expression: string, sessionId: string, awaitPromise?: boolean): Promise<unknown>;
-  openTab(url: string): Promise<{ targetId: string; sessionId: string }>;
-  closeTarget(targetId: string): Promise<void>;
-  close(): void;
+/** 旁听能力面(EgoSession 满足);测试塞桩,不连浏览器 */
+export interface DouyinBrowser {
+  intercept(p: { url: string; patterns: string[]; waitMs: number; settleMs: number }): Promise<InterceptResult>;
 }
 
 export interface PullDouyinOptions {
   waitMs?: number;
   settleMs?: number;
   limit?: number;
-  /** 测试注入点:默认连常驻 chrome-cdp */
-  connect?: () => Promise<{ session: DouyinCdp; tap: EventTap }>;
-}
-
-/** 收集命中的 requestId(页面可能连打好几个列表请求,全接住) */
-function collectListRequests(tap: EventTap, sessionId: string): { ids: string[]; stop: () => void } {
-  const ids: string[] = [];
-  const stop = tap.on((ev: CdpEvent) => {
-    if (ev.method !== "Network.responseReceived") return;
-    if (ev.sessionId && ev.sessionId !== sessionId) return;
-    const res = isRecord(ev.params.response) ? ev.params.response : {};
-    const url = typeof res.url === "string" ? res.url : "";
-    const requestId = typeof ev.params.requestId === "string" ? ev.params.requestId : "";
-    if (requestId && isDouyinListUrl(url) && !ids.includes(requestId)) ids.push(requestId);
-  });
-  return { ids, stop };
-}
-
-async function readBody(cdp: DouyinCdp, sessionId: string, requestId: string): Promise<string | null> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const r = await cdp.cmd("Network.getResponseBody", { requestId }, sessionId);
-      const body = typeof r.body === "string" ? r.body : "";
-      return r.base64Encoded === true ? Buffer.from(body, "base64").toString("utf8") : body;
-    } catch {
-      // 响应体还没进缓冲区是常态,退一步再取;两次都拿不到就当这条没拦到
-      await sleep(300);
-    }
-  }
-  return null;
+  /** 测试注入点:默认走 ego lite 通道 */
+  connect?: () => DouyinBrowser;
 }
 
 /**
  * DOM 兜底(只在**什么都没拦到**时才用):页面文本命中登录墙 = needs_login,否则 timeout。
  * 页面文本只用于判定,**永不进 errorCode**(spec §4.1 脱敏红线)。
  */
-async function probeLoginByDom(cdp: DouyinCdp, sessionId: string): Promise<PullResult> {
-  try {
-    const raw = await cdp.eval("document.body ? document.body.innerText.slice(0,4000) : ''", sessionId);
-    const text = typeof raw === "string" ? raw : "";
-    if (/扫码登录|手机号登录|请先登录|登录后查看/.test(text)) return failure("needs_login", "dom_login_wall");
-    return failure("timeout", "no_list_response");
-  } catch {
-    return failure("timeout", "dom_probe_failed");
-  }
+function judgeDomText(domText: string | null): PullResult {
+  if (domText === null) return failure("timeout", "dom_probe_failed");
+  if (/扫码登录|手机号登录|请先登录|登录后查看/.test(domText)) return failure("needs_login", "dom_login_wall");
+  return failure("timeout", "no_list_response");
 }
 
-async function pullInTab(cdp: DouyinCdp, tap: EventTap, tab: { sessionId: string }, opts: PullDouyinOptions): Promise<PullResult> {
-  const waitMs = opts.waitMs ?? DEFAULT_WAIT_MS;
-  const settleMs = opts.settleMs ?? DEFAULT_SETTLE_MS;
-  await cdp.cmd("Network.enable", {}, tab.sessionId);
-  const collector = collectListRequests(tap, tab.sessionId);
-  try {
-    await cdp.cmd("Page.navigate", { url: DOUYIN_MANAGE_URL }, tab.sessionId);
-    if (collector.ids.length === 0) {
-      // 收集器在导航前就订阅了,`waitForEvent` 在导航后才订阅——两者之间到达的响应只有
-      // 收集器看得见。所以等完之后再问一次收集器,别把已经拦到的当成「什么都没拦到」。
-      await waitForEvent(
-        tap,
-        (ev) => ev.method === "Network.responseReceived" && isDouyinListUrl(String(bagOf(ev.params.response).url ?? "")),
-        waitMs,
-      );
-    }
-    // 窗口内一条都没拦到:先分清是登录墙还是慢/接口没发
-    if (collector.ids.length === 0) return await probeLoginByDom(cdp, tab.sessionId);
-    await sleep(settleMs);
-    const parses: DouyinParse[] = [];
-    for (const requestId of collector.ids) {
-      const body = await readBody(cdp, tab.sessionId, requestId);
-      if (body !== null) parses.push(parseDouyinItemList(body));
-    }
-    // 拦到了事件却一个响应体都读不出来 → 归 timeout(不是接口漂移,别误报 canary)
-    if (parses.length === 0) return failure("timeout", "response_body_unavailable");
-    return mergeDouyinParses(parses, opts.limit ?? PAGE_ROW_LIMIT);
-  } finally {
-    collector.stop();
-  }
+/** 旁听结果 → 最终状态(纯函数) */
+export function judgeIntercept(r: InterceptResult, limit = PAGE_ROW_LIMIT): PullResult {
+  // 窗口内一条都没拦到:先分清是登录墙还是慢/接口没发
+  if (r.matched === 0) return judgeDomText(r.domText);
+  // 拦到事件却一个响应体都读不出来 → 归 timeout(不是接口漂移,别误报 canary)
+  if (r.bodies.length === 0) return failure("timeout", "response_body_unavailable");
+  return mergeDouyinParses(r.bodies.map(parseDouyinItemList), limit);
 }
 
 /**
@@ -284,24 +222,24 @@ async function pullInTab(cdp: DouyinCdp, tap: EventTap, tab: { sessionId: string
  * | 拦到列表响应,`status_code:8` | `needs_login` |
  * | 拦到列表响应,`status_code` 其他非 0 | `error`(`envelope:<码>`) |
  * | 拦到了,但 HTML 伪装 200 / JSON 解析失败 / 无 `items` 与 `aweme_list` | `schema_changed` + 空 rows |
- * | 窗口内什么都没拦到,页面文本有「扫码登录」 | `needs_login` |
+ * | 窗口内什么都没拦到,页面文本有「扫码登录」(跳了登录页) | `needs_login` |
  * | 窗口内什么都没拦到,页面文本无登录线索 | `timeout` |
  * | 拦到事件但响应体两次都读不出 | `timeout` |
- * | chrome-cdp 连不上/连接断开 | `browser_unreachable` |
+ * | ego lite 没开 / `ego-browser` 不在 | `browser_unreachable` |
+ * | 单次抓取总超时(子进程被杀) | `timeout` |
+ * | `ego-browser` 输出不是预期 JSON | `error`(`ego_bad_output`),零写入 |
  */
 export async function pullDouyinStats(opts: PullDouyinOptions = {}): Promise<PullResult> {
-  let deps: { session: DouyinCdp; tap: EventTap };
   try {
-    deps = await (opts.connect ?? connectWithEventTap)();
+    const browser = opts.connect ? opts.connect() : new EgoSession({ label: "douyin" });
+    const intercepted = await browser.intercept({
+      url: DOUYIN_MANAGE_URL,
+      patterns: LIST_URL_PATTERNS,
+      waitMs: opts.waitMs ?? DEFAULT_WAIT_MS,
+      settleMs: opts.settleMs ?? DEFAULT_SETTLE_MS,
+    });
+    return judgeIntercept(intercepted, opts.limit ?? PAGE_ROW_LIMIT);
   } catch (err) {
     return classifyThrown(err);
-  }
-  try {
-    // 先开空白页再导航:Network.enable 必须早于页面发出列表请求,否则拦了个寂寞
-    return await withTab(deps.session, "about:blank", (tab) => pullInTab(deps.session, deps.tap, tab, opts));
-  } catch (err) {
-    return classifyThrown(err);
-  } finally {
-    deps.session.close();
   }
 }

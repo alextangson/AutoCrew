@@ -714,12 +714,12 @@ S3.0 把已有后端（雷达/流水线/飞轮/会话）暴露到创作者母语
 
 ## 十五、三平台自动回流（抖音/视频号/小红书，2026-08-23）
 
-> 对应 `docs/metrics-autopull-spec.md`（设计）与 `docs/metrics-autopull-endpoints.md`（端点+校准清单）。抓取走 chrome-cdp 常驻实例，登录态只活在浏览器 profile，AutoCrew 不落 cookie。
+> 对应 `docs/metrics-autopull-spec.md`（设计）、`docs/2026-10-03-metrics-pull-on-ego-lite-spec.md`（通道改 ego lite）与 `docs/metrics-autopull-endpoints.md`（端点+校准清单）。抓取走 ego lite，登录态只活在浏览器 profile，AutoCrew 不落 cookie。
 
 ### 启用步骤（一次性）
 
-1. 确认 chrome-cdp 常驻实例在跑（launchd `ai.openclaw.chrome-cdp`，默认 `127.0.0.1:18792`，同公众号拉数那台）。没跑时 Report 页会显示「浏览器未连接」+ 指引；
-2. 在该 Chrome 里逐个打开并扫码登录：`creator.douyin.com`、`channels.weixin.qq.com`、`creator.xiaohongshu.com`；
+1. 确认 ego lite 在运行、`ego-browser` 命令可用（`autocrew doctor` 里 egoBrowser / egoLiteReachable 两项）。没开时 Report 页会显示「浏览器未连接（ego lite）」+ 指引；
+2. 在 ego lite 里逐个打开并扫码登录：`creator.douyin.com`、`channels.weixin.qq.com`、`creator.xiaohongshu.com`；
 3. 工作台「数据回流」页 → 「自动回流」区，逐平台打开开关；点「立即抓取」做首轮验证。
 
 ### 人工只读 smoke（每次平台接口疑似改版时跑）
@@ -733,13 +733,14 @@ S3.0 把已有后端（雷达/流水线/飞轮/会话）暴露到创作者母语
 
 | 徽标 | 含义 | 你要做什么 |
 |---|---|---|
-| 需扫码 | 登录态过期（视频号可能每天一次） | 在 chrome-cdp 实例里开对应后台扫码，回来点「立即抓取」 |
+| 需登录 | 登录态过期（视频号可能每天一次） | 在 ego lite 里登录对应后台，回来点「立即抓取」 |
 | 风控暂停 | 小红书 461/471 验证码 | 当日自动抓取已停；去后台人工过一次验证码，次日恢复 |
 | 接口变更 | 响应 schema 不符，零写入 | 走上面的 smoke 第 4 步 |
-| 浏览器未连接 | chrome-cdp 实例没起 | 启动 launchd 实例 |
+| 浏览器未连接 | ego lite 没开 / `ego-browser` 不在 | 打开 ego lite；`autocrew doctor` 自检 |
 
 ### 已知边界
 
-- 自动抓取每平台 ≤2 次/天（保守默认）；手动不限；
+- 每天 09:00 自动抓一次（三平台串行，间隔 ≥10 秒）；错过就在下一次检查（30 分钟一次）补抓，当天抓成一次就不再抓；失败按退避重试，当日自动尝试 ≤3 次；手动不限；
+- 抓取只在 Agent 自己的 TaskSpace 里开页，抓完就关，不碰你在 ego lite 里的标签；
 - 数据绑定优先平台作品 id（发布确认时贴链接会当场认亲），无 id 退回标题+±48h 时间窗；视频号分享链提不出作品 id，靠标题精确命中后自愈登记；
 - 崩溃恢复靠幂等重放：状态没写住就下轮重抓，重复导入无害。

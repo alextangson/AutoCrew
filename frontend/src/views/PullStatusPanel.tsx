@@ -51,15 +51,14 @@ function PullRow(props: {
         <p className="muted pull-note">
           {hint}{" "}
           {row.lastStatus === "needs_login" && (
-            <a href={row.consoleUrl} target="_blank" rel="noreferrer">
-              去{row.label}后台扫码 ↗
-            </a>
+            // 回流用的是 ego lite 里的登录态：在别的浏览器里登录没用，所以只给地址，不给外链
+            <span className="mono">{row.consoleUrl}</span>
           )}
         </p>
       )}
       {row.platform === "wechat_video" && row.enabled && (
         // 如实告知,不承诺也不隐瞒(spec §4.4):视频号登录态短是社区经验,不是我们的承诺
-        <p className="muted pull-note">视频号登录态较短，可能需要每天扫码。</p>
+        <p className="muted pull-note">视频号登录态较短，可能需要每天在 ego lite 里重新扫码登录。</p>
       )}
     </div>
   );
@@ -114,7 +113,7 @@ export function PullStatusPanel({ onImported }: { onImported: () => void }) {
     <div className="card report-card">
       <div className="card-head">
         <span className="card-title">自动回流</span>
-        <span className="mono muted">浏览器登录态直调创作者后台 · 每 12 小时一次</span>
+        <span className="mono muted">ego lite 登录态直调创作者后台 · 每天 9:00 一次</span>
       </div>
       {err && (
         // 读不出状态 ≠ 没抓过:这里必须说实话,否则人会以为自动回流从没跑过
@@ -123,8 +122,8 @@ export function PullStatusPanel({ onImported }: { onImported: () => void }) {
       {!err && rows === null && <p className="muted">载入中…</p>}
       {rows && browserUnreachable(rows) && (
         <p className="pull-banner">
-          浏览器未连接：自动回流需要一个常驻 Chrome（chrome-cdp，默认 127.0.0.1:18792）带着你的平台登录态。
-          启动它之后点任意一行的「立即抓取」重试——三平台会一起恢复。
+          浏览器未连接（ego lite）：自动回流借 ego lite 里的平台登录态抓数据。打开 ego lite 并保持运行，
+          然后点任意一行的「立即抓取」重试——三平台会一起恢复。还没装就去 lite.ego.app 安装，运行 autocrew doctor 可自检。
         </p>
       )}
       {rows?.map((row) => (

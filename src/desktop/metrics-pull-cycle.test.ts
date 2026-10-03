@@ -1,5 +1,5 @@
 /**
- * 调度语义锁（回流 spec §4.3）：TTL 门 / 退避状态机 / single-flight / 写序。
+ * 调度语义锁（回流 spec §4.3 + 2026-10-03 每天 09:00）：定时门 / 退避状态机 / single-flight / 写序。
  * 全程注入假抓取器（不连浏览器）+ 注入 now/sleep（不等真时间）；
  * 生命周期那一组用 fake timer 验「启动跑一轮 + 30 分钟再一轮 + stop 后不再跑」。
  */
@@ -11,6 +11,7 @@ import {
   METRICS_PULL_TICK_MS,
   PLATFORM_GAP_MS,
   applyPullOutcome,
+  MAX_AUTO_PULLS_PER_DAY,
   isPullDue,
   nextDayAtNine,
   pullPlatformNow,
@@ -80,7 +81,7 @@ afterEach(async () => {
 
 // ── 纯函数：判定与退避 ───────────────────────────────────────────────────────
 
-describe("isPullDue — 三道门", () => {
+describe("isPullDue — 每天 09:00 的门", () => {
   const base = (over: Partial<PlatformPullState> = {}): PlatformPullState => ({
     ...defaultPlatformState(),
     enabled: true,
@@ -91,11 +92,20 @@ describe("isPullDue — 三道门", () => {
     expect(isPullDue(base({ enabled: false }), NOW)).toBe(false);
   });
 
-  it("TTL 门：12h 内成功过就不重抓，超过才抓", () => {
-    const sixHoursAgo = new Date(NOW.getTime() - 6 * 3_600_000).toISOString();
-    const thirteenHoursAgo = new Date(NOW.getTime() - 13 * 3_600_000).toISOString();
-    expect(isPullDue(base({ lastSuccessAt: sixHoursAgo }), NOW)).toBe(false);
-    expect(isPullDue(base({ lastSuccessAt: thirteenHoursAgo }), NOW)).toBe(true);
+  it("09:00 之前不抓，09:00 起该抓", () => {
+    const yesterday = new Date(2026, 7, 22, 9, 5).toISOString();
+    expect(isPullDue(base({ lastSuccessAt: yesterday }), new Date(2026, 7, 23, 8, 59))).toBe(false);
+    expect(isPullDue(base({ lastSuccessAt: yesterday }), new Date(2026, 7, 23, 9, 0))).toBe(true);
+  });
+
+  it("今天 09:00 之后成功过就不再抓（一天一次）；09:00 之前的成功（如手动）不算今天这一抓", () => {
+    expect(isPullDue(base({ lastSuccessAt: new Date(2026, 7, 23, 9, 1).toISOString() }), NOW)).toBe(false);
+    expect(isPullDue(base({ lastSuccessAt: new Date(2026, 7, 23, 8, 0).toISOString() }), NOW)).toBe(true);
+  });
+
+  it("错过 09:00（睡眠 / 服务没开）：之后任意一次检查补抓", () => {
+    const twoDaysAgo = new Date(2026, 7, 21, 9, 0).toISOString();
+    expect(isPullDue(base({ lastSuccessAt: twoDaysAgo }), new Date(2026, 7, 23, 22, 30))).toBe(true);
   });
 
   it("nextEligibleAt 未到 = 退避中，不抓", () => {
@@ -103,9 +113,10 @@ describe("isPullDue — 三道门", () => {
     expect(isPullDue(base({ nextEligibleAt: later }), NOW)).toBe(false);
   });
 
-  it("当日自动抓取满 2 次 = 红线拦下（次日重新计数）", () => {
-    expect(isPullDue(base({ autoAttemptDate: "2026-08-23", autoAttemptCount: 2 }), NOW)).toBe(false);
-    expect(isPullDue(base({ autoAttemptDate: "2026-08-23", autoAttemptCount: 1 }), NOW)).toBe(true);
+  it("当日自动尝试满 3 次 = 红线拦下（次日重新计数）", () => {
+    expect(MAX_AUTO_PULLS_PER_DAY).toBe(3);
+    expect(isPullDue(base({ autoAttemptDate: "2026-08-23", autoAttemptCount: 3 }), NOW)).toBe(false);
+    expect(isPullDue(base({ autoAttemptDate: "2026-08-23", autoAttemptCount: 2 }), NOW)).toBe(true);
     expect(isPullDue(base({ autoAttemptDate: "2026-08-22", autoAttemptCount: 9 }), NOW)).toBe(true);
   });
 });
@@ -113,13 +124,17 @@ describe("isPullDue — 三道门", () => {
 describe("applyPullOutcome — 退避状态机", () => {
   const prev = { ...defaultPlatformState(), enabled: true };
 
-  it("ok：记成功时间/行数/批次，失败计数清零，下次 = now + TTL", () => {
+  it("ok：记成功时间/行数/批次，失败计数清零，下次 = 下一个 09:00", () => {
     const next = applyPullOutcome(prev, { status: "ok", rowCount: 7, imported: 7, batchId: "b1" }, NOW, "auto");
     expect(next.lastSuccessAt).toBe(NOW.toISOString());
     expect(next.lastRowCount).toBe(7);
     expect(next.lastBatchId).toBe("b1");
     expect(next.failureCount).toBe(0);
-    expect(Date.parse(next.nextEligibleAt!) - NOW.getTime()).toBe(12 * 3_600_000);
+    expect(next.nextEligibleAt).toBe(nextDayAtNine(NOW));
+    // 09:00 之前的成功（手动）→ 下次就是今天 09:00，不挡掉今天的定时抓取
+    const early = new Date(2026, 7, 23, 8, 0);
+    const manual = applyPullOutcome(prev, { status: "ok", rowCount: 1 }, early, "manual");
+    expect(manual.nextEligibleAt).toBe(new Date(2026, 7, 23, 9, 0).toISOString());
   });
 
   it("needs_login 不算失败：计数不动，下次 = 次日 09:00", () => {
@@ -207,7 +222,7 @@ describe("pullPlatformNow — 入库与状态", () => {
     expect((await stateOf("douyin")).lastRowCount).toBe(1);
   });
 
-  it("全部行被拒收 = 失败，不盖成功时间也不进入 12h TTL", async () => {
+  it("全部行被拒收 = 失败，不盖成功时间，按失败退避 1 小时", async () => {
     const attempt = await pullPlatformNow("douyin", {
       dataDir: dir,
       ...deps({
@@ -360,7 +375,7 @@ describe("runMetricsPullTick — 编排", () => {
       dir,
       deps({
         registry: {
-          douyin: async () => fail("browser_unreachable", "cdp_unreachable"),
+          douyin: async () => fail("browser_unreachable", "ego_unreachable"),
           wechat_video: others,
           xiaohongshu: others,
         },
@@ -391,9 +406,9 @@ describe("runMetricsPullTick — 编排", () => {
     expect(state.nextEligibleAt).toBe(nextDayAtNine(NOW));
   });
 
-  it("当日自动抓取 ≤2 次：第 3 轮直接不出手", async () => {
-    // 两次都失败(不改 lastSuccessAt)且 nextEligibleAt 已过 —— 只剩红线能拦住它
-    await seed("douyin", { autoAttemptDate: "2026-08-23", autoAttemptCount: 2, failureCount: 1 });
+  it("当日自动尝试 ≤3 次：第 4 轮直接不出手（ego lite 没开也不刷屏）", async () => {
+    // 三次都失败(不改 lastSuccessAt)且 nextEligibleAt 已过 —— 只剩红线能拦住它
+    await seed("douyin", { autoAttemptDate: "2026-08-23", autoAttemptCount: 3, failureCount: 1 });
     const fetcher = vi.fn(async () => okResult());
     const attempts = await runMetricsPullTick(dir, deps({ registry: { douyin: fetcher } }));
     expect(attempts).toHaveLength(0);
@@ -404,7 +419,8 @@ describe("runMetricsPullTick — 编排", () => {
     await seed("douyin", {
       nextEligibleAt: new Date(NOW.getTime() + 5 * 3_600_000).toISOString(),
       autoAttemptDate: "2026-08-23",
-      autoAttemptCount: 2,
+      autoAttemptCount: 3,
+      lastSuccessAt: new Date(2026, 7, 23, 9, 0).toISOString(),
     });
     const fetcher = vi.fn(async () => okResult());
     const attempt = await pullPlatformNow("douyin", {

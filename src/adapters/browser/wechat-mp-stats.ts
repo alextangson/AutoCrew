@@ -1,15 +1,16 @@
 /**
  * 公众号后台运营数据拉取 —— musegzh pull_wechat_stats.py 的 TS 移植(PRD §9 收编已验证路径)。
  *
- * 机制:CDP 会话基座(cdp-session.ts)开后台标签到 mp.weixin.qq.com → 在页面 origin 内 fetch
- * 后台自己的 appmsgpublish JSON 接口(credentials:'include' 自动带 cookie)→ 阅读/分享/在看/
+ * 机制:ego lite 通道(ego-session.ts)在 Agent 自己的 TaskSpace 里开 mp.weixin.qq.com → 页面内 fetch
+ * 后台自己的 appmsgpublish JSON 接口(带页面 cookie)→ 阅读/分享/在看/
  * 送达数/群发时刻。只读、低频、有人值守(GUI 一键触发)——合规口径与 PRD §6 红线同构。
  * 个人主体订阅号无 datacube 权限(实测 48001),这条是公众号回填的主路。
  *
  * 登录态三分法(in/out/timeout)原样保留:后台标签导航慢是瞬时态,绝不误报"请扫码"。
  * 新抓取器统一用 pull-types 的 7 值状态码,三态映射见 wechatStatusToPullStatus。
  */
-import { CdpSession, withCdpTab, type CdpTab } from "./cdp-session.js";
+import { EgoChannelError, EgoSession, type EgoRunner } from "./ego-session.js";
+import { withTab, type TabRef } from "./pull-shared.js";
 import type { PullStatus } from "./pull-types.js";
 
 export interface WechatStatRow {
@@ -66,7 +67,11 @@ export function parsePublishPage(body: string): WechatStatRow[] {
       }
     }
     const info = pi as
-      | { sent_status?: { total?: number }; sent_info?: { time?: number }; appmsg_info?: Array<Record<string, unknown>> }
+      | {
+          sent_status?: { total?: number };
+          sent_info?: { time?: number };
+          appmsg_info?: Array<Record<string, unknown>>;
+        }
       | undefined;
     const fans = Number(info?.sent_status?.total ?? 0) || 0;
     const sentTime = Number(info?.sent_info?.time ?? 0) || 0;
@@ -116,14 +121,13 @@ const normTitle = (t: string): string => (t || "").toLowerCase().replace(/[^\w�
 
 /** 后台页导航探测:token= 落到 /cgi-bin/home = 已登录;真落到登录页 = out;还卡 about:blank = 瞬时 */
 async function probeBackend(
-  cdp: CdpSession,
-  tab: CdpTab,
+  ego: EgoSession,
+  tab: TabRef,
   secs = 25,
 ): Promise<{ status: WechatSessionStatus; token: string | null }> {
-  await cdp.cmd("Page.navigate", { url: BACKEND }, tab.sessionId).catch(() => {}); // 强推导航,别赖被降级的后台标签
   let href = "";
   for (let i = 0; i < secs * 2; i += 1) {
-    href = String((await cdp.eval("location.href", tab.sessionId)) ?? "");
+    href = String((await ego.eval("location.href", tab.sessionId).catch(() => "")) ?? "");
     if (href.includes("token=")) break;
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -134,8 +138,8 @@ async function probeBackend(
 }
 
 async function fetchAllPages(
-  cdp: CdpSession,
-  tab: CdpTab,
+  ego: EgoSession,
+  tab: TabRef,
   token: string,
   total: number,
   pageSize: number,
@@ -145,7 +149,7 @@ async function fetchAllPages(
     const url =
       `${BACKEND}cgi-bin/appmsgpublish?sub=list&begin=${begin}&count=${pageSize}` +
       `&token=${token}&lang=zh_CN&f=json&ajax=1`;
-    const res = await cdp.fetchInPage(url, tab.sessionId);
+    const res = await ego.fetch(url, { method: "GET" }, tab.sessionId);
     if (res.httpStatus !== 200) break;
     const rows = parsePublishPage(res.bodyText);
     if (rows.length === 0) break; // 拉到底
@@ -154,28 +158,49 @@ async function fetchAllPages(
   return [...byTitle.values()];
 }
 
-/** 拉全量已发文数据。timeout 自动重开标签重试;out 明确返回(调用方给扫码指引)。 */
+/**
+ * 拉全量已发文数据。timeout 自动重开 TaskSpace 重试;out 明确返回(调用方给登录指引)。
+ * 通道故障(ego lite 没开 / 超时 / 输出不对)抛 EgoChannelError,由调用方给可见状态。
+ */
 export async function pullWechatMpStats(
-  opts: { total?: number; pageSize?: number; attempts?: number } = {},
+  opts: { total?: number; pageSize?: number; attempts?: number; runner?: EgoRunner; retryDelayMs?: number } = {},
 ): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
-  const { total = 100, pageSize = 20, attempts = 3 } = opts;
-  const cdp = await CdpSession.connect();
+  const { total = 100, pageSize = 20, attempts = 3, retryDelayMs = 1000 } = opts;
+  const ego = new EgoSession({ label: "wechat_mp", runner: opts.runner });
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const res = await openAndProbe(ego, total, pageSize);
+    if (res.status === "in") return res;
+    if (res.status === "out") return { status: "out", rows: [] };
+    if (!ego.hasTimeLeft()) break;
+    await new Promise((r) => setTimeout(r, retryDelayMs)); // timeout → 重开再试
+  }
+  return { status: "timeout", rows: [] };
+}
+
+/** 开页导航超时(脚本里 goto 超时)是瞬时态:当成 timeout 交给重试循环;通道故障/总超时照常抛 */
+function isRetryableNavTimeout(err: unknown): boolean {
+  return !(err instanceof EgoChannelError) && err instanceof Error && /timed? ?out|timeout/i.test(err.message);
+}
+
+async function openAndProbe(
+  ego: EgoSession,
+  total: number,
+  pageSize: number,
+): Promise<{ status: WechatSessionStatus; rows: WechatStatRow[] }> {
   try {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const res = await withCdpTab(cdp, BACKEND, async (tab) => {
-        const probe = await probeBackend(cdp, tab);
-        if (probe.status === "in" && probe.token) {
-          return { status: "in" as WechatSessionStatus, rows: await fetchAllPages(cdp, tab, probe.token, total, pageSize) };
-        }
-        // 拿不到 token 的"已登录"当瞬时态处理:重开标签再试,不冒充登录失效
-        return { status: probe.status === "in" ? "timeout" : probe.status, rows: [] as WechatStatRow[] };
-      });
-      if (res.status === "in") return res;
-      if (res.status === "out") return { status: "out", rows: [] };
-      await new Promise((r) => setTimeout(r, 1000)); // timeout → 重开标签再试
-    }
-    return { status: "timeout", rows: [] };
-  } finally {
-    cdp.close();
+    return await withTab(ego, BACKEND, async (tab) => {
+      const probe = await probeBackend(ego, tab);
+      if (probe.status === "in" && probe.token) {
+        return {
+          status: "in" as WechatSessionStatus,
+          rows: await fetchAllPages(ego, tab, probe.token, total, pageSize),
+        };
+      }
+      // 拿不到 token 的"已登录"当瞬时态处理:重开再试,不冒充登录失效
+      return { status: probe.status === "in" ? "timeout" : probe.status, rows: [] as WechatStatRow[] };
+    });
+  } catch (err) {
+    if (isRetryableNavTimeout(err)) return { status: "timeout", rows: [] };
+    throw err;
   }
 }

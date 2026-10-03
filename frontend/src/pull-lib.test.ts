@@ -33,7 +33,7 @@ describe("pullBadge — 状态徽标", () => {
   it.each([
     ["never", "从未运行", "idle"],
     ["ok", "已连接", "ok"],
-    ["needs_login", "需扫码", "warn"],
+    ["needs_login", "需登录", "warn"],
     ["risk_control", "风控暂停", "warn"],
     ["schema_changed", "接口变更", "bad"],
     ["browser_unreachable", "浏览器未连接", "bad"],
@@ -45,8 +45,8 @@ describe("pullBadge — 状态徽标", () => {
 });
 
 describe("pullHint — 行内那句话", () => {
-  it("需扫码时指向「去后台扫码」，不是「抓取失败」", () => {
-    expect(pullHint(row({ lastStatus: "needs_login" }))).toContain("扫码");
+  it("需登录时指向「在 ego lite 里登录 XX 后台」，不是「抓取失败」", () => {
+    expect(pullHint(row({ lastStatus: "needs_login" }))).toContain("在 ego lite 里登录");
   });
 
   it("失败时带脱敏错误码与连败次数", () => {
@@ -59,8 +59,8 @@ describe("pullHint — 行内那句话", () => {
     expect(pullHint(row({ lastStatus: "ok" }))).toBeNull();
   });
 
-  it("刚开开关说清「最多等多久」，不让人以为没反应", () => {
-    expect(pullHint(row({ lastStatus: "never" }))).toContain("30 分钟");
+  it("刚开开关说清「什么时候抓」，不让人以为没反应", () => {
+    expect(pullHint(row({ lastStatus: "never" }))).toContain("每天 9:00");
   });
 });
 

@@ -11,7 +11,7 @@
  * `x-s-common` 本地拼 base64 JSON 那条腿**故意不做**:端点文档有拼法,但它是纯本地重实现,
  * 一旦平台改算法就静默失效。等真实抓包确认 `x-s`/`x-t` 不够用时再补,不预先造。
  */
-import { CdpSession } from "./cdp-session.js";
+import { EgoSession } from "./ego-session.js";
 import type { OutcomeMetrics } from "../../modules/flywheel/outcome-schema.js";
 import type { PullResult, TypedRow } from "./pull-types.js";
 import {
@@ -20,7 +20,6 @@ import {
   classifyThrown,
   envelopeOf,
   failure,
-  fetchInPageWithInit,
   firstString,
   idOf,
   isRecord,
@@ -64,7 +63,7 @@ async function trySign(page: PageEvaluator, sessionId: string, uri: string): Pro
     const xt = String(raw.xt ?? "");
     return xs && xt ? { xs, xt } : null;
   } catch {
-    // `_webmsxyw is not a function` 会以异常形态回来(cdp-session 把 exceptionDetails 转错误)
+    // `_webmsxyw is not a function` 会以异常形态回来(ego 通道把页面内异常转成错误)
     return null;
   }
 }
@@ -130,7 +129,7 @@ export function judgeLogin(res: PageFetchOutcome): PullResult | "logged_in" {
   return failure("schema_changed", "missing:login_ping.success");
 }
 
-export interface XhsCdp extends PageEvaluator, TabHost {
+export interface XhsBrowser extends PageEvaluator, TabHost {
   close(): void;
 }
 
@@ -140,12 +139,12 @@ export interface PullXhsOptions {
   delayMs?: number;
   navTimeoutMs?: number;
   signRetryMs?: number;
-  /** 测试注入点:默认连常驻 chrome-cdp */
-  connect?: () => Promise<{ session: XhsCdp }>;
+  /** 测试注入点:默认走 ego lite 通道 */
+  connect?: () => Promise<{ session: XhsBrowser }>;
 }
 
 const getJson = (page: PageEvaluator, sessionId: string, path: string, headers?: Record<string, string>) =>
-  fetchInPageWithInit(page, `${ORIGIN}${path}`, { method: "GET", headers }, sessionId);
+  page.fetch(`${ORIGIN}${path}`, { method: "GET", headers }, sessionId);
 
 /** 依次打免签登录端点,第一条给出明确结论就采信;两条都没结论时返回最后一条的结论 */
 async function probeLogin(page: PageEvaluator, sessionId: string): Promise<PullResult | "logged_in"> {
@@ -217,14 +216,16 @@ async function pickRoute(
  * | 免签 analyze/list 不可用,且 `window._webmsxyw` 重试后仍缺失 | `error`(`sign_fn_missing`) |
  * | 签名端点信封 `success:false` | `error`(`note_stats_code:<码>`) |
  * | 标签页超时未落到 creator.xiaohongshu.com | `timeout` |
- * | chrome-cdp 连不上/连接断开 | `browser_unreachable` |
+ * | ego lite 没开 / `ego-browser` 不在 | `browser_unreachable` |
+ * | 单次抓取总超时(子进程被杀) | `timeout` |
+ * | `ego-browser` 输出不是预期 JSON | `error`(`ego_bad_output`),零写入 |
  */
 export async function pullXhsStats(opts: PullXhsOptions = {}): Promise<PullResult> {
   const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
   const signRetryMs = opts.signRetryMs ?? SIGN_RETRY_MS;
-  let session: XhsCdp;
+  let session: XhsBrowser;
   try {
-    session = opts.connect ? (await opts.connect()).session : await CdpSession.connect();
+    session = opts.connect ? (await opts.connect()).session : new EgoSession({ label: "xiaohongshu" });
   } catch (err) {
     return classifyThrown(err);
   }

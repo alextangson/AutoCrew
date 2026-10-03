@@ -9,6 +9,7 @@
  */
 import type { OutcomeMetrics } from "../../modules/flywheel/outcome-schema.js";
 import type { PullResult, PullStatus, TypedRow } from "./pull-types.js";
+import { EgoChannelError, type PageFetchInit, type PageFetchResponse } from "./ego-session.js";
 
 /** 单次抓取入库上限(spec §4.2);超出即 hasMore */
 export const PAGE_ROW_LIMIT = 200;
@@ -50,15 +51,16 @@ export function okResult(rows: TypedRow[], hasMore: boolean): PullResult {
 }
 
 /**
- * 抛出的异常 → 结构化状态码。**读 message 只为归类,绝不把 message 放进 errorCode**
- * ——异常文本里可能带页面内片段(cdp-session 的「页面内表达式抛错:<描述>」)。
+ * 抛出的异常 → 结构化状态码。通道层（EgoChannelError）在抛出处已定好状态与错误码，原样采信；
+ * 其余异常**读 message 只为归类，绝不把 message 放进 errorCode**——异常文本里可能带页面内片段。
  */
 export function classifyThrown(err: unknown): PullResult {
+  if (err instanceof EgoChannelError) return failure(err.status, err.code);
   const msg = err instanceof Error ? err.message : String(err);
-  if (/断开|关闭|WebSocket|webSocketDebuggerUrl|ECONNREFUSED|fetch failed|连接失败/i.test(msg)) {
-    return failure("browser_unreachable", "cdp_unreachable");
+  if (/断开|关闭|ECONNREFUSED|fetch failed|连接失败|Target closed/i.test(msg)) {
+    return failure("browser_unreachable", "ego_unreachable");
   }
-  if (/无响应|timed? ?out|timeout/i.test(msg)) return failure("timeout", "cdp_timeout");
+  if (/无响应|timed? ?out|timeout/i.test(msg)) return failure("timeout", "page_timeout");
   return failure("error", "exception");
 }
 
@@ -198,28 +200,27 @@ export async function paginate<C>(
   return { ...okResult(collected, hasMore), rejected };
 }
 
-/** 页面内 fetch 的最小能力面(CdpSession 结构上满足);测试直接塞桩,不连浏览器 */
+/** 页面能力面（EgoSession 满足）；测试直接塞桩，不连浏览器 */
 export interface PageEvaluator {
   eval(expression: string, sessionId: string, awaitPromise?: boolean): Promise<unknown>;
+  /** 页面内 window.fetch（带页面 cookie），响应原样交回 */
+  fetch(url: string, init: PageFetchInit, sessionId: string): Promise<PageFetchResponse>;
 }
 
-export interface CdpTabRef {
+/** 标签页句柄：ego 通道里 targetId 与 sessionId 都是 TaskSpace 的 spaceId */
+export interface TabRef {
   targetId: string;
   sessionId: string;
 }
 
 /** 标签页宿主的最小能力面 */
 export interface TabHost {
-  openTab(url: string): Promise<CdpTabRef>;
+  openTab(url: string): Promise<TabRef>;
   closeTarget(targetId: string): Promise<void>;
 }
 
-/**
- * 标签页生命周期(异常路径也关,不留后台幽灵标签)。
- * 与 `cdp-session.withCdpTab` 同义,但签名收窄到结构化接口——`CdpSession` 带私有字段,
- * 测试桩无法赋值给它;抓取器要可打桩,就必须按能力面而不是按类来要求依赖。
- */
-export async function withTab<T>(host: TabHost, url: string, fn: (tab: CdpTabRef) => Promise<T>): Promise<T> {
+/** 标签页（TaskSpace）生命周期：异常路径也关，不在 ego lite 里留幽灵页 */
+export async function withTab<T>(host: TabHost, url: string, fn: (tab: TabRef) => Promise<T>): Promise<T> {
   const tab = await host.openTab(url);
   try {
     return await fn(tab);
@@ -228,51 +229,8 @@ export async function withTab<T>(host: TabHost, url: string, fn: (tab: CdpTabRef
   }
 }
 
-export interface PageFetchInit {
-  method?: "GET" | "POST";
-  headers?: Record<string, string>;
-  /** 已序列化的请求体(JSON 字符串) */
-  body?: string;
-}
-
-export interface PageFetchOutcome {
-  httpStatus: number;
-  finalUrl: string;
-  contentType: string;
-  bodyText: string;
-}
-
-/**
- * 带 method/header/body 的页面内 fetch —— cdp-session 的 `fetchInPage` 只做 GET,
- * 视频号(POST + X-WECHAT-UIN)与小红书(x-s/x-t 签名头)都需要这条。
- * 依旧是页面 origin 内执行 + `credentials:'include'`:登录态留在浏览器,我们不搬 cookie。
- */
-export async function fetchInPageWithInit(
-  page: PageEvaluator,
-  url: string,
-  init: PageFetchInit,
-  sessionId: string,
-): Promise<PageFetchOutcome> {
-  const opts = {
-    method: init.method ?? "GET",
-    headers: init.headers ?? {},
-    ...(init.body === undefined ? {} : { body: init.body }),
-    credentials: "include" as const,
-  };
-  const expr =
-    `(async()=>{const r=await fetch(${JSON.stringify(url)},${JSON.stringify(opts)});` +
-    `return{httpStatus:r.status,finalUrl:r.url,contentType:r.headers.get('content-type')||'',bodyText:await r.text()};})()`;
-  const raw = (await page.eval(expr, sessionId, true)) as Partial<PageFetchOutcome> | undefined;
-  if (!raw || typeof raw.httpStatus !== "number" || typeof raw.bodyText !== "string") {
-    throw new Error("页面内 fetch 返回形状异常(缺 httpStatus/bodyText)");
-  }
-  return {
-    httpStatus: raw.httpStatus,
-    finalUrl: String(raw.finalUrl ?? url),
-    contentType: String(raw.contentType ?? ""),
-    bodyText: raw.bodyText,
-  };
-}
+export type { PageFetchInit };
+export type PageFetchOutcome = PageFetchResponse;
 
 /**
  * 响应 → JSON 对象的统一前置守卫:HTTP 状态 / HTML 伪装 / JSON 解析 三道闸。
@@ -309,7 +267,7 @@ export function isoFromMillis(raw: unknown): string | null {
 }
 
 /**
- * 等页面真正落到目标 origin 再动手 —— 刚 `Target.createTarget` 的标签还停在 about:blank,
+ * 等页面真正落到目标 origin 再动手 —— 刚开的页可能还停在 about:blank,
  * 这时候 in-page fetch 会打到错的 origin(没 cookie),表现成假的「未登录」。
  */
 export async function waitForPageHost(
