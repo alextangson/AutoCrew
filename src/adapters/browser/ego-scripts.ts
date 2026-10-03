@@ -153,40 +153,62 @@ const BROWSE_WAIT = `      const waitPage = async (ms) => {
         }
         return { gate: null, responses };
       };
+      const findControl = (cfg) => page.evaluate("(" + ${JSON.stringify(FIND_NEXT_FN)} + ")(" + JSON.stringify(cfg) + ")");
+      const clickAt = async (hit) => {
+        await sleep(rand(300, 800));
+        await page.mouse.move(hit.x + rand(-3, 3), hit.y + rand(-2, 2), { steps: 8 + Math.floor(rand(0, 8)) });
+        await page.mouse.click(hit.x, hit.y);
+      };
       const advance = async () => {
         const info = await page.info().catch(() => ({ w: 1280, h: 800 }));
         if (P.next.kind === "scroll") {
           await page.mouse.move(rand(0.35, 0.65) * (info.w || 1280), rand(0.45, 0.7) * (info.h || 800), { steps: 6 + Math.floor(rand(0, 6)) });
           const n = 3 + Math.floor(rand(0, 4));
-          for (let i = 0; i < n; i += 1) { await page.mouse.wheel(0, rand(400, 900)); await sleep(rand(250, 700)); }
+          for (let i = 0; i < n; i += 1) {
+            await page.mouse.wheel(0, rand(400, 900));
+            await sleep(rand(250, 700));
+            // 新的一页一到就停手：一串滚轮不能一口气吞下好几页（30 天截止与 2–6 秒停顿要逐页生效）
+            collect(await page.events());
+            if (pending.length > 0) break;
+          }
           return "moved";
         }
-        const hit = await page.evaluate("(" + ${JSON.stringify(FIND_NEXT_FN)} + ")(" + JSON.stringify(P.next) + ")");
+        const hit = await findControl(P.next);
         if (!hit || !hit.found) return "pagination_missing";
         if (hit.disabled) return "no_more";
-        await sleep(rand(300, 800));
-        await page.mouse.move(hit.x + rand(-3, 3), hit.y + rand(-2, 2), { steps: 8 + Math.floor(rand(0, 8)) });
-        await page.mouse.click(hit.x, hit.y);
+        await clickAt(hit);
         return "moved";
       };`;
 
-const BROWSE_MAIN = `      const follow = async () => {
-        const re = new RegExp(P.follow.match);
-        const deadline = Date.now() + P.waitMs;
-        let m = null;
-        while (!m && Date.now() < deadline) {
-          m = re.exec(String(await page.evaluate("location.href").catch(() => "")));
-          if (!m) await sleep(500);
-        }
-        if (!m) return false;
-        await pause();
-        await page.goto(P.follow.template.replace("$1", m[1]), { waitUntil: "domcontentloaded", timeout: P.navTimeoutMs }).catch(() => {});
+const BROWSE_MAIN = `      const clickText = async (texts) => {
+        const hit = await findControl({ css: P.entry.css, texts });
+        if (!hit || !hit.found || hit.disabled) return false;
+        await clickAt(hit);
         return true;
+      };
+      // 像人一样从官方页面的菜单点进数据页（公众号：内容管理 → 发表记录）；不手拼任何数据地址
+      const enter = async () => {
+        const deadline = Date.now() + P.waitMs;
+        while (Date.now() < deadline) {
+          const g = await gate(false);
+          if (g) return g;
+          if (await clickText(P.entry.target)) return "ok";
+          if (P.entry.openers.length > 0 && (await clickText(P.entry.openers))) {
+            await pause();
+            if (await clickText(P.entry.target)) return "ok";
+          }
+          await sleep(1000);
+        }
+        return (await gate(true)) || "entry_missing";
       };
       await page.cdp("Network.enable", {});
       await page.events();
       await page.goto(P.url, { waitUntil: "domcontentloaded", timeout: P.navTimeoutMs }).catch(() => {});
-      if (P.follow && !(await follow())) return { pages: 0, end: "no_response", gate: await gate(true) };
+      if (P.entry) {
+        const entered = await enter();
+        if (entered === "entry_missing") return { pages: 0, end: "entry_missing", gate: null };
+        if (entered !== "ok") return { pages: 0, end: "gate", gate: entered };
+      }
       let pages = 0;
       for (let i = 0; i < P.maxPages; i += 1) {
         const got = await waitPage(i === 0 ? P.waitMs : P.nextWaitMs);
@@ -194,13 +216,19 @@ const BROWSE_MAIN = `      const follow = async () => {
         if (got.responses.length === 0) return { pages, end: i === 0 ? "no_response" : "no_new_response", gate: null };
         console.log(${JSON.stringify("__PAGE__")} + JSON.stringify({ index: i, responses: got.responses }));
         pages += 1;
+        // 有数据也要先看页面是不是已经跳到登录/验证页，再决定下一步（拿到响应 ≠ 没被风控）
+        const after = await gate(true);
+        if (after) return { pages, end: "gate", gate: after };
         if (got.responses.some((r) => r.status < 200 || r.status >= 300)) return { pages, end: "http_status", gate: null };
-        let seenInfo = { oldestMs: null, hasMore: null };
+        let seenInfo = { oldestMs: null, hasMore: null, terminal: null };
         try { seenInfo = inspect(got.responses) || seenInfo; } catch { /* 判不出就按「还有」处理，翻页上限兜底 */ }
+        if (seenInfo.terminal === "login" || seenInfo.terminal === "risk") return { pages, end: "gate", gate: seenInfo.terminal };
         if (typeof seenInfo.oldestMs === "number" && seenInfo.oldestMs < P.cutoffMs) return { pages, end: "cutoff", gate: null };
         if (seenInfo.hasMore === false) return { pages, end: "no_more", gate: null };
         if (i === P.maxPages - 1) break;
         await pause();
+        const before = await gate(true);
+        if (before) return { pages, end: "gate", gate: before };
         const moved = await advance();
         if (moved !== "moved") return { pages, end: moved, gate: null };
       }
@@ -210,12 +238,12 @@ const BROWSE_MAIN = `      const follow = async () => {
 export interface BrowseParams {
   space: string;
   url: string;
-  /** 先落到某个 URL 再跳数据页（公众号：首页 URL 里拿 token 拼发表记录页） */
-  follow?: { match: string; template: string };
+  /** 打开 url 后先从页面菜单点进数据页：找 target 文字的链接点它；找不到先点 openers 展开菜单 */
+  entry?: { css: string; target: string[]; openers: string[] };
   patterns: string[];
   gates: { loginUrl?: string; riskUrl?: string; loginText?: string; riskText?: string };
   next: { kind: "scroll" } | { kind: "click"; css: string; texts: string[] };
-  /** 自包含 JS 函数源码：(responses) => { oldestMs, hasMore } —— 决定还翻不翻 */
+  /** 自包含 JS 函数源码：(responses) => { oldestMs, hasMore, terminal? } —— 决定还翻不翻；terminal=login/risk 立刻收手 */
   inspectSrc: string;
   cutoffMs: number;
   maxPages: number;

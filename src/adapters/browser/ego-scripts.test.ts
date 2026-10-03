@@ -37,12 +37,17 @@ interface Sim {
   text?: string;
   /** 翻页控件：undefined = 找得到且可点 */
   next?: { found: boolean; disabled?: boolean };
+  /** 页面菜单上看得见的文字（入口点击用） */
+  menu?: string[];
+  /** 什么动作会让页面收到下一条响应（默认点击） */
+  serveOn?: "click" | "wheel";
 }
 
 function fakePage(sim: Sim) {
   let queue: unknown[] = [];
   let served = 0;
   const actions: string[] = [];
+  const clicked: string[] = [];
   const serve = () => {
     const b = sim.bodies[served];
     if (!b) return;
@@ -59,16 +64,22 @@ function fakePage(sim: Sim) {
     info: async () => ({ w: 1000, h: 800 }),
     evaluate: async (expr: string) => {
       if (expr === "location.href") return sim.href ?? WV.url;
-      if (expr.startsWith("((cfg) =>")) return sim.next ?? { found: true, disabled: false, x: 10, y: 20 };
+      if (expr.startsWith("((cfg) =>")) {
+        const cfg = JSON.parse(expr.slice(expr.lastIndexOf(")(") + 2, -1)) as { texts: string[] };
+        if (cfg.texts.includes("下一页")) return sim.next ?? { found: true, disabled: false, x: 10, y: 20 };
+        const t = cfg.texts.find((x) => (sim.menu ?? []).includes(x));
+        if (t) clicked.push(t);
+        return t ? { found: true, disabled: false, x: 5, y: 5 } : { found: false };
+      }
       return sim.text ?? "";
     },
     mouse: {
       move: async () => void actions.push("move"),
-      wheel: async () => void actions.push("wheel"),
-      click: async () => (actions.push("click"), serve()),
+      wheel: async () => (actions.push("wheel"), sim.serveOn === "wheel" ? serve() : undefined),
+      click: async () => (actions.push("click"), sim.serveOn === "wheel" ? undefined : serve()),
     },
   };
-  return { page, actions };
+  return { page, actions, clicked };
 }
 
 const params = (over: Partial<BrowseParams> = {}): BrowseParams => ({
@@ -78,8 +89,8 @@ const params = (over: Partial<BrowseParams> = {}): BrowseParams => ({
 });
 
 const run = async (sim: Sim, over: Partial<BrowseParams> = {}) => {
-  const { page, actions } = fakePage(sim);
-  return { ...(await execScript(browseScript(params(over)), page)), actions };
+  const { page, actions, clicked } = fakePage(sim);
+  return { ...(await execScript(browseScript(params(over)), page)), actions, clicked };
 };
 
 describe("browseScript — 只旁听页面自己的响应", () => {
@@ -122,6 +133,32 @@ describe("browseScript — 只旁听页面自己的响应", () => {
     expect(r.results[0]).toMatchObject({ pages: 1 });
   });
 
+  it("P2-2 滚动中新的一页一到就停手：一串滚轮不会吞下好几页，每页都单独过截止与停顿", async () => {
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }, { body: body(3, false) }], serveOn: "wheel" }, { next: { kind: "scroll" } });
+    expect(r.pages.map((p) => p.index)).toEqual([0, 1, 2]);
+    expect(r.actions.filter((a) => a === "wheel")).toHaveLength(2);
+    expect(r.results[0]).toMatchObject({ end: "no_more", pages: 3 });
+  });
+
+  it("P1-2 拿到数据响应时页面已在验证页 → 立刻收手，不再点翻页", async () => {
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }], href: "https://channels.weixin.qq.com/verifycenter?captcha=1" });
+    expect(r.pages).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk", pages: 1 });
+    expect(r.actions).not.toContain("click");
+  });
+
+  it("P1-2 有数据但页面文字是滑块验证 → 同样收手", async () => {
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }], text: "请拖动滑块完成验证" });
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "risk" });
+    expect(r.actions).not.toContain("click");
+  });
+
+  it("P2-1 响应里是终止态信封（inspect 给 terminal）→ 浏览循环里当场停，不再翻", async () => {
+    const r = await run({ bodies: [{ body: body(1) }, { body: body(2) }] }, { inspectSrc: "() => ({ oldestMs: null, hasMore: true, terminal: 'login' })" });
+    expect(r.results[0]).toMatchObject({ end: "gate", gate: "login", pages: 1 });
+    expect(r.actions).not.toContain("click");
+  });
+
   it("页面跳到登录页（URL 特征）→ gate login，零页，不做任何翻页动作，照样 finish", async () => {
     const r = await run({ bodies: [], href: "https://channels.weixin.qq.com/login.html" }, { waitMs: 1_500 });
     expect(r.results[0]).toMatchObject({ end: "gate", gate: "login", pages: 0 });
@@ -146,9 +183,33 @@ describe("browseScript — 只旁听页面自己的响应", () => {
     expect(r.results[0]).toMatchObject({ end: "http_status" });
   });
 
-  it("follow：首页 URL 一直没有 token（公众号没登录）→ no_response + 看页面文字判登录", async () => {
-    const r = await run({ bodies: [], href: "https://mp.weixin.qq.com/", text: "使用账号登录 扫码登录" }, { follow: { match: "token=(\\d+)", template: "https://mp.weixin.qq.com/x?token=$1" }, gates: { loginText: "扫码登录" } });
-    expect(r.results[0]).toMatchObject({ end: "no_response", gate: "login" });
+  it("P1-1 入口：「发表记录」直接可见就点它进数据页，只 goto 过入口页一次", async () => {
+    const entry = { css: "a,span", target: ["发表记录"], openers: ["内容管理"] };
+    const r = await run({ bodies: [{ body: body(1, false) }], menu: ["发表记录"] }, { entry });
+    expect(r.clicked).toEqual(["发表记录"]);
+    expect(r.actions.filter((a) => a === "goto")).toHaveLength(1);
+  });
+
+  it("P1-1 入口：先点「内容管理」展开菜单再点「发表记录」", async () => {
+    const entry = { css: "a,span", target: ["发表记录"], openers: ["内容管理"] };
+    const { page, clicked } = fakePage({ bodies: [{ body: body(1, false) }], menu: ["内容管理"] });
+    const ev = page.evaluate;
+    page.evaluate = async (expr: string) => {
+      if (clicked.includes("内容管理") && expr.includes("发表记录")) clicked.push("发表记录");
+      if (clicked.includes("内容管理") && expr.includes("发表记录")) return { found: true, disabled: false, x: 1, y: 1 };
+      return ev(expr);
+    };
+    const r = await execScript(browseScript(params({ entry })), page);
+    expect(clicked).toEqual(["内容管理", "发表记录"]);
+    expect(r.results[0]).toMatchObject({ end: "no_more", pages: 1 });
+  });
+
+  it("P1-1 入口：公众号没登录（菜单不出来、页面是登录页）→ gate login；菜单一直找不到 → entry_missing", async () => {
+    const entry = { css: "a,span", target: ["发表记录"], openers: [] };
+    const login = await run({ bodies: [], href: "https://mp.weixin.qq.com/", text: "使用账号登录 扫码登录" }, { entry, gates: { loginText: "扫码登录" } });
+    expect(login.results[0]).toMatchObject({ end: "gate", gate: "login", pages: 0 });
+    const missing = await run({ bodies: [] }, { entry });
+    expect(missing.results[0]).toMatchObject({ end: "entry_missing", pages: 0 });
   });
 
   it("中途抛错 → 报错且只 finish 一次；连不上 → stage connect", async () => {

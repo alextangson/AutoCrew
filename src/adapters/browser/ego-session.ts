@@ -197,6 +197,7 @@ export type BrowseEnd =
   | "no_more"
   | "max_pages"
   | "pagination_missing"
+  | "entry_missing"
   | "error";
 
 export interface BrowseOutcome {
@@ -207,7 +208,7 @@ export interface BrowseOutcome {
   error?: unknown;
 }
 
-const BROWSE_ENDS: readonly string[] = ["no_response", "no_new_response", "gate", "http_status", "cutoff", "no_more", "max_pages", "pagination_missing"];
+const BROWSE_ENDS: readonly string[] = ["no_response", "no_new_response", "gate", "http_status", "cutoff", "no_more", "max_pages", "pagination_missing", "entry_missing"];
 
 /** 每页一行；被杀时最后一行可能是半截，解析不了就丢（不完整的页不算拿到） */
 export function parsePageLines(out: EgoRunOutput): CapturedPage[] {
