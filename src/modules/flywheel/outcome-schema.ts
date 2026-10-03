@@ -182,17 +182,36 @@ export function validateOutcome(input: {
   return { ok: true, needsReview: review.length > 0, reasons: review };
 }
 
-/** 幂等键：platform : (contentId 或 归一化标题@发布日期) : metricDate */
-export function outcomeKey(o: {
+interface KeyInput {
   contentId: string | null;
   platform: string;
   platformTitle: string;
   publishedAt: string | null;
   metricDate: string;
-}): string {
+  platformItemId?: string;
+}
+
+/** 可信的平台作品 id（截坏的抖音 id 不算）；没有就是空串 */
+export function trustedItemId(o: { platform: string; platformItemId?: string }): string {
+  const id = (o.platformItemId ?? "").trim();
+  return id && !isTruncatedItemId(o.platform, id) ? id : "";
+}
+
+/** 只按标题@日期（或 contentId）的旧键：作品标签等按旧键存过的东西用它查 */
+export function titleOutcomeKey(o: KeyInput): string {
   const norm = normalizeTitle(o.platformTitle) || o.platformTitle;
   const item = o.contentId
     ? o.contentId
     : `${norm}@${o.publishedAt ? shanghaiDate(o.publishedAt) : "unknown"}`;
   return `${normalizePlatform(o.platform)}:${item}:${o.metricDate}`;
+}
+
+/**
+ * 幂等键：platform : (contentId 或 归一化标题@发布日期) : metricDate，行带可信作品 id 时再加 #id。
+ * 加 id 是为了同平台同标题同日的两条不同作品永不合并（2026-10-03：09-16 抖音私密 + 公开重发）；
+ * 没有 id（CSV 等）或 id 截坏的行保持原来的标题@日期键，listOutcomes 会把它们并到唯一那条带 id 的作品上。
+ */
+export function outcomeKey(o: KeyInput): string {
+  const id = trustedItemId(o);
+  return id ? `${titleOutcomeKey(o)}#${id}` : titleOutcomeKey(o);
 }

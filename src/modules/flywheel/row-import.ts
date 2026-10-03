@@ -24,6 +24,8 @@ import type { PendingBinding } from "./platform-items.js";
 import {
   validateOutcome,
   outcomeKey,
+  titleOutcomeKey,
+  trustedItemId,
   normalizePlatform,
   type OutcomeMetrics,
   type OutcomeSource,
@@ -140,6 +142,18 @@ export async function importPerformanceRows(
   return serializeOutcomeWrite(opts.dataDir, async () => {
     const existing = await listOutcomes(opts.dataDir);
     const existingKeys = new Set(existing.map((o) => outcomeKey(o)));
+    // 标题@日期键 → 这一作品已有行的可信 id（'' = 没有 id）：带 / 不带 id 的同一作品算「覆盖」，不算新作品
+    const titleIds = new Map<string, Set<string>>();
+    for (const o of existing) {
+      const k = titleOutcomeKey(o);
+      titleIds.set(k, (titleIds.get(k) ?? new Set()).add(trustedItemId(o)));
+    }
+    const sameWorkExists = (o: PerformanceOutcome): boolean => {
+      const ids = titleIds.get(titleOutcomeKey(o));
+      if (!ids) return false;
+      const id = trustedItemId(o);
+      return id ? ids.has(id) || ids.has("") : ids.size === 1;
+    };
     const ctx: RowContext = {
       platform: normalizePlatform(platform),
       source: opts.source,
@@ -160,7 +174,7 @@ export async function importPerformanceRows(
       if (prepared.pending) pending.push(prepared.pending);
       const key = outcomeKey(prepared.outcome);
       report.imported += 1;
-      if (existingKeys.has(key) || staged.has(key)) report.replaced += 1;
+      if (existingKeys.has(key) || staged.has(key) || sameWorkExists(prepared.outcome)) report.replaced += 1;
       if (prepared.outcome.contentId) report.matched += 1;
       else report.historical += 1;
       staged.set(key, prepared.outcome);
