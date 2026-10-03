@@ -15,6 +15,8 @@ import { bucketOf } from "./derive.js";
 import { activePredictions, readPredictions, type PredictionRecord } from "./pool.js";
 import { requireText } from "./predict-input.js";
 import { retroStateUpdate } from "./retro-state.js";
+import { normText, readObservations } from "./obs-store.js";
+import { reproject } from "./observations.js";
 import { appendLog, ensureCalibration, fingerprint, serializeCalibration, writeState } from "./store.js";
 
 type Obj = Record<string, unknown>;
@@ -112,14 +114,18 @@ async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, a
     const after = (await readPredictions(dataDir)).predictions.find((x) => x.id === p.id);
     const intact = cached !== null && after !== undefined && fingerprint(after.body) === cached && after.body_fp === cached;
     if (!intact) await appendLog("predictions", { type: "integrity_warning", prediction_id: p.id, at: now.toISOString(), detail: "复盘前后预测主体指纹不一致：该样本降为参考，不进校准池" }, dataDir);
-    for (const text of observations) {
+    const { tombstones } = await readObservations(dataDir);
+    const blocked = observations.filter((t) => tombstones.some((x) => normText(x.text) === normText(t)));
+    for (const text of observations.filter((t) => !blocked.includes(t))) {
       await appendLog("rubric-memo", { type: "observation", id: `obs-${crypto.randomUUID().slice(0, 8)}`, stage: "observation", text, sample_ids: [p.id], source: "retro", at: now.toISOString() }, dataDir);
     }
+    if (observations.length > blocked.length) await reproject(dataDir);
     const { state } = await ensureCalibration(dataDir);
     const counted = !early && !p.reconstructed && intact;
     const upd = retroStateUpdate(state, p.id, ratio, counted, now);
     await writeState(upd.state, dataDir);
     return { ok: true, landed_bucket: landed, predicted_bucket: p.body.bucket, center_deviation_pct: rec.center_deviation, actual,
-      counted_as_calibration_sample: counted, integrity_warning: !intact, early_retro: early, prompts: upd.prompts };
+      counted_as_calibration_sample: counted, integrity_warning: !intact, early_retro: early, prompts: upd.prompts,
+      ...(blocked.length ? { tombstoned_observations: blocked } : {}) };
   });
 }

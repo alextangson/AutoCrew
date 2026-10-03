@@ -17,15 +17,15 @@ let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-r-")); });
 
 describe("§三 复盘", () => {
-  it("T+3 复盘：数据取回流、算落档与偏差、样本 +1、观察进 memo 不进 rubric.json", async () => {
+  it("T+3 复盘：数据取回流、算落档与偏差、样本 +1、观察进 memo，只有抽象的投影进 rubric.json", async () => {
     const { p, later } = await predictPublished(dir, 2000);
-    const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "钩子撑住了", observations: ["具体场景开头比概念开头留人"] }, dir, later);
+    const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "钩子撑住了", observations: ["具体场景开头比概念开头留人", "这条播放 2000 比上条高"] }, dir, later);
     expect(r).toMatchObject({ ok: true, landed_bucket: "命中", counted_as_calibration_sample: true, integrity_warning: false });
     const { state, rubric } = await ensureCalibration(dir);
     expect(state.calibration_samples).toBe(1);
     expect(state.pending_retros).toEqual([]);
-    expect(rubric.observations).toEqual([]);
-    expect((await readLog<{ type: string }>("rubric-memo", dir)).records.map((x) => x.type)).toEqual(["observation"]);
+    expect(rubric.observations.map((o) => o.text)).toEqual(["具体场景开头比概念开头留人"]);
+    expect((await readLog<{ type: string }>("rubric-memo", dir)).records.map((x) => x.type)).toEqual(["observation", "observation"]);
     expect(await calibrationPool(dir)).toHaveLength(1);
   });
   it("只追加一次；D+7 追加读数；修正只追加", async () => {
