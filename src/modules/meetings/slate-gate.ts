@@ -8,7 +8,7 @@
  * 「当前片单」= 最近一场会议记录的 slots（同日追加的单题会写进同一份记录）。上一场选中、
  * 这一场没再选中 → 拦。会议记录读不出 → 报读失败，既不放行也不冒充「没开过会」。
  */
-import { listContents } from "../../storage/local-store.js";
+import { listContentsStrict } from "../../storage/local-store.js";
 import { latestMeetingDate, readMeeting } from "./meeting-store.js";
 
 /** 用户可见文案集中在这里（创始人过目） */
@@ -34,9 +34,13 @@ const MEETING_NEXT = {
   note: "按 topic-meeting 技能开会（临时蹭热点就开单题会：meeting_save 的 meeting 里带 append:true 只加这一条），存好片单后再回来开写。不要自己绕过。",
 } as const;
 
-/** 该选题是否已有未归档稿件（有 = 不是新稿） */
+/**
+ * 该选题是否已有真稿（有 = 不是新稿）。真稿 = 未删、未归档、不是 `topic_saved` 占位行
+ * （create_variant 不带正文建的那种行只是选题的影子，不能拿来解锁闸口）。
+ * 严格读：任何一条稿件记录读不出就抛，不把「漏读」当成「没有」或「有」。
+ */
 export async function topicHasDraft(topicId: string, dataDir?: string): Promise<boolean> {
-  return (await listContents(dataDir)).some((c) => c.topicId === topicId && c.status !== "archived");
+  return (await listContentsStrict(dataDir)).some((c) => c.topicId === topicId && !c.deletedAt && c.status !== "archived" && c.status !== "topic_saved");
 }
 
 /** 选题是否在当前有效片单里；读失败直接抛（调用方转成 slate_read_failed） */

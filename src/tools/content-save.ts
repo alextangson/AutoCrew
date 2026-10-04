@@ -35,6 +35,7 @@ import { executeMarkReady, executeRecord } from "../modules/production/record.js
 import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
@@ -462,6 +463,11 @@ export async function executeContentSave(
       error: "平台变体的新正文也必须走 writer pack/submit；只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
       next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: topicId, platform } },
     };
+    // 片单闸口：选题还没有真稿时，这一步是在开它的第一篇——手动导入的成稿除外
+    if (!(hasBody && manualImport)) {
+      const offSlate = await newDraftSlateRefusal(topicId, dataDir);
+      if (offSlate) return offSlate;
+    }
     const result = await createPlatformVariant(
       topicId,
       platform,
@@ -503,6 +509,11 @@ export async function executeContentSave(
     return { ok: false, error: "title and body are required for save" };
   }
 
+  // 片单闸口：非导入的新建稿挂到选题上 = 给它开稿，选题须在片单上
+  if (!manualImport && params.topicId) {
+    const offSlate = await newDraftSlateRefusal(params.topicId as string, params._dataDir as string | undefined);
+    if (offSlate) return offSlate;
+  }
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
   if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: (await isOntologyEnabled(params._dataDir as string | undefined)) ? EDITING_VIA_ONTOLOGY : EDITING_VIA_HANDOFF };

@@ -828,6 +828,37 @@ async function listContentsRaw(dataDir?: string): Promise<Content[]> {
   return contents.map(withNormalizedStatus).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/**
+ * 严格全量读（含已删）：任何一条读不出、解析不了就抛，不跳过。
+ * 给「读漏一条就会判错」的决策用（片单闸口：漏读一篇已有稿 ≠ 没有稿）。
+ */
+export async function listContentsStrict(dataDir?: string): Promise<Content[]> {
+  if (readProjectRegistry(dataDir)) {
+    const out: Content[] = [];
+    for (const id of await contentIds(dataDir)) {
+      const c = await getContent(id, dataDir);
+      if (!c) throw new Error(`稿件 ${id} 读不出`);
+      out.push(c);
+    }
+    return out;
+  }
+  const dir = path.join(getDataDir(dataDir), "contents");
+  let entries: import("node:fs").Dirent[];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const out: Content[] = [];
+  for (const entry of entries) {
+    const file = entry.isDirectory() ? path.join(dir, entry.name, "meta.json") : entry.name.endsWith(".json") ? path.join(dir, entry.name) : null;
+    if (!file) continue;
+    try { out.push(withNormalizedStatus(JSON.parse(await fs.readFile(file, "utf-8")))); } catch (err) {
+      throw new Error(`稿件记录 contents/${entry.name} 读不出：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return out;
+}
+
 /** 稿件移入回收站(软删除,可恢复)。不存在 → null */
 export async function softDeleteContent(id: string, dataDir?: string): Promise<Content | null> {
   return updateContent(id, { deletedAt: new Date().toISOString() }, dataDir);

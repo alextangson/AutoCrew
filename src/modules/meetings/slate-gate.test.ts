@@ -64,6 +64,26 @@ describe("片单判定 newDraftSlateRefusal", () => {
     expect(await newDraftSlateRefusal(t2.id, f.data)).toMatchObject({ code: "not_on_slate" });
   });
 
+  it("回归 P1：不在片单的新题 create_variant 不带正文 → 拦；占位行也不能解锁闸口", async () => {
+    const t = await makeTopic(f.data, "新题");
+    expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "douyin", _dataDir: f.data })).toMatchObject({ code: "not_on_slate" });
+    expect(await executeContentSave({ action: "save", title: "直接存", body: "正文", topicId: t.id, status: "drafting", _dataDir: f.data })).toMatchObject({ code: "not_on_slate" });
+    expect(await listContents(f.data)).toHaveLength(0);
+    // 旧版本留下的 topic_saved 占位行：不算真稿，后续开写照样拦
+    await makeContent(f.data, "新题", { topicId: t.id }, "topic_saved");
+    expect(await newDraftSlateRefusal(t.id, f.data)).toMatchObject({ code: "not_on_slate" });
+    const generateScriptImpl = vi.fn();
+    expect(await executeGenerate({ action: "script", topic: t.title, topic_id: t.id, platform: "douyin", _dataDir: f.data }, { generateScriptImpl })).toMatchObject({ code: "not_on_slate" });
+    expect(generateScriptImpl).not.toHaveBeenCalled();
+  });
+
+  it("回归 P2：旧版存储里一份稿件 meta 读坏 → slate_read_failed，不放行", async () => {
+    const legacy = await fs.mkdtemp(path.join(f.temp, "legacy-"));
+    await fs.mkdir(path.join(legacy, "contents/content-broken"), { recursive: true });
+    await fs.writeFile(path.join(legacy, "contents/content-broken/meta.json"), "{ 坏");
+    expect(await newDraftSlateRefusal("topic-x", legacy)).toMatchObject({ ok: false, code: "slate_read_failed" });
+  });
+
   it("没有选题的新稿 → 拦", async () => {
     expect(await newDraftSlateRefusal(undefined, f.data)).toMatchObject({ code: "not_on_slate", error: SLATE_GATE_COPY.noTopic });
   });
