@@ -5,7 +5,13 @@
 import { useEffect, useState } from "react";
 import { loadCard, type CardPanelData } from "./board-api";
 import { bannerText } from "./card-next";
-import { routeHash } from "../routes";
+
+/** 展开并滚到稿件页里的「这条视频的进度」区（原看板卡片面板） */
+function showProgress(): void {
+  const el = document.getElementById("card-progress");
+  if (el instanceof HTMLDetailsElement) el.open = true;
+  el?.scrollIntoView({ block: "start", behavior: "smooth" });
+}
 
 export function ProductionBanner(p: { contentId: string; refreshKey: string }) {
   const [d, setD] = useState<CardPanelData | null>(null);
@@ -19,6 +25,6 @@ export function ProductionBanner(p: { contentId: string; refreshKey: string }) {
   const stage = `${d.stage ?? d.column}${d.status === "reviewing" ? "（待审）" : ""}`;
   return <div className="ed-production-banner" role="status">
     <strong>{stage}</strong> · {text}
-    {" "}<a href={routeHash({ view: "board", card: p.contentId })}>回看板看这张卡</a>
+    {" "}<button className="bcard-link" onClick={showProgress}>看这条的进度</button>
   </div>;
 }

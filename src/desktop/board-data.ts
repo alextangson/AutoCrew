@@ -21,6 +21,8 @@ import { storyboards, versionLabel } from "../modules/production/storyboard.js";
 import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-store.js";
 import { editorLabel } from "../modules/production/workbench.js";
 import { draftRef } from "../modules/production/inbox.js";
+import { activeClaim } from "../storage/claims.js";
+import { GENERATING_TITLE_PREFIX, RESEARCHING_TITLE_PREFIX } from "../modules/writing/generate-script.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -64,6 +66,16 @@ export interface BoardItem {
   candidates: CandidateView[];
   /** 这张卡按本体走（资料库已启用、没被排除、视频稿）：点开面板、拖动按 §10 规则；否则走旧流程 */
   active: boolean;
+  /** 正在写（后台生成占位稿或还活着的写手认领）：看板不许移入回收站 */
+  writing: boolean;
+}
+
+/** 正在写：drafting 且（占位标题带［生成中］/［调研中］，或写手认领还活着） */
+export function isBeingWritten(c: Pick<Content, "status" | "title" | "claim">, now: number = Date.now()): boolean {
+  if (c.status !== "drafting") return false;
+  const title = c.title ?? "";
+  if (title.startsWith(GENERATING_TITLE_PREFIX) || title.startsWith(RESEARCHING_TITLE_PREFIX)) return true;
+  return activeClaim(c, now)?.employee === "writer";
 }
 
 export interface BoardTopic {
@@ -154,7 +166,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
-    active,
+    active, writing: isBeingWritten(current),
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
     ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
     // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）

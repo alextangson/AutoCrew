@@ -3,6 +3,8 @@
  * 我发了 / 纠正、登记核对清单、重开文稿。等你拍板 2a：卡片只留整条稿的动作（下一步、原片行、挂原片、重开文稿、已经发出去了）；
  * 逐件的决定（候选、待核的发布、闪帧、成片、封面）只给「去『等你拍板』处理」，不重复放按钮。
  * 每个按钮都是创始人决定，走浏览器会话的 /api/board/decision。
+ * 2026-10-04：看板不再弹面板（点卡直接进稿件页），这块内容整块搬进稿件页，作为可折叠的「这条视频的进度」区；
+ * 只对按本体走的稿显示。
  */
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
@@ -15,7 +17,7 @@ const onScreen = (s: string) => s.replace(/A-roll/g, "原片");
 import { CardCandidates } from "./CardCandidates";
 import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
 import { RevealLink, when } from "./board-parts";
-import { openInboxItem } from "./review/review-api";
+import { inboxHref } from "./review/review-api";
 
 const KIND_LABEL: Record<string, string> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面", publish: "发布回执", chatcut_project: "ChatCut 工程" };
 import { UNDO } from "./board-columns";
@@ -24,7 +26,7 @@ import { platformName } from "./board-columns";
 /** 有正在核对的时候面板多久重读一次 */
 const POLL_MS = 5000;
 
-type Props = { contentId: string; onClose: () => void; openEditor: (id: string) => void; reload: () => Promise<void> };
+type Props = { contentId: string; reload?: () => Promise<void>; open?: boolean };
 
 export function CardPanel(p: Props) {
   const [data, setData] = useState<CardPanelData | null>(null);
@@ -49,7 +51,7 @@ export function CardPanel(p: Props) {
     try {
       const r = await decide(p.contentId, action, params);
       toast(r.ok ? done : r.error);
-      await Promise.all([refresh(), p.reload()]);
+      await Promise.all([refresh(), p.reload?.()]);
       return r;
     } finally { setBusy(false); }
   };
@@ -89,16 +91,17 @@ export function CardPanel(p: Props) {
     if (!(await confirmDialog({ title: undo.title, body: undo.body, confirmLabel: "重开文稿", danger: true }))) return;
     const r = await reopenScript(p.contentId, data?.round ?? 1);
     toast(r.ok ? "已重开文稿" : r.error);
-    await Promise.all([refresh(), p.reload()]);
+    await Promise.all([refresh(), p.reload?.()]);
   };
 
-  return <div className="card-panel-mask" role="dialog" aria-label="卡片详情" onClick={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
-    <div className="card-panel">
-      <header className="card-panel-head"><h2>{data?.title ?? "读取中"}</h2><button className="bcard-link card-panel-close" onClick={p.onClose}>关闭</button></header>
-      {error && <p className="board2-stale" role="alert">{error}</p>}
-      {data && <PanelBody goInbox={(types) => { openInboxItem(p.contentId, types); p.onClose(); }} data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} openEditor={() => p.openEditor(p.contentId)} refresh={async () => { await Promise.all([refresh(), p.reload()]); }} />}
-    </div>
-  </div>;
+  // 没按本体走的稿（旧流程 / 图文）不显示这块；读失败要说出来，不装作没有
+  if (data && !data.active) return null;
+  return <details className="card-panel card-panel-inline" id="card-progress" aria-label="这条视频的进度" open={p.open ?? true}>
+    <summary className="card-panel-head"><h2>这条视频的进度{data ? ` · ${data.title}` : ""}</h2></summary>
+    {error && <p className="board2-stale" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p>}
+    {!data && !error && <p className="card-panel-note">读取中</p>}
+    {data && <PanelBody goInbox={() => { window.location.hash = inboxHref(p.contentId); }} data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} refresh={async () => { await Promise.all([refresh(), p.reload?.()]); }} />}
+  </details>;
 }
 
 /** 改挂确认的说法：原片现在归谁、改挂之后那条稿就不再拥有它 */
@@ -109,7 +112,7 @@ export function reassignText(owner: string): string {
 function PanelBody(p: {
   data: CardPanelData; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
   actOrReassign: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
-  arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; pick: () => Promise<void>; reopen: () => Promise<void>; openEditor: () => void;
+  arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; pick: () => Promise<void>; reopen: () => Promise<void>;
   refresh: () => Promise<void>; goInbox: (types?: string[]) => void;
 }) {
   const d = p.data;
@@ -117,13 +120,12 @@ function PanelBody(p: {
   const next = nextStep(d);
   const covered = (b: string) => Boolean(next) && (b === d.reason || b.startsWith("已有") || b.includes("自动挂上，不对就点"));
   return <>
-    <CardNext d={d} busy={p.busy} act={p.act} openEditor={p.openEditor} refresh={p.refresh} goInbox={p.goInbox} />
+    <CardNext d={d} busy={p.busy} act={p.act} openEditor={() => undefined} refresh={p.refresh} goInbox={p.goInbox} />
     {d.active && d.unreviewed && <UnreviewedCut u={d.unreviewed} busy={p.busy} act={p.act} goInbox={() => p.goInbox(["cut_review"])} />}
     <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason && !next ? ` · ${d.reason}` : ""}</p>
     {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.map(onScreen).join("、")}</p>}
     {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
     {d.badges.filter((b) => b !== d.reason && !covered(b)).map((b) => <p key={b} className="card-panel-note">{onScreen(b)}</p>)}
-    {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} inbox={() => p.goInbox(["candidate"])} />}
     {d.active && d.stray_covers && <StrayCovers n={d.stray_covers.count} busy={p.busy} act={p.act} />}
     {d.active && <CardArolls contentId={d.id} rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
@@ -152,10 +154,9 @@ function PanelBody(p: {
       {d.past_receipts!.map((r) => <p key={`${r.round}-${r.platform}`} className="card-panel-note">{platformName(r.platform)} · {r.label}{r.url ? `：${r.url}` : ""}</p>)}
     </details>}
     {d.active && d.checklist && <p className="bcol-note">实拍版核对清单：项目里的 {d.checklist}</p>}
-    <footer className="card-panel-actions">
-      <button onClick={p.openEditor}>打开稿件 / 工作台</button>
-      {d.active && d.can_reopen && <button className="btn-ghost" disabled={p.busy} onClick={() => void p.reopen()}>重开文稿</button>}
-    </footer>
+    {d.active && d.can_reopen && <footer className="card-panel-actions">
+      <button className="btn-ghost" disabled={p.busy} onClick={() => void p.reopen()}>重开文稿</button>
+    </footer>}
   </>;
 }
 

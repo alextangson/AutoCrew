@@ -33,6 +33,7 @@ import { EditingWorkspace } from "./EditingWorkspace";
 import { CoverWorkspace } from "./CoverWorkspace";
 import { PublishWorkspace } from "./PublishWorkspace";
 import { StageAdvance } from "./StageAdvance";
+import { CardPanel } from "./CardPanel";
 import { ProductionBanner } from "./ProductionBanner";
 import { loadCard } from "./board-api";
 import {
@@ -433,7 +434,11 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
 
   const workspace = workspaceForStatus(c.status);
   // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
-  const productionBanner = isVideo ? <ProductionBanner contentId={props.id} refreshKey={c.status} /> : null;
+  // 原看板卡片面板的内容（下一步、原片、候选、分镜、发布纠正、重开文稿）搬到这里（spec 2026-10-04 §2）
+  const productionBanner = isVideo ? <>
+    <ProductionBanner contentId={props.id} refreshKey={c.status} />
+    <CardPanel key={c.status} contentId={props.id} reload={async () => { await load({ quiet: true }); }} open={workspace !== "draft"} />
+  </> : null;
   const stageBar = (
     <div className="ed-topbar ed-workspace-header">
       <div className="ed-header-context">

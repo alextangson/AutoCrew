@@ -62,9 +62,8 @@ describe("页面导航兼容", () => {
 });
 
 describe("看板深链到卡片（1b 验收）", () => {
-  it("#/board?card=… 打开那张卡，能来回转换", () => {
-    expect(parseRouteHash("#/board?card=content-1-a")).toEqual({ view: "board", card: "content-1-a" });
-    expect(routeHash({ view: "board", card: "content-1-a" })).toBe("#/board?card=content-1-a");
+  it("旧的 #/board?card=… 深链直接打开稿件页（卡片面板已去掉）", () => {
+    expect(parseRouteHash("#/board?card=content-1-a")).toEqual({ view: "editor", id: "content-1-a" });
     expect(routeHash({ view: "board" })).toBe("#/board");
   });
 });

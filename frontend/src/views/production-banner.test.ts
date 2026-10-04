@@ -20,10 +20,11 @@ async function render(c: Record<string, unknown>) {
 }
 
 describe("稿件页的阶段行", () => {
-  it("写稿中 + 已有原片 → 说清已经有原片、点上面「稿子没问题，进入制作」，带回看板的链接", async () => {
+  it("写稿中 + 已有原片 → 说清已经有原片、点上面「稿子没问题，进入制作」，带「看这条的进度」（不再跳回看板）", async () => {
     await render({ status: "draft_ready", arolls: [{ fact_id: "f1" }, { fact_id: "f2" }] });
     expect(el.textContent).toContain("写稿中 · 已经有原片了，稿子没问题就点上面「稿子没问题，进入制作」");
-    expect(el.querySelector("a")!.getAttribute("href")).toBe("#/board?card=content-1-a");
+    expect(el.querySelector("a")).toBeNull();
+    expect([...el.querySelectorAll("button")].some((b) => b.textContent === "看这条的进度")).toBe(true);
   });
 
   it("待审 + 已有原片 → 同样显示，并标待审（面板数据没有原片行时认徽章）", async () => {
