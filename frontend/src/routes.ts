@@ -2,7 +2,7 @@
 export type EditorPanel = "cover" | "images" | "video";
 
 export type Route =
-  | { view: "board"; inbox?: string }
+  | { view: "board"; inbox?: string; inboxTypes?: string[] }
   | { view: "topic"; key: string }
   | { view: "editor"; id: string; panel?: EditorPanel }
   | { view: "calibration" }
@@ -49,7 +49,10 @@ export function parseRouteHash(hash: string): Route {
   // 旧的看板卡片深链：卡片面板已去掉，直接打开稿件页（spec 2026-10-04 §2）
   if (path === "board" && query.get("card")) return { view: "editor", id: query.get("card")! };
   // 工作台 / 稿件页「去『等你拍板』处理」：回看板并打开这条稿的那件事
-  if (path === "board" && query.get("inbox")) return { view: "board", inbox: query.get("inbox")! };
+  if (path === "board" && query.get("inbox")) {
+    const types = (query.get("types") ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+    return { view: "board", inbox: query.get("inbox")!, ...(types.length ? { inboxTypes: types } : {}) };
+  }
   if (PAGES.has(path)) return { view: path } as Route;
   // 坏深链回到可操作的看板，不带空 id 请求编辑器。
   return { view: "board" };
@@ -61,7 +64,9 @@ export function routeHash(route: Route): string {
     return `#/editor/${encodeURIComponent(route.id)}${route.panel ? `?panel=${route.panel}` : ""}`;
   }
   if (route.view === "settings" && route.tab) return `#/settings?tab=${route.tab}`;
-  if (route.view === "board" && route.inbox) return `#/board?inbox=${encodeURIComponent(route.inbox)}`;
+  if (route.view === "board" && route.inbox) {
+    return `#/board?inbox=${encodeURIComponent(route.inbox)}${route.inboxTypes?.length ? `&types=${encodeURIComponent(route.inboxTypes.join(","))}` : ""}`;
+  }
   return `#/${route.view}`;
 }
 

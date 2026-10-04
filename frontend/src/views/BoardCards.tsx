@@ -108,18 +108,27 @@ function BoardCodexPublish({ item }: { item: BoardItem }) {
  * 正在写就拒；再确认；软删除后回收站里能恢复。
  */
 export async function trashItem(item: BoardItem, reload: () => Promise<void>): Promise<void> {
-  const fresh = await loadBoard();
-  if (!fresh.ok) return toast(fresh.error);
-  const now = fresh.data.items.find((i) => i.id === item.id);
-  if (!now) { toast("这条已经不在看板上了"); return reload(); }
-  if (now.writing) return toast(WRITING_REFUSAL);
-  if (!canTrash(now)) { toast("这条已经进了后面的阶段，不能在看板上弃用"); return reload(); }
-  const yes = await confirmDialog({ title: "移入回收站？", body: `《${now.title || "无标题"}》会从看板上拿掉，回收站里可以恢复。`, confirmLabel: "移入回收站", danger: true });
+  const before = await trashable(item, reload);
+  if (!before) return;
+  const yes = await confirmDialog({ title: "移入回收站？", body: `《${before.title || "无标题"}》会从看板上拿掉，回收站里可以恢复。`, confirmLabel: "移入回收站", danger: true });
   if (!yes) return;
+  // 确认框开着的时候可能开写了 / 进了下一步：再判一次；服务端删除口子上还有同一道判定（board_guard）
+  if (!(await trashable(item, reload))) return;
   try {
-    const r = await invoke("content:delete", { id: item.id });
+    const r = await invoke("content:delete", { id: item.id, board_guard: true });
     toast(r.ok ? "已移入回收站（可恢复）" : r.error ?? "没移成，刷新一下再试");
   } finally { await reload(); }
+}
+
+/** 重读看板判这条现在能不能弃用；不能就说为什么（并刷新），能就给最新的卡 */
+async function trashable(item: BoardItem, reload: () => Promise<void>): Promise<BoardItem | null> {
+  const fresh = await loadBoard();
+  if (!fresh.ok) { toast(fresh.error); return null; }
+  const now = fresh.data.items.find((i) => i.id === item.id);
+  if (!now) { toast("这条已经不在看板上了"); await reload(); return null; }
+  if (now.writing) { toast(WRITING_REFUSAL); return null; }
+  if (!canTrash(now)) { toast("这条已经进了后面的阶段，不能在看板上弃用"); await reload(); return null; }
+  return now;
 }
 
 function BackMenu(props: { item: BoardItem; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {

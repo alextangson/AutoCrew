@@ -134,6 +134,7 @@ export function App() {
           {route.view === "board" && (
             <Board
               {...(route.inbox ? { inbox: route.inbox } : {})}
+              {...(route.inboxTypes ? { inboxTypes: route.inboxTypes } : {})}
               openTopic={(key) => setRoute({ view: "topic", key })}
               openEditor={(id) => setRoute({ view: "editor", id })}
               openData={() => setRoute({ view: "report" })}

@@ -72,7 +72,7 @@ describe("trashItem", () => {
     boardItems = [item("写稿中")];
     const reload = vi.fn(async () => {});
     await trashItem(item("写稿中"), reload);
-    expect(invoke).toHaveBeenCalledWith("content:delete", { id: "content-1-a" });
+    expect(invoke).toHaveBeenCalledWith("content:delete", { id: "content-1-a", board_guard: true });
     expect(toasts).toEqual(["已移入回收站（可恢复）"]);
     expect(reload).toHaveBeenCalled();
   });
@@ -122,5 +122,24 @@ describe("点卡直接进稿件页", () => {
     expect(openEditor).toHaveBeenCalledWith("content-1-a");
     expect(el.querySelector("[aria-label='卡片详情']")).toBeNull();
     root.unmount();
+  });
+});
+
+describe("确认框开着期间状态变了", () => {
+  it("确认后再重读一次：这时已经开始写了 → 拒绝，不删", async () => {
+    const { trashItem } = await import("./BoardCards");
+    boardItems = [item("写稿中")];
+    const ui = await import("../ui");
+    const spy = vi.spyOn(ui, "confirmDialog").mockImplementation(async () => { boardItems = [item("写稿中", { status: "drafting", writing: true })]; return true; });
+    await trashItem(item("写稿中"), async () => {});
+    expect(invoke).not.toHaveBeenCalled();
+    expect(toasts).toContain("这篇正在写，先停掉再弃用");
+    spy.mockRestore();
+  });
+  it("看板删除带上服务端校验标记", async () => {
+    const { trashItem } = await import("./BoardCards");
+    boardItems = [item("待录制")];
+    await trashItem(item("待录制"), async () => {});
+    expect(invoke).toHaveBeenCalledWith("content:delete", { id: "content-1-a", board_guard: true });
   });
 });

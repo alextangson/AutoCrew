@@ -25,7 +25,7 @@ import "./board.css";
 
 const POLL_MS = 3000;
 
-type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; inbox?: string };
+type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; inbox?: string; inboxTypes?: string[] };
 
 /** 读看板 + 3 秒轮询；拖动中 / 菜单开着时暂停，结束后补一次（§7） */
 function useBoardData() {
@@ -120,7 +120,7 @@ export function Board(props: Nav) {
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
     <UpdateBanner />
-    <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} />
+    <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} {...(props.inboxTypes ? { focusTypes: props.inboxTypes } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
       {data && <OntologyBanner ontology={data.ontology} reload={reload} />}

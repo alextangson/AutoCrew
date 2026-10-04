@@ -26,7 +26,7 @@ import { platformName } from "./board-columns";
 /** 有正在核对的时候面板多久重读一次 */
 const POLL_MS = 5000;
 
-type Props = { contentId: string; reload?: () => Promise<void>; open?: boolean };
+type Props = { contentId: string; reload?: () => Promise<void>; open?: boolean; approveBlocked?: string | null };
 
 export function CardPanel(p: Props) {
   const [data, setData] = useState<CardPanelData | null>(null);
@@ -96,11 +96,11 @@ export function CardPanel(p: Props) {
 
   // 没按本体走的稿（旧流程 / 图文）不显示这块；读失败要说出来，不装作没有
   if (data && !data.active) return null;
-  return <details className="card-panel card-panel-inline" id="card-progress" aria-label="这条视频的进度" open={p.open ?? true}>
+  return <details className="card-panel card-panel-inline" id="card-progress" aria-label="这条视频的进度" open={Boolean(error) || (p.open ?? true)}>
     <summary className="card-panel-head"><h2>这条视频的进度{data ? ` · ${data.title}` : ""}</h2></summary>
     {error && <p className="board2-stale" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p>}
     {!data && !error && <p className="card-panel-note">读取中</p>}
-    {data && <PanelBody goInbox={() => { window.location.hash = inboxHref(p.contentId); }} data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} refresh={async () => { await Promise.all([refresh(), p.reload?.()]); }} />}
+    {data && <PanelBody goInbox={(types) => { window.location.hash = inboxHref(p.contentId, types); }} approveBlocked={p.approveBlocked ?? null} data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} refresh={async () => { await Promise.all([refresh(), p.reload?.()]); }} />}
   </details>;
 }
 
@@ -113,14 +113,14 @@ function PanelBody(p: {
   data: CardPanelData; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
   actOrReassign: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
   arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; pick: () => Promise<void>; reopen: () => Promise<void>;
-  refresh: () => Promise<void>; goInbox: (types?: string[]) => void;
+  refresh: () => Promise<void>; goInbox: (types?: string[]) => void; approveBlocked: string | null;
 }) {
   const d = p.data;
   // 「下一步」已经说了的，下面不再重复（1b 验收）：原因句、「已有原片…」、「…自动挂上，不对就点…」（原片行里有来源和「不是」）
   const next = nextStep(d);
   const covered = (b: string) => Boolean(next) && (b === d.reason || b.startsWith("已有") || b.includes("自动挂上，不对就点"));
   return <>
-    <CardNext d={d} busy={p.busy} act={p.act} openEditor={() => undefined} refresh={p.refresh} goInbox={p.goInbox} />
+    <CardNext d={d} busy={p.busy} act={p.act} openEditor={() => undefined} refresh={p.refresh} goInbox={p.goInbox} approveBlocked={p.approveBlocked} />
     {d.active && d.unreviewed && <UnreviewedCut u={d.unreviewed} busy={p.busy} act={p.act} goInbox={() => p.goInbox(["cut_review"])} />}
     <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason && !next ? ` · ${d.reason}` : ""}</p>
     {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.map(onScreen).join("、")}</p>}
