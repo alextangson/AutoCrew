@@ -23,13 +23,13 @@ description: |
 
 ## 2 调研
 
-查这个方向的真事、真数据、同类视频怎么讲、哪条爆了。搜索、读网页都用你自己的工具。要在稿里引用的原话或数字，用 `verify_quote{content_id, url, quote}` 登记：服务端现抓原网页逐字比对，过了才进证据台账、回证据编号。被拒说明那段不在原文里，回原网页重新逐字复制。不用问创始人。
+查这个方向的真事、真数据、同类视频怎么讲、哪条爆了。搜索、读网页都用你自己的工具。要在稿里引用的原话或数字，用 `verify_quote{content_id, url, quote}` 登记：服务端现抓原网页逐字比对，过了才进证据台账、回证据编号。被拒说明那段不在原文里，回原网页重新逐字复制。你自己的工具打不开原网页时，照样带 URL 调 `verify_quote`（服务端自己抓）；服务端也抓不到，这条就是未核验，不能当事实写。不用问创始人。
 
 ## 3 立意
 
 给 3 个立意，每个包含：我们的判断（一句）、给谁看、开头 15 秒原话、为什么可能爆（引 `context.hits` 或对标视频的真实数字，没有就写没有）、4–6 行论证链。主线必须是我们自己的判断，外部资料只做证据。
 
-创始人选定或改写后，`angle{content_id, base_version, main_line, for_whom, opening, why_viral, chain, founder_words}`，`founder_words` 照抄他的原话。
+创始人没选定（如「A 和 B 都不错」）就追问一句：选哪个，还是合成一个。选定或改写后，`angle{content_id, base_version, main_line, for_whom, opening, why_viral, chain, founder_words, chosen_option}`：`founder_words` 照抄他的原话，`main_line` 写选中项的完整主线，`chosen_option` 放当时给他看的那个选项全文——他只回一个「B」，以后也看得懂。
 
 ## 4 写
 
@@ -45,14 +45,14 @@ codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文�
 
 ## 5 改
 
-创始人说改哪里就只改哪里，别的不动，改完 `save`。意见是方向性的、没指具体句子（如「缺用户心理洞察」）：先给一段简短诊断和具体改动清单，等他确认再动稿。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写。
+创始人说改哪里就只改哪里，别的不动，改完 `save`。意见是方向性的、没指具体句子（如「缺用户心理洞察」）：先给一段简短诊断和具体改动清单，等他确认再动稿。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写；重写的第一版按第 4 步再跑一次 Codex 审稿。
 
 ## 6 定稿
 
-创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
+创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。每项可带 `kind`：默认 `claim`（要出处的事实）；类比、编的例子（「打个比方」「我编个例子」）标 `example`，我们自己的判断标 `judgment`——这两种不列为没出处，工作台折叠放在「示意/判断，不需要出处」里。别把真实数据标成 example 来躲出处。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
 
 ```json
-{ "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }] }
+{ "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }, { "text": "打个比方，……", "evidence_ids": [], "kind": "example" }] }
 ```
 
 ## 「你定」
