@@ -819,10 +819,14 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["content_id", "target_platform"],
       },
       execute: async (args) => {
-        const source = String(sanitize(args).content_id ?? "");
-        const refused = source ? await aiContentWriteRefusal(source, dataDir) : null;
+        // 只改写已有稿件：不收裸 title/body（聊天循环不强制 schema，裸文本会被存成一篇没选题、没定角度的新稿）
+        const rest = Object.fromEntries(Object.entries(sanitize(args)).filter(([k]) => !["title", "body", "tags"].includes(k)));
+        const source = typeof rest.content_id === "string" ? rest.content_id.trim() : "";
+        const found = source ? await d.content({ ...dirParams, action: "get", id: source }) : null;
+        if (!found?.ok || !found.content) return fail("adapt_platform 需要一篇已有稿件的 content_id");
+        const refused = await aiContentWriteRefusal(source, dataDir);
         if (refused) return JSON.stringify(refused);
-        const res = await d.rewrite({ ...sanitize(args), ...dirParams, action: "adapt_platform", save_as_draft: true });
+        const res = await d.rewrite({ ...rest, ...dirParams, action: "adapt_platform", save_as_draft: true });
         if (!res.ok) return fail(res.error ?? (res as Record<string, unknown>).notes);
         // rewrite 返回扁平结构（无 data 包络），新稿 id 在 content.id —— 归一成 generate 同形的 draft 卡
         const flat = res as Record<string, unknown>;

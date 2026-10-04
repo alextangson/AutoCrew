@@ -728,7 +728,7 @@ export async function executeScout(
     });
     if (!(outcome instanceof DeferredPageRead)) return outcome;
     return await finishPageRead(outcome, {
-      topicId, dir, host, viaToken, brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
+      topicId, dir, host, viaToken, ...(viaToken ? { perspectiveToken: str(args.perspective_token) } : {}), brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
     });
   } catch (err) {
     const storage = storageFailure(err);

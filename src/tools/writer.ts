@@ -1,6 +1,7 @@
 import { updateContent } from "../storage/local-store.js";
 import { historyGuard } from "./history-guard.js";
 import { newDraftGate } from "./writing-readiness.js";
+import { aiContentWriteRefusal } from "../modules/research/angle-gate.js";
 import { Value } from "@sinclair/typebox/value";
 import { outlineSchema, techniqueRefsSchema, gapSchema, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
 import { findCard, techniqueCatalog } from "../modules/writing/technique-store.js";
@@ -366,6 +367,9 @@ export async function executeWriter(
         if (params.attempt === undefined) return fail("attempt 必填：从 1 开始，每提交一次加一");
         const gate = await gateWrite(contentId, params, host, dataDir);
         if ("denied" in gate) return gate.denied;
+        // 选题会闸口也守在第一份正文落盘这一步：包可能是升级前领的，或创始人后来撤了选择；真稿的修订照旧
+        const firstBody = await aiContentWriteRefusal(contentId, dataDir);
+        if (firstBody) return firstBody as WriterResult;
         const review = str(params.review) === "none" ? "none" : str(params.review) === "engine" ? "engine" : "host";
         const submitted = await serializeWriterCall(contentId, () =>
           runSubmit(

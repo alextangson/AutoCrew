@@ -300,9 +300,25 @@ describe("generate_script 的角度闸口", () => {
 
 // ─── 选卡通道（§1.4）─────────────────────────────────────────────────────────
 
+/** 浏览器会话里人点的（令牌调用另测） */
+const HUMAN = { authMethod: "session" as const };
+
 describe("topic:select_angle / topic:clear_angle", () => {
+  it("令牌调用（宿主/模型可达）不带创始人原话 → 拒，不落选题；人点或带原话才算", async () => {
+    const topic = await seed();
+    const ipc = buildIpcHandlers()["topic:select_angle"];
+    const base = { topic_id: topic.id, brief_revision: 1, angle_id: "angle-1", _dataDir: testDir };
+    expect(await ipc(base, { authMethod: "bearer" })).toMatchObject({ ok: false, code: "founder_words_required" });
+    expect(await ipc(base)).toMatchObject({ ok: false, code: "founder_words_required" });
+    expect((await getTopic(topic.id, testDir))?.selectedAngle).toBeUndefined();
+    expect(await ipc({ ...base, founder_words: "就第一张" }, { authMethod: "bearer" })).toMatchObject({ ok: true });
+    expect((await getTopic(topic.id, testDir))?.selectedAngle).toMatchObject({ chosenBy: "founder", founderWords: "就第一张" });
+    expect(await ipc(base, HUMAN)).toMatchObject({ ok: true });
+    expect((await getTopic(topic.id, testDir))?.selectedAngle?.founderWords).toContain("桌面界面点选");
+  });
+
   const call = (channel: "topic:select_angle" | "topic:clear_angle", payload: Record<string, unknown>) =>
-    buildIpcHandlers()[channel]({ ...payload, _dataDir: testDir });
+    buildIpcHandlers()[channel]({ ...payload, _dataDir: testDir }, HUMAN);
 
   it("点选：落原卡快照 + 指针", async () => {
     const topic = await seed();
@@ -418,7 +434,7 @@ describe("两个入口都只认 job.briefRevision 指针", () => {
   it("选卡 IPC：brief_revision 比对的是指针版 v1——报 2 反而被拒", async () => {
     const { topic } = await seedOrphanV2();
     const call = (payload: Record<string, unknown>) =>
-      buildIpcHandlers()["topic:select_angle"]({ ...payload, _dataDir: testDir });
+      buildIpcHandlers()["topic:select_angle"]({ ...payload, _dataDir: testDir }, HUMAN);
 
     const stale = await call({ topic_id: topic.id, brief_revision: 2, angle_id: "angle-1" });
     expect(stale.ok).toBe(false);
@@ -443,7 +459,7 @@ describe("两个入口都只认 job.briefRevision 指针", () => {
     // 选卡 IPC：人话拒绝，不拿盘上那份顶上
     const res = await buildIpcHandlers()["topic:select_angle"]({
       topic_id: topic.id, brief_revision: 1, angle_id: "angle-1", _dataDir: testDir,
-    });
+    }, HUMAN);
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain("还没有可用简报");
   });

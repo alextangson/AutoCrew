@@ -624,8 +624,10 @@ describe("writer pack 异步备料", () => {
   it.each(["title", "description"])("选题 %s 更新不能继续复用旧包", async (field) => {
     const first = await pack();
     await updateTopic(first.topicId, { [field]: "创作者更新后的内容规划" }, testDir);
-    expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
-      .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
+    // 选题改了，创始人之前定的角度随之作废：选题会闸口先拦（不复用旧包，也不悄悄换包）
+    const again = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
+    expect(again).toMatchObject({ ok: false, gate: "needs_founder_angle" });
+    expect((await readPackFile(first.content_id)).packId).toBe(first.pack_id);
   });
 
   it("旧包无 request 快照仍可复用，并能从 context.req 识别新要求", async () => {

@@ -82,7 +82,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
-import { aiContentWriteRefusal, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -276,6 +276,8 @@ export type IpcHandlerContext = {
   onChatDelta?: (e: { turnId: string; seq: number; ev: "delta" | "reset" | "done"; text?: string }) => void;
   requestApproval?: (binding: ApprovalBinding) => { token: string; expiresAt: string };
   consumeApproval?: (token: string, binding: ApprovalBinding) => { ok: true } | { ok: false; error: string };
+  /** 调用方怎么认证的：session = 浏览器里登录的人；bearer = 令牌（宿主/模型也拿得到） */
+  authMethod?: "session" | "bearer";
 };
 export type IpcHandler = (
   payload: Record<string, unknown>,
@@ -1614,7 +1616,7 @@ async function topicDeleteHandler(payload: Record<string, unknown>): Promise<Rec
  * 2. `angle_id` 必须在那版简报里；改写版（可选 `card`）还要过一遍字段与证据引用校验，
  *    创始人能改任何文字，但改不出简报里没有的证据。
  */
-async function topicSelectAngleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function topicSelectAngleHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
   const angleId = typeof payload.angle_id === "string" ? payload.angle_id.trim() : "";
   const revision = payload.brief_revision;
@@ -1623,6 +1625,10 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
     return { ok: false, error: "brief_revision 必须是整数" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
+  // 只有浏览器会话（人在界面上点）才能用「桌面点选」当原话；令牌调用（宿主/模型可达）必须带创始人原话
+  const givenWords = typeof payload.founder_words === "string" ? payload.founder_words.trim() : "";
+  if (!givenWords && ctx?.authMethod !== "session") return { ok: false, code: "founder_words_required", error: ANGLE_GATE_COPY.needFounderWords };
+  const founderWords = givenWords || `（桌面界面点选 ${angleId}）`;
   try {
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
@@ -1641,8 +1647,7 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
     const updated = await updateTopic(
       topicId,
       // 桌面界面上是创始人本人点的卡（人手操作）：记成创始人选定，原话缺省就记这次点选
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder",
-        founderWords: typeof payload.founder_words === "string" && payload.founder_words.trim() ? payload.founder_words.trim() : `（桌面界面点选 ${angleId}）` } },
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords } },
       dataDir,
     );
     // 两个后端都从「最近工作区动作」得知创作者选了哪个角度（bug A3）

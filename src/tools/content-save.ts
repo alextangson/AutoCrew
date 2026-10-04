@@ -473,8 +473,8 @@ export async function executeContentSave(
       error: "平台变体的新正文也必须走 writer pack/submit；只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
       next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: topicId, platform } },
     };
-    // 选题会闸口：选题还没有真稿时，这一步是在开它的第一篇——手动导入的成稿除外
-    if (!(hasBody && manualImport)) {
+    // 选题会闸口：模型给还没有真稿的选题开第一篇（占位）要过闸口；人手录入、手动导入的成稿不拦
+    if (modelCall && !(hasBody && manualImport)) {
       const refused = await newDraftAngleRefusal(topicId, dataDir);
       if (refused) return refused;
     }
@@ -519,11 +519,7 @@ export async function executeContentSave(
     return { ok: false, error: "title and body are required for save" };
   }
 
-  // 选题会闸口：非导入的新建稿挂到选题上 = 给它开稿，选题须先由创始人定了角度
-  if (!manualImport && params.topicId) {
-    const refused = await newDraftAngleRefusal(params.topicId as string, params._dataDir as string | undefined);
-    if (refused) return refused;
-  }
+  // 模型发起的非导入新建稿上面已经拒了（writer_submission_required）；走到这里的是人手录入，不过选题会闸口
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
   if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: (await isOntologyEnabled(params._dataDir as string | undefined)) ? EDITING_VIA_ONTOLOGY : EDITING_VIA_HANDOFF };

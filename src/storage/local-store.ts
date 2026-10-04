@@ -671,6 +671,20 @@ export async function getTopic(id: string, dataDir?: string): Promise<Topic | nu
   }
 }
 
+/** 严格读选题：不存在 → null；读不出或解析不了 → 抛（不把坏记录当成「没有这条选题」） */
+export async function getTopicStrict(id: string, dataDir?: string): Promise<Topic | null> {
+  if (!isTopicId(id)) return null;
+  const file = path.join(getDataDir(dataDir), "topics", `${id}.json`);
+  let raw: string;
+  try { raw = await fs.readFile(file, "utf-8"); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  try { return JSON.parse(raw) as Topic; } catch (err) {
+    throw new Error(`选题记录 topics/${id}.json 读不出：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
   if (!isTopicId(topic.id)) throw new Error("Invalid topic id");
   const dir = await topicsDir(dataDir);

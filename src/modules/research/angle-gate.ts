@@ -10,9 +10,11 @@
  * 读稿件或选题失败 → 明确拒绝（angle_gate_read_failed），既不放行，也不当成「没定角度」。
  */
 import {
-  getContent, getTopic, isPlaceholderBody, listContentsStrict, updateTopic,
+  getContent, getDataDir, getTopicStrict, isPlaceholderBody, listContentsStrict, updateTopic,
   type Content, type Topic,
 } from "../../storage/local-store.js";
+import { activeAngleCard } from "./angle-cards.js";
+import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import { topicHashOf } from "./research-job-store.js";
 
 /** 用户可见文案集中在这里（创始人过目） */
@@ -21,6 +23,7 @@ export const ANGLE_GATE_COPY = {
   notFounderChoice: "这张卡不是你亲口定的。选题会的最后一步要你本人拍板：说一句你选哪张、为什么，再开写。",
   noTopic: "开新稿要先有选题并开过选题会。给一句灵感也行，先建选题、出立意卡，你定了再写。",
   readFailed: "稿件或选题记录读不出来，没法确认这条是不是已经定过角度，先不开写。",
+  staleChoice: "你之前定的那张卡已经过期了（选题改过或调研重跑过）。看一眼新的立意卡，再定一次。",
   needFounderWords: "选哪张卡要附上创始人的原话（founder_words），不能由助手代选。",
   bareDirection: "自定角度要附上创始人的原话：用 select_angle 传 direction + founder_words，不能直接拿 direction 跳过选题会。",
   skipRemoved: "跳过调研、跳过选卡的通道已关闭。创作者自带材料用 research_mode:\"provided\" 带进来，仍要出立意卡、由创始人定。",
@@ -65,6 +68,12 @@ export function founderChoiceOf(topic: Topic): { kind: "card" | "authored"; word
   return null;
 }
 
+/** 创始人选的卡在当前生效简报里还作数（同 writing-readiness 的 activeAngleCard 口径） */
+async function selectedCardFresh(topic: Topic, dataDir?: string): Promise<boolean> {
+  const snap = await resolveEffectiveBrief(topic.id, getDataDir(dataDir));
+  return Boolean(snap && activeAngleCard(topic.selectedAngle, snap.brief, topicHashOf(topic.title, topic.description ?? "")));
+}
+
 function refusal(code: AngleRefusal["code"], error: string, extra: Record<string, unknown> = {}): AngleRefusal {
   return { ok: false, code, error, next_action: meetingNext(typeof extra.topic_id === "string" ? extra.topic_id : undefined), ...extra };
 }
@@ -86,9 +95,13 @@ export async function newDraftAngleRefusal(topicId: string | undefined, dataDir?
   if (!id) return refusal("needs_founder_angle", ANGLE_GATE_COPY.noTopic);
   try {
     if (await topicHasDraft(id, dataDir)) return null;
-    const topic = await getTopic(id, dataDir);
+    const topic = await getTopicStrict(id, dataDir);
     if (!topic || topic.deletedAt) return refusal("needs_founder_angle", ANGLE_GATE_COPY.noTopic, { topic_id: id });
-    if (founderChoiceOf(topic)) return null;
+    // 自定角度（指纹没变）或还作数的选卡，任一成立即放行；选卡要核生效简报（选题文本或简报变了那张卡就过期）
+    if (founderChoiceOf({ ...topic, selectedAngle: undefined })) return null;
+    const founderCard = founderChoiceOf({ ...topic, founderAngle: undefined });
+    if (founderCard && await selectedCardFresh(topic, dataDir)) return null;
+    if (founderCard) return refusal("needs_founder_angle", ANGLE_GATE_COPY.staleChoice, { topic_id: id });
     const legacy = Boolean(topic.selectedAngle);
     return refusal("needs_founder_angle", legacy ? ANGLE_GATE_COPY.notFounderChoice : ANGLE_GATE_COPY.noChoice, { topic_id: id });
   } catch (err) {

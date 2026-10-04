@@ -643,3 +643,24 @@ describe("选题会：五路并行调研（分视角令牌）", () => {
     expect(await run("claim", { perspective: "audience" }, "sub-agent-2")).toMatchObject({ ok: true });
   });
 });
+
+it("读页途中视角令牌被收回（超时后别人重领）→ 抓回的页不并入", async () => {
+  await prepare();
+  const claim = await run("claim", { perspective: "evidence" }, "sub-agent");
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  deps.brokerDeps!.fetchImpl = vi.fn(async (url: string) => {
+    await gate;
+    return { finalUrl: url, text: `${QUOTE}\n${"其他记录。".repeat(10)}`, title: "种植记录", imageCandidates: [] };
+  });
+  const reading = run("read_page", { perspective: "evidence", url: URL, perspective_token: claim.perspective_token }, "sub-agent");
+  await new Promise((r) => setTimeout(r, 50));
+  await withHostResearchLock(topicId, dir, async (task, save) => {
+    task!.perspectiveClaims!.evidence!.touchedAt = "2026-01-01T00:00:00.000Z";
+    await save(task!);
+  });
+  expect(await run("claim", { perspective: "evidence" }, "sub-agent-2")).toMatchObject({ ok: true });
+  release();
+  expect(await reading).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+  expect((await run("status")).sources).toEqual([]);
+});
