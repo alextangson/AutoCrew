@@ -1,4 +1,4 @@
-/** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退）、发布行（我发了 / 撤销）。 */
+/** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退 / 移入回收站）、发布行（我发了 / 撤销）。 */
 import { Button } from "../components/Button";
 import { useState } from "react";
 import { invoke } from "../transport";
@@ -9,9 +9,9 @@ import { artifactUrl } from "./board-parts";
 import { CodexPublishButton } from "./CodexPublish";
 import { showCodexPublish } from "./codex-publish";
 import { useProjectReview } from "./use-project-review";
-import { markPublished, revokeHandoff, unmarkPublished } from "./board-api";
+import { loadBoard, markPublished, revokeHandoff, unmarkPublished } from "./board-api";
 import {
-  backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel, cardArollBadges,
+  WRITING_REFUSAL, backMoves, canTrash, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel, cardArollBadges,
   type BackMove, type BoardColumn, type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
@@ -103,19 +103,49 @@ function BoardCodexPublish({ item }: { item: BoardItem }) {
   return <div className="bcard-actions"><CodexPublishButton contentId={item.id} title={review.title || item.title} status={item.status} review={review} /></div>;
 }
 
+/**
+ * 稿件卡移入回收站（spec 2026-10-04 §1）：点下去先重读看板判「正在写」（不用卡上的旧数据），
+ * 正在写就拒；再确认；软删除后回收站里能恢复。
+ */
+export async function trashItem(item: BoardItem, reload: () => Promise<void>): Promise<void> {
+  const before = await trashable(item, reload);
+  if (!before) return;
+  const yes = await confirmDialog({ title: "移入回收站？", body: `《${before.title || "无标题"}》会从看板上拿掉，回收站里可以恢复。`, confirmLabel: "移入回收站", danger: true });
+  if (!yes) return;
+  // 确认框开着的时候可能开写了 / 进了下一步：再判一次；服务端删除口子上还有同一道判定（board_guard）
+  if (!(await trashable(item, reload))) return;
+  try {
+    const r = await invoke("content:delete", { id: item.id, board_guard: true });
+    toast(r.ok ? "已移入回收站（可恢复）" : r.error ?? "没移成，刷新一下再试");
+  } finally { await reload(); }
+}
+
+/** 重读看板判这条现在能不能弃用；不能就说为什么（并刷新），能就给最新的卡 */
+async function trashable(item: BoardItem, reload: () => Promise<void>): Promise<BoardItem | null> {
+  const fresh = await loadBoard();
+  if (!fresh.ok) { toast(fresh.error); return null; }
+  const now = fresh.data.items.find((i) => i.id === item.id);
+  if (!now) { toast("这条已经不在看板上了"); await reload(); return null; }
+  if (now.writing) { toast(WRITING_REFUSAL); return null; }
+  if (!canTrash(now)) { toast("这条已经进了后面的阶段，不能在看板上弃用"); await reload(); return null; }
+  return now;
+}
+
 function BackMenu(props: { item: BoardItem; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
   const moves = backMoves(props.item);
+  const trash = canTrash(props.item);
   const [busy, setBusy] = useState(false);
-  if (moves.length === 0) return null;
-  const run = async (move: BackMove, el: HTMLDetailsElement | null) => {
+  if (moves.length === 0 && !trash) return null;
+  const run = async (task: () => Promise<void>, el: HTMLDetailsElement | null) => {
     if (el) el.open = false;
     setBusy(true);
-    try { await confirmBackMove(props.item, move, props.reload); } finally { setBusy(false); }
+    try { await task(); } finally { setBusy(false); }
   };
   return <details className="bcard-menu" onToggle={(e) => props.onMenu(e.currentTarget.open)}>
-    <summary aria-label="改阶段">⋯</summary>
+    <summary aria-label="更多操作">⋯</summary>
     <div className="bcard-menu-list">
-      {moves.map((m) => <button key={m.target} disabled={busy} onClick={(e) => void run(m, e.currentTarget.closest("details"))}>{m.label}…</button>)}
+      {moves.map((m) => <button key={m.target} disabled={busy} onClick={(e) => void run(() => confirmBackMove(props.item, m, props.reload), e.currentTarget.closest("details"))}>{m.label}…</button>)}
+      {trash && <button disabled={busy} onClick={(e) => void run(() => trashItem(props.item, props.reload), e.currentTarget.closest("details"))}>移入回收站</button>}
     </div>
   </details>;
 }

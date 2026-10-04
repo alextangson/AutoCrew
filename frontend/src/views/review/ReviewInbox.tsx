@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
+import { focusPick } from "./inbox-focus";
 import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
 import { invoke, SESSION_EXPIRED } from "../../transport";
 import { DONE_TEXT, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
@@ -33,7 +34,7 @@ export function Thumb(p: { item: InboxItem }) {
 /** 标签页在后台时轮询放慢到 30 秒（不停）：后台标签页也要能弹提醒、更新标题件数（整分支审 5 P2） */
 export const HIDDEN_POLL_MS = 30_000;
 
-export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: number }) {
+export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[]; hiddenPollMs?: number }) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 上一次读成功的时间：读失败时列表停在那一刻，列表头写明（整分支审 3 P2） */
@@ -78,7 +79,7 @@ export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: numbe
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent<InboxOpenDetail>).detail;
-      const pick = (xs: InboxItem[]) => xs.find((i) => i.content_id === d.content_id && (!d.types || d.types.includes(i.type)));
+      const pick = (xs: InboxItem[]) => focusPick(xs, d.content_id, d.types);
       const hit = pick(list);
       if (hit) { setCollapsed(false); open(rowOfItem(hit.item_id)); return; }
       // 刚做的决定刚生出这件事（「我现在就要审」）：先读一遍再打开（verifier 2a P3）
@@ -94,7 +95,7 @@ export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: numbe
   useEffect(() => {
     if (focused.current || !props.focusContent || !items) return;
     focused.current = true;
-    const hit = items.find((i) => i.content_id === props.focusContent);
+    const hit = focusPick(items, props.focusContent, props.focusTypes);
     if (hit) { setCollapsed(false); open(rowOfItem(hit.item_id)); }
   });
   const current = rows.find((r) => r.key === openKey) ?? null;

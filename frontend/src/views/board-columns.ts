@@ -84,7 +84,14 @@ export interface BoardItem {
   editorLabel?: string;
   /** 「稿子写好了」这件事的身份与代次：拖「写稿中 → 待录制」认稿要带它 */
   draftRef?: { item_id: string; gen: string };
+  /** 正在写（后台生成 / 写手认领还活着）：不许移入回收站 */
+  writing?: boolean;
 }
+
+/** 「移入回收站」只给前三列（创始人 10-04 定）：进了剪辑就不在看板上弃用 */
+export const TRASH_COLUMNS: ReadonlySet<BoardColumn> = new Set<BoardColumn>(["选题", "写稿中", "待录制"]);
+export const canTrash = (item: Pick<BoardItem, "column">): boolean => TRASH_COLUMNS.has(item.column);
+export const WRITING_REFUSAL = "这篇正在写，先停掉再弃用";
 
 export interface BoardTopic {
   id: string;
@@ -194,8 +201,8 @@ export type DropAction =
   | { kind: "open-final" }
   | { kind: "publish" }
   | { kind: "back"; move: BackMove }
-  /** 本体（spec §10）：其余前向拖只打开卡片面板，不改状态 */
-  | { kind: "panel" }
+  /** 本体（spec §10）：其余前向拖只打开稿件页，不改状态 */
+  | { kind: "open" }
   /** 本体：往回拖 = 撤销具体决定 / 重开文稿 / 纠正发布，先确认 */
   | { kind: "undo"; undo: UndoMove }
   | { kind: "refuse"; reason: string };
@@ -231,7 +238,7 @@ function ontologyDrop(from: BoardColumn, item: DragCard, to: BoardColumn): DropA
   if (!back) {
     if (from === "写稿中") return forwardDrop(from, item, to);
     if (from === "待发布" && to === "已发布") return { kind: "publish" };
-    return { kind: "panel" };
+    return { kind: "open" };
   }
   if (from === "待录制" && to === "写稿中") return { kind: "undo", undo: UNDO.unapprove };
   if ((from === "剪辑中" || from === "待发布") && (to === "待录制" || to === "写稿中")) return { kind: "undo", undo: UNDO.reopen };

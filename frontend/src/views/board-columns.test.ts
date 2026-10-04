@@ -92,8 +92,8 @@ describe("拖动与往回退", () => {
     const v = (column: BoardItem["column"], status = "approved") => item("x", { column, status });
     expect(dropAction("写稿中", v("写稿中", "draft_ready"), "待录制", true)).toEqual({ kind: "approve" });
     expect(dropAction("待发布", v("待发布"), "已发布", true)).toEqual({ kind: "publish" });
-    expect(dropAction("待录制", v("待录制"), "剪辑中", true)).toEqual({ kind: "panel" });
-    expect(dropAction("剪辑中", v("剪辑中"), "待发布", true)).toEqual({ kind: "panel" });
+    expect(dropAction("待录制", v("待录制"), "剪辑中", true)).toEqual({ kind: "open" });
+    expect(dropAction("剪辑中", v("剪辑中"), "待发布", true)).toEqual({ kind: "open" });
     expect(dropAction("待录制", v("待录制"), "写稿中", true)).toMatchObject({ kind: "undo", undo: { action: "unapprove" } });
     expect(dropAction("剪辑中", v("剪辑中"), "待录制", true)).toMatchObject({ kind: "undo", undo: { action: "reopen" } });
     expect(dropAction("待发布", v("待发布"), "剪辑中", true)).toMatchObject({ kind: "undo", undo: { action: "revoke_cut" } });

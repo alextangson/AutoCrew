@@ -48,3 +48,6 @@ export function nextStep(d: NextInput): NextStep | null {
   if (col === "已发布") return { text: "已经发出去了，暂时不用你操作" };
   return null;
 }
+
+/** 稿件页进度区的 key：状态或存盘时刻变了就重挂，重读拿新的稿件代次（Codex 审 P2） */
+export const progressKey = (status: string, updatedAt: string): string => `${status}@${updatedAt}`;

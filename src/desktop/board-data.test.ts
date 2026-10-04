@@ -92,3 +92,27 @@ it("没有登记过成片 → 不给语速；字数去空白", async () => {
   expect((await boardData(dir)).wordsPerMinute).toBeNull();
   expect(countChars("# 标题\n\n你好 世界\nab")).toBe(6);
 });
+
+it("正在写：drafting 且占位标题 / 写手认领还活着才算；别的状态、过期认领、别的岗位都不算", async () => {
+  const { isBeingWritten } = await import("./board-data.js");
+  const now = Date.parse("2026-10-04T10:00:00Z");
+  const claim = (employee: "writer" | "cover", leaseUntil: string) => ({ employee, host: "claude-code", token: "t", at: "2026-10-04T09:50:00Z", leaseUntil });
+  expect(isBeingWritten({ status: "drafting", title: "［生成中］某选题" }, now)).toBe(true);
+  expect(isBeingWritten({ status: "drafting", title: "［调研中］某选题" }, now)).toBe(true);
+  expect(isBeingWritten({ status: "drafting", title: "手写", claim: claim("writer", "2026-10-04T10:20:00Z") }, now)).toBe(true);
+  expect(isBeingWritten({ status: "drafting", title: "手写", claim: claim("writer", "2026-10-04T09:59:00Z") }, now)).toBe(false);
+  expect(isBeingWritten({ status: "drafting", title: "手写", claim: claim("cover", "2026-10-04T10:20:00Z") }, now)).toBe(false);
+  expect(isBeingWritten({ status: "draft_ready", title: "［生成中］残留", claim: claim("writer", "2026-10-04T10:20:00Z") }, now)).toBe(false);
+  expect(isBeingWritten({ status: "drafting", title: "［生成中断］某选题" }, now)).toBe(false);
+});
+
+it("稿件移入回收站后离开看板、进回收站，恢复后回到原列", async () => {
+  const { softDeleteContent, restoreContent, listTrash } = await import("../storage/local-store.js");
+  const c = await saveContent({ title: "弃用", body: "正文", status: "draft_ready", platform: "douyin", tags: [] }, dir);
+  expect((await boardData(dir)).items.find((i) => i.id === c.id)?.writing).toBe(false);
+  await softDeleteContent(c.id, dir);
+  expect((await boardData(dir)).items.some((i) => i.id === c.id)).toBe(false);
+  expect((await listTrash(dir)).contents.map((x) => x.id)).toContain(c.id);
+  await restoreContent(c.id, dir);
+  expect((await boardData(dir)).items.find((i) => i.id === c.id)?.column).toBe("写稿中");
+});
