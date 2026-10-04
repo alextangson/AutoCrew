@@ -126,6 +126,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 可选键 card = 改写后的整张卡（§1.4 改写动作），缺省则落原卡快照
   "topic:select_angle": ["topic_id", "brief_revision", "angle_id"],
   "topic:clear_angle": ["topic_id"],
+  "draft:final_get": ["id"],
+  "draft:review_rerun": ["id"],
+  "draft:finalize": ["id", "draft_hash"],
   "trash:list": [],
   "content:versions": ["id"],
   "content:revert": ["id", "version"],

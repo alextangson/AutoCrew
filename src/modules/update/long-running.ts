@@ -42,6 +42,8 @@ export const BACKGROUND_TRACKED_CHANNELS: ReadonlySet<string> = new Set([
   "generate:script", "generate:retry",
   "cover:create", "cover:revise", "cover:ratios", "cover:identity", "cover:approve",
   "article_images:generate", "article_images:regenerate",
+  // Codex 审稿排队后台跑，codex-review-queue 用 trackWork 登记
+  "draft:review_rerun",
 ]);
 
 /** 交给剪辑 / 深调研 runner 跑的：请求先回，runner 在跑 / 排着的任务数计入忙碌（server.ts 的 inProcessTurns） */
@@ -77,6 +79,7 @@ export const SHORT_CHANNELS: ReadonlySet<string> = new Set([
   "campaign:list", "campaign:get", "campaign:create", "campaign:transition", "campaign:artifact_get", "campaign:set_autonomy",
   "campaign:patch_propose", "campaign:patch_decide",
   "topics:list", "topic:update", "topic:delete", "topic:restore", "topic:select_angle", "topic:clear_angle", "trash:list",
+  "draft:final_get", "draft:finalize",
   "doctor:inbox", "inbox:list", "inbox:delete", "inbox:settings_get", "inbox:settings_set", "inbox:status",
   "patterns:list", "patterns:update", "patterns:delete",
   "research:status", "research:brief_get", "research:list_assets",
@@ -100,6 +103,8 @@ export const LONG_RUNNING_TOOL_ACTIONS: Readonly<Record<string, "*" | ReadonlySe
   autocrew_research: new Set(["discover"]),
   autocrew_topic: new Set(["radar_pool"]),
   autocrew_scout: new Set(["search", "read_page"]),
+  // 薄路径：read 抓外网；Codex 审稿在 codex-review-queue 里用 trackWork 登记，不在这里
+  autocrew_draft: new Set(["read"]),
   autocrew_workflow: new Set(["prepare", "research", "write", "draft"]),
   // 写稿：领包备料、查证据（外网）、交稿审稿（模型）
   autocrew_writer: new Set(["pack", "find_evidence", "submit"]),

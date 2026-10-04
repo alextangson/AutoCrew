@@ -23,6 +23,7 @@ import type { WritingFeedback } from "../modules/writing/writing-feedback.js";
 import type { AngleCard } from "../modules/research/brief-store.js";
 // 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
+import type { DraftFinalRecord, DraftPathRecord } from "../modules/draft/draft-types.js";
 import type { ContentVideoLink } from "../modules/video/handoff/types.js";
 import { applyScriptEdit, modelTransitionRefusal, planScriptEdit, projectInLock, recordScriptTransition, type Editor } from "./production-hooks.js";
 
@@ -435,6 +436,10 @@ export interface Content {
    * 落在稿件上，而不只在回执里——导入稿补证入口（与后续交接快速通道）只认这里。
    */
   writingSource?: { kind: "manual_import"; importedAt: string; reason: string };
+  /** 走灵感 → A-roll 薄路径（autocrew_draft）的稿：立意与审稿排队标记。只由该工具写，content update 不开放 */
+  draftPath?: DraftPathRecord;
+  /** 创始人在工作台点「定了」（绑定稿件指纹）。只由工作台会话写，交接据此认定稿 */
+  draftFinal?: DraftFinalRecord;
   /** 补录的历史作品记录（imported-history.ts）：没有正文，不进任何生产流程 */
   source?: typeof IMPORTED_HISTORY;
   /**

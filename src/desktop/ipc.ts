@@ -259,6 +259,7 @@ import {
   campaignTransitionHandler,
 } from "./campaign-handlers.js";
 import { provenanceFromAuth } from "../storage/first-body-guard.js";
+import { DRAFT_IPC_HANDLERS } from "./draft-handlers.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -1362,6 +1363,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "topic:delete": topicDeleteHandler,
     "topic:restore": topicRestoreHandler,
     "topic:select_angle": topicSelectAngleHandler,
+    ...DRAFT_IPC_HANDLERS,
     "topic:clear_angle": topicClearAngleHandler,
     "trash:list": trashListHandler,
     "content:versions": contentVersionsHandler,

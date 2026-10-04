@@ -16,6 +16,7 @@ export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_research: "找新选题（不是给写作需求做调研，那个用 autocrew_workflow prepare）。discover 发现并可存选题；session_status 查浏览器登录。",
   autocrew_content: "管理已有稿件。list / get / siblings / allowed_transitions 查询；summary 看进度、请示答复、创始人修改意见 rejections；update 改稿；transition 推进；create_variant 派生平台版；adoption 仅工作台；delete / restore；save 仅手动导入；record 报制作事实；check_slivers 自查抽帧缝；mark_ready 成片可以审了；ask / answer_ask / withdraw_ask 请示创始人（进「等你拍板」，别在聊天里问）。批准只归创始人。新 AI 稿走 workflow → writer。",
   autocrew_workflow: "创作统一入口。prepare 开选题会（可只给 inspiration）；select_angle 须带创始人原话 founder_words；新稿没定角度会回 needs_founder_angle；research 领调研任务；status 查进度；select_angle 选定角度（带 brief_revision）；write / draft 由 next_action 引导；doctor 自检。每步按返回的 next_action 走。",
+  autocrew_draft: "抖音口播新稿（write-script 技能）。start 建稿或接手并拿档案 / 爆款 / 系列 / 一手材料；read 抓网页原文；cite 逐字核引文；angle 记创始人选的立意；save 存一版（首版后台 Codex 审稿）；review 查审稿或 rerun；prepare_final 出出处清单推到等你认稿，「定了」只由创始人在工作台点。",
   autocrew_scout: "宿主执行的调研。prepare / pack 领任务；status 查进度；search 搜索（要搜索 key，没配就用你自己的搜索找网址）；read_page{perspective,url} 抓页；cite 登记逐字引文；claim_offline 登记未核验说法；perspective 交视角；synthesize 综合；angles 交角度候选。prepare 之后都带 topic_id + task_id。",
   autocrew_review_desk: "宿主审稿。pack 领审稿材料；submit 交审稿意见（带 review_pack_id、attempt、issues）。",
   autocrew_writer: "宿主写稿。pack 领写作包；pack_status 查备包；find_evidence 补证据；submit 交稿；submit_status 查交稿；gap / technique 缺口与技法参考。领包后的每次写都带 claim_token。",

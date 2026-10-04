@@ -151,6 +151,10 @@ export const IPC_CHANNELS = [
   // 角度点选（角度卡 spec §1.4）：点选 = 只带 angle_id；改写 = 额外带改写后的 card
   "topic:select_angle",
   "topic:clear_angle",
+  // 灵感 → A-roll 薄路径定稿（2026-10-04）：清单 + 再审 + 「定了」（只认浏览器会话）
+  "draft:final_get",
+  "draft:review_rerun",
+  "draft:finalize",
   "content:delete",
   "content:restore",
   "content:open_folder",

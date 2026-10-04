@@ -31,6 +31,7 @@ import { reviewDeskSchema, executeReviewDesk, REVIEW_DESK_DESCRIPTION } from "./
 import { writerSchema, executeWriter, WRITER_DESCRIPTION } from "./src/tools/writer.js";
 import { deskSchema, executeDesk, DESK_DESCRIPTION } from "./src/tools/desk.js";
 import { videoSchema, executeVideo, VIDEO_DESCRIPTION } from "./src/tools/video.js";
+import { draftSchema, executeDraft, DRAFT_DESCRIPTION } from "./src/tools/draft.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -86,6 +87,8 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   });
 
   runner.register({ name: "autocrew_scout", label: "AutoCrew Scout", description: SCOUT_DESCRIPTION, parameters: scoutSchema, execute: executeScout });
+  // 灵感 → A-roll 薄路径（2026-10-04）：抖音口播新稿走它，旧的 workflow / writer 线留给其他平台
+  runner.register({ name: "autocrew_draft", label: "AutoCrew Draft", description: DRAFT_DESCRIPTION, parameters: draftSchema, execute: executeDraft });
   runner.register({ name: "autocrew_review_desk", label: "AutoCrew Review Desk", description: REVIEW_DESK_DESCRIPTION, parameters: reviewDeskSchema, execute: executeReviewDesk });
 
   runner.register({

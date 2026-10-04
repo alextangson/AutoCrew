@@ -616,6 +616,107 @@
    }
   },
   {
+   "name": "autocrew_draft",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "start",
+       "read",
+       "cite",
+       "angle",
+       "save",
+       "review",
+       "prepare_final"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "chain": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "citations": {
+      "items": {
+       "properties": {
+        "evidence_ids": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text",
+        "evidence_ids"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "claim": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "for_whom": {
+      "type": "string"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "inspiration": {
+      "type": "string"
+     },
+     "main_line": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "opening": {
+      "type": "string"
+     },
+     "page_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "quote": {
+      "type": "string"
+     },
+     "rerun": {
+      "type": "boolean"
+     },
+     "takeover": {
+      "type": "boolean"
+     },
+     "title": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     },
+     "why_viral": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
    "name": "autocrew_review_desk",
    "shape": {
     "additionalProperties": false,
@@ -3317,6 +3418,107 @@
     "required": [
      "action",
      "topic_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_draft",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "start",
+       "read",
+       "cite",
+       "angle",
+       "save",
+       "review",
+       "prepare_final"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "chain": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "citations": {
+      "items": {
+       "properties": {
+        "evidence_ids": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "text": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "text",
+        "evidence_ids"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "claim": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "for_whom": {
+      "type": "string"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "inspiration": {
+      "type": "string"
+     },
+     "main_line": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "opening": {
+      "type": "string"
+     },
+     "page_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "quote": {
+      "type": "string"
+     },
+     "rerun": {
+      "type": "boolean"
+     },
+     "takeover": {
+      "type": "boolean"
+     },
+     "title": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     },
+     "why_viral": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
     ],
     "type": "object"
    }

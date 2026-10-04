@@ -687,6 +687,9 @@ switch (command) {
     try { hosts = JSON.parse(hostsResult.stdout || "[]"); } catch { hostsError = "宿主检测脚本没跑成"; }
     const hostConnected = (h) => hosts.find((x) => x.host === h)?.connected === true;
 
+    // 薄路径的 Codex 审稿（2026-10-04）：codex 命令在不在、登没登录。可选项，不影响退出码（审稿只是提示，不拦定稿）
+    const codexLogin = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 15_000 });
+    const codexReview = { installed: !codexLogin.error, loggedIn: !codexLogin.error && codexLogin.status === 0 };
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -713,6 +716,7 @@ switch (command) {
       typesafeReachable: typesafe.reachable === true,
       egoBrowser: Boolean(ego.binary),
       egoLiteReachable: ego.reachable === true,
+      codexReview: codexReview.loggedIn,
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -740,6 +744,7 @@ switch (command) {
         ? (typesafe.reachable ? `\n  发布前把关语义检查（TypeSafe，密钥来自 ${typesafe.source === "env" ? "环境变量" : "本机设置"}）可用` : `\n  → TypeSafe 调不通：${typesafe.error ?? "未知原因"}（发布前把关的语义检查会标「没跑成」，确定性检查照常）`)
         : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")
       + (ego.reachable ? "" : `\n  → 数据自动回流需要 ego lite：${ego.reason}。${ego.fix}`)
+      + (codexReview.loggedIn ? "" : codexReview.installed ? "\n  → 抖音口播初稿的 Codex 审稿需要登录：在终端跑 codex login（不登录也能写稿定稿，只是没有审稿意见）" : "\n  → 抖音口播初稿的 Codex 审稿需要 Codex CLI：npm i -g @openai/codex 后 codex login（不装也能写稿定稿）")
       + (checks.asrModelReady
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),

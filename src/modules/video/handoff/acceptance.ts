@@ -53,12 +53,21 @@ export function recordedAsIs(content: Content, hash: string, confirmation?: AsIs
     confirmation.draft_hash === hash && Boolean(arollSha) && confirmation.aroll_sha256 === arollSha;
 }
 
+/**
+ * 灵感 → A-roll 薄路径（autocrew_draft）：创始人在工作台对当前稿件指纹点了「定了」。
+ * 只由工作台会话写（content update 不开放 draftFinal）；正文一改指纹对不上就不算。Codex 审稿是提示，不参与这里。
+ */
+export function founderFinalized(content: Content, hash: string): boolean {
+  return content.draftFinal?.source === "founder-workbench" && content.draftFinal.draftHash === hash;
+}
+
 /** null = 放行；否则是可原样回给宿主的拒绝（带 next_action） */
 export function acceptanceBlock(content: Content, confirmation?: AsIsConfirmation, arollSha?: string): HandoffResult | null {
   const blocked = statusBlock(content);
   if (blocked) return blocked;
   const hash = draftHash(content);
   if (reviewValid(content, hash)) return null;
+  if (founderFinalized(content, hash)) return null;
   if (recordedAsIs(content, hash, confirmation, arollSha)) return null;
   if (content.review?.status === "failed") {
     // P6-e 行为 eval（handoff-blocks-issues 0/3）证明：「创作者点了采纳」这个 flag 由模型自填，
