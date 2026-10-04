@@ -138,3 +138,32 @@ describe("formatPullTime / evidenceSummary", () => {
     expect(evidenceSummary(undefined)).toBeNull();
   });
 });
+
+describe("资料库写入权丢失 — 自动回流暂停", () => {
+  const lost = row({ lastStatus: "ok", writeRefusal: { code: "library_writer_lost", at: "2026-10-04T01:00:00.000Z" } });
+  it("徽标盖过上一次的旧状态", () => {
+    expect(pullBadge(lost)).toEqual({ text: "回流暂停", tone: "bad" });
+  });
+  it("行内说清原因与怎么办", () => {
+    const hint = pullHint(lost)!;
+    expect(hint).toContain("资料库写入权已丢失，自动回流暂停");
+    expect(hint).toContain("重启");
+  });
+  it("资料库连不上另有说法", () => {
+    expect(pullHint(row({ writeRefusal: { code: "library_unavailable", at: "2026-10-04T01:00:00.000Z" } }))).toContain("资料库暂时连不上");
+  });
+});
+
+describe("写入权丢失：预检拒绝 vs 入账后中断 / 盖过浏览器", () => {
+  it("入账后中断：说出已入账条数，不说一行都没写", () => {
+    const msg = attemptMessage("抖音", { platform: "douyin", status: "error", rowCount: 12, imported: 11, errorCode: "library_writer_lost" });
+    expect(msg).toContain("已入账 11 条");
+    expect(msg).not.toContain("一行都没写");
+  });
+  it("预检拒绝仍说一行都没写", () => {
+    expect(attemptMessage("抖音", { platform: "douyin", status: "error", rowCount: 0, errorCode: "library_writer_lost" })).toContain("一行都没写");
+  });
+  it("browserUnreachable 不让旧的浏览器状态盖住当前写入权拒绝", () => {
+    expect(browserUnreachable([row({ lastStatus: "browser_unreachable", writeRefusal: { code: "library_writer_lost", at: "2026-10-04T01:00:00.000Z" } })])).toBe(false);
+  });
+});

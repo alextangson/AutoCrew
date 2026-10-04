@@ -135,6 +135,14 @@ function emptyReport(total: number): ImportReport {
   return { total, imported: 0, replaced: 0, matched: 0, historical: 0, needsReview: [], rejected: [] };
 }
 
+/** outcomes 已落盘、之后（提交绑定时）才失败——多半是失去资料库写入权。report 是已入账的那部分 */
+export class PartialImportError extends Error {
+  constructor(readonly report: ImportReport, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "PartialImportError";
+  }
+}
+
 export async function importPerformanceRows(
   platform: string,
   rows: TypedRow[],
@@ -177,7 +185,12 @@ export async function importPerformanceRows(
     report.needsReview = finals.filter((o) => o.needsReview && !o.retracted); // 只报真正落盘的那条
     await appendOutcomes(finals, opts.dataDir);
     // 先 outcomes 后绑定：绑定是索引，写序反了会出现「指着不存在的行」的绑定
-    await commitResolvedBindings(pending, opts.dataDir);
+    try {
+      await commitResolvedBindings(pending, opts.dataDir);
+    } catch (err) {
+      // 行已落盘：把已入账的报告带出去，调用方才不会把「写了 N 行」报成「零写入」
+      throw new PartialImportError(report, err);
+    }
     return report;
   });
 }

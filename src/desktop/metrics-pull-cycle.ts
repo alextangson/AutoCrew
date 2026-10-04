@@ -23,7 +23,7 @@ import {
   type PlatformPullState,
   type PullPlatform,
 } from "../modules/flywheel/pull-state.js";
-import { importPerformanceRows } from "../modules/flywheel/row-import.js";
+import { importPerformanceRows, PartialImportError } from "../modules/flywheel/row-import.js";
 import { saveAutoCover, type FetchLike } from "../modules/flywheel/data-covers.js";
 import { getDataDir } from "../storage/local-store.js";
 import { assertDataDirWritable } from "../storage/storage-roots.js";
@@ -223,6 +223,7 @@ function eventLabel(attempt: PullAttempt): string {
     case "timeout":
       return `${name}抓取超时，稍后重试`;
     default:
+      if (attempt.errorCode === "library_writer_lost" && (attempt.imported ?? 0) > 0) return `${name}已入账 ${attempt.imported} 条后失去资料库写入权（另一个 AutoCrew 服务在占用），自动回流暂停`;
       if (attempt.errorCode === "library_writer_lost") return `${name}没抓：当前进程没有资料库写入权（另一个 AutoCrew 服务在占用），本次零写入`;
       if (attempt.errorCode === "library_unavailable") return `${name}没抓：资料库暂时连不上，本次零写入`;
       if (attempt.errorCode === "no_data_response") return `${name}页面没返回作品数据，本次零写入`;
@@ -293,11 +294,30 @@ async function land(platform: PullPlatform, result: PullResult, now: Date, opts:
     const coverError = await captureCovers(platform, result.rows, opts);
     return { ...base, imported: report.imported, batchId, ...(coverError ? { coverError } : {}) };
   } catch (err) {
+    if (err instanceof PartialImportError) return partialLanding(platform, base, err, opts);
     opts.warn?.(`[metrics-pull] ${platform} 入库失败：${err instanceof Error ? err.message : String(err)}`);
     // 登录/风控是这次抓取的结论（决定当天碰不碰、要不要提醒登录），入库失败不能把它改写成可重试的 error
     if (result.status !== "ok") return { ...base, imported: 0, importError: "import_failed" };
     return { status: "error", rowCount: 0, errorCode: "import_failed" };
   }
+}
+
+/** 行已入账、提交绑定时失去写入权：如实报「入账 N 条 + 写入权丢失」，不报零写入 */
+function partialLanding(platform: PullPlatform, base: Landing, err: PartialImportError, opts: PullNowOptions): Landing {
+  const code = err.message.startsWith("library_writer_lost") ? "library_writer_lost" : "import_failed";
+  const imported = err.report.imported;
+  (opts.warn ?? console.warn)(`[metrics-pull] ${platform} 已入账 ${imported} 条后写入中断：${err.message}`);
+  if (base.status !== "ok") return { ...base, imported, importError: code };
+  return { status: "error", rowCount: base.rowCount, imported, errorCode: code };
+}
+
+// ── 写入权拒绝记录：只存本进程内存（资料库已不可写，不能往里记），pull_status 带给界面 ──
+
+export interface WriteRefusal { code: string; at: string }
+const refusals = new Map<string, WriteRefusal>();
+
+export function writeRefusalFor(dataDir: string | undefined, platform: PullPlatform): WriteRefusal | null {
+  return refusals.get(flightKey(dataDir, platform)) ?? null;
 }
 
 /** 抓之前先核写入权：没权就不打平台后台、不写状态/账本/事件（这些写也都会被拒） */
@@ -309,15 +329,40 @@ function writeRefusalCode(dataDir?: string): string | null {
   }
 }
 
+/** 发 metrics_pull 事件让打开着的页面刷新；没写入权时只广播不落盘（资料库不可写） */
+function notifyPull(attempt: PullAttempt, label: string, opts: PullNowOptions, persist: boolean): void {
+  const emit = opts.emit ?? emitEngineEvent;
+  const event = {
+    role: "analyst" as const,
+    kind: "metrics_pull",
+    label,
+    metricsPull: { platform: attempt.platform, status: attempt.status, rowCount: attempt.rowCount },
+  };
+  const sent = persist ? emit(event, opts.dataDir) : emit(event, opts.dataDir, { persist: false });
+  void Promise.resolve(sent).catch(() => {
+    /* 观测层不得破坏执行层 */
+  });
+}
+
 async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<PullAttempt> {
   const refused = writeRefusalCode(opts.dataDir);
-  if (refused) {
-    opts.warn?.(`[metrics-pull] ${platform} 没抓：${refused}`);
-    return { platform, status: "error", rowCount: 0, errorCode: refused };
-  }
+  const key = flightKey(opts.dataDir, platform);
   const now = opts.now?.() ?? new Date();
+  if (refused) {
+    refusals.set(key, { code: refused, at: now.toISOString() });
+    (opts.warn ?? console.warn)(`[metrics-pull] ${platform} 没抓：${refused}（资料库写入权不在本进程，自动回流暂停）`);
+    const refusedAttempt: PullAttempt = { platform, status: "error", rowCount: 0, errorCode: refused };
+    notifyPull(refusedAttempt, eventLabel(refusedAttempt), opts, false);
+    return refusedAttempt;
+  }
+  // 写入权在：旧的拒绝记录作废（持久状态从这一轮起重新说真话）
+  refusals.delete(key);
   const trigger = opts.trigger ?? "manual";
   const landing = await land(platform, await callFetcher(platform, opts), now, opts);
+
+  if (landing.errorCode === "library_writer_lost" || landing.importError === "library_writer_lost") {
+    refusals.set(key, { code: "library_writer_lost", at: now.toISOString() });
+  }
 
   let persistError: string | undefined;
   try {
@@ -340,18 +385,8 @@ async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<Pu
     ...(landing.importError ? { importError: landing.importError } : {}),
     ...(persistError ? { persistError } : {}),
   };
-  const emit = opts.emit ?? emitEngineEvent;
-  void emit(
-    {
-      role: "analyst",
-      kind: "metrics_pull",
-      label: persistError ? `${eventLabel(attempt)}（状态未写住，下轮会重抓）` : eventLabel(attempt),
-      metricsPull: { platform, status: attempt.status, rowCount: attempt.rowCount },
-    },
-    opts.dataDir,
-  ).catch(() => {
-    /* 观测层不得破坏执行层 */
-  });
+  const label = persistError ? `${eventLabel(attempt)}（状态未写住，下轮会重抓）` : eventLabel(attempt);
+  notifyPull(attempt, label, opts, !refusals.has(key));
   return attempt;
 }
 

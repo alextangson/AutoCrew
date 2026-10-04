@@ -28,7 +28,7 @@ import {
   type PullPlatform,
 } from "../modules/flywheel/pull-state.js";
 import type { PullResult, TypedRow } from "../adapters/browser/pull-types.js";
-import type { ImportReport } from "../modules/flywheel/row-import.js";
+import { PartialImportError, type ImportReport } from "../modules/flywheel/row-import.js";
 
 let dir: string;
 
@@ -578,5 +578,37 @@ describe("顺手抓封面（数据页规格 §I.57）", () => {
     const st = await stateOf("douyin");
     expect(st.lastStatus).toBe("ok");
     expect(st.lastCoverError).toBe("cover_download_failed:2/2:http_403");
+  });
+});
+
+describe("入库到一半失去写入权（行已落盘）", () => {
+  const partial = () => new PartialImportError(report({ imported: 1 }), new Error("library_writer_lost: x"));
+
+  it("ok 抓取：报 imported N + library_writer_lost，不谎报 rowCount 0 / import_failed", async () => {
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => okResult() }, importRows: vi.fn(async () => Promise.reject(partial())) }),
+    });
+    expect(attempt).toMatchObject({ status: "error", rowCount: 1, imported: 1, errorCode: "library_writer_lost" });
+  });
+
+  it("事件文案说出已入账条数，不说零写入；事件不落盘（资料库不可写）", async () => {
+    const emit = vi.fn(async () => ({ ts: NOW.toISOString(), role: "analyst" as const, kind: "metrics_pull", label: "x" }));
+    await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => okResult() }, importRows: vi.fn(async () => Promise.reject(partial())), emit }),
+    });
+    const [event, , opts] = emit.mock.calls[0] as unknown as [{ label: string }, string, { persist?: boolean }];
+    expect(event.label).toContain("已入账 1 条");
+    expect(event.label).not.toContain("零写入");
+    expect(opts).toEqual({ persist: false });
+  });
+
+  it("登录/风控中途：状态保留，importError=library_writer_lost，imported=N", async () => {
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => ({ status: "risk_control", rows: ROWS, errorCode: "partial:risk_page" }) }, importRows: vi.fn(async () => Promise.reject(partial())) }),
+    });
+    expect(attempt).toMatchObject({ status: "risk_control", imported: 1, importError: "library_writer_lost" });
   });
 });
