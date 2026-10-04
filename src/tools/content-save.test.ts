@@ -52,7 +52,7 @@ describe("executeContentSave", () => {
     });
 
     it("records a model-host update as an AI diff", async () => {
-      const createRes = await executeContentSave({ action: "save", title: "Test", body: "Original body", _dataDir: testDir });
+      const createRes = await executeContentSave({ _provenance: HUMAN_WRITE, action: "save", title: "Test", body: "Original body", _dataDir: testDir });
       const contentId = (createRes.content as any).id;
       const updateRes = await executeContentSave({
         action: "update", id: contentId, body: "Host body", _host: "claude-desktop-test", _dataDir: testDir,

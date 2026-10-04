@@ -348,7 +348,7 @@ export async function executeContentSave(
     let styleLearned: StyleDistillResult | undefined;
     if (newBody && newBody !== oldBody) {
       try {
-        await recordDiffImpl(id, isModelCall(params) ? "ai" : "founder", "body", oldBody, newBody, dataDir, params.diff_note as string | undefined, oldContent.platform);
+        await recordDiffImpl(id, provenance?.kind === "human" ? "founder" : "ai", "body", oldBody, newBody, dataDir, params.diff_note as string | undefined, oldContent.platform);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         return {
