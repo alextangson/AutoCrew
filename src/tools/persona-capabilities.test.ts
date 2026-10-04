@@ -79,12 +79,12 @@ describe("persona ↔ capability consistency", () => {
     expect(missing, `${file} 点了这个宿主看不见的工具`).toEqual([]);
   });
 
-  it("keeps the writer skill on the pack/submit path, never autocrew_content save", () => {
+  it("keeps the douyin writing skill on autocrew_draft, never autocrew_content save", () => {
     const text = personaBody("skills/write-script/SKILL.md");
-    expect(text).toContain("autocrew_writer");
-    // 存草稿绕过格式门/数字门/质量门与审稿人——这条路 P3b 关掉了
+    // 2026-10-04 薄路径：抖音口播走 autocrew_draft，定稿只到 prepare_final，「定了」归创始人
+    expect(text).toContain("autocrew_draft");
     expect(text).not.toMatch(/autocrew_content[^\n]{0,40}save/);
-    expect(text).toMatch(/"action":\s*"submit"/);
+    expect(text).toMatch(/"action":\s*"prepare_final"/);
   });
 
   it("keeps research off the retired autocrew_research tool", () => {

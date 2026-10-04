@@ -6,6 +6,8 @@ description: |
 
 # 选题会
 
+抖音口播不开这个会：走 `write-script`（立意在它的第 3 步由创始人定）。这里只用于其他平台。
+
 一条内容开写前的最后一道关：先把这个题从几个方向查透，摆出几张真正不同的立意卡，由创始人拍板。你负责查、整理、推荐；选哪张只能是创始人的原话。没有跳过选卡或跳过调研的通道。
 
 ## 开会
@@ -23,7 +25,7 @@ description: |
 - 他选了：`autocrew_workflow {action:"select_angle", topic_id, angle_id, brief_revision, founder_words:"<他的原话>"}`；他改了卡面就加 `card`。
 - 他要写自己的角度：`select_angle{topic_id, direction:"<角度>", founder_words:"<他的原话>"}`，之后 prepare / pack 带同一句 `direction`。
 - `founder_words` 照抄他这轮说的话，不转述、不代填；他还没表态就停下来问。
-- 回 `ready_to_write` 才算开完会，按 `next_action` 交给 `write-script`（视频走 `video-session`）。
+- 回 `ready_to_write` 才算开完会，按 `next_action` 领写作包开写（视频走 `video-session`）。
 
 ## 边界
 

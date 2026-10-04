@@ -12,6 +12,7 @@ import { editorialSchema } from "../src/tools/editorial.js";
 import { scoutSchema } from "../src/tools/scout.js";
 import { reviewDeskSchema } from "../src/tools/host-review.js";
 import { writerSchema } from "../src/tools/writer.js";
+import { draftSchema } from "../src/tools/draft.js";
 import { listGuiSkills } from "../src/desktop/skills-reader.js";
 import { WRITING_INSTRUCTIONS } from "./writing-instructions.js";
 
@@ -31,6 +32,10 @@ const writerExampleSchema = Type.Object({
   action: Type.Union((writerSchema.properties.action.enum as string[]).map(value => Type.Literal(value))),
   research_mode: Type.Optional(Type.Union((writerSchema.properties.research_mode.enum as string[]).map(value => Type.Literal(value)))),
   review: Type.Optional(Type.Union((writerSchema.properties.review.enum as string[]).map(value => Type.Literal(value)))),
+}, { additionalProperties: false });
+const draftExampleSchema = Type.Object({
+  ...draftSchema.properties,
+  action: Type.Union((draftSchema.properties.action.enum as string[]).map(value => Type.Literal(value))),
 }, { additionalProperties: false });
 
 describe("writing guidance matches callable product capabilities", () => {
@@ -88,7 +93,7 @@ describe("writing guidance matches callable product capabilities", () => {
 
   it("published host research, writing and review examples satisfy their real tool schemas", () => {
     for (const [name, schema] of [
-      ["research", scoutSchema], ["write-script", writerExampleSchema], ["content-review", reviewDeskSchema],
+      ["research", scoutSchema], ["write-script", draftExampleSchema], ["content-review", reviewDeskSchema],
     ] as const) {
       const examples = [...harness(name).matchAll(/```json\s*\n([\s\S]*?)\n```/g)];
       expect(examples.length, name).toBeGreaterThan(0);

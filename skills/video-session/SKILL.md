@@ -11,20 +11,21 @@ description: |
 
 这条视频的事实只在 AutoCrew 的 content 上。你说出口的每个状态——过审、已交接、剪完、可发布——都要来自本会话里某次工具回执；Codex 的回话、用户转述、你的推断只是线索，拿 `autocrew_content get` 核过才算。稿件处在 `editing` 时归剪辑工位，写作线的工具（`autocrew_writer`、`autocrew_review_desk`、`autocrew_editorial feedback`）不碰它，要改稿先撤回。一个会话只服务一条视频的一个平台（PRD-v4 §4.3：同一上下文连写两个平台会串稿），第二个平台另开会话。模型活全用本会话自己的额度：不选 `execution:"engine"` / `review:"engine"`，不调 `autocrew_generate`。
 
-会话本身不存状态，压缩或重开后从 `autocrew_content get` 接上：还没稿、或审稿还没 accepted → 第 2 步；`draft_ready` / `approved` 且已 accepted → 第 3 步；`editing` → 第 5 步；`publish_ready` → 第 6 步。
+会话本身不存状态，压缩或重开后从 `autocrew_content get` 接上（抖音口播：`approved` 且带 `draftFinal` 即创始人已定稿 → 第 3 步；其余用 `autocrew_draft start{content_id}` 回到写稿）：还没稿、或审稿还没 accepted → 第 2 步；`draft_ready` / `approved` 且已 accepted → 第 3 步；`editing` → 第 5 步；`publish_ready` → 第 6 步。
 
 令牌以最近一次回执为准：`pack` 发的 `claim_token` 一直带到 `handoff`（交接后认领转给 Codex，这枚作废）；撤回、`video_kit` 的回执会给新的，之后改用新的。
 
 ## 1. 开工
 
 - 从晨报来：晨报已给出 `topic_id` 和标题。裸请求：`autocrew_topic {action:"list"}` 找现成选题，没有再 `create`；用户点名一篇已有稿就按上面接上。
-- 新稿（这条选题还没有真稿）先开选题会：照 `topic-meeting` 技能并行调研、出 3–4 张立意卡，由创始人用原话定（`select_angle` 带 `founder_words`），定了再进第 2 步。不要替他选，也不要绕过；开写入口回 `needs_founder_angle` 就是会还没开完，回 `angle_gate_read_failed` 就把原始错误告诉用户，停下。
+- 抖音口播新稿：直接按 `write-script` 技能走（`autocrew_draft`，立意在它的第 3 步定），不开选题会，下面第 2 步的写手 / 审稿台流程不适用；它的第 6 步创始人在工作台点「定了」就进第 3 步，出处清单已写好，交接时不用再提交 citations。
+- 其他平台的新稿（这条选题还没有真稿）先开选题会：照 `topic-meeting` 技能并行调研、出 3–4 张立意卡，由创始人用原话定（`select_angle` 带 `founder_words`），定了再进第 2 步。不要替他选，也不要绕过；开写入口回 `needs_founder_angle` 就是会还没开完，回 `angle_gate_read_failed` 就把原始错误告诉用户，停下。
 - 平台（只能一个：`xiaohongshu` / `douyin` / `wechat_video` / `bilibili`）和目标口播时长没说就一次问清；其余照对话原话进 `requirements`。
 - 会话标题：选题定下时、`select_angle` 成功后、收稿时标题变了，调桌面工具 `mcp__ccd_session_mgmt__set_session_title{session_id:"self", title}`。这是尽力而为：工具不在（终端 `claude`、Codex、dsh）或用户自己改过标题就跳过，不重试，交付时提一句。
 
-## 2. 写作线
+## 2. 写作线（非抖音口播）
 
-研究、选角、动笔、自审照 `write-script` 技能走（技能列表里没有就读 `../write-script/SKILL.md`），这里只补差异。下面几处若回执还是旧形状，按 `next_action` 走。
+研究、选角、动笔、自审按 MCP 写作守则 autocrew://writing-guide 走，这里只补差异。下面几处若回执还是旧形状，按 `next_action` 走。
 
 - `select_angle` 回 `ready_to_write` 时，`next_action` 已带好 `autocrew_writer pack` 参数，直接领包，不再二次 `prepare`。
 - `pack` 回执里的 `project_root` 是后续唯一项目根；读取 `rules_path` 指向的项目 AGENTS.md。调研、文稿通过服务提交，不直接改导出稿和状态。纯图文同样建项目。
