@@ -29,6 +29,7 @@ import {
   type ContentHandoff,
 } from "./local-store.js";
 import { callerSession } from "../runtime/run-log.js";
+import { seriesTransaction } from "./series-transaction.js";
 import os from "node:os";
 import { resolveContentProject } from "./content-project.js";
 import { hashClaimToken, isHashedToken, tokenMatches } from "./claim-token.js";
@@ -232,7 +233,17 @@ export async function claimContent(
   return serializeClaim(contentId, () => claimContentLocked(contentId, employee, host, dataDir, opts));
 }
 const claimQueues = new Map<string, Promise<unknown>>();
+/**
+ * 认领队列。全局加锁顺序（与 series-transaction.ts、local-store.ts contentWrite 的注释一致）：
+ *   系列锁（seriesTransaction）→ 认领队列（本函数）→ 单稿写锁（serializeContentWrite）。
+ * 认领改动会经 updateContent 写稿件，系列范围内的稿要先拿系列锁；所以进认领队列前先取系列锁
+ * （已持有则重入），持有认领队列时再要系列锁的路径就不存在了——否则审稿台「持系列锁再认领」
+ * 与「持认领队列再写系列范围内的稿」会互等成死锁（Codex 复审 2026-10-04）。
+ */
 function serializeClaim<T>(id: string, task: () => Promise<T>): Promise<T> {
+  return seriesTransaction(() => enqueueClaim(id, task));
+}
+function enqueueClaim<T>(id: string, task: () => Promise<T>): Promise<T> {
   const next = (claimQueues.get(id) ?? Promise.resolve()).then(task, task);
   claimQueues.set(id, next);
   const done = () => { if (claimQueues.get(id) === next) claimQueues.delete(id); };

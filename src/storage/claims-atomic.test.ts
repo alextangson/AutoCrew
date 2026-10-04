@@ -59,3 +59,19 @@ describe("认领改动原子化", () => {
     expect(renew.ok && take.ok).toBe(false);
   });
 });
+
+describe("锁顺序：系列锁 → 认领队列 → 单稿写锁（Codex 复审 P1 死锁）", () => {
+  it("一边持系列锁再认领，一边在认领里续租系列范围内的稿：两边都在限时内完成", async () => {
+    const { seriesTransaction } = await import("./series-transaction.js");
+    const c = await saveContent({ title: "t", body: "正文".repeat(50), platform: "douyin", status: "draft_ready", tags: [], _provenance: HUMAN_WRITE }, dir);
+    const first = await ensureClaim(c.id, { host: "claude-code", employee: "writer" }, dir);
+    if (!first.ok) throw new Error("claim failed");
+    const series = seriesTransaction(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return ensureClaim(c.id, { host: "claude-code", employee: "writer", token: first.claim.token }, dir);
+    });
+    const renew = ensureClaim(c.id, { host: "claude-code", employee: "writer", token: first.claim.token }, dir);
+    const timeout = new Promise<"hang">((r) => setTimeout(() => r("hang"), 2000));
+    expect(await Promise.race([Promise.all([series, renew]).then(() => "done"), timeout])).toBe("done");
+  });
+});
