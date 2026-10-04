@@ -9,14 +9,14 @@ import { CALIB_ACTIONS, CALIB_DESCRIPTION, executeCalibrationAction } from "./in
 import { WORK_ACTIONS, WORK_DESCRIPTION, executeWorkAction } from "./insights-works.js";
 
 export const insightsSchema = Type.Object({
-  action: Type.Optional(Type.Union(["prepare", "submit", "list", "get", ...MEETING_ACTIONS, ...CALIB_ACTIONS, ...WORK_ACTIONS].map((action) => Type.Literal(action)), { description: "默认prepare冻结账号事实；宿主分析后submit保存；list/get回读。选题会：meeting_brief/meeting_get/meeting_save/meeting_tag。" })),
+  action: Type.Optional(Type.Union(["prepare", "submit", "list", "get", ...MEETING_ACTIONS, ...CALIB_ACTIONS, ...WORK_ACTIONS].map((action) => Type.Literal(action)), { description: "默认prepare冻结账号事实；宿主分析后submit保存；list/get回读。排期会（可选，不拦写稿）：meeting_brief/meeting_get/meeting_save/meeting_tag。" })),
   days: Type.Optional(Type.Integer({ minimum: 1, maximum: 366, default: 30, description: "prepare的观察窗口天数；累计背景另列，不冒充本期新增。" })),
   platform: Type.Optional(Type.Union([...CLIPBOARD_PLATFORMS, "xhs"].map((platform) => Type.Literal(platform)), { description: "只分析指定平台；不填则分平台展示全部。" })),
   focus: Type.Optional(Type.String({ maxLength: 500, description: "用户本次关注的问题，例如留存、账号定位、下一批选题。" })),
   pack_id: Type.Optional(Type.String({ pattern: "^insights-[a-f0-9-]{36}$", description: "prepare返回的ID，submit/get必填。" })),
   evidence_hash: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$", description: "submit必填，来自同一个prepare，防止混用事实包。" })),
   report: Type.Optional(insightsReportSchema),
-  date: Type.Optional(Type.String({ description: "选题会日期 YYYY-MM-DD（北京时间），缺省今天。" })),
+  date: Type.Optional(Type.String({ description: "排期会日期 YYYY-MM-DD（北京时间），缺省今天。" })),
   meeting: Type.Optional(Type.Unknown({ description: "meeting_save：{expected_revision（读到的 revision，新会 0；CAS 冲突即报错重读）, slots:[{slot_id?,topic_id,persona:{key,name},payoff,format,line?,why_now,data_basis,bet,watch:{platform,metric,day},probability,premortem,angle_decision?}], rejected:[{topic_id?,title,reason}], reviews:[{hypothesis_id,would_repeat}], notes?, append?（单题会：true 只追加新位，旧位原样保留）}" })),
   calib: Type.Optional(Type.Unknown({ description: "calib_* 动作的参数对象，见 tool-guide。" })),
   tag: Type.Optional(Type.Unknown({ description: "meeting_tag：{work_key, format?, persona_key?}；work_key 取简报 works/untagged 的 key。" })),

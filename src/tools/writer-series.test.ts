@@ -14,7 +14,7 @@ import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCardV3, type ResearchBrief }
 import { pendingPerspectives, topicHashOf, upsertJob } from "../modules/research/research-job-store.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 import { getContent, saveContent, saveTopic, transitionStatus, updateContent, updateTopic } from "../storage/local-store.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { asFounder } from "../modules/research/angle-gate.test-helper.js";
 
 let dir: string;
 const TITLE = "AI 编程助手横评";
@@ -36,7 +36,6 @@ const CARD: AngleCardV3 = {
 
 async function freshTopic(): Promise<string> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, dir);
-  await putOnSlate(dir, topic.id);
   const brief: ResearchBrief = {
     schemaVersion: BRIEF_SCHEMA_VERSION, summary: "厂商口径与独立评测差了四倍。", perspectives: [], tensions: ["差距"], angleSuggestions: [],
     angleCards: [CARD], evidence: [{ claim: "提效幅度低", quote: "平均完成时间缩短约 12%。", sourceUrl: "https://example.com/r" }],
@@ -50,7 +49,7 @@ async function freshTopic(): Promise<string> {
   return topic.id;
 }
 
-const run = (params: Record<string, unknown>) => executeWriter({ ...params, _dataDir: dir }, { onWarn: () => {} }) as Promise<Record<string, any>>;
+const run = async (params: Record<string, unknown>) => { await asFounder(dir, params); return executeWriter({ ...params, _dataDir: dir }, { onWarn: () => {} }) as Promise<Record<string, any>>; };
 
 async function pack(topicId: string, over: Record<string, unknown> = {}): Promise<Record<string, any>> {
   const started = await run({ action: "pack", topic_id: topicId, platform: "douyin", ...over });

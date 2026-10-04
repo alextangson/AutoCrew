@@ -37,6 +37,18 @@ export interface SelectedAngle {
   angleId: string;
   card: AngleCard;
   selectedAt: string;
+  /** 选题会规则：只有创始人定的卡才放行开写；没有这两格的旧选择不算数 */
+  chosenBy?: "founder";
+  /** 创始人选卡时的原话（宿主照抄，诚信制） */
+  founderWords?: string;
+}
+
+/** 创始人自己给的角度（「就写这个角度」）：同样要原话，按选题文本指纹判过期 */
+export interface FounderAngle {
+  direction: string;
+  founderWords: string;
+  chosenAt: string;
+  topicHash: string;
 }
 
 export interface Topic {
@@ -63,6 +75,8 @@ export interface Topic {
   angles?: string[];
   /** 创始人选中/改写的角度卡（角度卡 spec §1.3）；未选 = 字段不落，写稿走「未经角度点选」 */
   selectedAngle?: SelectedAngle;
+  /** 创始人自己写的角度（选题会的另一条出口） */
+  founderAngle?: FounderAngle;
   scoredAt?: string;
   createdAt: string;
   /**

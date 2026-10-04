@@ -168,7 +168,7 @@ export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now =
   const failedTopics = await syncTopicSlots(record, previous, dataDir);
   return {
     ok: failedTopics.length === 0, record,
-    topicStatus: Object.fromEntries(slots.map((s) => [s.topicId, topicStatus(s.topicId, contents) ?? "未开工（选中≠开工，开写走 video-session 一条一个会话）"])),
+    topicStatus: Object.fromEntries(slots.map((s) => [s.topicId, topicStatus(s.topicId, contents) ?? "未开工（排期≠开工：开写前先为这条开选题会，立意卡由创始人定）"])),
     ...(failedTopics.length ? { error: `会议记录与下注已保存，但这些选题没标上本周片单：${failedTopics.join("、")}`, next_action: `带 expected_revision:${record.revision} 原样重存一次` } : {}),
   };
 }

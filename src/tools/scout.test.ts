@@ -16,7 +16,7 @@ import { saveTopic, updateTopic, saveContent, updateContent, getContent } from "
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
 import { claimContent } from "../storage/claims.js";
 import * as config from "../engine/config.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { asFounder } from "../modules/research/angle-gate.test-helper.js";
 
 let dir: string;
 let topicId: string;
@@ -84,6 +84,7 @@ function angles(ref = "ev-1", anchor = false) {
       },
     ].map((c) => ({
       ...c,
+      why_may_perform: "无数据依据",
       primary_persona: "grow",
       evidence_level: "grounded",
       core_evidence_ids: [ref],
@@ -104,7 +105,6 @@ function angles(ref = "ev-1", anchor = false) {
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-scout-"));
   topicId = (await saveTopic({ title: "菜园的清晨", description: "记录社区共同照顾菜苗的经历", tags: [] }, dir)).id;
-  await putOnSlate(dir, topicId);
   taskId = "";
   deps = {
     collectOwnMaterialImpl: vi.fn(async () => structuredClone(EMPTY_OWN_MATERIAL)),
@@ -457,8 +457,10 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     throw new Error("host pipeline must never call runLoop");
   });
   const engine = vi.spyOn(config, "loadEngineConfig");
-  const writer = (args: Record<string, unknown>) =>
-    executeWriter({ ...args, _host: "claude", _dataDir: dir }, { runLoopImpl: loop, onWarn: () => {} });
+  const writer = async (args: Record<string, unknown>) => {
+    await asFounder(dir, args);
+    return executeWriter({ ...args, _host: "claude", _dataDir: dir }, { runLoopImpl: loop, onWarn: () => {} });
+  };
   await prepare({ direction: "从清晨浇水的经历自然展开" });
   await readPage();
   await perspectives();
@@ -559,4 +561,85 @@ it("超长网页按完整字符分页，复制消毒后的标点、链接与空�
     await run("cite", { source_id: "p1", claim: "不能任意替换标点", quote: copied.replace("：“", ':"') }),
   ).toMatchObject({ code: "quote_not_verified" });
   expect(deps.brokerDeps!.fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+describe("选题会：五路并行调研（分视角令牌）", () => {
+  it("两个会话各领一个视角并行做；同一视角二次认领被拒；凭令牌提交不受任务持有者限制", async () => {
+    await prepare();
+    await readPage();
+    const a = await run("claim", { perspective: "audience" }, "claude");
+    const b = await run("claim", { perspective: "counter" }, "sub-agent-b");
+    expect(a).toMatchObject({ ok: true, perspective: "audience", pack: { stage: "perspective", perspective: "audience" } });
+    expect(b).toMatchObject({ ok: true, perspective: "counter" });
+    expect(await run("claim", { perspective: "audience" }, "sub-agent-c")).toMatchObject({ ok: false, code: "perspective_claimed", holder: "claude" });
+    // 不带令牌提交被别人领走的视角 → 拒
+    expect(await run("perspective", { perspective: "counter", payload: perspective() }, "claude")).toMatchObject({ ok: false, code: "perspective_claimed" });
+    // 另一宿主凭令牌提交：不撞 task_owned
+    const [ra, rb] = await Promise.all([
+      run("perspective", { perspective: "audience", payload: perspective(), perspective_token: a.perspective_token }, "claude"),
+      run("perspective", { perspective: "counter", payload: perspective(), perspective_token: b.perspective_token }, "sub-agent-b"),
+    ]);
+    expect(ra).toMatchObject({ ok: true });
+    expect(rb).toMatchObject({ ok: true });
+    const status = await run("status");
+    expect(status.perspectives).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "audience", status: "submitted" }),
+      expect.objectContaining({ name: "counter", status: "submitted" }),
+      expect.objectContaining({ name: "account", status: "submitted" }),
+    ]));
+    // 令牌只认自己的视角
+    expect(await run("perspective", { perspective: "evidence", payload: perspective(), perspective_token: a.perspective_token }, "sub-agent-c")).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+  });
+
+  it("失败的视角一直摆在回执里，可单独重领重跑；不齐就不许综合", async () => {
+    await prepare();
+    await readPage();
+    const claim = await run("claim", { perspective: "benchmark" }, "sub-agent");
+    expect(await run("fail_perspective", { perspective: "benchmark", reason: "找不到可比的对标账号", perspective_token: claim.perspective_token }, "sub-agent"))
+      .toMatchObject({ ok: true, perspectives: expect.arrayContaining([expect.objectContaining({ name: "benchmark", status: "failed", last_failure: "找不到可比的对标账号" })]) });
+    for (const p of ["audience", "evidence", "counter"]) expect(await run("perspective", { perspective: p, payload: perspective() })).toMatchObject({ ok: true });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: false, code: "perspectives_incomplete", missing: ["benchmark"] });
+    const again = await run("claim", { perspective: "benchmark" }, "sub-agent-2");
+    expect(again).toMatchObject({ ok: true, perspective_token: expect.stringMatching(/^pt-/) });
+    expect(await run("perspective", { perspective: "benchmark", payload: perspective(), perspective_token: again.perspective_token }, "sub-agent-2")).toMatchObject({ ok: true });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: true, status: "needs_angles" });
+  });
+
+  it("账号数据视角失败 → 四路齐也拒综合（4/5）；account_data 重跑成功后放行", async () => {
+    await prepare();
+    await readPage();
+    await withHostResearchLock(topicId, dir, async (task, save) => {
+      task!.accountData = { status: "failed", reason: "账号数据读取失败：测试注入", builtAt: new Date().toISOString() };
+      await save(task!);
+    });
+    await perspectives();
+    expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "account", status: "failed", last_failure: expect.stringContaining("测试注入") })]) });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: false, code: "perspectives_incomplete", missing: ["account"] });
+    expect(await run("account_data")).toMatchObject({ ok: true, account_data: { status: "ok" } });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: true, status: "needs_angles" });
+  });
+
+  it("立意卡每张都要 why_may_perform（引账号数据或写「无数据依据」）", async () => {
+    await prepare();
+    await readPage();
+    await perspectives();
+    const synth = await run("synthesize", { payload: synthesis() });
+    expect(synth.pack).toMatchObject({ stage: "angles", account_data: expect.stringContaining("账号数据") });
+    const bare = angles();
+    bare.candidates = bare.candidates.map(({ why_may_perform: _drop, ...c }) => c) as typeof bare.candidates;
+    expect(await run("angles", { payload: bare })).toMatchObject({ ok: false, code: "missing_why_may_perform" });
+    expect(await run("angles", { payload: angles() })).toMatchObject({ ok: true, status: "ready" });
+  });
+
+  it("视角令牌闲置超时 → 回执标 timed_out，别人可以重领", async () => {
+    await prepare();
+    const claim = await run("claim", { perspective: "audience" }, "sub-agent");
+    await withHostResearchLock(topicId, dir, async (task, save) => {
+      task!.perspectiveClaims!.audience!.touchedAt = "2026-01-01T00:00:00.000Z";
+      await save(task!);
+    });
+    expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "audience", status: "timed_out" })]) });
+    expect(await run("perspective", { perspective: "audience", payload: perspective(), perspective_token: claim.perspective_token }, "sub-agent")).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+    expect(await run("claim", { perspective: "audience" }, "sub-agent-2")).toMatchObject({ ok: true });
+  });
 });

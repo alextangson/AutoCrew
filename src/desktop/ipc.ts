@@ -82,7 +82,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
-import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
+import { aiContentWriteRefusal, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -531,9 +531,9 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
     return { ok: false, error: "Invalid payload: expected object" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
-  // 片单闸口：后台写稿每次都开新稿，选题必须在当前选题会片单上
-  const offSlate = await newDraftSlateRefusal(typeof payload.topic_id === "string" ? payload.topic_id : undefined, dataDir);
-  if (offSlate) return offSlate;
+  // 选题会闸口：后台写稿每次都开新稿，选题必须先开过选题会、由创始人定了角度
+  const refused = await newDraftAngleRefusal(typeof payload.topic_id === "string" ? payload.topic_id : undefined, dataDir);
+  if (refused) return refused;
   try {
     const started = await startGenerateScript(
       {
@@ -571,6 +571,9 @@ async function generateRetryHandler(payload: Record<string, unknown>): Promise<R
   const contentId = typeof payload.content_id === "string" ? payload.content_id.trim() : "";
   if (!contentId) return { ok: false, error: "generate:retry 需要 content_id" };
   const dataDir = (payload._dataDir as string) || undefined;
+  // 选题会闸口：重写一张空占位稿 = 在给它的选题开第一篇，和新开写同一判定；真稿的重写放行
+  const refused = await aiContentWriteRefusal(contentId, dataDir);
+  if (refused) return refused;
   const key = GENERATE_JOB_KEY(contentId);
   if (!claimJob(key)) return { ok: false, error: "这篇已经在写了——等它跑完再重试" };
   let held = false;
@@ -1635,7 +1638,9 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
     if (typeof card === "string") return { ok: false, error: card };
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      // 桌面界面上是创始人本人点的卡（人手操作）：记成创始人选定，原话缺省就记这次点选
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder",
+        founderWords: typeof payload.founder_words === "string" && payload.founder_words.trim() ? payload.founder_words.trim() : `（桌面界面点选 ${angleId}）` } },
       dataDir,
     );
     // 两个后端都从「最近工作区动作」得知创作者选了哪个角度（bug A3）

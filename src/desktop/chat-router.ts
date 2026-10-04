@@ -13,7 +13,7 @@ import { describeEngineFailure, isEngineFailure, type FailureRole } from "../eng
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
-import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle } from "../modules/research/angle-gate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeStyle } from "../tools/style.js";
@@ -543,14 +543,14 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
   };
 
   /** 落选题 + 放行。卡不在生效简报里 = 用户看的是过期候选，拒绝并让他重看一次 */
-  const selectAngle = async (topicId: string, snap: BriefSnapshot, angleId: string): Promise<string | null> => {
+  const selectAngle = async (topicId: string, snap: BriefSnapshot, angleId: string, founderWords: string): Promise<string | null> => {
     const card = findAngleCard(snap.brief, angleId);
     if (!card) {
       return fail(`角度 ${angleId} 不在这条选题的当前简报（v${snap.revision}）里——重新把候选念给用户听,让他重选`);
     }
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords } },
       dataDir,
     );
     return updated ? null : fail(`选题不存在：${topicId}`);
@@ -579,15 +579,15 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
    * 用户点了卡（angle_id）、自己写了角度（direction）、明说直接写（skip_reason）、
    * 或这条选题压根没有角度卡（无简报 / 旧简报 / 证据为空的降级简报，§1.8 不硬出角度）。
    */
-  const angleGate = async (req: ScriptRequest, angleId: string): Promise<string | null> => {
+  const angleGate = async (req: ScriptRequest, angleId: string, founderWords = ""): Promise<string | null> => {
     if (!req.topicId) return null;
     // 唯一「当前有效简报」入口（P1 §3.0）：闸口与写稿注入必须认同一版，不然聊天里选的是
     // v2 的卡、写稿注进去的却是 v1 的材料
     const snap = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), () => {});
     const cards = angleCardsOf(snap?.brief);
     if (!snap || cards.length === 0) return null; // 没有候选就没有闸口（§1.8 降级：不硬出角度）
-    if (angleId) return selectAngle(req.topicId, snap, angleId);
-    if (req.direction?.trim() || req.angleSkipReason?.trim()) return null;
+    if (angleId) return selectAngle(req.topicId, snap, angleId, founderWords);
+    if (req.direction?.trim()) return null;
     const topic = await getTopic(req.topicId, dataDir);
     const hash = topic ? topicHashOf(topic.title, topic.description) : "";
     if (topic && activeAngleCard(topic.selectedAngle, snap.brief, hash)) return null; // 之前选过且还作数
@@ -725,10 +725,9 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             description:
               "用户自己手写的角度原话(不是你的转述、不是候选卡的复述)。他说「我想从 XX 角度写」时传这句,它压过一切候选卡。",
           },
-          skip_reason: {
+          founder_words: {
             type: "string",
-            description:
-              "仅当用户原话明确表示不选角度直接写(「别选角度」「直接写」「就按老样子」)时,把那句原话转述进来。用户没说过就绝不要传。",
+            description: "传 angle_id 或 direction 时必填：用户选卡/给角度时的原话,照抄不转述。没有跳过选卡的通道。",
           },
         },
         required: ["topic", "platform"],
@@ -754,19 +753,38 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           const angleId = typeof a.angle_id === "string" ? a.angle_id.trim() : "";
           // 用户这轮点了卡：先落选题再走任何路——即便下一步命中中断稿重写,
           // 重写读的也是 topic.selectedAngle,不先落盘他刚选的角度就会被静默丢掉
+          const founderWords = typeof a.founder_words === "string" ? a.founder_words.trim() : "";
+          // 选题会规则 4–6：没有跳过通道；选卡和自定角度都要创始人原话
+          if (req.angleSkipReason) return JSON.stringify({ ok: false, code: "skip_removed", error: ANGLE_GATE_COPY.skipRemoved });
+          if ((angleId || req.direction) && !founderWords) {
+            return JSON.stringify({ ok: false, code: "founder_words_required", error: angleId ? ANGLE_GATE_COPY.needFounderWords : ANGLE_GATE_COPY.bareDirection });
+          }
           if (angleId) {
-            const selected = await angleGate(req, angleId);
+            const selected = await angleGate(req, angleId, founderWords);
             if (selected) return selected;
           }
+          if (req.direction && req.topicId) {
+            const topic = await getTopic(req.topicId, dataDir);
+            if (!topic) return fail(`选题不存在：${req.topicId}`);
+            await recordFounderAngle(topic, req.direction, founderWords, dataDir);
+          }
+          // 选题会闸口排在一切开写/重写之前（含中断稿重写：空占位的重写一样是在开第一篇）
+          const refused = await newDraftAngleRefusal(req.topicId, dataDir);
+          if (refused) {
+            // 还没定角度但已有立意卡：把卡念给用户挑（比一句「先开会」更能往下走）；没有卡就回闸口原话
+            const cards = refused.code === "needs_founder_angle" && !angleId ? await angleGate(req, "") : null;
+            return cards ?? JSON.stringify(refused);
+          }
+          if (!req.direction && req.topicId) {
+            // 创始人自定过角度：沿用他那句原话当方向，不再弹卡
+            const own = (await getTopic(req.topicId, dataDir))?.founderAngle;
+            if (own) req.direction = own.direction;
+          }
           // 这条选题上次就写崩了 → 救活那张卡，而不是再开一张（见 retryInterrupted）。
-          // **排在 needsAngle 弹卡之前**：中断重写不该再问一遍角度。
           if (req.topicId) {
             const retried = await retryInterrupted(req);
             if (retried) return retried;
           }
-          // 片单闸口：开新稿的选题必须在当前选题会片单上（与 MCP 各开写入口同一判定）
-          const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
-          if (offSlate) return JSON.stringify(offSlate);
           // angleId 那条已在上面选定并放行,不必再过一遍闸口
           const gated = angleId ? null : await angleGate(req, "");
           if (gated) return gated;
@@ -801,6 +819,9 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["content_id", "target_platform"],
       },
       execute: async (args) => {
+        const source = String(sanitize(args).content_id ?? "");
+        const refused = source ? await aiContentWriteRefusal(source, dataDir) : null;
+        if (refused) return JSON.stringify(refused);
         const res = await d.rewrite({ ...sanitize(args), ...dirParams, action: "adapt_platform", save_as_draft: true });
         if (!res.ok) return fail(res.error ?? (res as Record<string, unknown>).notes);
         // rewrite 返回扁平结构（无 data 包络），新稿 id 在 content.id —— 归一成 generate 同形的 draft 卡
@@ -902,6 +923,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const instruction = String(a.instruction ?? "").trim();
         if (!contentId || !instruction) return fail("revise_draft 需要 content_id 和 instruction");
         if (revisionFocus) return fail("当前有修改焦点——焦点内的修改请用 revise_focus(出提案让用户收下);要改的超出焦点范围就先 clear_revision_focus 退出,再用本工具。");
+        const refused = await aiContentWriteRefusal(contentId, dataDir);
+        if (refused) return JSON.stringify(refused);
         try {
           const result = await d.reviseDraftImpl(contentId, instruction, dataDir);
           const content = result.content;
@@ -944,6 +967,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         if (!focus || !contentId) return fail("当前没有修改焦点——请用户在编辑器里选段「改这段」或点「改这篇」");
         const instruction = String(sanitize(args).instruction ?? "").trim();
         if (!instruction) return fail("revise_focus 需要 instruction");
+        const refusedFocus = await aiContentWriteRefusal(contentId, dataDir);
+        if (refusedFocus) return JSON.stringify(refusedFocus);
         try {
           const rf: ReviseFocus =
             focus.scope === "selection" ? { scope: "selection", selection: focus.selection ?? "" } : { scope: "draft" };

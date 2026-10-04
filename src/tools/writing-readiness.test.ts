@@ -7,6 +7,8 @@ import { BRIEF_SCHEMA_VERSION, saveBrief, type ResearchBrief, type AngleCardV3 }
 import { topicHashOf, upsertJob, type ResearchJob } from "../modules/research/research-job-store.js";
 import { getTopic, saveTopic, updateTopic } from "../storage/local-store.js";
 import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest } from "./writing-readiness.js";
+import { ANGLE_GATE_COPY } from "../modules/research/angle-gate.js";
+import { founderAuthored, founderStamped } from "../modules/research/angle-gate.test-helper.js";
 
 let dir: string;
 let topicId: string;
@@ -97,6 +99,9 @@ describe("writing readiness", () => {
     expect(await inspect({ direction: "从我的返工经历展开" })).toMatchObject({ ready: false, research: { status: "stale" } });
     await saveBrief(topicId, brief({ revision: 2, angleCards: [], creativeTask: createCreativeTask({ direction: "从我的返工经历展开" }) }), dir);
     await upsertJob(job({ briefRevision: 2 }), dir);
+    // 宿主自己带 direction 不算数：要创始人原话记下的那一句
+    expect(await inspect({ direction: "从我的返工经历展开" })).toMatchObject({ ready: false, status: "needs_angle", note: ANGLE_GATE_COPY.bareDirection });
+    await founderAuthored(dir, topicId, "从我的返工经历展开");
     expect(await inspect({ direction: "从我的返工经历展开" })).toMatchObject({ ready: true, angle: { status: "direction" } });
   });
 
@@ -118,6 +123,9 @@ describe("writing readiness", () => {
   it("requires current selection, then hands writing to the host with visible gaps", async () => {
     await seed({ gaps: ["缺最新样本"] }, { status: "partial" });
     await updateTopic(topicId, { selectedAngle: { briefRevision: 1, angleId: card.id, card, selectedAt: "2026-09-22T02:00:00Z" } }, dir);
+    // 没有创始人原话的选择（旧数据或助手代选）不算数
+    expect(await inspect()).toMatchObject({ ready: false, status: "needs_angle", note: ANGLE_GATE_COPY.notFounderChoice });
+    await founderStamped(dir, topicId);
     expect(await inspect()).toMatchObject({ ready: true, status: "ready_to_write", research: { status: "partial", autoResearched: true, gaps: ["缺最新样本"] }, next_action: { tool: "autocrew_writer", params: { action: "pack" } } });
     await updateTopic(topicId, { selectedAngle: { briefRevision: 2, angleId: card.id, card, selectedAt: "2026-09-22T02:00:00Z" } }, dir);
     expect(await inspect()).toMatchObject({ ready: false, status: "needs_angle" });
@@ -126,14 +134,21 @@ describe("writing readiness", () => {
   it("requires real supplied material and a separate creator direction", async () => {
     expect(await inspect({ researchMode: "provided", research: " " })).toMatchObject({ ready: false, status: "needs_attention" });
     expect(await inspect({ researchMode: "provided", research: "已有材料" })).toMatchObject({ ready: false, status: "needs_angle" });
+    expect(await inspect({ researchMode: "provided", research: "已有材料", direction: "我的经历" })).toMatchObject({ ready: false, status: "needs_angle" });
+    await founderAuthored(dir, topicId, "我的经历");
     expect(await inspect({ researchMode: "provided", research: "已有材料", direction: "我的经历" })).toMatchObject({ ready: true, research: { status: "provided", autoResearched: false } });
   });
 
-  it("separates a research skip from an angle skip, preserving the creator's reason", async () => {
-    expect(await inspect({ researchMode: "skip", direction: "有方向" })).toMatchObject({ ready: false, status: "needs_attention" });
-    const req = { researchMode: "skip" as const, researchReason: "本人日记，无需外部调研" };
-    expect(await inspect(req)).toMatchObject({ ready: false, status: "needs_angle" });
-    expect(await inspect({ ...req, angleSkipReason: "我明确要求直接写" })).toMatchObject({ ready: true, research: { status: "skipped", autoResearched: false, reason: req.researchReason }, angle: { status: "skipped" } });
+  it("跳过调研 / 跳过选卡的通道已关闭：每种写法都明确拒绝", async () => {
+    await seed();
+    for (const req of [
+      { researchMode: "skip" as const, direction: "有方向" },
+      { researchMode: "skip" as const, researchReason: "本人日记，无需外部调研" },
+      { angleSkipReason: "我明确要求直接写" },
+      { researchMode: "skip" as const, researchReason: "本人日记", angleSkipReason: "直接写" },
+    ]) {
+      expect(await inspect(req)).toMatchObject({ ready: false, status: "needs_attention", note: ANGLE_GATE_COPY.skipRemoved });
+    }
   });
 
   it("rejects an invalid mode at runtime instead of treating it as a skip", async () => {
@@ -147,6 +162,7 @@ describe("creative task continuity", () => {
 
   it("persists the preparation request across a new host conversation", async () => {
     await seed({ creativeTask: task }, { creativeTask: task });
+    await founderAuthored(dir, topicId, task.direction!);
     const result = await inspect();
     expect(result).toMatchObject({ ready: true, creativeTask: task, research: { matchesRequestedTask: true } });
     expect(result.continue_params).toMatchObject({ platform: task.platform, requirements: task.requirements, direction: task.direction });

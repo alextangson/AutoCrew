@@ -10,7 +10,7 @@ description: |
 
 ## 开始
 
-用户还在找题时先按 `topic-ideas` / `topic-meeting` 构思，不对整个选题库自动开启研究。明确题目后复用或用 `autocrew_topic` 建题，把受众、目标、提纲、篇幅、必写/禁写放 `requirements`；明确主张另传 `direction`。
+用户还在找题时先按 `topic-ideas` / `schedule-meeting` 构思；单个题的调研到选卡按 `topic-meeting`（选题会）走，不对整个选题库自动开启研究。明确题目后复用或用 `autocrew_topic` 建题，把受众、目标、提纲、篇幅、必写/禁写放 `requirements`；明确主张另传 `direction`。
 
 ```json
 { "action":"prepare", "topic_id":"topic-…", "platform":"wechat_mp", "requirements":"保留用户完整规划" }
@@ -33,8 +33,8 @@ description: |
 
 收齐视角后，由你综合，再 `action:"synthesize"` 提交 `payload`；有离线主张时按工具 schema 明确传 `offline_claim_ids`。没有明确方向时继续 `action:"angles"` 提交不同立意候选的 `payload`，不能只想出一张然后自选。所有提交字段以当前任务包与工具 schema 为准；已完成阶段不可直接覆盖，要重做用新任务。
 
-展示各候选的主张、读者收获、依据、缺口及推荐理由。推荐不等于代选；创作者明确选择后通过 `autocrew_workflow {action:"select_angle", topic_id, angle_id, brief_revision}` 保存。已有明确 `direction` 时沿用，不重复选卡。
+展示各候选的主张、读者收获、依据、缺口及推荐理由。推荐不等于代选；创始人明确选择后通过 `autocrew_workflow {action:"select_angle", topic_id, angle_id, brief_revision, founder_words}` 保存（原话照抄）；他自己给角度用 `select_angle{topic_id, direction, founder_words}`。
 
-然后回 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`，按实际 `next_action` 交给写作包。用户已有足够材料可用 `research_mode=provided` 并传 `research`；明确无需调研才用 `skip` 和 `research_reason`，不得为绕过失败自行跳过。两者均需披露材料是否验证。
+然后回 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`，按实际 `next_action` 交给写作包。用户已有材料可用 `research_mode=provided` 并传 `research`，仍要出卡、由创始人定，并披露材料是否验证；没有跳过调研的模式。
 
 只有用户明确选择 `execution=engine` 的后台流程或已授权的无人值守后台执行才另用后台研究能力；默认不调用模型探测，也不把 engine 配置当作普通 MCP 写作前提。图像、视频和第三方搜索仍按各自服务额度计费。

@@ -7,7 +7,7 @@ export const WRITING_INSTRUCTIONS = [
   "由你完成 audience/evidence/counter/benchmark 四个研究视角，按任务 schema 用 scout perspective 提交，再 synthesize 综合、angles 提交候选。多视角不等于四个独立 agent；只报告实际启动的分工。",
   "needs_angle 时，展示候选的不同主张、依据、缺口和推荐理由，让用户选择；推荐不等于代选。用户已经明确给出角度可用 direction，不能把风格要求当作选角度。",
   "选定后用 workflow select_angle（带 prepare 返回的 brief_revision，缺它会被拒），按它的 next_action 领 writer pack。requirements 必须保留用户原话中的提纲、篇幅、口吻、必写和禁写。",
-  "用户已提供足够材料时可明确 research_mode=provided 并传 research；用户明确无需调研时用 research_mode=skip 和 research_reason 原话。两者都不能冒充自动调研完成，不能为绕过失败自行选择 skip。此时用户事实就是写作包证据台账里的 user-… 条目；由它们推算出的数先用 scout claim_offline{topic_id,content_id,pack_id,claim,reason,claim_token}（不带 task_id，reason 写推算依据）登记再写，不承载真实数据的量词（一周、大半）改成定性说法，不必登记。",
+  "用户已提供材料时可明确 research_mode=provided 并传 research，仍要出立意卡、由创始人定；没有跳过调研或选卡的通道。此时用户事实就是写作包证据台账里的 user-… 条目；由它们推算出的数先用 scout claim_offline{topic_id,content_id,pack_id,claim,reason,claim_token}（不带 task_id，reason 写推算依据）登记再写，不承载真实数据的量词（一周、大半）改成定性说法，不必登记。",
   "ready_to_write 后才领包，ready 才动笔；pack 回 preparing 时 pack_status 至多查 3 次。writer pack 默认只整理已有材料，不读后台模型配置或自动补证；find_evidence 返回宿主补证指引。由你写，完整正文可放 body，hook/cta 可省略，不硬加反常识提问、数字或关注结尾。只用有依据的事实，不编造亲历。pack（或对这篇的第一次写）会回 claim_token，之后对这篇的每次写（writer submit / find_evidence、review_desk submit、editorial feedback、带 content_id 补证的 scout cite / claim_offline、pre_publish video_kit、content update / transition）都要带上它；同宿主的另一个会话不带也会被拒（claim_held）。",
   "只走 writer submit 交生成稿，默认 review=host。三道确定性检查通过后回 awaiting_host_review，并直接带回 review_pack（就是 review_desk pack 的产物：review_pack_id、attempt、draft_hash 与审稿材料），实际审阅后 autocrew_review_desk submit{content_id,review_pack_id,attempt,issues,audience?,claim_token}；attempt 沿用写稿尝试，不能靠轮询等后台审稿。saved、quality_status、needs_attention 和审稿来源以 review_desk submit 的回执为准（review=engine 时才需要 submit_status）。accepted 之后自己要再改，用 writer submit{revision_of: draft_hash, revision_note?}（每包最多 3 个修订周期），只有用户原话反馈才走 editorial feedback。",
   "单宿主审稿必须如实报告 host_self_review / host_self_reviewed；另一宿主的审阅也不自动代表独立评审。语义审稿、作者认可、发布是不同的事。review=none 要报告未审；review=engine 仅在用户明确选择后台审稿时使用。",
@@ -28,7 +28,7 @@ export const WRITING_INSTRUCTIONS = [
 export const MCP_INSTRUCTIONS = [
   "AutoCrew 是创作者的编辑部：调研、立意、写作、审稿由你（当前宿主模型）完成；AutoCrew 负责任务、抓页验引文、确定性检查和保存。",
   "动笔前先读资源 autocrew://writing-guide（写作守则）；某个工具怎么用，读 autocrew://tool-guide/<工具名>。",
-  "写新稿：先确认选题在本周片单（不在就先开选题会/单题会，topic-meeting 技能；被拒 not_on_slate 同理）→ autocrew_topic 复用或建选题 → autocrew_workflow prepare{topic_id,platform,requirements} → 按返回的 research_task 用 autocrew_scout 做调研 → 让创作者选角度后 workflow select_angle → autocrew_writer pack 领包写稿 → writer submit → autocrew_review_desk submit 审稿。",
+  "写新稿先开选题会（topic-meeting 技能）：autocrew_topic 复用或建选题（只有一句灵感就 prepare 带 inspiration）→ autocrew_workflow prepare → 按 research_task 用 autocrew_scout 五路调研（视角可 claim 后派子代理并行）→ 出 3–4 张立意卡 → 创始人用原话定，workflow select_angle 带 founder_words → autocrew_writer pack 领包写稿 → writer submit → autocrew_review_desk submit 审稿。没有跳过调研或选卡的通道。",
   "每一步都照返回里的 next_action 走；被拒时读 error 和 next_action 改正后再调，不要绕开。不要直接 content save 新稿或用 generate 代写。",
   "requirements 保留创作者原话里的提纲、篇幅、口吻、必写和禁写；只用有依据的事实，不编造亲历。",
   "pack 之后对这篇的每次写都带上 claim_token；被别的会话占着（claim_held）就如实告诉创作者，不要抢。",

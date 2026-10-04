@@ -20,7 +20,8 @@ import {
   type ResearchJob,
 } from "../modules/research/research-job-store.js";
 import { getTopic, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { TEST_FOUNDER_WORDS, founderAuthored } from "../modules/research/angle-gate.test-helper.js";
+import { ANGLE_GATE_COPY } from "../modules/research/angle-gate.js";
 
 let testDir: string;
 
@@ -88,7 +89,6 @@ async function adopt(topicId: string, briefRevision: number): Promise<void> {
 
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
-  await putOnSlate(testDir, topic.id);
   if (brief) {
     await saveBrief(topic.id, brief, testDir);
     await adopt(topic.id, brief.revision);
@@ -109,8 +109,11 @@ function tools(sink: ChatCard[] = []) {
   return { sink, startGenerate, list: buildChatTools(sink, testDir, { startGenerate, content }) };
 }
 
+/** 选卡/自定角度时补上创始人原话（缺原话被拒另有专门测试） */
 const run = (t: ReturnType<typeof tools>, args: Record<string, unknown>) =>
-  t.list.find((x) => x.name === "generate_script")!.execute(args) as Promise<string>;
+  t.list.find((x) => x.name === "generate_script")!.execute(
+    (args.angle_id || args.direction) && args.founder_words === undefined ? { ...args, founder_words: TEST_FOUNDER_WORDS } : args,
+  ) as Promise<string>;
 
 describe("generate_script 的角度闸口", () => {
   it("有候选卡且没选 → 不接单：回 needsAngle + 候选清单，同时推一张 angle_cards 卡", async () => {
@@ -156,7 +159,7 @@ describe("generate_script 的角度闸口", () => {
     expect((await getTopic(topic.id, testDir))?.selectedAngle).toBeUndefined();
   });
 
-  it("skip_reason（用户明说直接写）→ 放行开写，原话进 ScriptRequest 留痕", async () => {
+  it("skip_reason 跳过选卡的通道已关闭：明确拒绝，不开写", async () => {
     const topic = await seed();
     const t = tools();
 
@@ -164,11 +167,20 @@ describe("generate_script 的角度闸口", () => {
       await run(t, { topic: TITLE, platform: "douyin", topic_id: topic.id, skip_reason: "用户说：别选角度，直接写" }),
     );
 
-    expect(out).toMatchObject({ ok: true, pending: true });
-    expect(t.startGenerate).toHaveBeenCalledWith(
-      expect.objectContaining({ angleSkipReason: "用户说：别选角度，直接写" }),
-      testDir,
-    );
+    expect(out).toMatchObject({ ok: false, code: "skip_removed" });
+    expect(t.startGenerate).not.toHaveBeenCalled();
+  });
+
+  it("angle_id / direction 不带创始人原话 → 拒绝，不落选题、不开写", async () => {
+    const topic = await seed();
+    const t = tools();
+    const exec = (args: Record<string, unknown>) => t.list.find((x) => x.name === "generate_script")!.execute(args) as Promise<string>;
+    expect(JSON.parse(await exec({ topic: TITLE, platform: "douyin", topic_id: topic.id, angle_id: "angle-1" }))).toMatchObject({ ok: false, code: "founder_words_required" });
+    expect(JSON.parse(await exec({ topic: TITLE, platform: "douyin", topic_id: topic.id, direction: "我自己的角度" }))).toMatchObject({ ok: false, code: "founder_words_required" });
+    expect(t.startGenerate).not.toHaveBeenCalled();
+    const saved = await getTopic(topic.id, testDir);
+    expect(saved?.selectedAngle).toBeUndefined();
+    expect(saved?.founderAngle).toBeUndefined();
   });
 
   it("direction（用户手写角度）→ 放行开写，原话进 ScriptRequest", async () => {
@@ -181,18 +193,20 @@ describe("generate_script 的角度闸口", () => {
       expect.objectContaining({ direction: "从被裁掉的初级程序员视角写" }),
       testDir,
     );
+    expect((await getTopic(topic.id, testDir))?.founderAngle).toMatchObject({ direction: "从被裁掉的初级程序员视角写", founderWords: TEST_FOUNDER_WORDS });
   });
 
-  it("随手写没带 topic_id → 片单闸口拦下，不开写", async () => {
+  it("随手写没带 topic_id → 选题会闸口拦下，不开写", async () => {
     const t = tools();
     const out = JSON.parse(await run(t, { topic: TITLE, platform: "douyin" }));
-    expect(out).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting" } });
+    expect(out).toMatchObject({ ok: false, code: "needs_founder_angle", next_action: { skill: "topic-meeting" } });
     expect(t.startGenerate).not.toHaveBeenCalled();
   });
 
-  it("没有简报 / 简报没有角度卡 → 现状直写（§1.8 不硬出角度）", async () => {
+  it("没有简报 / 简报没有角度卡、但创始人已自定角度 → 照他的角度直写", async () => {
     const bare = await seed(null);
     const noCards = await seed(makeBrief({ angleCards: undefined }));
+    await founderAuthored(testDir, [bare.id, noCards.id]);
     const cases: Array<[string, Record<string, unknown>]> = [
       ["没有简报", { topic: TITLE, platform: "douyin", topic_id: bare.id }],
       ["简报没有角度卡", { topic: TITLE, platform: "douyin", topic_id: noCards.id }],
@@ -210,7 +224,7 @@ describe("generate_script 的角度闸口", () => {
     const topic = await seed();
     await updateTopic(
       topic.id,
-      { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: "2026-08-24T11:00:00.000Z" } },
+      { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: "2026-08-24T11:00:00.000Z", chosenBy: "founder", founderWords: TEST_FOUNDER_WORDS } },
       testDir,
     );
     const t = tools();
@@ -221,8 +235,24 @@ describe("generate_script 的角度闸口", () => {
     expect(t.startGenerate).toHaveBeenCalledOnce();
   });
 
-  it("中断稿重写排在闸口之前：崩掉那次原样重来，不再问一遍角度", async () => {
+  it("旧版选卡（没有创始人原话）不算数 → 重念候选，不开写", async () => {
     const topic = await seed();
+    await updateTopic(topic.id, { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: "2026-08-24T11:00:00.000Z" } }, testDir);
+    const t = tools();
+    const out = JSON.parse(await run(t, { topic: TITLE, platform: "douyin", topic_id: topic.id }));
+    expect(out).toMatchObject({ ok: false, code: "needs_founder_angle", error: ANGLE_GATE_COPY.notFounderChoice });
+    expect(t.startGenerate).not.toHaveBeenCalled();
+  });
+
+  it("中断的空占位稿重写也要过选题会闸口：没定角度不重写，定了才原地重写", async () => {
+    const topic = await seed();
+    const blocked = buildChatTools([], testDir, {
+      content: vi.fn(async (p: Record<string, unknown>) => p.action === "list" ? { ok: true, contents: [{ id: "c-stale", topicId: topic.id, platform: "douyin", lastError: "断流" }] } : { ok: true }),
+      retryGenerate: vi.fn(),
+    });
+    const refused = JSON.parse((await blocked.find((x) => x.name === "generate_script")!.execute({ topic: TITLE, platform: "douyin", topic_id: topic.id })) as string);
+    expect(refused).toMatchObject({ needsAngle: true });
+    await founderAuthored(testDir, topic.id);
     const retryGenerate = vi.fn(async () => ({
       contentId: "c-stale", runId: "run-2", completion: Promise.resolve(),
     }));
@@ -257,7 +287,7 @@ describe("generate_script 的角度闸口", () => {
 
     const out = JSON.parse(
       (await list.find((x) => x.name === "generate_script")!.execute({
-        topic: TITLE, platform: "douyin", topic_id: topic.id, angle_id: "angle-2",
+        topic: TITLE, platform: "douyin", topic_id: topic.id, angle_id: "angle-2", founder_words: TEST_FOUNDER_WORDS,
       })) as string,
     );
 
@@ -401,7 +431,7 @@ describe("两个入口都只认 job.briefRevision 指针", () => {
 
   it("有简报文件但台账没指针 → 两个入口都当「没有简报」", async () => {
     const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
-    await putOnSlate(testDir, topic.id);
+      await founderAuthored(testDir, topic.id);
     await saveBrief(topic.id, makeBrief(), testDir);
 
     // 闸口：没有候选就没有闸口，直接放行开写

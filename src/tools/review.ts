@@ -6,6 +6,8 @@ import { Type } from "@sinclair/typebox";
 import { scanText, type ScanResult } from "../modules/filter/sensitive-words.js";
 import { humanizeZh } from "../modules/humanizer/zh.js";
 import { getContent, updateContent } from "../storage/local-store.js";
+import { aiContentWriteRefusal } from "../modules/research/angle-gate.js";
+import { isModelCall } from "../storage/stage-guard.js";
 
 const REVIEW_SCOPE = {
   quality_status: "mechanical_checks_only",
@@ -126,6 +128,8 @@ export async function executeReview(params: Record<string, unknown>) {
     const humanResult = humanizeZh({ text });
     const fixedText = humanResult.humanizedText;
     if (contentId && fixedText !== text) {
+      const refused = isModelCall(params) ? await aiContentWriteRefusal(contentId, dataDir) : null;
+      if (refused) return refused;
       await updateContent(contentId, { body: fixedText }, dataDir);
     }
     return {

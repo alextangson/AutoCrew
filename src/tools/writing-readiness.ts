@@ -4,6 +4,7 @@ import { activeAngleCard, angleCardHash, angleCardsOf } from "../modules/researc
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { getJob, topicHashOf } from "../modules/research/research-job-store.js";
 import { getTopic } from "../storage/local-store.js";
+import { ANGLE_GATE_COPY, founderChoiceOf, newDraftAngleRefusal, topicHasDraft } from "../modules/research/angle-gate.js";
 import { angleOptionsView, jobView } from "./workflow-views.js";
 
 export interface WritingReadinessRequest {
@@ -113,8 +114,12 @@ export async function inspectWritingReadiness(
   if (!topic) {
     return { ...result, status: "needs_attention", note: `选题不存在：${topicId}`, next_action: { tool: "autocrew_topic", params: { action: "list" } } };
   }
-  if (!["auto", "provided", "skip"].includes(mode)) {
-    return { ...result, status: "needs_attention", note: "research_mode 仅支持 auto / provided / skip。" };
+  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：明确拒绝，不静默当成 auto
+  if (mode === "skip" || req.angleSkipReason?.trim() || req.researchReason?.trim()) {
+    return { ...result, status: "needs_attention", note: ANGLE_GATE_COPY.skipRemoved, next_action: { tool: "autocrew_workflow", params: { topic_id: topicId, action: "prepare" } } };
+  }
+  if (!["auto", "provided"].includes(mode)) {
+    return { ...result, status: "needs_attention", note: "research_mode 仅支持 auto / provided。" };
   }
   const [job, snap] = await Promise.all([
     getJob(topicId, dataDir), resolveEffectiveBrief(topicId, dataDir, warn),
@@ -150,12 +155,6 @@ export async function inspectWritingReadiness(
     }
     result.research.status = "provided";
     result.research.reason = "使用宿主或创作者提供的材料；AutoCrew 未执行自动调研，来源仍需核查。";
-  } else if (mode === "skip") {
-    if (!req.researchReason?.trim()) {
-      return { ...result, status: "needs_attention", note: "跳过调研需 research_reason 记录创作者明确的要求；不能由 agent 自行假定。" };
-    }
-    result.research.status = "skipped";
-    result.research.reason = req.researchReason;
   } else {
     // A retained old brief is not proof that the latest requested research succeeded.
     if (job?.status === "queued" || job?.status === "running") {
@@ -186,33 +185,59 @@ export async function inspectWritingReadiness(
     result.research.executedBy = snap.brief.executedBy ?? job?.executedBy ?? { kind: "engine" };
     result.research.autoResearched = result.research.executedBy.kind !== "host";
     result.research.matchesRequestedTask = true;
-    if (angleCardsOf(snap.brief).length === 0 && !req.direction?.trim() && !req.angleSkipReason?.trim()) {
+    if (angleCardsOf(snap.brief).length === 0 && !req.direction?.trim()) {
       return { ...result, status: "needs_attention", note: "调研已有简报，但没有形成可选立意；需要补跑立意，不能直接冒充写前准备完成。", next_action: next("research", { kind: "angles" }) };
     }
   }
 
-  if (req.direction?.trim()) result.angle.status = "direction";
-  else if (effective) {
+  // 已有真稿的选题（存量、改稿、真稿的平台变体）不用再开选题会（规则 8）：沿用原立意即可
+  let existingDraft: boolean;
+  try { existingDraft = await topicHasDraft(topicId, dataDir); } catch (err) {
+    return { ...result, status: "needs_attention", note: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` };
+  }
+  // 角度只认创始人亲口定的：带原话选的卡，或带原话记下的自定角度（选题会规则 4、5）
+  const authored = topic.founderAngle && founderChoiceOf({ ...topic, selectedAngle: undefined })?.kind === "authored" ? topic.founderAngle : null;
+  const direction = req.direction?.trim() ?? "";
+  const founderCard = effective && (existingDraft || (topic.selectedAngle?.chosenBy === "founder" && topic.selectedAngle.founderWords?.trim())) ? effective : null;
+  if (direction && (existingDraft || (authored && authored.direction === direction))) result.angle.status = "direction";
+  else if (direction) {
+    result.status = "needs_angle";
+    result.note = ANGLE_GATE_COPY.bareDirection;
+    result.next_action = next("select_angle", { direction, founder_words: "<创始人原话>" });
+    return result;
+  } else if (founderCard) {
     result.angle.status = "selected";
-    result.angle.selectedAngleId = effective.id;
-    result.angle.selectedAngleHash = angleCardHash(effective);
-  } else if (req.angleSkipReason?.trim()) {
-    result.angle.status = "skipped";
-    result.angle.reason = req.angleSkipReason;
+    result.angle.selectedAngleId = founderCard.id;
+    result.angle.selectedAngleHash = angleCardHash(founderCard);
+  } else if (authored) {
+    // 自定角度已记下，但这次没带那句 direction：照下一步带上再来，不暗中替换创作任务
+    result.status = "needs_angle";
+    result.note = "创始人已定了自己的角度；照 next_action 带上同一句 direction 继续。";
+    result.next_action = next("prepare", { direction: authored.direction });
+    return result;
   } else {
     result.status = "needs_angle";
-    result.note = result.angle.cards.length
-      ? "请向创作者展示候选之间的主张、适用受众和证据差异，并说明推荐理由；由他选择或给出自己的方向，不要替他选。"
-      : "已有材料或跳过调研不等于已确定立意。请基于现有材料给出不同方向，由创作者确定 direction；只有他明确不选时才填 skip_reason。";
-    result.next_action = result.angle.cards.length ? next("select_angle", { brief_revision: snap!.revision }) : next("prepare");
+    result.note = effective ? ANGLE_GATE_COPY.notFounderChoice : result.angle.cards.length
+      ? "请向创始人展示每张卡的主张、证据、缺口、观众收获和数据依据，说明推荐理由；由他用原话选一张或给出自己的角度，不要替他选。"
+      : "还没有立意卡：先按选题会出 3–4 张卡（自带材料也一样），由创始人定。";
+    result.next_action = result.angle.cards.length ? next("select_angle", { brief_revision: snap!.revision, founder_words: "<创始人原话>" }) : next("prepare");
     return result;
   }
   result.ready = true;
   result.status = "ready_to_write";
-  const preparationNote = mode === "auto" ? "调研与立意已准备好。"
-    : mode === "skip" ? `本次按创作者要求跳过调研，AutoCrew 未执行自动调研：${result.research.reason}。`
-    : result.research.reason + " ";
+  const preparationNote = mode === "auto" ? "调研与立意已准备好。" : result.research.reason + " ";
   result.note = `${preparationNote}由当前宿主领取写作包，按原始要求写稿；后台不会自动代写。`;
   result.next_action = { tool: "autocrew_writer", params: { ...continuation, action: "pack" } };
   return result;
+}
+
+/**
+ * 开新稿的选题会闸口 + 就绪检查一起判：闸口拒了时，若写前准备本身也没就绪（还在调研 / 还有卡没选），
+ * 回就绪检查那份更具体的结果（带候选卡与下一步）；就绪检查也过了才回闸口自己的拒绝。null = 放行。
+ */
+export async function newDraftGate(topicId: string, req: WritingReadinessRequest, dataDir: string, warn?: (m: string) => void): Promise<Record<string, unknown> | null> {
+  const refused = await newDraftAngleRefusal(topicId, dataDir);
+  if (!refused || refused.code !== "needs_founder_angle") return refused;
+  const readiness = await inspectWritingReadiness(topicId, req, dataDir, warn);
+  return readiness.ready ? refused : { ...writingReadinessFailure(readiness), gate: refused.code };
 }

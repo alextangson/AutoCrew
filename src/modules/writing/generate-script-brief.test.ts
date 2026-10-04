@@ -32,7 +32,7 @@ import {
 import { getContent, saveTopic, type Topic } from "../../storage/local-store.js";
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
-import { putOnSlate } from "../meetings/slate.test-helper.js";
+import { founderAuthored } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -137,7 +137,7 @@ function hugeBrief(): ResearchBrief {
 
 async function seedTopic(): Promise<Topic> {
   const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
-  await putOnSlate(testDir, topic.id);
+  await founderAuthored(testDir, topic.id);
   return topic;
 }
 
@@ -440,7 +440,7 @@ describe("注入点唯一 — 桌面/聊天/MCP 三路一致", () => {
     expect(msg).toContain("厂商宣称提效 55%");
   });
 
-  it("MCP 工具入口不带 topic_id → 片单闸口拦下，不进生成（也就谈不上注入）", async () => {
+  it("MCP 工具入口不带 topic_id → 选题会闸口拦下，不进生成（也就谈不上注入）", async () => {
     await seedResearched();
     const seen: { opts?: LoopOptions } = {};
 
@@ -449,7 +449,7 @@ describe("注入点唯一 — 桌面/聊天/MCP 三路一致", () => {
       { generateScriptImpl: (req, dd) => generateScript(req, dd, { runLoopImpl: capturingLoop(seen) }) },
     );
 
-    expect(res).toMatchObject({ ok: false, code: "not_on_slate" });
+    expect(res).toMatchObject({ ok: false, code: "needs_founder_angle" });
     expect(seen.opts).toBeUndefined();
   });
 

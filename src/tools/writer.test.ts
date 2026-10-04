@@ -46,7 +46,7 @@ import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { asFounder, founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -126,7 +126,6 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 /** 落一份「当前生效简报」（台账指针 CAS 过） */
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
-  await putOnSlate(testDir, topic.id);
   if (brief) {
     await saveBrief(topic.id, brief, testDir);
     const job: ResearchJob = {
@@ -159,8 +158,10 @@ async function pickAngle(topicId: string, brief = makeBrief()): Promise<void> {
   );
 }
 
-const run = (params: Record<string, unknown>, deps = {}) =>
-  executeWriter({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+const run = async (params: Record<string, unknown>, deps = {}) => {
+  await asFounder(testDir, params);
+  return executeWriter({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+};
 
 /** 一份干净的成稿：没有数字、没有镜头标注，三道门全过 */
 const GOOD = {
@@ -442,7 +443,6 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
 
   const manualTopic = async (): Promise<Topic> => {
     const topic = await saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
-    await putOnSlate(testDir, topic.id);
     return topic;
   };
 
@@ -533,7 +533,6 @@ describe("writer provided 模式：证据台账带编号，推算数走写手侧
 
   async function providedPack(): Promise<Record<string, any>> {
     const topic = await saveTopic({ title: "例会纪要", description: "", tags: [] }, testDir);
-    await putOnSlate(testDir, topic.id);
     const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: FACTS, direction: "讲自动纪要省下的时间" });
     expect(started).toMatchObject({ ok: true, status: "ready" });
     return started;
@@ -1667,6 +1666,8 @@ describe("persisted creative task reaches writing and review", () => {
   it("recovers omitted requirements from the research brief and preserves the original wording", async () => {
     const task = createCreativeTask({ platform: "douyin", requirements: "  写给门店老板\n保留犹豫过程，不要营销口号。  ", direction: "从一次返工经历展开" });
     const topic = await seed(makeBrief({ creativeTask: task }));
+    // 调研任务里继承来的方向也要是创始人记下的那一句
+    await founderAuthored(testDir, topic.id, task.direction!);
     const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
     expect(started.ok).toBe(true);
     const ready = await settle(started.content_id as string);

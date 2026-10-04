@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { executeGenerate } from "./generate.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 import type { GeneratedScript } from "../modules/writing/generate-script.js";
 
 // ─── Mock factory ──────────────────────────────────────────────────────────────
@@ -34,13 +34,19 @@ function makeGenerateImpl(result: GeneratedScript | Error) {
   };
 }
 
-// ─── Slate：generate 每次都开新稿，测试选题先进片单（临时资料库，不碰真实资料） ──
+// ─── 选题会：generate 每次都开新稿，测试选题先由创始人定了角度（临时资料库，不碰真实资料） ──
 
 const SLATED = "topic-42";
 let slateDir = "";
+/** 选题文件 + 创始人已定角度：generate 才放行 */
+async function seedSlated(dir: string): Promise<void> {
+  await fs.mkdir(path.join(dir, "topics"), { recursive: true });
+  await fs.writeFile(path.join(dir, "topics", `${SLATED}.json`), JSON.stringify({ id: SLATED, title: "AI技能", description: "", tags: [], createdAt: "2026-01-01T00:00:00.000Z" }));
+  await founderAuthored(dir, SLATED);
+}
 beforeEach(async () => {
   slateDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-slate-"));
-  await putOnSlate(slateDir, SLATED);
+  await seedSlated(slateDir);
 });
 afterEach(async () => { await fs.rm(slateDir, { recursive: true, force: true }); });
 /** 非宿主直调的参数补上已进片单的选题与临时资料库 */
@@ -197,11 +203,11 @@ describe("executeGenerate", () => {
   });
 
   // 10. 不带 topic_id / 空串 → 没有选题的新稿必然不在片单上：结构化拒绝，不进生成
-  it("absent or empty topic_id → not_on_slate, generateScript never called", async () => {
+  it("absent or empty topic_id → needs_founder_angle, generateScript never called", async () => {
     const impl = vi.fn(makeGenerateImpl(GOOD_RESULT));
     for (const topic_id of [undefined, "", "   "]) {
       const res = await executeGenerate({ action: "script", topic: "AI技能", platform: "douyin", topic_id, _dataDir: slateDir }, { generateScriptImpl: impl });
-      expect(res).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting", tool: "autocrew_insights" } });
+      expect(res).toMatchObject({ ok: false, code: "needs_founder_angle", next_action: { skill: "topic-meeting", tool: "autocrew_workflow" } });
     }
     expect(impl).not.toHaveBeenCalled();
   });
@@ -317,7 +323,7 @@ describe("knowledge dedupe", () => {
     const testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-knowledge-"));
     await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
     await fs.writeFile(path.join(testDir, "knowledge", "agent.md"), "工具调用循环是 Agent 的核心。");
-    await putOnSlate(testDir, SLATED);
+    await seedSlated(testDir);
 
     let capturedReq: Record<string, unknown> | null = null;
     const generateScriptImpl = async (req: Record<string, unknown>) => {
@@ -344,8 +350,8 @@ describe("engine entry keeps persisted creative intent", () => {
       const { saveBrief } = await import("../modules/research/brief-store.js");
       const { topicHashOf, upsertJob } = await import("../modules/research/research-job-store.js");
       const topic = await saveTopic({ title: "返工复盘", description: "真实经历", tags: [] }, dir);
-      await putOnSlate(dir, topic.id);
       const creativeTask = { version: 1 as const, platform: "douyin", requirements: "  保留完整经历\n不要口号  ", direction: "从失败原因展开" };
+      await founderAuthored(dir, topic.id, creativeTask.direction);
       const topicHash = topicHashOf(topic.title, topic.description);
       await saveBrief(topic.id, { schemaVersion: 1, summary: "已有素材", perspectives: [], tensions: [], angleSuggestions: [], angleCards: [], evidence: [], assetPicks: [], missingPerspectives: [], gaps: [], generatedAt: "2026-09-22T00:00:00Z", revision: 1, topicHash, creativeTask }, dir);
       await upsertJob({ topicId: topic.id, topicHash, creativeTask, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 1 }, dir);

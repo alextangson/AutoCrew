@@ -5,8 +5,8 @@ import { inheritCreativeTask } from "../modules/writing/creative-task.js";
  * 调用生成管线（generate-script.ts），返回 {ok, data} 或 {ok, error}。
  * 引擎未配置的中文可执行提示必须原文透传，让用户知道如何修复。
  */
-import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure } from "./writing-readiness.js";
-import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
+import { inspectWritingReadiness, newDraftGate, writingContinueParams, writingReadinessFailure } from "./writing-readiness.js";
+import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { getDataDir } from "../storage/local-store.js";
 import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
@@ -31,9 +31,7 @@ export const generateSchema = Type.Object({
     }),
   ),
   execution: Type.Optional(Type.Literal("engine", { description: "仅用户明确选择后台模型代写时传 engine；普通请求用 workflow prepare 后由宿主 writer 写" })),
-  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({ type: "string", enum: ["auto", "provided", "skip"] })),
-  research_reason: Type.Optional(Type.String({ description: "用户明确跳过研究的原因，skip 必填" })),
-  skip_reason: Type.Optional(Type.String({ description: "用户明确不选立意的原因，不能由模型自行假定" })),
+  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided">({ type: "string", enum: ["auto", "provided"] })),
   research: Type.Optional(
     Type.String({ description: "Optional research material to inject into the prompt." }),
   ),
@@ -187,16 +185,16 @@ export async function executeGenerate(
       ...preparationHandoff(req),
       requested_execution: "engine",
     };
-    const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
-    if (offSlate) return offSlate;
+    const refused = await newDraftGate(req.topicId, req, getDataDir(dataDir));
+    if (refused) return refused as GenerateResult;
     const preparation = await inspectWritingReadiness(req.topicId, req, getDataDir(dataDir));
     if (!preparation.ready) return writingReadinessFailure(preparation);
     req = inheritCreativeTask(req, preparation.creativeTask);
   }
-  // 片单闸口：generate 每次都开新稿（不改已有稿），选题必须在当前片单上（宿主路径已在上面判过）
+  // 选题会闸口：generate 每次都开新稿（不改已有稿），选题必须先由创始人定了角度（宿主路径已在上面判过）
   if (typeof params._host !== "string") {
-    const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
-    if (offSlate) return offSlate;
+    const refused = await newDraftAngleRefusal(req.topicId, dataDir);
+    if (refused) return refused;
   }
   const generateFn = deps.generateScriptImpl ?? generateScript;
 

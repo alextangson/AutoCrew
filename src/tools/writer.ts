@@ -1,6 +1,6 @@
 import { updateContent } from "../storage/local-store.js";
 import { historyGuard } from "./history-guard.js";
-import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
+import { newDraftGate } from "./writing-readiness.js";
 import { Value } from "@sinclair/typebox/value";
 import { outlineSchema, techniqueRefsSchema, gapSchema, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
 import { findCard, techniqueCatalog } from "../modules/writing/technique-store.js";
@@ -79,20 +79,16 @@ export const writerSchema = Type.Object({
   requirements: Type.Optional(
     Type.String({ description: "pack：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈。它补充选中立意，不代替 direction，也不绕过选卡。要求变化后需 force:true 换包" }),
   ),
-  skip_reason: Type.Optional(
-    Type.String({ description: "pack：创始人**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
-  ),
   research: Type.Optional(
     Type.String({
       description:
         "pack：宿主已查到的材料（原文与出处），只作写作参考并登记为未核验材料；重领时不传会继承，显式空串清除，变化后需 force:true 换包",
     }),
   ),
-  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({
-    type: "string", enum: ["auto", "provided", "skip"],
-    description: "pack：默认 auto 要求有效调研简报；provided 使用用户已有材料，必须给 research；skip 仅用户明确无需调研，必须给 research_reason。不能用 direction 跳过研究。",
+  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided">({
+    type: "string", enum: ["auto", "provided"],
+    description: "pack：默认 auto 要求有效调研简报；provided 使用创作者自带材料（必须给 research），仍要创始人定过的立意。没有跳过通道。",
   })),
-  research_reason: Type.Optional(Type.String({ description: "pack：用户明确无需调研的原因原话（skip 必填），不是模型为绕过失败编的理由" })),
   force: Type.Optional(
     Type.Boolean({
       description: "pack：作废旧包、重跑备料（要求、材料、立意或创作者档案变化，或备料失败时使用；正常轮询不要带）",
@@ -141,7 +137,7 @@ export const writerSchema = Type.Object({
 
 export const WRITER_DESCRIPTION = [
   "AutoCrew 写作包：由当前宿主模型动笔。新需求先 autocrew_workflow prepare，确认研究与立意状态；这里不会替代完整调研。",
-  "1) pack{topic_id, platform, direction?, requirements?, skip_reason?, research?, research_mode?, research_reason?, force?}：领包。创作者本次规划与修改反馈完整放进 requirements，只有明确改变立意才放 direction；research 只装原文与出处。材料会进研究槽并记进证据台账；不放进来的材料，正文里引用它的数字会被硬门当作查无出处打回。宿主模式通常直接回 {status:'ready', content_id, pack_id, pack_md, synchronous:true}，超 15 秒才回 'preparing'——仅组装本地材料，不读取模型API配置或自动补证。默认无有效调研或未定立意会被拒，按 next_action 继续。已有材料用 research_mode=provided；用户明确不需调研用 skip+research_reason，不能自行跳过。候选有推荐理由但最终由用户选。相同请求复用已备包；未重提的要求与材料会继承。新要求与旧包不同会返回 pack_request_changed，此时带完整更新与 force:true 重领（旧 pack_id 当场作废），不能继续照旧包写。",
+  "1) pack{topic_id, platform, direction?, requirements?, research?, research_mode?, force?}：领包。创作者本次规划与修改反馈完整放进 requirements，只有明确改变立意才放 direction；research 只装原文与出处。材料会进研究槽并记进证据台账；不放进来的材料，正文里引用它的数字会被硬门当作查无出处打回。宿主模式通常直接回 {status:'ready', content_id, pack_id, pack_md, synchronous:true}，超 15 秒才回 'preparing'——仅组装本地材料，不读取模型API配置或自动补证。默认无有效调研或未定立意会被拒，按 next_action 继续。新题必须先开选题会、由创始人用原话定立意（否则 needs_founder_angle）；自带材料用 research_mode=provided。候选有推荐理由但最终由创始人选。相同请求复用已备包；未重提的要求与材料会继承。新要求与旧包不同会返回 pack_request_changed，此时带完整更新与 force:true 重领（旧 pack_id 当场作废），不能继续照旧包写。",
   "2) pack_status{content_id}：pack 回 preparing 时才用，隔 poll_after_seconds 至多查 3 次，再查回 pack_stalled 就按 next_action 重领。ready 时带 pack_md——那就是你要照着写的全部材料（岗位规则、立意卡、研究槽、证据台账）。status='failed' 时看 error，别写，按 next_action 用 pack{force:true} 重来。",
   "3) find_evidence{content_id, pack_id, need}：默认返回宿主补证任务和citation_target；由你查找，scout read_page/cite核验入账，不启动后台模型。provided/skip 模式没有研究任务，返回 scout claim_offline 登记入口（不需 task_id），推算出的数登记成 user_claim。只有用户明确指定execution=engine才走旧后台补证（搜索与模型单独额度）。",
   "4) submit{content_id, pack_id, attempt, title, body, outline, technique_ids?, hook?, cta?, hashtags?, review?, revision_of?, revision_note?}：交稿。新写作包（pack_md 里有系列快照）必须附 outline（中心思想、信息点、骨架、说过的东西），technique_ids 只能用本包目录里的卡，可为空；回执里的 length_hint 只是提示，不打回。**先看返回体的 status**：repair=按条改、blocked=硬门拦下、awaiting_host_review=稿已落盘，审稿任务就在 review_pack 里，审完按 next_action 调 review_desk submit；reviewing仅显式engine审稿。每交一次 attempt 加一；同号同内容重发返回上次结果，同号换内容报 attempt_conflict。稿件已 draft_ready 时宿主要再改：带 revision_of=当前 draft_hash 直接交（不必重领包），创作者有新意见时仍走 editorial feedback。",
@@ -277,11 +273,18 @@ export async function executeWriter(
         }
         const topicId = str(params.topic_id);
         if (!topicId) return fail("topic_id 必填");
-        // 片单闸口：没带 content_id 且这条选题还没有稿 = 开新稿
-        if (!str(params.content_id)) {
-          const offSlate = await newDraftSlateRefusal(topicId, dataDir);
-          if (offSlate) return offSlate;
-        }
+        // 选题会闸口：选题还没有真稿 = 这次领包是在开第一篇（带 content_id 的占位稿也一样）；
+        // 已有真稿的改稿、补证、重领包放行
+        const refused = await newDraftGate(topicId, {
+          ...(typeof params.platform === "string" ? { platform: params.platform } : {}),
+          ...(typeof params.direction === "string" ? { direction: params.direction } : {}),
+          ...(typeof params.requirements === "string" ? { requirements: params.requirements } : {}),
+          ...(typeof params.research === "string" ? { research: params.research } : {}),
+          ...(typeof params.skip_reason === "string" ? { angleSkipReason: params.skip_reason } : {}),
+          ...(typeof params.research_reason === "string" ? { researchReason: params.research_reason } : {}),
+          researchMode: (str(params.research_mode) || "auto") as "auto",
+        }, dataDir);
+        if (refused) return refused as WriterResult;
         const platform = str(params.platform);
         if (!platform) return fail(`platform 必填。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}`);
         const issued = await startPack(

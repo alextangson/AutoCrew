@@ -6,7 +6,7 @@ import { executeContentSave } from "./content-save.js";
 import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle } from "../modules/learnings/style-distiller.js";
 import { getContent, listContents, saveContent, saveTopic } from "../storage/local-store.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -546,7 +546,7 @@ describe("MCP content storage cannot bypass writer submission", () => {
 
   it("无正文可建平台占位，但不能再用 update 填正文绕过 submit", async () => {
     const topic = await saveTopic({ title: "返工记录", description: "这里只是选题描述", tags: [] }, testDir);
-    await putOnSlate(testDir, topic.id);
+    await founderAuthored(testDir, topic.id);
     const placeholder = await run({ action: "create_variant", topicId: topic.id, platform: "wechat_mp" });
     expect(placeholder.ok).toBe(true);
     if (!("content" in placeholder) || !placeholder.content) throw new Error("missing content");
@@ -592,7 +592,7 @@ describe("MCP content storage cannot bypass writer submission", () => {
     expect(internal.ok).toBe(true);
     expect((await getContent(blank.id, testDir))?.body).toBe("内部已完成的正文");
     const topic = await saveTopic({ title: "内部选题", description: "素材", tags: [] }, testDir);
-    await putOnSlate(testDir, topic.id);
+    await founderAuthored(testDir, topic.id);
     const internalVariant = await run({ action: "create_variant", topicId: topic.id, platform: "douyin", body: "内部平台稿", _host: undefined });
     expect(internalVariant.ok).toBe(true);
   });

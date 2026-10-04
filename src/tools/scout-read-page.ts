@@ -35,6 +35,8 @@ export interface PageReadContext {
   topicId: string;
   dir: string;
   host: string;
+  /** 凭视角令牌读页的子代理：任务持有者是谁不影响并入（令牌本身就是授权） */
+  viaToken?: boolean;
   brokerDeps?: Omit<ResearchBrokerDeps, "snapshot" | "dataDir" | "beforeNetwork">;
   view: (task: HostResearchTask) => Record<string, unknown>;
   assertTopic: (task: HostResearchTask) => Promise<void>;
@@ -100,7 +102,7 @@ export async function finishPageRead(read: DeferredPageRead, ctx: PageReadContex
       throw new HostResearchError("stale_task", "读页期间研究任务已换代，抓回的页面没有并入新任务；预扣的额度随旧任务作废");
     current.pageReads = (current.pageReads ?? []).filter((r) => r.id !== read.entry.id);
     const broker = createResearchBroker({ ...ctx.brokerDeps, dataDir: ctx.dir, snapshot: current.broker });
-    if (!page || current.host !== ctx.host) {
+    if (!page || (current.host !== ctx.host && !ctx.viaToken)) {
       await save(current);
       if (page) throw new HostResearchError("lease_lost", `读页期间任务已由 ${current.host} 接管，页面未并入`, { holder: current.host });
       const reason = failure instanceof Error ? failure.message : String(failure);

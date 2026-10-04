@@ -56,9 +56,13 @@ import { attachContentEvidence, routeContentEvidence } from "./scout-content-evi
 import { holdTask, taskChangedError } from "./scout-task-guard.js";
 import { DeferredPageRead, finishPageRead, renderPage, reservePageRead } from "./scout-read-page.js";
 import { storageFailure } from "../storage/storage-error.js";
+import {
+  WHY_MAY_PERFORM_SCHEMA, buildAccountData, checkPerspectiveAccess, claimPerspective, failPerspective,
+  missingForSynthesis, perspectiveState, perspectivesView, readWhyMayPerform, settlePerspective,
+} from "./scout-parallel.js";
 
 export const SCOUT_DESCRIPTION =
-  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every research action after prepare requires topic_id/task_id; the one exception is claim_offline with content_id+pack_id and no task_id (provided/skip writing has no research task): it registers a number derived from the user's material as user_claim user-<n> in that draft's ledger, reason required. A manual_import draft in draft_ready has no pack: cite/claim_offline take content_id alone for it. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
+  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Parallel: claim{perspective} issues a perspective_token per perspective so sub-agents work concurrently (same perspective twice: perspective_claimed; idle 30 min: timed_out, re-claimable); fail_perspective{reason} records a visible failure to re-run. The 5th route, account data, is built deterministically (account_data re-runs it). synthesize needs all 5; angles = 3-4 cards each with why_may_perform. Every research action after prepare requires topic_id/task_id; the one exception is claim_offline with content_id+pack_id and no task_id (provided/skip writing has no research task): it registers a number derived from the user's material as user_claim user-<n> in that draft's ledger, reason required. A manual_import draft in draft_ready has no pack: cite/claim_offline take content_id alone for it. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
 const text = Type.String();
 const actions = [
   "prepare",
@@ -71,6 +75,9 @@ const actions = [
   "perspective",
   "synthesize",
   "angles",
+  "claim",
+  "fail_perspective",
+  "account_data",
 ] as const;
 export const scoutSchema = Type.Object(
   {
@@ -98,6 +105,7 @@ export const scoutSchema = Type.Object(
       }),
     ),
     payload: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    perspective_token: Type.Optional(Type.String({ description: "claim 发的视角令牌；子代理做这个视角的 search/read_page/cite/perspective/fail_perspective 都带上" })),
     content_id: Type.Optional(text),
     pack_id: Type.Optional(text),
     claim_token: Type.Optional(
@@ -131,6 +139,8 @@ const nonempty = (v: unknown, name: string) => {
   if (!s.trim()) throw new HostResearchError("missing_argument", `${name} 必填`);
   return s;
 };
+/** 带 perspective 参数、受视角令牌约束的动作 */
+const PERSPECTIVE_SCOPED = new Set(["search", "read_page", "perspective", "fail_perspective"]);
 function perspectiveOf(value: unknown): PerspectiveName {
   if (!(PERSPECTIVE_NAMES as readonly unknown[]).includes(value))
     throw new HostResearchError("invalid_perspective", "perspective 必须是 audience/evidence/counter/benchmark");
@@ -139,7 +149,11 @@ function perspectiveOf(value: unknown): PerspectiveName {
 
 /** 下一阶段的提交入口：任务书已随回执的 pack 字段带回，不再让宿主为了拿任务书多跑一次 pack */
 function nextStageTarget(task: HostResearchTask, missing: PerspectiveName[]) {
-  if (missing[0]) return target(task, "perspective", { perspective: missing[0] });
+  // 并行：缺的视角各自 claim 发令牌派给子代理；只剩账号数据没齐就单独重跑它
+  const open = missing.filter((n) => perspectiveState(task, n) !== "claimed");
+  if (open[0]) return target(task, "claim", { perspective: open[0] });
+  if (missing[0]) return target(task, "status");
+  if (task.accountData?.status !== "ok") return target(task, "account_data");
   if (!task.brief) return target(task, "synthesize");
   return target(task, "angles");
 }
@@ -159,10 +173,7 @@ function view(task: HostResearchTask): Record<string, unknown> {
     creative_task: task.creativeTask,
     creative_task_hash: creativeTaskHash(task.creativeTask),
     brief_revision: task.briefRevision,
-    perspectives: PERSPECTIVE_NAMES.map((name) => ({
-      name,
-      status: task.perspectives[name] ? "submitted" : "pending",
-    })),
+    perspectives: perspectivesView(task),
     sources: task.broker.sources.map(([, e]) => e.source),
     unverified_claims: task.offlineClaims,
     next_action:
@@ -218,6 +229,12 @@ async function promptPack(
       submit: target(task, "perspective", { perspective: name }),
     };
   }
+  if (task.accountData?.status !== "ok")
+    return {
+      stage: "account_data",
+      note: `账号数据视角${task.accountData ? `失败：${task.accountData.reason}` : "还没生成"}。调 account_data 重跑（确定性、不调模型）；五路齐了才能综合。`,
+      submit: target(task, "account_data"),
+    };
   if (!task.brief)
     return {
       stage: "synthesis",
@@ -239,15 +256,20 @@ async function promptPack(
       },
       submit: target(task, "synthesize"),
     };
+  const angleSchema = ANGLE_SCHEMA as { properties: { candidates: { items: { required?: string[]; properties?: Record<string, unknown> } } } };
+  const cardSchema = angleSchema.properties.candidates.items;
   return {
     stage: task.status === "ready" ? "complete" : "angles",
-    system: buildAngleSystemPrompt(task.profile, task.creativeTask),
+    account_data: task.accountData?.summary ?? "",
+    system: `${buildAngleSystemPrompt(task.profile, task.creativeTask)}\n选题会规则：出 3–4 张卡，每张写 why_may_perform——只引下面「账号数据」里的数字（带 n），没有可用数据就照写「无数据依据」，不凭印象。开头钩子里的事实必须来自已 cite 的原文。`,
     // 立意阶段就给系列快照和手法目录（spec §3 C）：换骨架要在生成候选卡时发生，只换写作包菜单不够
     user: buildAngleUserMessage({
       ...common, brief: task.brief,
       ...(dataDir ? { series: await loadSeriesSnapshot(task.creativeTask?.platform ?? "", { topicId: task.topicId }, dataDir), techniques: await techniqueCatalog(dataDir) } : {}),
     }),
-    submit_schema: ANGLE_SCHEMA,
+    submit_schema: { ...ANGLE_SCHEMA, properties: { ...ANGLE_SCHEMA.properties, candidates: { ...angleSchema.properties.candidates, items: {
+      ...cardSchema, required: [...(cardSchema.required ?? []), "why_may_perform"], properties: { ...cardSchema.properties, why_may_perform: WHY_MAY_PERFORM_SCHEMA },
+    } } } },
     submit: target(task, "angles"),
   };
 }
@@ -339,6 +361,7 @@ export async function executeScout(
   const host = str(params._host) || "local-user";
   const topicId = str(args.topic_id),
     action = str(args.action);
+  let viaToken = false;
   try {
     const outcome = await withHostResearchLock(topicId, dir, async (current, save): Promise<Record<string, unknown> | DeferredPageRead> => {
       if (args.task_id && args.task_id !== current?.taskId)
@@ -385,6 +408,7 @@ export async function executeScout(
               description: [topic.description, renderCreativeTask(creativeTask)].join("\n"),
             }),
             perspectives: {},
+            accountData: await buildAccountData(dir),
             citations: [],
             offlineClaims: [],
             submissionHashes: {},
@@ -449,8 +473,33 @@ export async function executeScout(
       // 本轮任务已冻结：带着新要求的研究动作不能把旧来源分析静默套到新任务上，回差异让宿主确认
       if (creativeTaskHash(suppliedTask) !== creativeTaskHash(task.creativeTask)) throw taskChangedError(task, suppliedTask);
       if (action === "status") return view(task);
-      await holdTask(task, host, dir);
+      // 分视角认领：claim 谁都能领（这就是把视角派给并行子代理的口子）；带视角令牌的调用凭令牌授权，
+      // 不再要求是整份任务的持有者；不带令牌的老路照旧走持有者检查
+      const scoped = PERSPECTIVE_SCOPED.has(action) && args.perspective ? perspectiveOf(args.perspective) : undefined;
+      if (action === "claim") {
+        if (task.status !== "researching" || task.brief) throw new HostResearchError("stage_locked", "综合已开始，不能再领视角；要重做请 force prepare");
+        const name = perspectiveOf(args.perspective);
+        const token = claimPerspective(task, name, host);
+        await save(task);
+        const broker = createResearchBroker({ ...deps.brokerDeps, dataDir: dir, snapshot: task.broker });
+        return { ...view(task), perspective: name, perspective_token: token, pack: await promptPack(task, broker, name, dir),
+          note: "把 perspective_token 交给做这个视角的子代理：它的 search / read_page / cite / perspective 提交都带上令牌。做不下去就 fail_perspective 写明原因。" };
+      }
+      viaToken = checkPerspectiveAccess(task, scoped, str(args.perspective_token));
+      if (!viaToken) await holdTask(task, host, dir);
       await guardEngine(topicId, dir);
+      if (action === "fail_perspective") {
+        failPerspective(task, perspectiveOf(args.perspective), nonempty(args.reason, "reason"), host);
+        await save(task);
+        return { ...view(task), note: "已记下这个视角失败的原因，回执里一直摆着；补上材料后重新 claim 这一个视角重跑即可，综合要五路齐。" };
+      }
+      if (action === "account_data") {
+        if (task.brief) throw new HostResearchError("stage_locked", "综合已完成，账号数据已用于本轮；要刷新请 force prepare");
+        task.accountData = await buildAccountData(dir);
+        await save(task);
+        return { ...view(task), ok: task.accountData.status === "ok", account_data: task.accountData,
+          ...(task.accountData.status === "ok" ? {} : { code: "account_data_failed", error: task.accountData.reason }) };
+      }
       const broker = createResearchBroker({
         ...deps.brokerDeps,
         dataDir: dir,
@@ -572,6 +621,7 @@ export async function executeScout(
             e.source = "verified_quote";
           });
           task.perspectives[name!] = result.value;
+          settlePerspective(task, name!);
           task.submissionHashes[key] = payloadHash;
           const job = await getJob(topicId, dir);
           if (job?.executedBy?.kind === "host" && job.executedBy.host === host)
@@ -586,10 +636,12 @@ export async function executeScout(
               dir,
             );
         } else if (action === "synthesize") {
-          if (PERSPECTIVE_NAMES.some((n) => !task.perspectives[n]))
+          const missingRoutes = missingForSynthesis(task);
+          if (missingRoutes.length)
             throw new HostResearchError(
               "perspectives_incomplete",
-              "四个视角尚未全部交付；没有查到的情况也应明确提交材料缺口，不得假装完成",
+              `五路（四个调研视角 + 账号数据）还没齐：缺 ${missingRoutes.join("、")}。失败的视角重新 claim 重跑，账号数据用 account_data 重跑；没查到也要明确提交缺口，不得假装完成`,
+              { missing: missingRoutes },
             );
           const outputs = PERSPECTIVE_NAMES.map((n) => task.perspectives[n]!);
           const suppliedGaps = Array.isArray(payload.gaps)
@@ -652,6 +704,8 @@ export async function executeScout(
           const checked = validateAngles(payload, task.brief, task.ownMaterial);
           if (!checked.ok)
             return { ok: false, code: "invalid_angles", task_id: task.taskId, problems: checked.problems };
+          const why = readWhyMayPerform(payload, checked.value.cards.length);
+          checked.value.cards.forEach((card, i) => { (card as { whyMayPerform?: string }).whyMayPerform = why[i]; });
           for (const card of checked.value.cards) {
             if (
               card.evidenceLevel === "grounded" &&
@@ -674,7 +728,7 @@ export async function executeScout(
     });
     if (!(outcome instanceof DeferredPageRead)) return outcome;
     return await finishPageRead(outcome, {
-      topicId, dir, host, brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
+      topicId, dir, host, viaToken, brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
     });
   } catch (err) {
     const storage = storageFailure(err);

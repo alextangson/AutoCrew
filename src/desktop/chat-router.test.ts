@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runChatTurn, buildChatTools, chatProgressEvent, dedupeDraftCards, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 import { releaseJob, GENERATE_JOB_KEY } from "./job-claims.js";
-import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
+import { TEST_FOUNDER_DIRECTION, founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -20,7 +20,11 @@ beforeEach(async () => {
     JSON.stringify({ apiKey: "test-key", baseUrl: "https://fake.local" }),
   );
   // 后台写稿开的都是新稿：测试用的选题先进片单
-  await putOnSlate(testDir, ["topic-1", "topic-slated"]);
+  for (const id of ["topic-1", "topic-slated"]) {
+    await fs.mkdir(path.join(testDir, "topics"), { recursive: true });
+    await fs.writeFile(path.join(testDir, "topics", `${id}.json`), JSON.stringify({ id, title: id, description: "", tags: [], createdAt: "2026-01-01T00:00:00.000Z" }));
+  }
+  await founderAuthored(testDir, ["topic-1", "topic-slated"]);
 });
 
 afterEach(async () => {
@@ -111,8 +115,9 @@ describe("buildChatTools", () => {
     })) as string);
 
     // 用户这一轮说的话跟着走：换了角度就按新角度重写，不是照抄崩掉那次的请求
+    // 创始人在选题会上自定的角度跟着重写走
     expect(retryGenerate).toHaveBeenCalledWith("c-stale", testDir, {
-      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topicId: "topic-1",
+      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topicId: "topic-1", direction: TEST_FOUNDER_DIRECTION,
     });
     expect(startGenerate).not.toHaveBeenCalled(); // 没有第二张卡
     expect(out).toMatchObject({ ok: true, pending: true, contentId: "c-stale" });
@@ -131,7 +136,7 @@ describe("buildChatTools", () => {
       topic: "AI 焦虑", platform: "douyin", topic_id: "topic-1",
     });
 
-    expect(Object.keys(override ?? {}).sort()).toEqual(["platform", "topic", "topicId"]);
+    expect(Object.keys(override ?? {}).sort()).toEqual(["direction", "platform", "topic", "topicId"]);
   });
 
   it("随手写没带 topic_id / 选题不在片单 → 片单闸口拦下，不新建", async () => {
@@ -139,7 +144,7 @@ describe("buildChatTools", () => {
       const startGenerate = vi.fn();
       const tools = buildChatTools([], testDir, { content: listWith(), startGenerate });
       const out = JSON.parse((await tools.find((t) => t.name === "generate_script")!.execute(args)) as string);
-      expect(out).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting" } });
+      expect(out).toMatchObject({ ok: false, code: "needs_founder_angle", next_action: { skill: "topic-meeting" } });
       expect(startGenerate).not.toHaveBeenCalled();
     }
   });

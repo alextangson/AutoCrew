@@ -8,7 +8,7 @@ import { decodeArg } from "../modules/meetings/meeting-args.js";
 export const MEETING_ACTIONS = ["meeting_brief", "meeting_get", "meeting_save", "meeting_tag"] as const;
 
 export const MEETING_DESCRIPTION = [
-  "选题会（技能 topic-meeting）：meeting_brief 出确定性简报（回流健康度、作品 D+3/D+7、按形式/画像分组、同平台同龄基线 n<5 标 insufficient、上次下注对账），不调模型；读失败直接报原始错误，停会。",
+  "排期会（可选，技能 schedule-meeting，不拦写稿）：meeting_brief 出确定性简报（回流健康度、作品 D+3/D+7、按形式/画像分组、同平台同龄基线 n<5 标 insufficient、上次下注对账），不调模型；读失败直接报原始错误，停会。",
   "meeting_get{date?} 读会议记录与 revision；meeting_save{date?,meeting:{expected_revision,slots,rejected,reviews,notes?}} 落会议记录（CAS）+ 每个选中位一条假设 + 选题标进本周片单（选中≠开工）；单题会（临时蹭热点）meeting 里带 append:true 只追加新位到最近一场会（expected_revision 用 meeting_get 回的 latest_meeting.revision），照样要 bet/probability，不要求对账；meeting_tag{tag:{work_key,format?,persona_key?}} 给已发作品补形式/画像。",
 ].join("\n");
 
@@ -46,6 +46,6 @@ export async function executeMeetingAction(action: string, args: Record<string, 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof MeetingConflictError) return { ok: false, error: message, conflict: true, current_revision: err.current, next_action: "meeting_get 重读后再改" };
-    return { ok: false, error: message, next_action: "选题会停在这里：把原始错误告诉创始人，修好数据源再开，不凭记忆开会。" };
+    return { ok: false, error: message, next_action: "排期会停在这里：把原始错误告诉创始人，修好数据源再开，不凭记忆开会。" };
   }
 }

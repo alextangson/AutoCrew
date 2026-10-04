@@ -18,7 +18,7 @@ description: |
 ## 1. 开工
 
 - 从晨报来：晨报已给出 `topic_id` 和标题。裸请求：`autocrew_topic {action:"list"}` 找现成选题，没有再 `create`；用户点名一篇已有稿就按上面接上。
-- 新稿先查片单：`autocrew_insights {action:"meeting_get"}`（或 `meeting_brief`）看这条在不在最近一场会的片单上。不在就转 `topic-meeting` 技能开会，临时的就开单题会，存好再回来；不要自己 create 完直接 `prepare` 开写。开写入口回 `not_on_slate` 也是同一件事，照它的 `next_action` 走；回 `slate_read_failed` 就把原始错误告诉用户，停下。
+- 新稿（这条选题还没有真稿）先开选题会：照 `topic-meeting` 技能并行调研、出 3–4 张立意卡，由创始人用原话定（`select_angle` 带 `founder_words`），定了再进第 2 步。不要替他选，也不要绕过；开写入口回 `needs_founder_angle` 就是会还没开完，回 `angle_gate_read_failed` 就把原始错误告诉用户，停下。
 - 平台（只能一个：`xiaohongshu` / `douyin` / `wechat_video` / `bilibili`）和目标口播时长没说就一次问清；其余照对话原话进 `requirements`。
 - 会话标题：选题定下时、`select_angle` 成功后、收稿时标题变了，调桌面工具 `mcp__ccd_session_mgmt__set_session_title{session_id:"self", title}`。这是尽力而为：工具不在（终端 `claude`、Codex、dsh）或用户自己改过标题就跳过，不重试，交付时提一句。
 
