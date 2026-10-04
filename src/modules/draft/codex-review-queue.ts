@@ -43,7 +43,7 @@ export function setCodexRunner(fn: CodexRunner | null): void { runner = fn ?? ru
 export function resetReviewQueue(): void { waiting.length = 0; running = 0; }
 /** 只给测试：等排着和跑着的审稿都结束（删临时目录前用） */
 export async function reviewsIdle(): Promise<void> {
-  while (running || waiting.length) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < 600 && (running || waiting.length); i++) await new Promise((r) => setTimeout(r, 5));
 }
 
 const now = () => new Date().toISOString();

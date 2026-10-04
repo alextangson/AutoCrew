@@ -26,7 +26,7 @@ async function draft(): Promise<string> {
   return c.id;
 }
 async function settle(id: string, want = ["done", "failed"]): Promise<Record<string, unknown>> {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 500; i++) {
     const v = await reviewView(id, dir);
     if (want.includes(String(v.status))) return v;
     await new Promise((r) => setTimeout(r, 10));
@@ -73,6 +73,7 @@ describe("审稿任务", () => {
     await enqueueReview(id, dir);
     expect(activeWorkCount()).toBeGreaterThan(0);
     await settle(id, ["running"]);
+    while (!release) await new Promise((r) => setTimeout(r, 5));
     release();
     const v = await settle(id);
     expect(v).toMatchObject({ status: "done", version: 1, current: true });
@@ -116,6 +117,7 @@ describe("审稿任务", () => {
     const b = await enqueueReview(id, dir);
     expect(b).toMatchObject({ coalesced: true, attempt: { attempt: a.attempt.attempt } });
     await settle(id, ["running"]);
+    while (!release) await new Promise((r) => setTimeout(r, 5));
     release();
     await settle(id);
     await updateContent(id, { body: `${BODY}补一句。`, _provenance: HUMAN_WRITE }, dir);

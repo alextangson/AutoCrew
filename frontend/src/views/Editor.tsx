@@ -36,6 +36,7 @@ import { StageAdvance } from "./StageAdvance";
 import { CardPanel } from "./CardPanel";
 import { progressKey } from "./card-next";
 import { ProductionBanner } from "./ProductionBanner";
+import { DraftFinalPanel } from "./DraftFinalPanel";
 import { loadCard } from "./board-api";
 import {
   platformLabel,
@@ -532,6 +533,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {productionBanner}
+      <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}`} dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />
       {props.context}
       <SharedProjectPanel status={c.status} isVideo={isVideo} ontology={ontology} />
 
