@@ -117,7 +117,7 @@ describe("点卡直接进稿件页", () => {
     await act(async () => {
       root.render(createElement(Board, { openTopic: () => {}, openEditor, openData: () => {} }));
     });
-    const title = [...el.querySelectorAll("button.bcard-title")].find((b) => b.textContent?.includes("某稿"))!;
+    const title = [...el.querySelectorAll<HTMLButtonElement>("button.bcard-title")].find((b) => b.textContent?.includes("某稿"))!;
     await act(async () => { title.click(); });
     expect(openEditor).toHaveBeenCalledWith("content-1-a");
     expect(el.querySelector("[aria-label='卡片详情']")).toBeNull();
