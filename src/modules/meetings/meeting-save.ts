@@ -11,7 +11,7 @@ import { appendHypotheses, listHypotheses, type Hypothesis, type MetricFocus } f
 import { applyJudgement } from "../retro/hypothesis-judge.js";
 import { shanghaiDate } from "../flywheel/outcome-schema.js";
 import { listArg, readRejected, readReviews, readSlot } from "./meeting-args.js";
-import { assertMeetingDate, readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
+import { assertMeetingDate, latestMeetingDate, readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
 import { buildMeetingBrief } from "./meeting-brief.js";
 
 export interface SaveMeetingArgs {
@@ -146,13 +146,15 @@ function mergeAppend(onDisk: MeetingRecord | null, slots: MeetingSlot[], rejecte
 
 export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now = new Date()) {
   // 日期先过校验再碰任何路径或 id
-  const date = args.date === undefined || args.date === "" ? shanghaiDate(now.toISOString()) : assertMeetingDate(args.date);
+  const today = args.date === undefined || args.date === "" ? shanghaiDate(now.toISOString()) : assertMeetingDate(args.date);
   const expected = expectedRevision(args.expected_revision);
   const append = args.append === true || args.append === "true";
+  // 单题会追加到最近一场会（哪天开都一样），上一场片单因此继续有效；还没开过会才新建当天的记录
+  const date = append ? (await latestMeetingDate(dataDir)) ?? today : today;
   const read = await readSlots(args.slots, date, dataDir);
   const errors = read.errors;
   const onDisk = await readMeeting(date, dataDir);
-  const slots = stabilizeSlotIds(read.slots, onDisk, date);
+  const slots = stabilizeSlotIds(read.slots, onDisk, date).map((s) => (append ? { ...s, addedOn: today } : s));
   const rejected = readRejected(listArg(args.rejected, "rejected"));
   if (append) errors.push(...appendErrors(slots, onDisk, expected));
   if (errors.length) return { ok: false as const, error: errors.join("；"), next_action: "按错误逐条问创始人补齐后重新 meeting_save；什么都还没写入" };
@@ -174,5 +176,9 @@ export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now =
 export async function getMeeting(date: string | undefined, dataDir?: string, now = new Date()) {
   const day = date ? assertMeetingDate(date) : shanghaiDate(now.toISOString());
   const record = await readMeeting(day, dataDir);
-  return record ? { ok: true as const, record } : { ok: true as const, record: null, expected_revision: 0, note: `${day} 还没开过会；新会 expected_revision 传 0` };
+  // 单题会追加到最近一场会：给出它的日期和 revision，append 时 expected_revision 用这个
+  const latestDate = await latestMeetingDate(dataDir);
+  const latest = latestDate ? await readMeeting(latestDate, dataDir) : null;
+  const latest_meeting = latest ? { date: latest.date, revision: latest.revision } : null;
+  return record ? { ok: true as const, record, latest_meeting } : { ok: true as const, record: null, expected_revision: 0, latest_meeting, note: `${day} 还没开过会；新会 expected_revision 传 0；单题会（append）用 latest_meeting.revision，还没开过会就传 0` };
 }

@@ -5,7 +5,7 @@ const TIER_LABEL: Record<string, string> = { core: "核心受众", adjacent: "�
 
 function slotBlock(s: MeetingRecord["slots"][number], i: number): string {
   return [
-    `### ${i + 1}. ${s.title}`,
+    `### ${i + 1}. ${s.title}${s.addedOn ? `（${s.addedOn} 单题会追加）` : ""}`,
     "",
     `- 给谁看：${TIER_LABEL[s.persona.key] ?? s.persona.key}（${s.persona.name}）`,
     `- 观众拿走什么：${s.payoff}`,

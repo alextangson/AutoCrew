@@ -30,8 +30,8 @@ description: |
 没有绕过开关：片单外的题开不了新稿（写稿入口回 `not_on_slate`），想临时写一条就开只放这一条的会。
 
 - 照常问清这一条的画像、观众收获、形式、为什么现在、数据依据、赌什么、事前验尸，由创作者给概率；不读简报对账，也不补标签。
-- `meeting_get` 拿当日 `revision`，再 `meeting_save{meeting:{expected_revision, append:true, slots:[这一条]}}`。`append` 只追加新位，当日已存的位、下注和毙题原样保留，和当日会议算同一场。报 `conflict` 就重读再存。
-- 当天还没开过会时，这场单题会就是「最近一场会」：上一场片单里还没开写的题会因此被拦。存之前先告诉创作者这一点，问清还想写的旧题要不要一并放进这场会。
+- `meeting_get` 读回执里的 `latest_meeting.revision`（还没开过会就是 0），再 `meeting_save{meeting:{expected_revision, append:true, slots:[这一条]}}`。不管哪天开，这一条都追加进最近一场会，原片单、下注、毙题原样保留，纪要里标出追加日期；还没开过会就新建一场只含这一条的会。报 `conflict` 就重读再存。
+- 只有不带 `append` 的整场新会才替换片单。
 
 ## 用数字的规矩
 

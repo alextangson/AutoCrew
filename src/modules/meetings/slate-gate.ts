@@ -5,7 +5,7 @@
  * 平台改写、手动导入都不经过这里。所有开写入口（workflow prepare / write、writer pack、
  * generate、看板「开始写」、桌面后台写稿）共用 `newDraftSlateRefusal` 一个判定。
  *
- * 「当前片单」= 最近一场会议记录的 slots（同日追加的单题会写进同一份记录）。上一场选中、
+ * 「当前片单」= 最近一场会议记录的 slots（单题会无论哪天开都追加进这份记录）。上一场选中、
  * 这一场没再选中 → 拦。会议记录读不出 → 报读失败，既不放行也不冒充「没开过会」。
  */
 import { listContentsStrict } from "../../storage/local-store.js";
@@ -31,7 +31,7 @@ const MEETING_NEXT = {
   skill: "topic-meeting",
   tool: "autocrew_insights",
   params: { action: "meeting_brief" },
-  note: "按 topic-meeting 技能开会（临时蹭热点就开单题会：meeting_save 的 meeting 里带 append:true 只加这一条），存好片单后再回来开写。不要自己绕过。",
+  note: "按 topic-meeting 技能开会（临时蹭热点就开单题会：meeting_save 的 meeting 里带 append:true，这一条追加进最近一场会），存好片单后再回来开写。不要自己绕过。",
 } as const;
 
 /**

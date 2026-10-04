@@ -12,6 +12,7 @@ import { startWriting } from "../../desktop/board-actions.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
 import { buildChatTools } from "../../desktop/chat-router.js";
 import { readMeeting } from "./meeting-store.js";
+import { renderMeetingMinutes } from "./meeting-render.js";
 import { SLATE_GATE_COPY, newDraftSlateRefusal } from "./slate-gate.js";
 import { putOnSlate } from "./slate.test-helper.js";
 import { dropFixture, makeContent, makeFixture, makeTopic, type Fixture } from "./meeting-fixture.test-helper.js";
@@ -101,6 +102,36 @@ describe("单题会：meeting_save append", () => {
     const bets = await listHypotheses(f.data);
     expect(bets.map((h) => h.id).sort()).toEqual(["hyp-meeting-2026-10-04-s1", "hyp-meeting-2026-10-04-s2"]);
     expect(bets.every((h) => h.status === "open")).toBe(true);
+  });
+
+  it("周一 3 个位，周三单题会追加 → 4 条都放行；追加进最近那场会，纪要标出追加日期", async () => {
+    const ts = await Promise.all(["A", "B", "C", "热点"].map((t) => makeTopic(f.data, t)));
+    await save("2026-09-28", { expected_revision: 0, slots: ts.slice(0, 3).map((t) => slot(t.id)) });
+    const res = await save("2026-09-30", { expected_revision: 1, slots: [slot(ts[3].id)], append: true });
+    expect(res).toMatchObject({ ok: true, record: { date: "2026-09-28", revision: 2 } });
+    expect(await fs.readdir(path.join(f.data, "meetings")).then((n) => n.filter((x) => x.endsWith(".json")))).toEqual(["2026-09-28.json"]);
+    for (const t of ts) expect(await newDraftSlateRefusal(t.id, f.data), t.title).toBeNull();
+    const rec = (await readMeeting("2026-09-28", f.data))!;
+    expect(rec.slots[3]).toMatchObject({ topicId: ts[3].id, addedOn: "2026-09-30", hypothesisId: "hyp-meeting-2026-09-28-s4" });
+    expect(renderMeetingMinutes(rec)).toContain("热点（2026-09-30 单题会追加）");
+    // 周四开整场新会、没选这些题 → 全部被拦
+    const thu = await makeTopic(f.data, "周四题");
+    await save("2026-10-01", { expected_revision: 0, slots: [slot(thu.id)] });
+    for (const t of ts) expect(await newDraftSlateRefusal(t.id, f.data), t.title).toMatchObject({ code: "not_on_slate" });
+    expect(await newDraftSlateRefusal(thu.id, f.data)).toBeNull();
+  });
+
+  it("从没开过会时单题会新建一场只含这一条的会", async () => {
+    const hot = await makeTopic(f.data, "热点");
+    expect(await save("2026-10-04", { expected_revision: 0, slots: [slot(hot.id)], append: true })).toMatchObject({ ok: true, record: { date: "2026-10-04", revision: 1, slots: [{ topicId: hot.id }] } });
+    expect(await newDraftSlateRefusal(hot.id, f.data)).toBeNull();
+  });
+
+  it("跨天追加带旧 revision → conflict，不覆盖", async () => {
+    const [a, hot] = await Promise.all([makeTopic(f.data, "周会题"), makeTopic(f.data, "热点")]);
+    await save("2026-09-28", { expected_revision: 0, slots: [slot(a.id)] });
+    expect(await save("2026-09-30", { expected_revision: 0, slots: [slot(hot.id)], append: true })).toMatchObject({ ok: false, conflict: true, current_revision: 1 });
+    expect((await readMeeting("2026-09-28", f.data))?.slots.map((s) => s.topicId)).toEqual([a.id]);
   });
 
   it("append 也走 CAS：带旧 revision 报 conflict，不静默覆盖", async () => {
