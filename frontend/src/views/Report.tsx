@@ -18,6 +18,7 @@ import { DataTable } from "./DataTable";
 import { METRICS, availability, loadMetric, metricThresholds, saveMetric, type MetricId } from "./data-metrics";
 import { ExperimentsCard, useRetros } from "./DataAside";
 import { LatestCard, NextCard, TrendCard } from "./DataQuestions";
+import { LedgerCard } from "./Ledger";
 import {
   COVER_CAPTURE_PLATFORMS, fmtViews, monthLabel, pickMonth, platformCards, pullLine, rowsInPeriod, sourceLabel,
   type DataPageData, type Period,
@@ -163,6 +164,7 @@ export function ReportView(props: { openEditor: (id: string) => void; openSettin
         <ExperimentsCard retro={retro} onOpenRetro={setRetro} retros={retros} />
       </div>
       {retro && <RetroView file={retro} onClose={() => setRetro(null)} />}
+      <LedgerCard />
       <AllWorks data={data} onChanged={load} openEditor={props.openEditor} />
     </PageShell>
   );

@@ -34,7 +34,11 @@ import { executeMarkReady, executeRecord } from "../modules/production/record.js
 import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
+<<<<<<< HEAD
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+=======
+import { boardTrashRefusal } from "../modules/production/trash-guard.js";
+>>>>>>> main
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
@@ -374,6 +378,13 @@ export async function executeContentSave(
   if (action === "delete") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required for delete" };
+    // 看板来的删除（spec 2026-10-04 §1）：在删除口子上再判一次正在写 / 已过待录制；别的调用方不带标记、照旧
+    if (params.board_guard === true) {
+      const current = await getContent(id, dataDir);
+      if (!current) return { ok: false, error: `Content ${id} not found` };
+      const refused = await boardTrashRefusal(current, getDataDir(dataDir));
+      if (refused) return { ok: false, error: refused };
+    }
     const deleted = await softDeleteContent(id, dataDir);
     if (!deleted) return { ok: false, error: `Content ${id} not found` };
     return { ok: true, content: redactClaim(deleted) };

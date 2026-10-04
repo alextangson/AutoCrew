@@ -514,6 +514,30 @@ describe("startMetricsPullCycle — 生命周期", () => {
     expect(onTick).toHaveBeenCalledTimes(2);
   });
 
+  it("每轮回流之后都跑 afterPull（自动数字对账），带同一个数据目录", async () => {
+    fakeInterval();
+    const onTick = vi.fn();
+    const afterPull = vi.fn(async () => undefined);
+    const stop = startMetricsPullCycle({ resolveDataDir: async () => dir, onTick, afterPull, ...deps() });
+    await waitForCalls(onTick, 1);
+    stop();
+    expect(afterPull).toHaveBeenCalledWith(dir);
+  });
+
+  it("对账跑完（成败都）再广播一次账本刷新（不落盘），打开着的账本不停在旧计数", async () => {
+    fakeInterval();
+    const onTick = vi.fn();
+    const order: string[] = [];
+    const emit = vi.fn(async (e: { kind: string }, _d?: string, o?: { persist?: boolean }) => { order.push(`${e.kind}:${o?.persist === false ? "mem" : "disk"}`); return e as never; });
+    const afterPull = vi.fn(async () => { order.push("reconcile"); throw new Error("boom"); });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stop = startMetricsPullCycle({ resolveDataDir: async () => dir, onTick, afterPull, ...deps({ emit: emit as never }) });
+    await waitForCalls(onTick, 1);
+    stop();
+    spy.mockRestore();
+    expect(order.slice(order.indexOf("reconcile"))).toEqual(["reconcile", "calibration_ledger:mem"]);
+  });
+
   it("上一轮没跑完，下一 tick 直接跳过（双闸，不叠罗汉）", async () => {
     fakeInterval();
     let release: () => void = () => {};

@@ -5,6 +5,7 @@ import type { Content, VideoKit } from "./local-store.js";
 import { listContents } from "./local-store.js";
 import { resolveContentProject, projectRelativeFile, isMissing } from "./content-project.js";
 import { isVideoPlatform } from "./stage-guard.js";
+import { isImportedHistory } from "./imported-history.js";
 import { listRetros, readRetro } from "../modules/retro/retro.js";
 import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/spoken.js";
 import { spokenRel } from "../modules/video/handoff/register-spoken.js";
@@ -224,6 +225,8 @@ async function visible(contents: Content[], keepPublished: number, dataDir: stri
   const ctx = await explainContext(dataDir);
   const columns = new Map<string, Column>();
   for (const c of contents) {
+    // 历史作品记录没有制作状态，explain 会把它落到「写稿中」；与看板、晨报一样不进任何栏目
+    if (isImportedHistory(c)) continue;
     try {
       const col = await columnOf(c, dataDir, ctx);
       if (col) columns.set(c.id, col);

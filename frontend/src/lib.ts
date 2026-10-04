@@ -233,6 +233,10 @@ export interface Content {
   videoDone?: { renderedRevision: number; at: string } | null;
   /** 挂接进本稿的素材(剪辑台按 role 判断 A-roll 齐没齐) */
   assets?: Array<{ filename: string; type: string; description?: string; role?: string }>;
+  /** 补录的历史作品记录:只挂回流数据,不是生产稿 */
+  source?: "imported_history";
+  /** 历史作品记录的存档原稿(旧资料库只读复制):只供查看,不是正文 */
+  archiveDraft?: { body: string; sourcePath: string; oldContentId: string; oldTitle?: string; inferred: boolean; copiedAt: string };
   createdAt: string;
   updatedAt: string;
 }

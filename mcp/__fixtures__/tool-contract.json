@@ -2321,6 +2321,7 @@
        "calib_observe",
        "calib_learn",
        "work_bind",
+       "work_claim",
        "history_create",
        "history_delete"
       ],
@@ -4894,6 +4895,7 @@
        "calib_observe",
        "calib_learn",
        "work_bind",
+       "work_claim",
        "history_create",
        "history_delete"
       ],

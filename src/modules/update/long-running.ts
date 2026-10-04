@@ -69,7 +69,7 @@ export const SHORT_CHANNELS: ReadonlySet<string> = new Set([
   "settings:search_get", "settings:search_set", "settings:publish_get", "settings:publish_set",
   "persona:save", "cover:get", "settings:cover_get", "settings:cover_set",
   "logs:list", "logs:get_run", "skills:list", "goal:get", "goal:set", "retro:list", "retro:get", "onboarding:status",
-  "flywheel:import_csv", "flywheel:record", "flywheel:pull_status", "flywheel:pull_toggle", "flywheel:hypotheses_list",
+  "flywheel:import_csv", "flywheel:record", "flywheel:pull_status", "flywheel:pull_toggle", "flywheel:hypotheses_list", "calibration:ledger",
   "dialog:pick_file", "dialog:pick_media", "knowledge:status", "radar:status", "radar:sources_set", "profile:update",
   "conversations:list", "conversations:get", "conversations:delete",
   "library:list", "library:update", "library:remove", "library:folder_create", "library:folder_remove", "library:set_reusable",

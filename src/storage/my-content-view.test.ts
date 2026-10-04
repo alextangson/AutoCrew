@@ -143,6 +143,15 @@ describe("我的内容视图", () => {
     expect(Object.keys(manifest.entries).some((k) => k.includes("我改过的"))).toBe(false);
   });
 
+  it("leaves imported history records out of every column (they have no production state)", async () => {
+    const real = await make("真稿", "drafting");
+    const history = await make("历史作品", "published", { source: "imported_history", body: "" });
+    const result = await sync();
+    expect(result.errors).toEqual([]);
+    expect(await exists(path.join(folder("写稿中", real.title), "口播稿.md"))).toBe(true);
+    for (const col of COLS) expect(await exists(folder(col, history.title))).toBe(false);
+  });
+
   it("shows only the newest 5 published items", async () => {
     for (let i = 1; i <= 6; i++) await make(`发布${i}`, "published", { publishedAt: `2026-09-0${i}T00:00:00.000Z` });
     await sync();

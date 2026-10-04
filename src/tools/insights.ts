@@ -20,7 +20,7 @@ export const insightsSchema = Type.Object({
   meeting: Type.Optional(Type.Unknown({ description: "meeting_save：{expected_revision（读到的 revision，新会 0；CAS 冲突即报错重读）, slots:[{slot_id?,topic_id,persona:{key,name},payoff,format,line?,why_now,data_basis,bet,watch:{platform,metric,day},probability,premortem,angle_decision?}], rejected:[{topic_id?,title,reason}], reviews:[{hypothesis_id,would_repeat}], notes?, append?（单题会：true 只追加新位，旧位原样保留）}" })),
   calib: Type.Optional(Type.Unknown({ description: "calib_* 动作的参数对象，见 tool-guide。" })),
   tag: Type.Optional(Type.Unknown({ description: "meeting_tag：{work_key, format?, persona_key?}；work_key 取简报 works/untagged 的 key。" })),
-  work: Type.Optional(Type.Unknown({ description: "work_bind / history_create / history_delete 的参数对象。" })),
+  work: Type.Optional(Type.Unknown({ description: "work_bind / work_claim / history_create / history_delete 的参数对象。" })),
 }, { additionalProperties: false });
 
 export const INSIGHTS_DESCRIPTION = [

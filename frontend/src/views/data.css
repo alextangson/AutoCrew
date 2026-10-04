@@ -132,3 +132,15 @@ button.dcover-add:hover { color: var(--ink); border-color: var(--ink); }
 .data-mgrid { display: grid; grid-template-columns: 80px repeat(var(--data-cols), 96px); gap: 2px var(--s2); align-items: center; }
 .data-mgrid-h { font-size: var(--fs-xs); color: var(--muted); text-align: right; }
 .data-table .data-mgrid .data-num { font-size: var(--fs-sm); font-weight: 400; }
+
+/* 预测账本（预测账本规格 §一） */
+.data-ledger { margin-top: var(--s4); }
+.lg-summary { display: flex; flex-direction: column; gap: var(--s1); margin: var(--s2) 0 var(--s3); font-size: var(--fs-sm); }
+.lg-alert { font-size: var(--fs-xs); color: var(--hot); }
+.lg-alert.is-bad, .lg-status.is-bad { color: var(--danger); font-weight: 600; }
+.lg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.lg-row { border-top: 1px solid var(--lane); padding-top: var(--s2); font-size: var(--fs-sm); }
+.lg-head { display: flex; gap: var(--s3); align-items: baseline; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.lg-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.lg-detail { margin-top: var(--s2); display: flex; flex-direction: column; gap: var(--s1); font-size: var(--fs-xs); }
+.lg-pre { white-space: pre-wrap; font-size: var(--fs-xs); margin: 0; color: var(--muted); }

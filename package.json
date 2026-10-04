@@ -51,9 +51,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "typecheck:frontend": "tsx scripts/typecheck-frontend.mts",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
-    "check": "npm run typecheck && npm run lint && npm test",
+    "check": "npm run typecheck && npm run typecheck:frontend && npm run lint && npm test",
     "smoke": "tsx scripts/smoke-e2e.mts"
   },
   "openclaw": {

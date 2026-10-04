@@ -98,6 +98,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:pull_now": ["platform"],
   "flywheel:pull_toggle": ["platform", "enabled"],
   "flywheel:hypotheses_list": [],
+  "calibration:ledger": [],
   "dialog:pick_file": [],
   "knowledge:status": [],
   "radar:status": [],

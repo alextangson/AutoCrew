@@ -36,7 +36,9 @@ export const attachmentUrl = (contentId: string, askId: string, index: number) =
 
 /** 卡片 / 稿件页 / 工作台里「去『等你拍板』处理」：让看板上的列表打开这条稿的那件事 */
 /** 不在看板页时（工作台、稿件页）：回看板并打开这条稿的那件事 */
-export const inboxHref = (contentId: string) => `#/board?inbox=${encodeURIComponent(contentId)}`;
+export const inboxHref = (contentId: string, types?: string[]) =>
+  `#/board?inbox=${encodeURIComponent(contentId)}${types?.length ? `&types=${encodeURIComponent(types.join(","))}` : ""}`;
+
 
 export const INBOX_OPEN_EVENT = "autocrew:inbox-open";
 export interface InboxOpenDetail { content_id: string; types?: string[] }

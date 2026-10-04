@@ -33,6 +33,8 @@ import { EditingWorkspace } from "./EditingWorkspace";
 import { CoverWorkspace } from "./CoverWorkspace";
 import { PublishWorkspace } from "./PublishWorkspace";
 import { StageAdvance } from "./StageAdvance";
+import { CardPanel } from "./CardPanel";
+import { progressKey } from "./card-next";
 import { ProductionBanner } from "./ProductionBanner";
 import { loadCard } from "./board-api";
 import {
@@ -54,6 +56,7 @@ import {
   reconcileEditorState, restoreEditorState, type EditorBuffer, type EditorDraft, type EditorState,
 } from "./editor-sync";
 import "./editor-workspace.css";
+import { HistoryRecordView } from "./HistoryRecordView";
 import "./platform-mock.css";
 
 const IMAGES_KEY = "ed-images-open";
@@ -433,7 +436,12 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
 
   const workspace = workspaceForStatus(c.status);
   // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
-  const productionBanner = isVideo ? <ProductionBanner contentId={props.id} refreshKey={c.status} /> : null;
+  // 原看板卡片面板的内容（下一步、原片、候选、分镜、发布纠正、重开文稿）搬到这里（spec 2026-10-04 §2）
+  const productionBanner = isVideo ? <>
+    <ProductionBanner contentId={props.id} refreshKey={c.status} />
+    <CardPanel key={progressKey(c.status, c.updatedAt)} contentId={props.id} reload={async () => { await load({ quiet: true }); }} open={workspace !== "draft"}
+      approveBlocked={workspace === "draft" && (dirty || saving) ? "先保存修改，再进入下一阶段" : null} />
+  </> : null;
   const stageBar = (
     <div className="ed-topbar ed-workspace-header">
       <div className="ed-header-context">
@@ -486,6 +494,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   // 工作台随状态（spec §2）：文案之外的三张台子是整页，不带写作画布与抽屉
   // 视频剪辑看板（剪辑中 / 视频封面）：顶栏只剩一行「← 看板 · 标题 · 平台」；
   // 写作阶段的主题行、推进下拉都不放——剪辑阶段只能经 Codex 登记离开
+  // 历史作品记录：只读页（标题 / 日期 / 存档原稿），不给任何编辑、推进、发布入口
+  if (c.source === "imported_history") return <HistoryRecordView content={c} back={props.back} />;
+
   if (workspace === "editing" || (workspace === "cover" && isVideo)) {
     return (
       <div className="editor editor-workspace">
