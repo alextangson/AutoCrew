@@ -25,9 +25,13 @@ description: |
 
 查这个方向的真事、真数据、同类视频怎么讲、哪条爆了。搜索、读网页都用你自己的工具。要在稿里引用的原话或数字，用 `verify_quote{content_id, url, quote}` 登记：服务端现抓原网页逐字比对，过了才进证据台账、回证据编号。被拒说明那段不在原文里，回原网页重新逐字复制。你自己的工具打不开原网页时，照样带 URL 调 `verify_quote`（服务端自己抓）；服务端也抓不到，这条就是未核验，不能当事实写。不用问创始人。
 
+再花约 10 分钟收目标用户的原话：相关抖音视频的评论和提问（用 `ego-browser` 技能在创始人已登录的浏览器里只读看，不点赞、不评论、不发私信），和相关 YouTube 视频的评论（`npm run craft:fetch -- <视频网址> --comments 50`，结果在本机缓存里）。能收几条算几条，不凑数量，每条记出处链接。这些原话只当调研线索：不要用 `verify_quote` 登记，写进稿里一律按未核验材料处理。抖音看不了（没登录、页面变了）就如实告诉创始人，改用 YouTube 评论，不编。
+
 ## 3 立意
 
-给 3 个立意，每个包含：我们的判断（一句）、给谁看、开头 15 秒原话、为什么可能爆（引 `context.hits` 或对标视频的真实数字，没有就写没有）、4–6 行论证链。主线必须是我们自己的判断，外部资料只做证据。
+先看 `context.craft_method`（拆解库的方法页，只是参考，里面每条都是假设）；是 null 就照常写，并按 `craft_method_note` 告诉创始人还没有拆解库；有 `craft_method_error` 就把原因告诉创始人。
+
+给 3 个立意，每个包含：我们的判断（一句）、给谁看、开头 15 秒原话、为什么可能爆（引 `context.hits` 或对标视频的真实数字，可以再说用了方法页里的哪条假设；没有数字就写没有）、4–6 行论证链。主线必须是我们自己的判断，外部资料只做证据。开头必须从用户原话、创始人的素材或我们的判断出发，不能是你想象出来的场景。
 
 创始人没选定（如「A 和 B 都不错」）就追问一句：选哪个，还是合成一个。选定或改写后，`angle{content_id, base_version, main_line, for_whom, opening, why_viral, chain, founder_words, chosen_option}`：`founder_words` 照抄他的原话，`main_line` 写选中项的完整主线，`chosen_option` 放当时给他看的那个选项全文——他只回一个「B」，以后也看得懂。
 
@@ -35,7 +39,7 @@ description: |
 
 按选定的主线和论证链写全文，`save{content_id, base_version, title, body}`。`format_warnings` 有内容就改掉再存。
 
-第一版存下后，自己跑一次 Codex 审稿（只看主线、收获、开头，只是参考）：把本技能目录下 `codex-review-prompt.md` 里的 `{{RULES}}`、`{{ANGLE}}`、`{{BODY}}` 换成档案规则、选定的立意、当前正文，存成一个临时文件，再跑
+第一版存下后，自己跑一次 Codex 审稿（只看主线、收获、开头，只是参考）：把本技能目录下 `codex-review-prompt.md` 里的 `{{RULES}}`、`{{ANGLE}}`、`{{CRAFT}}`、`{{BODY}}` 换成档案规则、选定的立意、`context.craft_method` 正文（null 就写「无」）、当前正文，存成一个临时文件，再跑
 
 ```bash
 codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文件

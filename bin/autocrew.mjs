@@ -690,6 +690,9 @@ switch (command) {
     // 薄路径的 Codex 审稿（2026-10-04）：codex 命令在不在、登没登录。可选项，不影响退出码（审稿只是提示，不拦定稿）
     const codexLogin = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 15_000 });
     const codexReview = { installed: !codexLogin.error, loggedIn: !codexLogin.error && codexLogin.status === 0 };
+    // 拆解对标视频的抓取工具（传播方法 §11）：可选项，只跑带超时的 --version 显示版本；不联网查更新，不影响退出码
+    const ytdlpRun = spawnSync("yt-dlp", ["--version"], { encoding: "utf8", timeout: 10_000 });
+    const ytdlpVersion = !ytdlpRun.error && ytdlpRun.status === 0 ? (ytdlpRun.stdout || "").trim().split("\n")[0] || false : false;
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -717,6 +720,7 @@ switch (command) {
       egoBrowser: Boolean(ego.binary),
       egoLiteReachable: ego.reachable === true,
       codexReview: codexReview.loggedIn,
+      ytDlp: ytdlpVersion,
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -745,6 +749,7 @@ switch (command) {
         : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")
       + (ego.reachable ? "" : `\n  → 数据自动回流需要 ego lite：${ego.reason}。${ego.fix}`)
       + (codexReview.loggedIn ? "" : codexReview.installed ? "\n  → 抖音口播初稿的 Codex 审稿需要登录：在终端跑 codex login（不登录也能写稿定稿，只是没有审稿意见）" : "\n  → 抖音口播初稿的 Codex 审稿需要 Codex CLI：npm i -g @openai/codex 后 codex login（不装也能写稿定稿）")
+      + (ytdlpVersion ? "" : "\n  → （可选）抓对标视频做拆解要 yt-dlp：brew install yt-dlp（不装照样写稿）")
       + (checks.asrModelReady
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),

@@ -55,7 +55,8 @@
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
     "check": "npm run typecheck && npm run typecheck:frontend && npm run lint && npm test",
-    "smoke": "tsx scripts/smoke-e2e.mts"
+    "smoke": "tsx scripts/smoke-e2e.mts",
+    "craft:fetch": "tsx scripts/craft-fetch.mts"
   },
   "openclaw": {
     "extensions": [
