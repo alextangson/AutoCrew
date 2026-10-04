@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const frontend = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend");
-const tsc = path.join(frontend, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const tsc = path.join(frontend, "node_modules", "typescript", "bin", "tsc");
 const required = [tsc, path.join(frontend, "node_modules", "@types", "react")];
 
 if (required.some((p) => !existsSync(p))) {
@@ -14,6 +14,6 @@ if (required.some((p) => !existsSync(p))) {
   process.exit(1);
 }
 
-const result = spawnSync(tsc, ["--noEmit", "-p", "tsconfig.json"], { cwd: frontend, stdio: "inherit" });
+const result = spawnSync(process.execPath, [tsc, "--noEmit", "-p", "tsconfig.json"], { cwd: frontend, stdio: "inherit" });
 if (result.error) console.error(`typecheck:frontend: ${result.error.message}`);
 process.exit(result.status ?? 1);
