@@ -34,11 +34,8 @@ import { executeMarkReady, executeRecord } from "../modules/production/record.js
 import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
-<<<<<<< HEAD
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
-=======
 import { boardTrashRefusal } from "../modules/production/trash-guard.js";
->>>>>>> main
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
