@@ -8,7 +8,8 @@ import { saveContent } from "../../storage/local-store.js";
 import { appendOutcomes, commitResolvedBindings } from "./outcome-store.js";
 import { importPerformanceRows } from "./row-import.js";
 import { bindWorkManually, createHistoryRecord, deleteHistoryRecord } from "./work-binding.js";
-import { pullPlatformNow } from "../../desktop/metrics-pull-cycle.js";
+import { pullPlatformNow, writeRefusalFor } from "../../desktop/metrics-pull-cycle.js";
+import { pullStatusHandler } from "../../desktop/metrics-pull-handlers.js";
 import type { PerformanceOutcome } from "./outcome-schema.js";
 import type { TypedRow } from "../../adapters/browser/pull-types.js";
 
@@ -76,6 +77,23 @@ describe("非持锁进程", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
     expect(await read("metrics-pull.json")).toBeNull();
+  });
+
+  it("拒绝看得见：默认 warn 进 console、内存里记一笔、pull_status 带出来；拿回锁后清掉", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await pullPlatformNow("douyin", { dataDir: data, registry: { douyin: vi.fn() }, emit: vi.fn() });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("library_writer_lost"));
+    expect(writeRefusalFor(data, "douyin")).toMatchObject({ code: "library_writer_lost", at: expect.any(String) });
+    const status = await pullStatusHandler({ _dataDir: data });
+    const rows = (status.data as { platforms: Array<Record<string, unknown>> }).platforms;
+    expect(rows[0].writeRefusal).toMatchObject({ code: "library_writer_lost" });
+    expect(rows[1].writeRefusal).toBeUndefined();
+    expect(await read("metrics-pull.json")).toBeNull();
+
+    await fs.rm(path.join(lib, WRITER_LOCK), { recursive: true });
+    release = acquireLibraryLock(lib);
+    await pullPlatformNow("douyin", { dataDir: data, registry: { douyin: async () => ({ status: "ok", rows: [typedRow] }) }, emit: vi.fn(async () => ({}) as never), warn: () => {} });
+    expect(writeRefusalFor(data, "douyin")).toBeNull();
   });
 });
 

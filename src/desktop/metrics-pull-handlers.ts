@@ -20,6 +20,7 @@ import {
   DAILY_PULL_HOUR,
   inFlightPlatforms,
   pullPlatformNow,
+  writeRefusalFor,
 } from "./metrics-pull-cycle.js";
 
 type Payload = Record<string, unknown>;
@@ -43,13 +44,18 @@ export async function pullStatusHandler(payload: Payload): Promise<HandlerResult
       ok: true,
       data: {
         dailyPullHour: DAILY_PULL_HOUR,
-        platforms: PULL_PLATFORMS.map((platform) => ({
+        platforms: PULL_PLATFORMS.map((platform) => {
+          // 写入权丢失只记在内存（资料库不可写），叠在持久状态上，免得界面一直显示上一次的旧结论
+          const writeRefusal = writeRefusalFor(dataDir, platform);
+          return {
           platform,
           label: PULL_PLATFORM_LABELS[platform],
           consoleUrl: PULL_PLATFORM_CONSOLES[platform],
           inFlight: running.has(platform),
           ...(state.platforms[platform] ?? defaultPlatformState()),
-        })),
+          ...(writeRefusal ? { writeRefusal } : {}),
+          };
+        }),
       },
     };
   } catch (err) {

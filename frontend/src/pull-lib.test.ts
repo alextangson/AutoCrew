@@ -138,3 +138,18 @@ describe("formatPullTime / evidenceSummary", () => {
     expect(evidenceSummary(undefined)).toBeNull();
   });
 });
+
+describe("资料库写入权丢失 — 自动回流暂停", () => {
+  const lost = row({ lastStatus: "ok", writeRefusal: { code: "library_writer_lost", at: "2026-10-04T01:00:00.000Z" } });
+  it("徽标盖过上一次的旧状态", () => {
+    expect(pullBadge(lost)).toEqual({ text: "回流暂停", tone: "bad" });
+  });
+  it("行内说清原因与怎么办", () => {
+    const hint = pullHint(lost)!;
+    expect(hint).toContain("资料库写入权已丢失，自动回流暂停");
+    expect(hint).toContain("重启");
+  });
+  it("资料库连不上另有说法", () => {
+    expect(pullHint(row({ writeRefusal: { code: "library_unavailable", at: "2026-10-04T01:00:00.000Z" } }))).toContain("资料库暂时连不上");
+  });
+});
