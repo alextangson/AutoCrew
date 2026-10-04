@@ -100,7 +100,7 @@ async function fetchSubtitles(ctx: Ctx, id: string, info: Record<string, unknown
     const cues = parseVtt(vtt);
     return cues.length ? { status: "ok", ...choice, cues } : { status: "failed", ...choice, reason: "字幕文件是空的", cues: null };
   } catch (e) {
-    if (e instanceof StopRun || (e instanceof YtdlpError && e.kind === "missing")) throw e;
+    if (e instanceof YtdlpError && e.kind === "missing") throw e;
     return { status: "failed", ...choice, reason: e instanceof Error ? e.message : String(e), cues: null };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
@@ -136,7 +136,7 @@ async function fetchMweb(ctx: Ctx, id: string, fallback: Record<string, unknown>
     const meta = await fetchInfo(ctx, id, true);
     return normalizeHeatmap(meta.heatmap) ? { meta, status: "ok", reason: null } : { meta, status: "none", reason: "这条视频没有热度条（新视频或播放量小）" };
   } catch (e) {
-    if (e instanceof StopRun || (e instanceof YtdlpError && e.kind === "missing")) throw e;
+    if (e instanceof YtdlpError && e.kind === "missing") throw e;
     return { meta: { ...fallback, heatmap: null }, status: "failed", reason: `mweb 客户端取热度条失败：${e instanceof Error ? e.message : String(e)}` };
   }
 }
@@ -192,7 +192,9 @@ async function fetchOne(ctx: Ctx, id: string, dir: string, preInfo?: Record<stri
   const reuseSubs = prev !== null && subsDone(prev);
   const info = preInfo ?? (reuseSubs ? Object.fromEntries(META_KEYS.map((k) => [k, prev.rec[k]])) : await fetchInfo(ctx, id));
   const { heat, meta } = await heatPart(ctx, id, info, prev);
-  const subs: SubResult = reuseSubs
+  const subs: SubResult = !reuseSubs && ctx.stopped
+    ? { status: "failed", reason: "整批因限流停下，字幕没抓", cues: null }
+    : reuseSubs
     ? { status: prev.rec.subtitles.status as SubResult["status"], source: prev.rec.subtitles.source ?? undefined, lang: prev.rec.subtitles.lang ?? undefined, reason: prev.rec.subtitles.reason ?? undefined, cues: prev.cues }
     : await fetchSubtitles(ctx, id, info, dir);
   const comments = await commentPart(ctx, id, prev);
@@ -250,8 +252,22 @@ export function validateUrls(urls: string[]): { ids: string[]; bad: string[] } {
 }
 
 /** 没给 --out：用第一条视频的频道 id 定博主目录（这次取到的元数据留给第一条复用） */
-async function resolveDir(ctx: Ctx, o: FetchOptions, firstId: string): Promise<{ dir: string; info?: Record<string, unknown> }> {
+/** 这批里有视频已经在某个博主目录里抓过：直接用那个目录，不为定目录去联网 */
+async function findCachedDir(root: string, ids: string[]): Promise<string | null> {
+  const dirs = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const d of dirs.filter((x) => x.isDirectory())) {
+    for (const id of ids) {
+      if (await fs.stat(path.join(root, d.name, `${id}.json`)).then(() => true, () => false)) return path.join(root, d.name);
+    }
+  }
+  return null;
+}
+
+async function resolveDir(ctx: Ctx, o: FetchOptions, ids: string[]): Promise<{ dir: string; info?: Record<string, unknown> }> {
   if (o.outDir) return { dir: path.resolve(o.outDir) };
+  const cached = await findCachedDir(o.craftRoot ?? CRAFT_ROOT, ids);
+  if (cached) return { dir: cached };
+  const firstId = ids[0];
   const info = await fetchInfo(ctx, firstId);
   const slug = slugify(String(info.uploader_id ?? info.channel ?? info.uploader ?? ""));
   if (!slug) throw new YtdlpError("failed", "第一条视频的元数据里没有频道名，没法定博主目录；请加 --out <目录>");
@@ -300,7 +316,7 @@ export async function runCraftFetch(o: FetchOptions): Promise<FetchSummary> {
   if (!ids.length) return { ok: false, error: "没给视频网址", ...empty };
   const ctx = makeCtx(o);
   let resolved: { dir: string; info?: Record<string, unknown> };
-  try { resolved = await resolveDir(ctx, o, ids[0]); } catch (e) {
+  try { resolved = await resolveDir(ctx, o, ids); } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e), ...empty, stopped: ctx.stopped };
   }
   await fs.mkdir(resolved.dir, { recursive: true });

@@ -290,3 +290,33 @@ describe("Codex review 1004：按部分断点续抓", () => {
     expect((await readJson(`${A}.json`)).comments.status).toBe("disabled");
   });
 });
+
+describe("Codex re-review 1004", () => {
+  const isMweb = (c: string[]) => c.includes("youtube:player_client=mweb");
+
+  it("P2-1 字幕时连续 429 整批停：元数据和热度条照样存，下次只补字幕", async () => {
+    let limited = true;
+    const handler: Handler = (args) => (limited && args.includes("--load-info-json") ? new YtdlpError("rate_limited", "429") : undefined);
+    const s1 = await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A) }, handler) });
+    expect(s1.stopped).toContain("429");
+    expect(await readJson(`${A}.json`)).toMatchObject({ heatmap_status: "ok", view_count: 1000, subtitles: { status: "failed" } });
+    limited = false; calls = [];
+    expect(await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A) }, handler) })).toMatchObject({ ok: true, done: 1 });
+    expect(calls.some(isMweb)).toBe(false);
+  });
+
+  it("P2-2 没给 --out：已有缓存目录里有这批视频就直接用，不为定目录联网", async () => {
+    const root = path.join(dir, "root");
+    await runCraftFetch({ urls: [url(A)], craftRoot: root, exec: fake({ [A]: baseInfo(A) }), sleep: async () => {} });
+    calls = [];
+    const s = await runCraftFetch({ urls: [url(A)], craftRoot: root, exec: fake({}, () => new YtdlpError("failed", "Video unavailable")), sleep: async () => {} });
+    expect(s).toMatchObject({ ok: true, done: 1, outDir: path.join(root, "dankoetalks") });
+    expect(calls).toEqual([]);
+  });
+
+  it("P2-3 没有 language 也没有 en-orig：自动 en 可能是翻译轨，不取", async () => {
+    await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A, { subtitles: {}, automatic_captions: { en: [{}], "de-orig": [{}] }, language: undefined }) }) });
+    expect((await readJson(`${A}.json`)).subtitles.status).toBe("none");
+    expect(subCalls()).toEqual([]);
+  });
+});

@@ -37,7 +37,8 @@ export function pickSubtitle(info: Record<string, unknown>): SubtitleChoice | nu
   const auto = Object.keys((info.automatic_captions as Record<string, unknown>) ?? {});
   if (auto.includes("en-orig")) return { source: "auto", lang: "en-orig" };
   const language = typeof info.language === "string" ? info.language : "";
-  if (auto.includes("en") && (!language || language.startsWith("en"))) return { source: "auto", lang: "en" };
+  // 没有 en-orig 时，只有元数据明确说原视频是英语才收自动 en；语言缺失可能是翻译轨
+  if (auto.includes("en") && language.startsWith("en")) return { source: "auto", lang: "en" };
   return null;
 }
 
