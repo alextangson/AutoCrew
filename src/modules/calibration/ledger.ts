@@ -31,7 +31,7 @@ export interface LedgerSummary {
 export interface Ledger { summary: LedgerSummary; rows: LedgerRow[] }
 
 type Read = Awaited<ReturnType<typeof readPredictions>>;
-const strip = (r: ChainRecord) => { const { fp: _f, prev: _p, ...rest } = r; return rest; };
+const strip = (r: ChainRecord) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== "fp" && k !== "prev"));
 
 export async function readLedger(dataDir?: string, now = new Date()): Promise<Ledger> {
   const state = await readStateIfExists(dataDir);
