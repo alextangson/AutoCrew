@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import { buildMeetingBrief } from "../modules/meetings/meeting-brief.js";
 import { listContentsStrict } from "../storage/local-store.js";
 import { assertPlanEntriesReadable } from "../modules/flywheel/plan-binding.js";
+import { readPullState } from "../modules/flywheel/pull-state.js";
 import { formatSummaryOf } from "../modules/meetings/meeting-angle.js";
 import type { GroupRow } from "../modules/meetings/meeting-works.js";
 import { HostResearchError, type AccountDataPerspective, type HostResearchTask } from "../modules/research/host-research-store.js";
@@ -125,6 +126,10 @@ export async function buildAccountData(dataDir: string, now = new Date()): Promi
     // 简报的稿件枚举会跳过读坏的记录；先严格枚举一遍，坏一条就把这一路记成失败，不冒充「数据齐了」
     const contents = await listContentsStrict(dataDir);
     await assertPlanEntriesReadable(dataDir, contents.filter((c) => !c.deletedAt));
+    // 回流状态文件坏了，简报会默默按默认状态（全没开启）出——这一路要记失败，不冒充数据齐了
+    const pullProblems: string[] = [];
+    await readPullState(dataDir, (m) => pullProblems.push(m));
+    if (pullProblems.length) throw new Error(pullProblems.join("；"));
     const brief = await buildMeetingBrief(dataDir, now);
     const summary = [
       "## 账号数据（按形式，同平台同龄中位数）", formatSummaryOf(brief.groups),

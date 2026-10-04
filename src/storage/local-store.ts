@@ -319,6 +319,11 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  /**
+   * 系统建稿时垫的占位正文（create_variant 不带正文）：选题会卡口只认与它一字不差的正文为占位，
+   * 前缀长得像的正文不算。只由系统写，content update 不开放这个字段。
+   */
+  generatedPlaceholder?: string;
   /** 稿件摘要（spec §3 A）：只对 outlineDraftHash 那版正文有效，正文一改即失效（见 series-memory.validOutline） */
   outline?: Outline;
   outlineDraftHash?: string;
@@ -761,7 +766,7 @@ export async function saveContent(
 ): Promise<Content> {
   const { _provenance: provenance, ...content } = input;
   // 选题会唯一卡口：带真正文新建 = 这篇稿的第一份正文
-  await guardFirstBody(null, { body: content.body, topicId: content.topicId }, provenance, dataDir);
+  await guardFirstBody(null, { body: content.body, topicId: content.topicId, generatedPlaceholder: content.generatedPlaceholder }, provenance, dataDir);
   // 初始态也过阶段门（spec §1.2 收口）：from=to 时只有「这个阶段属不属于这种平台」会响，
   // 挡住的正是「把公众号稿直接建在剪辑阶段」这类跳阶段建稿。
   const initial = normalizeLegacyStatus(content.status);
@@ -868,7 +873,7 @@ async function listContentsRaw(dataDir?: string): Promise<Content[]> {
 }
 
 export { TOPIC_PLACEHOLDER_BODY_PREFIX, isPlaceholderBody } from "./first-body-guard.js";
-import { TOPIC_PLACEHOLDER_BODY_PREFIX, guardFirstBody, type WriteProvenance } from "./first-body-guard.js";
+import { guardFirstBody, topicPlaceholderBody, type WriteProvenance } from "./first-body-guard.js";
 
 /**
  * 严格全量读（含已删）：任何一条读不出、解析不了就抛，不跳过。
@@ -1983,10 +1988,12 @@ export async function createPlatformVariant(
   }
 
   // Create the new content
+  const placeholder = topicPlaceholderBody(topicId, topic.description ?? "");
   const content = await saveContent(
     {
       title: opts?.title || `${topic.title} (${platform})`,
-      body: opts?.body || `${TOPIC_PLACEHOLDER_BODY_PREFIX} ${topicId} -->\n\n${topic.description}`,
+      body: opts?.body || placeholder,
+      ...(opts?.body ? {} : { generatedPlaceholder: placeholder }),
       platform,
       topicId,
       status: "topic_saved",

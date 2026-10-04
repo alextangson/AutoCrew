@@ -90,8 +90,8 @@ import { getContent, getDataDir, getTopic, saveContent, updateContent } from "..
 import type { Content, Topic } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 import { selectEditorialExperiment, renderEditorialExperiment, type EditorialExperiment } from "../retro/editorial-experiments.js";
-import { modelWrite } from "../../storage/first-body-guard.js";
-import { admitWritingJob } from "../research/angle-gate.js";
+import { modelWrite, type WriteRequest } from "../../storage/first-body-guard.js";
+import { admitWritingJob, founderDirectionFor } from "../research/angle-gate.js";
 
 export type { ScriptRequest };
 
@@ -206,9 +206,22 @@ export const RESEARCHING_TITLE_PREFIX = "［调研中］";
  * 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在。
  * 宿主写稿（`autocrew_writer pack`）用**同一个**函数建占位稿：稿件的出生形态不许分叉。
  */
+/** 没带方向、而创始人最近一次是自定角度：按他那句写（所有生成入口共用，不靠各调用方记得注入） */
+async function withFounderDirection(req: ScriptRequest, dataDir?: string): Promise<ScriptRequest> {
+  if (req.direction?.trim()) return req;
+  const own = await founderDirectionFor(req.topicId, dataDir);
+  return own ? { ...req, direction: own } : req;
+}
+
+/** 生成请求 → 选题会卡口要对照的写作请求 */
+export function scriptWriteRequest(req: ScriptRequest): WriteRequest {
+  const direction = req.direction?.trim() || undefined;
+  return { ...(direction ? { direction } : {}), skip: req.researchMode === "skip" || Boolean(req.angleSkipReason?.trim()) || Boolean(req.researchReason?.trim()) };
+}
+
 export async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
-  // 生成任务的唯一准入：同步生成与后台生成都从这里建占位稿
-  await admitWritingJob({ topicId: req.topicId }, dataDir);
+  // 生成任务的唯一准入：同步生成与后台生成都从这里建占位稿（请求也要对上创始人最新的决定）
+  await admitWritingJob({ topicId: req.topicId, request: scriptWriteRequest(req) }, dataDir);
   const placeholder = await saveContent(
     {
       title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
@@ -1102,6 +1115,7 @@ export async function generateScript(
   dataDir?: string,
   deps?: GenerationDeps,
 ): Promise<GeneratedScript> {
+  req = await withFounderDirection(req, dataDir);
   const placeholderId = await createPlaceholder(req, dataDir);
   return runGeneration(placeholderId, req, dataDir, deps);
 }
@@ -1185,7 +1199,7 @@ export function startGenerateScript(
   // 第一个 await 之前就拿到忙碌登记：查锁与登记是同一步，中间不留更新钻进来的缝（Codex 审第 5 轮 P2）
   const work = beginWork("后台写稿");
   if (!work.ok) return Promise.reject(new Error(work.error));
-  return createPlaceholder(req, dataDir).then(
+  return withFounderDirection(req, dataDir).then((r) => { req = r; return createPlaceholder(req, dataDir); }).then(
     (contentId) => runInBackground(contentId, req, `编剧开写《${req.topic.slice(0, 24)}》`, dataDir, deps, work.end),
     (err) => { work.end(); throw err; },
   );
@@ -1238,7 +1252,9 @@ async function prepareRetry(
     throw new Error("这稿没有中断记录,不能重写——要改稿请直接说怎么改");
   }
 
-  const req: ScriptRequest = { ...rebuildRequest(content), ...override };
+  const req: ScriptRequest = await withFounderDirection({ ...rebuildRequest(content), ...override }, dataDir);
+  // 合并后的请求（含旧稿上继承来的 direction / 跳过参数）开跑前再对一次创始人最新的决定
+  await admitWritingJob({ contentId, request: scriptWriteRequest(req) }, dataDir);
   await updateContent(
     contentId,
     {
@@ -1327,7 +1343,7 @@ async function finalizeBlocked(args: FinalizeCommon & { written: WriterRun }): P
     {
       title: written.payload.title,
       body: humanizedText,
-      _provenance: modelWrite("engine"),
+      _provenance: modelWrite("engine", scriptWriteRequest(req)),
       hashtags: written.payload.hashtags.map((t) => t.trim()).filter(Boolean),
       // genRequest **不清**：这稿还要重写，重写的依据就是它
       lastError: null,
@@ -1394,7 +1410,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     {
       title,
       body: humanizedText,
-      _provenance: modelWrite("engine"),
+      _provenance: modelWrite("engine", scriptWriteRequest(req)),
       // 生产计时的「稿成」节点:转正这一刻就是稿成:起点是占位稿的 createdAt(开写)
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,

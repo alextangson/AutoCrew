@@ -68,7 +68,7 @@ import {
 } from "./writer-review.js";
 import { hostReviewPack } from "./host-review.js";
 import { directRevisionRefusal, openRevisionCycle, takeRevisionVersion } from "./writer-revision.js";
-import { modelWrite } from "../storage/first-body-guard.js";
+import { modelWrite, type WriteRequest } from "../storage/first-body-guard.js";
 
 export type SubmitFailure = { ok: false; error: string } & Record<string, unknown>;
 export type SubmitResult = ({ status: SubmitPhase } & Record<string, unknown>) | SubmitFailure;
@@ -237,7 +237,19 @@ async function record(
   return result;
 }
 
+/** 写作包里冻结的请求：落第一份正文时由存储层卡口对照创始人最新的角度决定 */
+function packRequest(pack: ReadyPack): WriteRequest {
+  const req = pack.context?.req;
+  const direction = req?.direction?.trim() || undefined;
+  return {
+    ...(direction ? { direction } : pack.angleId && pack.angleId !== "user-direction" ? { angleId: pack.angleId } : {}),
+    skip: req?.researchMode === "skip" || Boolean(req?.angleSkipReason?.trim()) || Boolean(req?.researchReason?.trim()),
+  };
+}
+
 type DraftExtra = {
+  /** 这份包冻结的写作请求（见 packRequest） */
+  request: WriteRequest;
   ledger: EvidenceLedger;
   seriesSnapshotId?: string;
   needsHuman: string[];
@@ -269,7 +281,7 @@ async function persistDraft(
       gapRecord: undefined,
       title: payload.title,
       body: humanizedText,
-      _provenance: modelWrite(args.host),
+      _provenance: modelWrite(args.host, extra.request),
       hashtags: payload.hashtags.map((t) => t.trim()).filter(Boolean),
       lastError: null,
       unverifiedNumbers: extra.needsHuman,
@@ -309,6 +321,7 @@ async function finalizeBlocked(
   const unverified = [...blockedNumbers(gates.failures), ...gates.needsHuman];
   const reason = hard[0]?.detail ?? "硬门未通过";
   await persistDraft(args, content, gates.payload, humanizedText, {
+    request: packRequest(pack),
     ledger: gates.ledger,
     seriesSnapshotId: pack.series?.id,
     needsHuman: unverified,
@@ -413,6 +426,7 @@ function recordRepair(args: SubmitArgs, pack: ReadyPack, failures: GateFailure[]
 async function acceptForReview(args: SubmitArgs, content: Content, pack: ReadyPack, gates: GateOutcome, dataDir: string, deps: SubmitDeps): Promise<SubmitResult> {
   const humanizedText = assembleAndHumanize(gates.payload);
   await persistDraft(args, content, gates.payload, humanizedText, {
+    request: packRequest(pack),
     ledger: gates.ledger,
     seriesSnapshotId: pack.series?.id,
     needsHuman: gates.needsHuman,

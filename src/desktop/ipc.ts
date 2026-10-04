@@ -82,7 +82,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, founderDirectionFor, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -537,15 +537,19 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
   }
   const dataDir = (payload._dataDir as string) || undefined;
   // 选题会闸口：后台写稿每次都开新稿，选题必须先开过选题会、由创始人定了角度
-  const refused = await newDraftAngleRefusal(typeof payload.topic_id === "string" ? payload.topic_id : undefined, dataDir);
+  const topicId = typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined;
+  const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused) return refused;
+  // 创始人最近一次是自定角度：按他那句写
+  const founderDirection = await founderDirectionFor(topicId, dataDir);
   try {
     const started = await startGenerateScript(
       {
         topic: String(payload.topic ?? ""),
         platform: payload.platform as never,
         research: typeof payload.research === "string" ? payload.research : undefined,
-        topicId: typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined,
+        topicId,
+        ...(founderDirection ? { direction: founderDirection } : {}),
         // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
         ...(payload.use_patterns === false ? { usePatterns: false } : {}),
       },

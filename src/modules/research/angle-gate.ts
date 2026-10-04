@@ -10,11 +10,11 @@
  * 读稿件或选题失败 → 明确拒绝（angle_gate_read_failed），既不放行，也不当成「没定角度」。
  */
 import {
-  getContentStrict, getDataDir, getTopicStrict, isPlaceholderBody, listContentsStrict, updateTopic,
+  getContentStrict, getDataDir, getTopicStrict, listContentsStrict, updateTopic,
   type Content, type Topic,
 } from "../../storage/local-store.js";
 import { activeAngleCard } from "./angle-cards.js";
-import { FirstBodyRefusedError } from "../../storage/first-body-guard.js";
+import { FirstBodyRefusedError, isRealDraft, type WriteRequest } from "../../storage/first-body-guard.js";
 import { resolveEffectiveBriefStrict } from "./brief-snapshot.js";
 import { topicHashOf } from "./research-job-store.js";
 
@@ -24,6 +24,7 @@ export const ANGLE_GATE_COPY = {
   notFounderChoice: "这张卡不是你亲口定的。选题会的最后一步要你本人拍板：说一句你选哪张、为什么，再开写。",
   noTopic: "开新稿要先有选题并开过选题会。给一句灵感也行，先建选题、出立意卡，你定了再写。",
   readFailed: "稿件或选题记录读不出来，没法确认这条是不是已经定过角度，先不开写。",
+  decisionChanged: "你后来改了角度，这份写作请求还是按之前的定的。按你最新定的角度重新领包 / 重新生成再写。",
   staleChoice: "你之前定的那张卡已经过期了（选题改过或调研重跑过）。看一眼新的立意卡，再定一次。",
   needFounderWords: "选哪张卡要附上创始人的原话（founder_words），不能由助手代选。",
   bareDirection: "自定角度要附上创始人的原话：用 select_angle 传 direction + founder_words，不能直接拿 direction 跳过选题会。",
@@ -32,7 +33,7 @@ export const ANGLE_GATE_COPY = {
 
 export interface AngleRefusal {
   ok: false;
-  code: "needs_founder_angle" | "angle_gate_read_failed";
+  code: "needs_founder_angle" | "angle_gate_read_failed" | "skip_removed";
   error: string;
   next_action: Record<string, unknown>;
   [key: string]: unknown;
@@ -47,15 +48,14 @@ function meetingNext(topicId?: string): Record<string, unknown> {
   };
 }
 
-/** 真稿：未删、未归档、正文（当前或任一版本）不是占位 */
-export function isRealDraft(c: Content): boolean {
-  if (c.deletedAt || c.status === "archived") return false;
-  return !isPlaceholderBody(c.body) || (c.versions ?? []).some((v) => !isPlaceholderBody(v.body));
-}
+export { isRealDraft };
 
-/** 该选题是否已有真稿。严格读：任何一条稿件记录读不出就抛 */
+/** 该选题是否已有真稿。严格读：任何一条稿件记录（或核验占位要读的选题）读不出就抛 */
 export async function topicHasDraft(topicId: string, dataDir?: string): Promise<boolean> {
-  return (await listContentsStrict(dataDir)).some((c) => c.topicId === topicId && isRealDraft(c));
+  for (const c of await listContentsStrict(dataDir)) {
+    if (c.topicId === topicId && await isRealDraft(c, dataDir)) return true;
+  }
+  return false;
 }
 
 /** 创始人亲口定的角度：带原话选的卡，或带原话、选题文本没改过的自定角度 */
@@ -128,7 +128,7 @@ export async function aiContentWriteRefusal(contentId: string, dataDir?: string)
   let content: Content | null;
   try { content = await getContentStrict(contentId, dataDir); } catch (err) { return readFailure(err); }
   if (!content) return null; // 找不到稿件由各入口自己报
-  if (isRealDraft(content)) return null;
+  try { if (await isRealDraft(content, dataDir)) return null; } catch (err) { return readFailure(err, content.topicId); }
   return newDraftAngleRefusal(content.topicId, dataDir);
 }
 
@@ -145,7 +145,47 @@ export async function recordFounderAngle(topic: Topic, direction: string, founde
  * 后台写作任务的准入（生成 / 重写 / 改稿 / 平台改写开跑之前）：和存储层卡口同一判定，
  * 只是提前到调模型之前，免得白跑一轮模型再在落盘时被拒。拒绝就抛 FirstBodyRefusedError。
  */
-export async function admitWritingJob(target: { topicId?: string; contentId?: string }, dataDir?: string): Promise<void> {
-  const refused = target.contentId ? await aiContentWriteRefusal(target.contentId, dataDir) : await newDraftAngleRefusal(target.topicId, dataDir);
+export async function admitWritingJob(target: { topicId?: string; contentId?: string; request?: WriteRequest }, dataDir?: string): Promise<void> {
+  let topicId = target.topicId;
+  if (target.contentId) {
+    let content: Content | null;
+    try { content = await getContentStrict(target.contentId, dataDir); } catch (err) { throw new FirstBodyRefusedError(readFailure(err)); }
+    if (!content) return; // 稿件不在：由调用方报「稿件不存在」，不在这里冒充成选题会问题
+    try { if (await isRealDraft(content, dataDir)) return; } catch (err) { throw new FirstBodyRefusedError(readFailure(err)); }
+    topicId = content.topicId ?? topicId;
+  }
+  const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused) throw new FirstBodyRefusedError(refused);
+  // 选题已有别的真稿 = 不是第一篇，请求不再对照；否则冻结 / 合并后的请求要对上创始人最新的决定
+  let exempt: boolean;
+  try { exempt = Boolean(topicId) && await topicHasDraft(topicId!, dataDir); } catch (err) { throw new FirstBodyRefusedError(readFailure(err)); }
+  if (exempt) return;
+  const mismatch = await decisionRequestRefusal(topicId, target.request, dataDir);
+  if (mismatch) throw new FirstBodyRefusedError(mismatch);
+}
+
+/**
+ * 冻结的写作请求对不对得上创始人「最新」的决定（第一篇稿专用；存量稿由调用方先豁免）。
+ * 带跳过参数 → 拒；带 direction → 必须是最近一次自定的那句；没带 direction → 最近一次必须是选卡，
+ * 给了 angleId 还得是同一张。没有请求（不依据角度的改写，如润色）→ 不对照。
+ */
+export async function decisionRequestRefusal(topicId: string | undefined, request: WriteRequest | undefined, dataDir?: string): Promise<AngleRefusal | null> {
+  if (!request || !topicId) return null;
+  if (request.skip) return refusal("skip_removed", ANGLE_GATE_COPY.skipRemoved, { topic_id: topicId });
+  let topic: Topic | null;
+  try { topic = await getTopicStrict(topicId, dataDir); } catch (err) { return readFailure(err, topicId); }
+  if (!topic) return refusal("needs_founder_angle", ANGLE_GATE_COPY.noTopic, { topic_id: topicId });
+  const latest = latestDecision(topic);
+  const direction = request.direction?.trim();
+  const ok = direction
+    ? latest === "authored" && topic.founderAngle?.direction.trim() === direction
+    : latest === "card" && (!request.angleId || topic.selectedAngle?.angleId === request.angleId);
+  return ok ? null : refusal("needs_founder_angle", ANGLE_GATE_COPY.decisionChanged, { topic_id: topicId });
+}
+
+/** 创始人最近一次决定是自定角度时返回那句方向（开写入口没带方向时沿用它），否则 undefined */
+export async function founderDirectionFor(topicId: string | undefined, dataDir?: string): Promise<string | undefined> {
+  if (!topicId) return undefined;
+  const topic = await getTopicStrict(topicId, dataDir).catch(() => null);
+  return topic && latestDecision(topic) === "authored" ? topic.founderAngle?.direction : undefined;
 }

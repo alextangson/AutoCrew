@@ -20,11 +20,18 @@ export type WriteProvenance =
   | { kind: "human" }
   | { kind: "import" }
   /** derivedFrom：由哪篇已有稿件改写而来（平台适配）；卡口会严格读它确认是真稿 */
-  | { kind: "model"; host?: string; derivedFrom?: string };
+  | { kind: "model"; host?: string; derivedFrom?: string; request?: WriteRequest };
+
+/**
+ * 这次模型写作依据的请求（写作包 / 生成请求里冻结的）：落第一份正文时要和创始人最新的决定对上——
+ * 给了 direction 就得是创始人最近自定的那句；没给 direction 就得是最近选了卡（angleId 给了还得同一张）；
+ * 带跳过参数一律不行。
+ */
+export interface WriteRequest { direction?: string; angleId?: string; skip?: boolean }
 
 export const HUMAN_WRITE: WriteProvenance = { kind: "human" };
 export const IMPORT_WRITE: WriteProvenance = { kind: "import" };
-export const modelWrite = (host?: string): WriteProvenance => ({ kind: "model", ...(host ? { host } : {}) });
+export const modelWrite = (host?: string, request?: WriteRequest): WriteProvenance => ({ kind: "model", ...(host ? { host } : {}), ...(request ? { request } : {}) });
 
 function isProvenance(v: unknown): v is WriteProvenance {
   const kind = (v as { kind?: unknown } | null)?.kind;
@@ -57,10 +64,35 @@ export function isPlaceholderBody(body: unknown): boolean {
   return typeof body !== "string" || !body.trim() || body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX);
 }
 
-/** 真稿：未删、未归档、正文（当前或任一版本）不是占位 */
-export function isRealDraft(c: Pick<Content, "deletedAt" | "status" | "body" | "versions">): boolean {
+/** 系统给选题垫的占位正文（create_variant 不带正文时）：一字不差的模板 */
+export function topicPlaceholderBody(topicId: string, description: string): string {
+  return `${TOPIC_PLACEHOLDER_BODY_PREFIX} ${topicId} -->\n\n${description}`;
+}
+
+type PlaceholderRef = { topicId?: string; generatedPlaceholder?: string };
+
+/**
+ * 一段正文算不算「核验过的占位」：空白；或与系统建稿时记下的那段占位一字不差；
+ * 或与该选题当前描述生成的模板一字不差（老数据没记那段占位）。前缀长得像不算——
+ * 在占位前缀后面接一段正文照样是真正文（Codex 第八轮：前缀可以被伪造）。
+ */
+export async function isVerifiedPlaceholder(body: unknown, ref: PlaceholderRef, dataDir?: string): Promise<boolean> {
+  if (typeof body !== "string" || !body.trim()) return true;
+  if (!body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX)) return false;
+  if (ref.generatedPlaceholder !== undefined && body === ref.generatedPlaceholder) return true;
+  if (!ref.topicId) return false;
+  const { getTopicStrict } = await import("./local-store.js");
+  const topic = await getTopicStrict(ref.topicId, dataDir);
+  return Boolean(topic && body === topicPlaceholderBody(ref.topicId, topic.description ?? ""));
+}
+
+/** 真稿：未删、未归档、正文（当前或任一版本）不是核验过的占位。严格读：选题读坏就抛 */
+export async function isRealDraft(c: Pick<Content, "deletedAt" | "status" | "body" | "versions" | "topicId" | "generatedPlaceholder">, dataDir?: string): Promise<boolean> {
   if (c.deletedAt || c.status === "archived") return false;
-  return !isPlaceholderBody(c.body) || (c.versions ?? []).some((v) => !isPlaceholderBody(v.body));
+  for (const body of [c.body, ...(c.versions ?? []).map((v) => v.body)]) {
+    if (!(await isVerifiedPlaceholder(body, c, dataDir))) return true;
+  }
+  return false;
 }
 
 export class FirstBodyRefusedError extends Error {
@@ -76,26 +108,32 @@ const UNKNOWN_PROVENANCE = "这次写正文没有标明来源（人手 / 导入 
  * `existing` 为 null = 新建稿件。
  */
 export async function guardFirstBody(
-  existing: Pick<Content, "deletedAt" | "status" | "body" | "versions" | "topicId"> | null,
-  next: { body?: string; topicId?: string },
+  existing: Pick<Content, "deletedAt" | "status" | "body" | "versions" | "topicId" | "generatedPlaceholder"> | null,
+  next: { body?: string; topicId?: string; generatedPlaceholder?: string },
   provenance: WriteProvenance | undefined,
   dataDir?: string,
 ): Promise<void> {
-  if (existing && isRealDraft(existing)) return;
-  if (next.body === undefined || isPlaceholderBody(next.body)) return;
+  const { ANGLE_GATE_COPY, decisionRequestRefusal, newDraftAngleRefusal, topicHasDraft } = await import("../modules/research/angle-gate.js");
+  const readFailed = (err: unknown) => new FirstBodyRefusedError({ ok: false, code: "angle_gate_read_failed", error: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` });
+  const topicId = next.topicId ?? existing?.topicId;
+  try {
+    if (existing && await isRealDraft(existing, dataDir)) return;
+    if (next.body === undefined) return;
+    // 写完仍是核验过的占位（系统记下的那段 / 该选题模板 / 空白）才不算第一份正文；伪造前缀不算
+    const ref = { topicId, generatedPlaceholder: next.generatedPlaceholder ?? existing?.generatedPlaceholder };
+    if (await isVerifiedPlaceholder(next.body, ref, dataDir)) return;
+  } catch (err) { throw readFailed(err); }
   // 来源必须显式：没标就拒（挂没挂选题都一样），漏标来源的写口不能悄悄开出第一篇
   if (!provenance) throw new FirstBodyRefusedError({ ok: false, code: "unknown_write_provenance", error: UNKNOWN_PROVENANCE });
   if (provenance.kind === "human" || provenance.kind === "import") return;
-  const { ANGLE_GATE_COPY, newDraftAngleRefusal, topicHasDraft } = await import("../modules/research/angle-gate.js");
-  const readFailed = (err: unknown) => new FirstBodyRefusedError({ ok: false, code: "angle_gate_read_failed", error: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` });
   // 模型改写一篇已有真稿（平台适配等）：凭可核验的源稿 id 放行，与新稿挂不挂选题无关
   if (provenance.derivedFrom) {
     const { getContentStrict } = await import("./local-store.js");
-    let source: Content | null;
-    try { source = await getContentStrict(provenance.derivedFrom, dataDir); } catch (err) { throw readFailed(err); }
-    if (source && isRealDraft(source)) return;
+    try {
+      const source = await getContentStrict(provenance.derivedFrom, dataDir);
+      if (source && await isRealDraft(source, dataDir)) return;
+    } catch (err) { throw readFailed(err); }
   }
-  const topicId = next.topicId ?? existing?.topicId;
   if (!topicId) {
     throw new FirstBodyRefusedError({ ok: false, code: "needs_founder_angle", error: ANGLE_GATE_COPY.noTopic, next_action: { skill: "topic-meeting", tool: "autocrew_workflow", params: { action: "prepare" } } });
   }
@@ -105,4 +143,7 @@ export async function guardFirstBody(
   if (hasDraft) return;
   const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused) throw new FirstBodyRefusedError(refused);
+  // 冻结的请求（写作包 / 生成请求 / 重写合并后的请求）要对得上创始人「最新」的决定
+  const mismatch = await decisionRequestRefusal(topicId, provenance.request, dataDir);
+  if (mismatch) throw new FirstBodyRefusedError(mismatch);
 }

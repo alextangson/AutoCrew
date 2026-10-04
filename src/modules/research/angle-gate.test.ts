@@ -21,7 +21,7 @@ import { buildChatTools } from "../../desktop/chat-router.js";
 import { saveBrief, BRIEF_SCHEMA_VERSION, type AngleCardV3 } from "./brief-store.js";
 import { topicHashOf, upsertJob } from "./research-job-store.js";
 import { createCreativeTask } from "../writing/creative-task.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal } from "./angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle } from "./angle-gate.js";
 import { TEST_FOUNDER_WORDS, founderAuthored, founderStamped } from "./angle-gate.test-helper.js";
 import { dropFixture, makeContent, makeFixture, makeTopic, type Fixture } from "../meetings/meeting-fixture.test-helper.js";
 
@@ -532,6 +532,51 @@ describe("第七轮", () => {
     await writePlan(f.data, c.id, []);
     const { resolveContentProject } = await import("../../storage/content-project.js");
     await fs.writeFile(path.join(resolveContentProject(c.id, f.data)!.project_root, "06-publish/publish-plan.json"), "");
+    expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
+  });
+});
+
+describe("第八轮：冻结的请求对照最新决定 + 占位核验", () => {
+  const OUTLINE = { thesis: "t", points: [{ text: "p", kind: "case", seconds: 20 }], structure: { opening: "o", progression: "p", ending: "e" }, said: [{ id: "a", kind: "concept", text: "p" }] };
+
+  it("按角度 A 领的包，创始人后来改成 B → 原包交稿被拒，第一份正文不落盘", async () => {
+    const t = await makeTopic(f.data, "改角度题");
+    await founderAuthored(f.data, t.id, "角度A");
+    const packed = await executeWriter({ action: "pack", topic_id: t.id, platform: "douyin", research_mode: "provided", research: "材料", direction: "角度A", _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(packed).toMatchObject({ ok: true, status: "ready" });
+    await recordFounderAngle((await getTopic(t.id, f.data))!, "角度B", "改成B", f.data);
+    const submitted = await executeWriter({ action: "submit", content_id: packed.content_id, pack_id: packed.pack_id, claim_token: packed.claim_token, attempt: 1,
+      title: "标题", body: "第一段。\n\n第二段。", hashtags: [], review: "none", outline: OUTLINE, _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(submitted).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect((await getContent(packed.content_id as string, f.data))?.body ?? "").toBe("");
+  });
+
+  it("中断的空稿重写：旧请求是角度 A、创始人已改成 B → 开跑前拒", async () => {
+    const t = await makeTopic(f.data, "重写改角度题");
+    await recordFounderAngle((await getTopic(t.id, f.data))!, "角度B", "改成B", f.data);
+    const stale = await saveContent({ _provenance: HUMAN_WRITE, title: "［生成中断］重写改角度题", body: "", platform: "douyin", topicId: t.id, status: "drafting", tags: [],
+      lastError: "断流", genRequest: { topic: "重写改角度题", platform: "douyin", topicId: t.id, direction: "角度A" } } as never, f.data);
+    const { retryGenerateScript } = await import("../writing/generate-script.js");
+    await expect(retryGenerateScript(stale.id, f.data)).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
+  });
+
+  it("在占位前缀后面接正文不算占位：令牌改写占位稿被拒；一字不差的系统占位才算", async () => {
+    const t = await makeTopic(f.data, "伪造占位题");
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    expect(ph.generatedPlaceholder).toBe(ph.body);
+    const update = buildIpcHandlers()["content:update"];
+    const forged = `<!-- Generated from topic: ${t.id} -->\n\n一整篇模型写的正文`;
+    expect(await update({ id: ph.id, body: forged, _dataDir: f.data }, { authMethod: "bearer" })).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect((await getContent(ph.id, f.data))?.body).toBe(ph.body);
+    await expect(saveContent({ title: "伪造", body: forged, topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
+  });
+
+  it("回流状态文件 metrics-pull.json 坏了 → 账号数据记失败", async () => {
+    const { buildAccountData } = await import("../../tools/scout-parallel.js");
+    await fs.writeFile(path.join(f.data, "metrics-pull.json"), "");
+    expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
+    await fs.writeFile(path.join(f.data, "metrics-pull.json"), "{ 坏");
     expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
   });
 });

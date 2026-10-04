@@ -6,7 +6,7 @@ import { inheritCreativeTask } from "../modules/writing/creative-task.js";
  * 引擎未配置的中文可执行提示必须原文透传，让用户知道如何修复。
  */
 import { firstDraftRequestRefusal, inspectWritingReadiness, newDraftGate, writingContinueParams, writingReadinessFailure } from "./writing-readiness.js";
-import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+import { founderDirectionFor, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { getDataDir } from "../storage/local-store.js";
 import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
@@ -195,6 +195,11 @@ export async function executeGenerate(
   if (typeof params._host !== "string") {
     const refused = await newDraftAngleRefusal(req.topicId, dataDir);
     if (refused) return refused;
+    // 没带方向而创始人最近一次是自定角度：沿用他那句（不让生成按「没有方向」写）
+    if (!req.direction?.trim()) {
+      const own = await founderDirectionFor(req.topicId, getDataDir(dataDir));
+      if (own) req = { ...req, direction: own };
+    }
     // 与 MCP 宿主路径同样按请求核：第一篇不许跳过，带来的方向必须是创始人自定的那句
     const mismatch = await firstDraftRequestRefusal(req.topicId, req, getDataDir(dataDir)).catch((err: unknown) =>
       ({ ok: false, code: "angle_gate_read_failed", error: err instanceof Error ? err.message : String(err) }));

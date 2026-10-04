@@ -13,7 +13,7 @@ import { describeEngineFailure, isEngineFailure, type FailureRole } from "../eng
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle, topicHasDraft } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle, topicHasDraft, founderDirectionFor } from "../modules/research/angle-gate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeStyle } from "../tools/style.js";
@@ -800,8 +800,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           }
           if (!req.direction && req.topicId) {
             // 创始人自定过角度：沿用他那句原话当方向，不再弹卡
-            const own = (await getTopic(req.topicId, dataDir))?.founderAngle;
-            if (own) req.direction = own.direction;
+            const own = await founderDirectionFor(req.topicId, dataDir);
+            if (own) req.direction = own;
           }
           // 这条选题上次就写崩了 → 救活那张卡，而不是再开一张（见 retryInterrupted）。
           if (req.topicId) {
