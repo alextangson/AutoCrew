@@ -696,6 +696,9 @@
      "title": {
       "type": "string"
      },
+     "topic_id": {
+      "type": "string"
+     },
      "url": {
       "type": "string"
      },
@@ -3494,6 +3497,9 @@
      },
      "review_notes": {},
      "title": {
+      "type": "string"
+     },
+     "topic_id": {
       "type": "string"
      },
      "url": {

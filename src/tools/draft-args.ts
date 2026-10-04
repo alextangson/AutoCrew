@@ -8,6 +8,8 @@ export interface DraftArgs {
   session: string;
   dataDir?: string;
   contentId?: string;
+  /** start：复用已有选题 */
+  topicId?: string;
   inspiration?: string;
   platform?: string;
   url?: string;
@@ -85,6 +87,7 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     session: str(p._session) ?? "unknown",
     dataDir: str(p._dataDir),
     contentId: str(p.content_id),
+    topicId: str(p.topic_id),
     inspiration: str(p.inspiration),
     platform: str(p.platform),
     url: str(p.url),

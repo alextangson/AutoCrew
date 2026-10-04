@@ -222,3 +222,58 @@ describe("乐观版本号（边界：两个写入方同时改）", () => {
     expect([a, b].find((r) => !r.ok)).toMatchObject({ code: "version_conflict" });
   });
 });
+
+describe("验收 10-04 跟进", () => {
+  const LINK = (id: string) => expect.stringMatching(new RegExp(`/#/editor/${id}$`));
+
+  it("start / angle / save（含只附审稿）都回工作台链接", async () => {
+    const r = await run("start", { inspiration: "用了 AI 反而更忙" });
+    const id = r.content_id as string;
+    expect(r.workbench_url).toEqual(LINK(id));
+    expect((await run("angle", { content_id: id, base_version: 1, ...ANGLE })).workbench_url).toEqual(LINK(id));
+    expect((await run("save", { content_id: id, base_version: 1, body: BODY })).workbench_url).toEqual(LINK(id));
+    expect((await run("save", { content_id: id, base_version: 2, body: BODY, review_notes: "codex 超时" })).workbench_url).toEqual(LINK(id));
+  });
+
+  it("start{topic_id} 复用已有选题，带出选题上创始人的原话与同选题转写", async () => {
+    const topic = await saveTopic({ title: "卡帕西看好 AI 讲解视频", description: "我做过一条讲大模型怎么工作的讲解视频，声音是克隆的", tags: [] }, dir);
+    const old = await saveContent({ title: "旧稿", body: "旧正文".repeat(40), platform: "douyin", topicId: topic.id, status: "drafting", tags: [], draftPath: { kind: "thin", startedAt: "2026-10-01T00:00:00Z", angle: { ...ANGLE, version: 1, founder_words: "讲我那条克隆声音的视频", at: "x" } }, _provenance: HUMAN_WRITE }, dir);
+    const r = await run("start", { topic_id: topic.id, inspiration: "AI 时代普通人怎么学" });
+    expect(r).toMatchObject({ ok: true, topic_id: topic.id });
+    expect((await getContent(r.content_id as string, dir))!.topicId).toBe(topic.id);
+    const fh = (r.context as { firsthand: { founder_words: string; founder_said: Array<{ text: string }> } }).firsthand;
+    expect(fh.founder_words).toBe("AI 时代普通人怎么学");
+    expect(fh.founder_said.map((x) => x.text)).toEqual(expect.arrayContaining([topic.description, "讲我那条克隆声音的视频"]));
+  });
+
+  it("边界：start{topic_id} 选题不存在 → 明确报错，不建稿", async () => {
+    expect(await run("start", { topic_id: "topic-nope" })).toMatchObject({ ok: false, code: "topic_not_found", error: expect.stringContaining("topic-nope") });
+  });
+
+  it("同系列不含同选题的稿", async () => {
+    const topic = await saveTopic({ title: "同题", description: "同题", tags: [] }, dir);
+    await saveContent({ title: "同题旧稿", body: "旧正文".repeat(40), platform: "douyin", topicId: topic.id, status: "draft_ready", tags: [], _provenance: HUMAN_WRITE }, dir);
+    const other = await saveTopic({ title: "别的题", description: "别的题", tags: [] }, dir);
+    await saveContent({ title: "别的稿", body: "别的正文".repeat(40), platform: "douyin", topicId: other.id, status: "draft_ready", tags: [], _provenance: HUMAN_WRITE }, dir);
+    const titles = ((await run("start", { topic_id: topic.id })).context as { series: Array<{ title: string }> }).series.map((s) => s.title);
+    expect(titles).toContain("别的稿");
+    expect(titles).not.toContain("同题旧稿");
+  });
+
+  it("next_action 随状态变：start 指 verify_quote；存正文后要审；附了审稿就按意见改；定稿后给链接", async () => {
+    const s = await run("start", { inspiration: "用了 AI 反而更忙" });
+    const id = s.content_id as string;
+    const note = (r: Record<string, unknown>) => (r.next_action as { note: string }).note;
+    expect(note(s)).toContain("verify_quote");
+    expect(note(s)).not.toContain("read / cite");
+    await run("angle", { content_id: id, base_version: 1, ...ANGLE });
+    expect(note(await run("save", { content_id: id, base_version: 1, body: BODY }))).toContain("Codex");
+    const reviewed = note(await run("save", { content_id: id, base_version: 2, body: BODY, review_notes: "主线清楚" }));
+    expect(reviewed).toContain("只改他说的地方");
+    expect(reviewed).not.toContain("Codex");
+    expect(note(await run("save", { content_id: id, base_version: 2, body: `${BODY}改一句。` }))).toContain("prepare_final");
+    expect(note(await run("start", { content_id: id }))).toContain("只改他说的地方");
+    await run("prepare_final", { content_id: id, base_version: 3, citations: [] });
+    expect(note(await run("start", { content_id: id }))).toMatch(/等你认稿.*\/#\/editor\//);
+  });
+});

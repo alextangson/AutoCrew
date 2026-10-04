@@ -7,7 +7,7 @@ import { FirstBodyRefusedError, modelWrite } from "../storage/first-body-guard.j
 import { ScriptFrozenError } from "../storage/production-store.js";
 import { recordFounderAngle } from "../modules/research/angle-gate.js";
 import { verifyQuote } from "../modules/draft/verify-quote.js";
-import { currentVersion, type DraftReviewNote } from "../modules/draft/draft-types.js";
+import { currentVersion, draftNextNote, workbenchUrl, type DraftReviewNote } from "../modules/draft/draft-types.js";
 import { fail, withVersion } from "./draft-version.js";
 import { INVALID, normalizeChain, type DraftArgs } from "./draft-args.js";
 
@@ -39,7 +39,7 @@ export async function draftAngle(a: DraftArgs): Promise<R> {
     const version = (c.draftPath?.angle?.version ?? 0) + 1;
     const angle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain, founder_words: a.founderWords!, at: new Date().toISOString() };
     await tx.write({ draftPath: { ...c.draftPath!, angle } });
-    return { ok: true, angle_version: version, version: currentVersion(c), next_action: { note: "按选定的立意和论证链写全文，再 save" } };
+    return { ok: true, angle_version: version, version: currentVersion(c), workbench_url: workbenchUrl(c.id), next_action: { note: "按选定的立意和论证链写全文，再 save" } };
   });
 }
 
@@ -70,11 +70,12 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   }
   if (!saved) return fail("not_found", `稿件不存在：${c.id}`);
   const version = currentVersion(saved);
+  let notes = saved.draftPath?.reviewNotes ?? [];
   if (a.reviewNotes !== undefined) {
-    const note: DraftReviewNote = { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() };
-    await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: [...(saved.draftPath?.reviewNotes ?? []), note] } });
+    notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
+    await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes } });
   }
-  return { ok: true, version, status: saved.status, format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg) };
+  return { ok: true, version, status: saved.status, reviewed: notes.length > 0, format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg) };
 }
 
 export async function draftSave(a: DraftArgs): Promise<R> {
@@ -84,5 +85,7 @@ export async function draftSave(a: DraftArgs): Promise<R> {
   const r = await withVersion(a, (c, tx) => writeVersion(a, c, tx));
   // 已出过定稿清单的稿又改了：退回写作中（锁外推进，状态机照常校验）
   if (r.ok && r.status === "draft_ready") await transitionStatus(a.contentId!, "drafting", { host: a.host }, a.dataDir);
-  return r.ok ? { ...r, status: undefined, next_action: { note: "第一版存下后自己跑一次 Codex 审稿，用 save{review_notes} 附上；之后创始人提意见就只改他说的地方；他说「定了」就调 prepare_final" } } : r;
+  if (!r.ok) return r;
+  const note = draftNextNote({ id: a.contentId!, status: "drafting", needsAngle: false, hasBody: true, reviewed: r.reviewed as boolean });
+  return { ...r, status: undefined, reviewed: undefined, workbench_url: workbenchUrl(a.contentId!), next_action: { note } };
 }

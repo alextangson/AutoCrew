@@ -10,6 +10,7 @@ import { reviewedRow } from "../insights/metric-review.js";
 import { loadProfile, personaSummary, rulesForPlatform } from "../profile/creator-profile.js";
 import { buildSeriesSnapshot } from "../writing/series-memory.js";
 import { collectOwnMaterial } from "../research/own-material.js";
+import { loadLatestBrief } from "../research/brief-store.js";
 import { getDataDir, listContents, type Content, type Topic } from "../../storage/local-store.js";
 import { DRAFT_PLATFORM } from "./draft-types.js";
 
@@ -79,13 +80,30 @@ export async function seriesContext(content: Pick<Content, "id" | "topicId">, da
   }));
 }
 
-/** 一手材料：创始人的灵感原话 + 他自己口播的转写片段（AI 起草的放行稿不算） */
-export async function firsthandContext(topic: Topic | null, dataDir?: string): Promise<Record<string, unknown>> {
-  if (!topic) return { founder_words: null, transcripts: [] };
+/** 选题上创始人留过的原话：选题描述、选卡 / 自定角度原话、最新简报里的原始要求、同选题其他稿立意时的原话 */
+async function founderSaid(topic: Topic, dataDir?: string): Promise<Array<{ source: string; text: string }>> {
+  const brief = await loadLatestBrief(topic.id, getDataDir(dataDir)).catch(() => null);
+  const others = (await listContents(dataDir)).filter((c) => c.topicId === topic.id && !c.deletedAt);
+  const raw: Array<[string, string | undefined]> = [
+    ["选题", topic.description || topic.title],
+    ["选卡原话", topic.selectedAngle?.founderWords],
+    ["自定角度原话", topic.founderAngle?.founderWords],
+    ["创作要求", brief?.creativeTask?.requirements],
+    ...others.map((c): [string, string | undefined] => [`稿件「${c.title}」立意原话`, c.draftPath?.angle?.founder_words]),
+  ];
+  const seen = new Set<string>();
+  return raw.filter(([, t]) => { const k = t?.trim(); if (!k || seen.has(k)) return false; seen.add(k); return true; })
+    .map(([source, text]) => ({ source, text: text!.trim() }));
+}
+
+/** 一手材料：创始人的灵感原话、选题上他留过的话 + 他自己口播的转写片段（AI 起草的放行稿不算） */
+export async function firsthandContext(topic: Topic | null, dataDir?: string, inspiration?: string): Promise<Record<string, unknown>> {
+  if (!topic) return { founder_words: inspiration ?? null, founder_said: [], transcripts: [] };
   const material = await collectOwnMaterial(getDataDir(dataDir), { id: topic.id, title: topic.title, description: topic.description }, { maxChars: 6000 });
   return {
-    founder_words: topic.description || topic.title,
-    transcripts: material.chunks.filter((c) => c.kind === "transcript").map((c) => ({ id: c.id, title: c.title, text: c.text })),
+    founder_words: inspiration || topic.description || topic.title,
+    founder_said: await founderSaid(topic, dataDir),
+    transcripts: material.chunks.filter((c) => c.kind === "transcript").map((c) => ({ id: c.id, title: c.title, text: c.text, same_topic: c.sameTopic })),
     rule: "亲历只能来自这里；没有就不写亲历",
   };
 }

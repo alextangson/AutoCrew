@@ -11,7 +11,7 @@ import { draftPrepareFinal } from "./draft-prepare.js";
 const ACTIONS = ["start", "angle", "save", "verify_quote", "prepare_final"] as const;
 
 export const DRAFT_DESCRIPTION =
-  "抖音口播从灵感写到定稿（write-script 技能按 6 步调用）。start{inspiration} 建稿或 start{content_id} 接手，返回档案、账号爆款、同系列主线、一手材料和当前 version；" +
+  "抖音口播从灵感写到定稿（write-script 技能按 6 步调用）。start{inspiration,topic_id?} 建稿（topic_id 复用已有选题）或 start{content_id} 接手，返回档案、账号爆款、同系列主线、一手材料和当前 version；" +
   "verify_quote{content_id,url,quote} 抓网页逐字核引文，过了进证据台账并回证据编号；" +
   "angle{content_id,base_version,main_line,for_whom,opening,why_viral,chain,founder_words} 记创始人选定的立意（可重调即改立意）；" +
   "save{content_id,base_version,body,title?,note?,review_notes?} 存一版（review_notes 附 Codex 审稿意见）；" +
@@ -20,6 +20,7 @@ export const DRAFT_DESCRIPTION =
 export const draftSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "start / angle / save / verify_quote / prepare_final" }),
   content_id: Type.Optional(Type.String({ description: "start 返回的稿件 id" })),
+  topic_id: Type.Optional(Type.String({ description: "start：复用的已有选题 id" })),
   base_version: Type.Optional(Type.Integer({ description: "你最后读到的版本号；save / angle / prepare_final 必带" })),
   inspiration: Type.Optional(Type.String({ description: "start：创始人的一句灵感原话" })),
   platform: Type.Optional(Type.String({ description: "只支持 douyin；别的平台走 autocrew_workflow" })),

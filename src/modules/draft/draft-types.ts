@@ -44,3 +44,17 @@ export function currentVersion(c: { versions?: unknown[] }): number { return c.v
 export function workbenchUrl(contentId: string): string {
   return `http://127.0.0.1:${Number(process.env.AUTOCREW_PORT) || 4317}/#/editor/${encodeURIComponent(contentId)}`;
 }
+
+export interface DraftState { id: string; status: string; needsAngle: boolean; hasBody: boolean; reviewed: boolean }
+
+/**
+ * 回执里的 next_action 随稿件状态走（验收 10-04：附完审稿还在提示去审）。
+ * reviewed = 这篇已附过 Codex 审稿（任一版）：技能规定只审第一版，之后按创始人意见改不再重审。
+ */
+export function draftNextNote(s: DraftState): string {
+  if (s.status === "draft_ready") return `稿在「等你认稿」：把工作台链接 ${workbenchUrl(s.id)} 给创始人，请他看清单后点「定了」`;
+  if (s.needsAngle) return "按 write-script 技能走：衍生 → 调研（verify_quote）→ 立意（angle）→ 写（save）";
+  if (!s.hasBody) return "按选定的立意和论证链写全文，再 save";
+  if (!s.reviewed) return "这篇还没附 Codex 审稿：跑一次 Codex 审稿，用 save{同一版正文, review_notes} 附上";
+  return "按创始人意见改、只改他说的地方；他说「定了」就调 prepare_final";
+}
