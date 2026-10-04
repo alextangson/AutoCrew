@@ -49,7 +49,6 @@ import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { migratePlaintextClaims } from "../src/storage/claims.js";
-import { recoverReviews } from "../src/modules/draft/codex-review-queue.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { ensureProductionReady } from "../src/modules/production/service.js";
 // 原片核对作业的处理器与「重启后 pending_match 重新入队」钩子（1b §3-5）：在首次 ensureProductionReady 之前注册
@@ -596,17 +595,6 @@ try {
   }
 } catch (err) {
   console.error("[claims] 令牌哈希迁移失败:", err instanceof Error ? err.message : err);
-}
-
-// 薄路径 Codex 审稿(2026-10-04):上次进程退出时跑着的审稿标失败(可再审),排着的按当前正文恢复排队
-try {
-  const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
-  for (const dir of dirs) {
-    const r = await recoverReviews(dir).catch((err) => { console.error(`[draft-review] 审稿恢复失败(${dir}):`, err instanceof Error ? err.message : err); return null; });
-    if (r && (r.failed || r.requeued)) console.log(`  [draft-review] ${r.failed} 次中断的审稿已标失败,${r.requeued} 次排队恢复`);
-  }
-} catch (err) {
-  console.error("[draft-review] 审稿恢复失败:", err instanceof Error ? err.message : err);
 }
 
 // 灵感库过期清理(V5.4c 创始人裁决):3 天未选用自动入回收站;有稿件血缘的永不清理

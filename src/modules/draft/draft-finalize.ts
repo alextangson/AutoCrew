@@ -8,6 +8,7 @@ import { draftHash } from "../../storage/draft-hash.js";
 import { getContent, getDataDir, LOCAL_HOST, transitionStatus, updateContent, type Content } from "../../storage/local-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
 import { saveCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
+import { currentVersion } from "./draft-types.js";
 import { loadChecklist, type ChecklistItem, type FinalChecklist } from "./draft-final.js";
 
 type R = Record<string, unknown>;
@@ -76,8 +77,8 @@ export async function finalizeByFounder(contentId: string, input: { draftHash: s
   return { ok: true, status: "approved", kept: kept.length };
 }
 
-/** 工作台读的那一份：清单、是否还对得上当前稿、审稿结果 */
-export async function finalPanel(contentId: string, review: R, dataDir?: string): Promise<R> {
+/** 工作台读的那一份：清单、是否还对得上当前稿、agent 附的审稿意见（按版本） */
+export async function finalPanel(contentId: string, dataDir?: string): Promise<R> {
   const c = await getContent(contentId, dataDir);
   if (!c?.draftPath) return { ok: true, data: null };
   const checklist = await loadChecklist(contentId, dataDir);
@@ -85,7 +86,7 @@ export async function finalPanel(contentId: string, review: R, dataDir?: string)
   return {
     ok: true,
     data: {
-      status: c.status, draft_hash: hash, review,
+      status: c.status, draft_hash: hash, version: currentVersion(c), review_notes: c.draftPath.reviewNotes ?? [],
       checklist: checklist ? { ...checklist, current: checklist.draft_hash === hash } : null,
       finalized: c.draftFinal ? { at: c.draftFinal.finalizedAt, current: c.draftFinal.draftHash === hash } : null,
     },

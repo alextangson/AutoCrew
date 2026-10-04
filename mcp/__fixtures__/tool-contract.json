@@ -622,14 +622,15 @@
      "action": {
       "enum": [
        "start",
-       "read",
-       "cite",
        "angle",
        "save",
-       "review",
+       "verify_quote",
        "prepare_final"
       ],
       "type": "string"
+     },
+     "base_version": {
+      "type": "integer"
      },
      "body": {
       "type": "string"
@@ -664,9 +665,6 @@
      "claim": {
       "type": "string"
      },
-     "claim_token": {
-      "type": "string"
-     },
      "content_id": {
       "type": "string"
      },
@@ -688,21 +686,13 @@
      "opening": {
       "type": "string"
      },
-     "page_id": {
-      "type": "string"
-     },
      "platform": {
       "type": "string"
      },
      "quote": {
       "type": "string"
      },
-     "rerun": {
-      "type": "boolean"
-     },
-     "takeover": {
-      "type": "boolean"
-     },
+     "review_notes": {},
      "title": {
       "type": "string"
      },
@@ -3432,14 +3422,15 @@
      "action": {
       "enum": [
        "start",
-       "read",
-       "cite",
        "angle",
        "save",
-       "review",
+       "verify_quote",
        "prepare_final"
       ],
       "type": "string"
+     },
+     "base_version": {
+      "type": "integer"
      },
      "body": {
       "type": "string"
@@ -3474,9 +3465,6 @@
      "claim": {
       "type": "string"
      },
-     "claim_token": {
-      "type": "string"
-     },
      "content_id": {
       "type": "string"
      },
@@ -3498,21 +3486,13 @@
      "opening": {
       "type": "string"
      },
-     "page_id": {
-      "type": "string"
-     },
      "platform": {
       "type": "string"
      },
      "quote": {
       "type": "string"
      },
-     "rerun": {
-      "type": "boolean"
-     },
-     "takeover": {
-      "type": "boolean"
-     },
+     "review_notes": {},
      "title": {
       "type": "string"
      },

@@ -1,13 +1,10 @@
 /** 薄路径定稿面板的纯逻辑：「定了」能不能点、不能点时在按钮位置写什么原因 */
 export interface DraftItem { id: string; status: "sourced" | "unsourced"; text: string; evidence_ids: string[]; reason?: string; needs_human?: string[] }
-export interface DraftVerdict { verdict: "pass" | "fail"; reason: string; quotes: string[] }
-export interface DraftReview {
-  status: string; version?: number; current?: boolean; note?: string;
-  result?: { main_line: DraftVerdict; payoff: DraftVerdict; opening: DraftVerdict; advisories: Array<{ text: string; quote?: string }> };
-  error?: { code: string; message: string; detail?: string };
-}
+export interface DraftVerdict { verdict: "pass" | "fail"; reason: string; quotes?: string[] }
+export interface StructuredReview { main_line: DraftVerdict; payoff: DraftVerdict; opening: DraftVerdict; advisories?: Array<{ text: string; quote?: string }> }
+export interface DraftReviewNote { version: number; notes: unknown; at: string }
 export interface DraftPanelData {
-  status: string; draft_hash: string; review: DraftReview;
+  status: string; draft_hash: string; version: number; review_notes: DraftReviewNote[];
   checklist: { draft_hash: string; items: DraftItem[]; current: boolean } | null;
   finalized: { at: string; current: boolean } | null;
 }
@@ -22,3 +19,10 @@ export function finalizeBlock(d: DraftPanelData, keep: ReadonlySet<string>, dirt
 }
 
 export const VERDICT_LABEL: Record<string, string> = { main_line: "主线", payoff: "收获", opening: "开头" };
+
+/** 审稿意见是不是按提示词的三项结论结构交的（不是就原文展示） */
+export function structuredReview(notes: unknown): StructuredReview | null {
+  const n = notes as Partial<StructuredReview> | null;
+  const ok = (v: unknown) => Boolean(v && typeof v === "object" && ((v as DraftVerdict).verdict === "pass" || (v as DraftVerdict).verdict === "fail"));
+  return n && typeof n === "object" && ok(n.main_line) && ok(n.payoff) && ok(n.opening) ? n as StructuredReview : null;
+}

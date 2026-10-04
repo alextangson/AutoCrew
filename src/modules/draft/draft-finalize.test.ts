@@ -4,11 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeDraft } from "../../tools/draft.js";
-import { setDraftFetch } from "./draft-research.js";
-import { resetDraftTokens } from "./draft-claims.js";
-import { resetReviewQueue, reviewsIdle, setCodexRunner } from "./codex-review-queue.js";
+import { setQuoteFetch } from "./verify-quote.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
-import { getContent } from "../../storage/local-store.js";
+import { getContent, transitionStatus } from "../../storage/local-store.js";
 import { draftHash } from "../../storage/draft-hash.js";
 import { contentFile } from "../../storage/content-project.js";
 import { acceptanceBlock } from "../video/handoff/acceptance.js";
@@ -24,40 +22,38 @@ const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: 
 const run = (action: string, args: Record<string, unknown> = {}) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 const finalize = (payload: Record<string, unknown>, authMethod?: "session" | "bearer") => buildIpcHandlers()["draft:finalize"]({ ...payload, _dataDir: dir }, authMethod ? { authMethod } : undefined);
 
+const V = 2;
 async function written(body = BODY): Promise<string> {
   const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;
-  await run("angle", { content_id: id, ...ANGLE });
-  expect((await run("save", { content_id: id, body })).ok).toBe(true);
-  await run("read", { content_id: id, url: "https://example.com/r" });
-  expect((await run("cite", { content_id: id, page_id: "p1", quote: "有 37% 每天用 AI 写周报" })).ok).toBe(true);
-  expect((await run("cite", { content_id: id, page_id: "p1", quote: "参与调查的 1200 名职场人" })).ok).toBe(true);
+  await run("angle", { content_id: id, base_version: 1, ...ANGLE });
+  expect((await run("save", { content_id: id, base_version: 1, body })).ok).toBe(true);
+  expect((await run("verify_quote", { content_id: id, url: "https://example.com/r", quote: "有 37% 每天用 AI 写周报" })).ok).toBe(true);
+  expect((await run("verify_quote", { content_id: id, url: "https://example.com/r", quote: "参与调查的 1200 名职场人" })).ok).toBe(true);
   return id;
 }
 const MAPPING = [{ text: SOURCED, evidence_ids: ["ev-d1", "ev-d2"] }];
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "draft-final-"));
-  resetDraftTokens(); resetReviewQueue();
-  setCodexRunner(async () => ({ code: null, stdout: "", stderr: "", timedOut: false, spawnError: "ENOENT" }));
-  setDraftFetch(async (url) => ({ finalUrl: url, text: PAGE, imageCandidates: [] }));
+  setQuoteFetch(async (url) => ({ finalUrl: url, text: PAGE }));
 });
 afterEach(async () => {
-  await reviewsIdle(); setDraftFetch(undefined); setCodexRunner(null); await fs.rm(dir, { recursive: true, force: true }); });
+  setQuoteFetch(undefined); await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("prepare_final", () => {
   it("全部有出处：清单全 sourced，推到等你认稿，并附审稿状态（失败也能定稿）", async () => {
     const id = await written();
-    const r = await run("prepare_final", { content_id: id, citations: MAPPING });
+    const r = await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     expect(r).toMatchObject({ ok: true, status: "draft_ready", unsourced: 0, workbench_url: expect.stringContaining(id) });
     expect((r.items as Array<{ status: string }>).every((i) => i.status === "sourced")).toBe(true);
     expect((await getContent(id, dir))!.status).toBe("draft_ready");
-    const again = await run("prepare_final", { content_id: id, citations: JSON.stringify(MAPPING) });
+    const again = await run("prepare_final", { content_id: id, base_version: V, citations: JSON.stringify(MAPPING) });
     expect((again.items as Array<{ id: string }>).map((i) => i.id)).toEqual((r.items as Array<{ id: string }>).map((i) => i.id));
   });
 
   it("有没出处的数字：列进清单、不拦；没映射的事实句也标未核验", async () => {
     const id = await written(BODY.replace("可周报写得快了", `${UNSOURCED}可周报写得快了`));
-    const r = await run("prepare_final", { content_id: id, citations: MAPPING });
+    const r = await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     expect(r).toMatchObject({ ok: true, unsourced: 1 });
     const bad = (r.items as Array<{ status: string; text: string; reason?: string }>).find((i) => i.status === "unsourced")!;
     expect(bad.text).toContain("25%");
@@ -66,19 +62,19 @@ describe("prepare_final", () => {
   it("中转把 citations 序列化成带未转义内部引号的字符串：修引号后照常用", async () => {
     const id = await written();
     const raw = `[{"text":"${SOURCED}","evidence_ids":["ev-d1","ev-d2"],"note":"他说"省时间""}]`;
-    expect(await run("prepare_final", { content_id: id, citations: raw })).toMatchObject({ ok: true, unsourced: 0 });
+    expect(await run("prepare_final", { content_id: id, base_version: V, citations: raw })).toMatchObject({ ok: true, unsourced: 0 });
   });
 
   it("映射引用了不存在的证据或找不到的句子 → 整批退回", async () => {
     const id = await written();
-    const r = await run("prepare_final", { content_id: id, citations: [{ text: "稿里没有的句子", evidence_ids: [] }, { text: SOURCED, evidence_ids: ["ev-d9"] }] });
+    const r = await run("prepare_final", { content_id: id, base_version: V, citations: [{ text: "稿里没有的句子", evidence_ids: [] }, { text: SOURCED, evidence_ids: ["ev-d9"] }] });
     expect(r).toMatchObject({ ok: false, code: "bad_citations" });
     expect((r.errors as string[]).length).toBe(2);
   });
 
   it("所引证据里找不到同值数字 → 该句标未核验", async () => {
     const id = await written();
-    const r = await run("prepare_final", { content_id: id, citations: [{ text: SOURCED, evidence_ids: ["ev-d2"] }] });
+    const r = await run("prepare_final", { content_id: id, base_version: V, citations: [{ text: SOURCED, evidence_ids: ["ev-d2"] }] });
     expect((r.items as Array<{ status: string; reason?: string }>)[0]).toMatchObject({ status: "unsourced", reason: expect.stringContaining("37%") });
   });
 });
@@ -86,7 +82,7 @@ describe("prepare_final", () => {
 describe("工作台「定了」", () => {
   it("非浏览器会话（令牌 / 未知）→ 拒绝", async () => {
     const id = await written();
-    await run("prepare_final", { content_id: id, citations: MAPPING });
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     const hash = draftHash((await getContent(id, dir))!);
     expect(await finalize({ id, draft_hash: hash }, "bearer")).toMatchObject({ ok: false, code: "founder_only" });
     expect(await finalize({ id, draft_hash: hash })).toMatchObject({ ok: false, code: "founder_only" });
@@ -95,7 +91,7 @@ describe("工作台「定了」", () => {
 
   it("定了：写认稿决定、进等 A-roll、citations.json 覆盖当前稿；交接认这份定稿", async () => {
     const id = await written();
-    await run("prepare_final", { content_id: id, citations: MAPPING });
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     const before = (await getContent(id, dir))!;
     expect(acceptanceBlock(before)).toMatchObject({ ok: false, code: "not_accepted" });
     const r = await finalize({ id, draft_hash: draftHash(before) }, "session");
@@ -112,7 +108,7 @@ describe("工作台「定了」", () => {
 
   it("没出处的项必须由创始人逐条保留；保留后写成显式的未核验引用", async () => {
     const id = await written(BODY.replace("可周报写得快了", `${UNSOURCED}可周报写得快了`));
-    const prep = await run("prepare_final", { content_id: id, citations: MAPPING });
+    const prep = await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     const hash = draftHash((await getContent(id, dir))!);
     expect(await finalize({ id, draft_hash: hash }, "session")).toMatchObject({ ok: false, code: "unsourced_open" });
     const keep = (prep.items as Array<{ id: string; status: string }>).filter((i) => i.status === "unsourced").map((i) => i.id);
@@ -126,21 +122,35 @@ describe("工作台「定了」", () => {
 
   it("清单生成之后正文又改过 → 「定了」作废，要重新 prepare_final", async () => {
     const id = await written();
-    await run("prepare_final", { content_id: id, citations: MAPPING });
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     const stale = draftHash((await getContent(id, dir))!);
-    expect((await run("save", { content_id: id, body: `${BODY}再加一句。` })).ok).toBe(true);
+    expect((await run("save", { content_id: id, base_version: V, body: `${BODY}再加一句。` })).ok).toBe(true);
     expect((await getContent(id, dir))!.status).toBe("drafting");
     const r = await finalize({ id, draft_hash: stale }, "session");
     expect(r.ok).toBe(false);
-    await run("prepare_final", { content_id: id, citations: MAPPING });
+    await run("prepare_final", { content_id: id, base_version: 3, citations: MAPPING });
     const fresh = (await getContent(id, dir))!;
     expect(await finalize({ id, draft_hash: stale }, "session")).toMatchObject({ ok: false, code: "stale_checklist" });
     expect(await finalize({ id, draft_hash: draftHash(fresh) }, "session")).toMatchObject({ ok: true });
   });
 
+  it("撤回之后交接不再认：拉回写稿段清掉 draftFinal；残留的旧记录也因认稿决定已撤回而被拒", async () => {
+    const id = await written();
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
+    expect(await finalize({ id, draft_hash: draftHash((await getContent(id, dir))!) }, "session")).toMatchObject({ ok: true });
+    expect((await transitionStatus(id, "draft_ready", { decidedBy: "founder", force: true }, dir)).ok).toBe(true);
+    const c = (await getContent(id, dir))!;
+    expect(c.draftFinal).toBeUndefined();
+    const approval = await readProductionDoc(id, dir);
+    const approved = Boolean(approval && scriptApprovalFor(approval, c.body));
+    expect(approved).toBe(false);
+    const stale = { ...c, status: "approved" as const, draftFinal: { draftHash: draftHash(c), finalizedAt: "x", source: "founder-workbench" as const, kept: [] } };
+    expect(acceptanceBlock(stale, undefined, undefined, approved)).toMatchObject({ ok: false, code: "not_accepted" });
+  });
+
   it("交接：定稿之后正文再变 → 不再认", async () => {
     const id = await written();
-    await run("prepare_final", { content_id: id, citations: MAPPING });
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
     await finalize({ id, draft_hash: draftHash((await getContent(id, dir))!) }, "session");
     const c = (await getContent(id, dir))!;
     expect(acceptanceBlock({ ...c, body: `${c.body}改了` }, undefined, undefined, true)).toMatchObject({ ok: false, code: "not_accepted" });

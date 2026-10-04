@@ -436,7 +436,7 @@ export interface Content {
    * 落在稿件上，而不只在回执里——导入稿补证入口（与后续交接快速通道）只认这里。
    */
   writingSource?: { kind: "manual_import"; importedAt: string; reason: string };
-  /** 走灵感 → A-roll 薄路径（autocrew_draft）的稿：立意与审稿排队标记。只由该工具写，content update 不开放 */
+  /** 走灵感 → A-roll 薄路径（autocrew_draft）的稿：立意与审稿意见。只由该工具写，content update 不开放 */
   draftPath?: DraftPathRecord;
   /** 创始人在工作台点「定了」（绑定稿件指纹）。只由工作台会话写，交接据此认定稿 */
   draftFinal?: DraftFinalRecord;

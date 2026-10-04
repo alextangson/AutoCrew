@@ -1,7 +1,4 @@
 /**
- * 所有认领改动（认领、续租、转交、恢复、释放、闲置接管）都经同一条按稿件的串行队列（serializeClaim）：
- * 读当前认领、判资格、写新认领是一个事务，彼此不会交错。这些函数之间不互相调用，避免同队列重入死锁。
- *
  * 认领与租约（P3 spec §6.1；P6 spec §3.8 写门）——多宿主协作里唯一的硬门。
  *
  * 一句话：**认领是软门，令牌是凭据**。没人认领时谁写都行（单人单机不设卡），写完顺手把
@@ -29,7 +26,6 @@ import {
   type ContentHandoff,
 } from "./local-store.js";
 import { callerSession } from "../runtime/run-log.js";
-import { seriesTransaction } from "./series-transaction.js";
 import os from "node:os";
 import { resolveContentProject } from "./content-project.js";
 import { hashClaimToken, isHashedToken, tokenMatches } from "./claim-token.js";
@@ -140,19 +136,7 @@ export function assertClaimToken(content: Pick<Content, "claim">, host: string, 
   return { ok: false, code: "claim_held", error: refusalMessage(claim, host), holder: claimView(claim)! };
 }
 
-/**
- * 排队等锁期间租约到期的续租（Codex 复审 P2）：进队时租约还有效、出示的就是盘上这一枚令牌（没被别人换掉）
- * → 仍按续租算，令牌、心跳原样保留；记录已被换掉时令牌对不上，照旧拒。
- */
-function liveClaim(content: Pick<Content, "claim">, now: number, arrivedAt: number, token?: string): ContentClaim | null {
-  const live = activeClaim(content, now);
-  if (live) return live;
-  return content.claim && token && tokenMatches(content.claim.token, token) && activeClaim(content, arrivedAt) ? content.claim : null;
-}
-
 interface ClaimWrite {
-  /** 调用方已判定的当前有效认领（liveClaim）；缺省按 now 现算 */
-  current?: ContentClaim | null;
   employee: ClaimEmployee;
   host: string;
   /** true = 续租，沿用活认领的令牌；false = 发新令牌（首次认领、接管、转交） */
@@ -188,7 +172,7 @@ async function writeClaim(
   dataDir: string | undefined,
   now: number,
 ): Promise<ContentClaim> {
-  const current = write.current !== undefined ? write.current : activeClaim(content, now);
+  const current = activeClaim(content, now);
   const kept = write.renew ? current : null;
   // 新令牌 / 续租时出示的令牌才有明文；续租但没出示（工作台越权续自己的）就只有哈希，回执不给令牌
   const plaintext = kept ? (tokenMatches(kept.token, write.presented) ? write.presented : undefined) : newClaimToken();
@@ -242,36 +226,25 @@ export async function claimContent(
   dataDir?: string,
   opts: ClaimOptions = {},
 ): Promise<ClaimResult> {
-  const arrivedAt = Date.now();
-  return serializeClaim(contentId, () => claimContentLocked(contentId, employee, host, dataDir, opts, arrivedAt));
+  return serializeClaim(contentId, () => claimContentLocked(contentId, employee, host, dataDir, opts));
 }
 const claimQueues = new Map<string, Promise<unknown>>();
-/**
- * 认领队列。全局加锁顺序（与 series-transaction.ts、local-store.ts contentWrite 的注释一致）：
- *   系列锁（seriesTransaction）→ 认领队列（本函数）→ 单稿写锁（serializeContentWrite）。
- * 认领改动会经 updateContent 写稿件，系列范围内的稿要先拿系列锁；所以进认领队列前先取系列锁
- * （已持有则重入），持有认领队列时再要系列锁的路径就不存在了——否则审稿台「持系列锁再认领」
- * 与「持认领队列再写系列范围内的稿」会互等成死锁（Codex 复审 2026-10-04）。
- */
 function serializeClaim<T>(id: string, task: () => Promise<T>): Promise<T> {
-  return seriesTransaction(() => enqueueClaim(id, task));
-}
-function enqueueClaim<T>(id: string, task: () => Promise<T>): Promise<T> {
   const next = (claimQueues.get(id) ?? Promise.resolve()).then(task, task);
   claimQueues.set(id, next);
   const done = () => { if (claimQueues.get(id) === next) claimQueues.delete(id); };
   next.then(done, done);
   return next;
 }
-async function claimContentLocked(contentId: string, employee: ClaimEmployee, host: string, dataDir: string | undefined, opts: ClaimOptions, arrivedAt: number): Promise<ClaimResult> {
+async function claimContentLocked(contentId: string, employee: ClaimEmployee, host: string, dataDir: string | undefined, opts: ClaimOptions): Promise<ClaimResult> {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const now = Date.now();
-  const current = liveClaim(content, now, arrivedAt, opts.token);
+  const current = activeClaim(content, now);
   if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
   if (current.host !== host) return held(current, host, now);
   if (tokenMatches(current.token, opts.token)) {
-    return { ok: true, claim: await writeClaim(content, { employee, host, renew: true, presented: opts.token, current }, dataDir, now) };
+    return { ok: true, claim: await writeClaim(content, { employee, host, renew: true, presented: opts.token }, dataDir, now) };
   }
   if (!opts.takeover) return held(current, host, now);
   if (current.heartbeat) {
@@ -286,30 +259,12 @@ async function claimContentLocked(contentId: string, employee: ClaimEmployee, ho
   return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
 }
 
-/**
- * 薄路径（autocrew_draft）的闲置接管：持有会话最近一次写入距今满 10 分钟，不论是不是同一宿主都可以接手。
- * 接管换新令牌（旧令牌迟到写入被拒）并记一条交接；剪辑认领（heartbeat）不走这里。
- */
-export async function takeOverIdleClaim(contentId: string, employee: ClaimEmployee, host: string, dataDir?: string): Promise<ClaimResult> {
-  return serializeClaim(contentId, async () => {
-    const content = await getContent(contentId, dataDir);
-    if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
-    const now = Date.now();
-    const current = activeClaim(content, now);
-    if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
-    if (current.heartbeat || claimIdleMs(current, now) < CLAIM_IDLE_TAKEOVER_MS) return held(current, host, now);
-    const handoff = { from: current.host, to: host, by: host, note: "接管（持有会话闲置满 10 分钟）" };
-    return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
-  });
-}
-
 /** `autocrew_desk release`：令牌对得上才清（对不上就是别人的活，不许替他放手） */
 export async function releaseClaim(
   contentId: string,
   token: string,
   dataDir?: string,
 ): Promise<{ ok: true; released: boolean } | { ok: false; error: string; holder?: ClaimView }> {
-  return serializeClaim(contentId, async () => {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   if (!content.claim) return { ok: true, released: false };
@@ -322,7 +277,6 @@ export async function releaseClaim(
   }
   await updateContent(contentId, { claim: undefined }, dataDir);
   return { ok: true, released: true };
-  });
 }
 
 export interface TransferInput {
@@ -343,8 +297,6 @@ export interface TransferInput {
  * 旧令牌当场作废，迟到写入被拒。返回的 claim 带令牌——给谁看由调用方决定。
  */
 export async function transferClaim(contentId: string, input: TransferInput, dataDir?: string): Promise<ClaimResult> {
-  const arrivedAt = Date.now();
-  return serializeClaim(contentId, async () => {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const gate = assertClaimToken(content, input.host, input.token);
@@ -362,7 +314,6 @@ export async function transferClaim(contentId: string, input: TransferInput, dat
   };
   const write = { employee: input.toEmployee, host: input.toHost, renew: false, handoff, ...(input.heartbeat ? { heartbeat: true } : {}) };
   return { ok: true, claim: await writeClaim(content, write, dataDir, now) };
-  });
 }
 
 /**
@@ -378,7 +329,6 @@ export async function restoreClaim(
   note: string,
   dataDir?: string,
 ): Promise<boolean> {
-  return serializeClaim(contentId, async () => {
   const content = await getContent(contentId, dataDir);
   if (!content?.claim || !tokenMatches(content.claim.token, heldToken)) return false;
   if (prior && tokenMatches(prior.token, heldToken) && prior.host === content.claim.host && prior.employee === content.claim.employee) return true;
@@ -391,7 +341,6 @@ export async function restoreClaim(
   });
   await updateContent(contentId, { claim: prior, handoffs: withHandoff(content, handoff) }, dataDir);
   return true;
-  });
 }
 
 export interface ClaimGuardInput {
@@ -413,15 +362,13 @@ export async function ensureClaim(
   input: ClaimGuardInput,
   dataDir?: string,
 ): Promise<ClaimResult> {
-  const arrivedAt = Date.now();
-  return serializeClaim(contentId, async () => {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const gate = assertClaimToken(content, input.host, input.token);
   if (!gate.ok) return { ok: false, error: gate.error, code: gate.code, holder: gate.holder };
 
   const now = Date.now();
-  const current = liveClaim(content, now, arrivedAt, input.token);
+  const current = activeClaim(content, now);
   if (current && gate.override) {
     const handoffs = withHandoff(content, withSession({
       from: current.host,
@@ -437,8 +384,7 @@ export async function ensureClaim(
   const employee = input.employee ?? current?.employee ?? content.claim?.employee ?? "writer";
   // 续租沿用原持有者：带着别人令牌来的宿主接手的是那份认领，别把账记到自己头上
   const host = current ? current.host : input.host;
-  return { ok: true, claim: await writeClaim(content, { employee, host, renew: Boolean(current), presented: input.token, current }, dataDir, now) };
-  });
+  return { ok: true, claim: await writeClaim(content, { employee, host, renew: Boolean(current), presented: input.token }, dataDir, now) };
 }
 
 /** 写操作回执里的令牌：认领落在调用宿主名下才回给他（新认领 / 带令牌续租）；越门的工作台拿不到别人的令牌 */

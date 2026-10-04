@@ -5,10 +5,9 @@ import { getContent, getTopic, saveContent, saveTopic, transitionStatus, updateC
 import { isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { SCRIPT_FROZEN } from "../storage/production-store.js";
 import { firsthandContext, hitsContext, profileContext, seriesContext } from "../modules/draft/draft-context.js";
-import { reviewView } from "../modules/draft/codex-review-queue.js";
 import { loadChecklist } from "../modules/draft/draft-final.js";
 import { draftHash } from "../storage/draft-hash.js";
-import { DRAFT_PLATFORM, workbenchUrl } from "../modules/draft/draft-types.js";
+import { currentVersion, DRAFT_PLATFORM, workbenchUrl } from "../modules/draft/draft-types.js";
 import type { DraftArgs } from "./draft-args.js";
 
 const FROZEN = new Set(["editing", "cover_pending", "publish_ready", "publishing"]);
@@ -40,8 +39,9 @@ async function progressOf(c: Content, dataDir?: string): Promise<Record<string, 
     status: c.status,
     angle: c.draftPath?.angle ? { version: c.draftPath.angle.version, main_line: c.draftPath.angle.main_line } : null,
     needs_angle: !real && !c.draftPath?.angle,
-    versions: real ? c.versions?.length ?? 0 : 0,
-    review: await reviewView(c.id, dataDir),
+    version: currentVersion(c),
+    has_body: real,
+    review_notes_for: (c.draftPath?.reviewNotes ?? []).map((n) => n.version),
     final: checklist ? { prepared_for_current: checklist.draft_hash === draftHash(c), workbench: workbenchUrl(c.id) } : null,
   };
 }

@@ -1,8 +1,7 @@
 /**
- * 工作台上的薄路径定稿（会审 #1）：读定稿清单、再审、「定了」。
+ * 工作台上的薄路径定稿（会审 #1）：读定稿清单（含 agent 附的 Codex 审稿意见）、「定了」。
  * 「定了」只认浏览器会话（创始人本人点的）；令牌调用宿主也拿得到，一律拒——AI 不能批准稿件（09-29 批准伪造漏洞）。
  */
-import { enqueueReview, reviewView } from "../modules/draft/codex-review-queue.js";
 import { finalizeByFounder, finalPanel } from "../modules/draft/draft-finalize.js";
 import type { IpcHandler } from "./ipc.js";
 
@@ -13,12 +12,7 @@ const errText = (err: unknown) => (err instanceof Error ? err.message : String(e
 export const FOUNDER_ONLY_FINALIZE = "「定了」只能由创始人在工作台点；AI 宿主不能代点。把工作台链接交给创始人。";
 
 const finalGet: IpcHandler = async (p) => {
-  try { return await finalPanel(idOf(p), await reviewView(idOf(p), dirOf(p)), dirOf(p)); }
-  catch (err) { return { ok: false, error: errText(err) }; }
-};
-
-const reviewRerun: IpcHandler = async (p) => {
-  try { const r = await enqueueReview(idOf(p), dirOf(p)); return { ok: true, coalesced: r.coalesced, review: await reviewView(idOf(p), dirOf(p)) }; }
+  try { return await finalPanel(idOf(p), dirOf(p)); }
   catch (err) { return { ok: false, error: errText(err) }; }
 };
 
@@ -31,6 +25,5 @@ const finalize: IpcHandler = async (p, ctx) => {
 
 export const DRAFT_IPC_HANDLERS = {
   "draft:final_get": finalGet,
-  "draft:review_rerun": reviewRerun,
   "draft:finalize": finalize,
 } as const;

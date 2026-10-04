@@ -1,28 +1,27 @@
 /**
- * 抖音口播薄路径（autocrew_draft）的定稿区：Codex 审稿意见（只是提示）+ 出处清单 + 「定了」。
+ * 抖音口播薄路径（autocrew_draft）的定稿区：agent 附的 Codex 审稿意见（只是提示）+ 出处清单 + 「定了」。
  * 「定了」只有创始人在这里点得到（服务端只认浏览器会话），点下去进「等 A-roll」。
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
-import { finalizeBlock, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReview } from "./draft-final-lib";
+import { finalizeBlock, structuredReview, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote } from "./draft-final-lib";
 
-function ReviewBlock(p: { review: DraftReview; rerun: () => void }) {
-  const r = p.review;
-  if (r.status === "none") return null;
+/** agent 附的 Codex 审稿意见：认得出三项结论就分项摆，否则原文照摆（调不通时就是原因） */
+export function ReviewNotes(p: { notes: DraftReviewNote[]; version: number }) {
+  const last = p.notes.at(-1);
+  if (!last) return null;
+  const r = structuredReview(last.notes);
   return <div className="draft-final-review">
-    <strong>Codex 审稿（只是参考）</strong> <span className="muted">{r.note ?? ""}</span>
-    {(r.status === "queued" || r.status === "running") && <p className="muted">{r.status === "queued" ? "排队中…" : "审稿中…"}</p>}
-    {r.status === "failed" && r.error && <p>没审成：{r.error.message}{r.error.detail ? <><br /><code>{r.error.detail}</code></> : null}</p>}
-    {r.result && <ul>
+    <strong>Codex 审稿（只是参考）</strong> <span className="muted">{last.version === p.version ? `审的是当前版（第 ${last.version} 版）` : `审的是第 ${last.version} 版，之后稿子又改过`}</span>
+    {r ? <ul>
       {(["main_line", "payoff", "opening"] as const).map((k) => <li key={k}>
-        {VERDICT_LABEL[k]}：{r.result![k].verdict === "pass" ? "过" : "不过"} · {r.result![k].reason}
-        {r.result![k].quotes.map((q) => <blockquote key={q}>{q}</blockquote>)}
+        {VERDICT_LABEL[k]}：{r[k].verdict === "pass" ? "过" : "不过"} · {r[k].reason}
+        {(r[k].quotes ?? []).map((q) => <blockquote key={q}>{q}</blockquote>)}
       </li>)}
-      {r.result.advisories.map((a, i) => <li key={`a${i}`}>建议：{a.text}{a.quote ? <blockquote>{a.quote}</blockquote> : null}</li>)}
-    </ul>}
-    {r.status !== "queued" && r.status !== "running" && <Button variant="quiet" size="sm" onClick={p.rerun}>再审</Button>}
+      {(r.advisories ?? []).map((x, i) => <li key={`a${i}`}>建议：{x.text}{x.quote ? <blockquote>{x.quote}</blockquote> : null}</li>)}
+    </ul> : <pre className="draft-final-notes">{typeof last.notes === "string" ? last.notes : JSON.stringify(last.notes, null, 2)}</pre>}
   </div>;
 }
 
@@ -47,18 +46,10 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
     const r = await invoke("draft:final_get", { id: p.contentId });
     const data = r.ok ? r.data as DraftPanelData | null | undefined : null;
     // 只认这条通道的形状：别的稿（不走 autocrew_draft）回 data:null，面板不出现
-    setD(data && typeof data.draft_hash === "string" && data.review && typeof data.review === "object" ? data : null);
+    setD(data && typeof data.draft_hash === "string" && Array.isArray(data.review_notes) ? data : null);
   }, [p.contentId]);
   useEffect(() => { void load(); }, [load, p.refreshKey]);
-  // 审稿在后台跑，结果只落 draft-review.json、不改稿件：排着 / 跑着时每 5 秒重读一次
-  const reviewing = d?.review.status === "queued" || d?.review.status === "running";
-  useEffect(() => {
-    if (!reviewing) return;
-    const t = setInterval(() => { void load(); }, 5000);
-    return () => clearInterval(t);
-  }, [reviewing, load]);
   if (!d) return null;
-  const rerun = async () => { const r = await invoke("draft:review_rerun", { id: p.contentId }); if (!r.ok) toast(r.error ?? "没排上"); await load(); };
   const finalize = async () => {
     setBusy(true);
     const r = await invoke("draft:finalize", { id: p.contentId, draft_hash: d.draft_hash, keep: [...keep] });
@@ -70,7 +61,7 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
   const block = finalizeBlock(d, keep, p.dirty);
   const toggle = (id: string) => setKeep((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return <section className="draft-final card" aria-label="定稿">
-    <ReviewBlock review={d.review} rerun={() => void rerun()} />
+    <ReviewNotes notes={d.review_notes} version={d.version} />
     {d.status === "draft_ready" && d.checklist && <div className="draft-final-checklist">
       <strong>出处清单</strong>
       <ul>{d.checklist.items.map((i) => <ChecklistRow key={i.id} item={i} kept={keep.has(i.id)} toggle={() => toggle(i.id)} />)}</ul>

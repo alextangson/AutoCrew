@@ -127,7 +127,6 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "topic:select_angle": ["topic_id", "brief_revision", "angle_id"],
   "topic:clear_angle": ["topic_id"],
   "draft:final_get": ["id"],
-  "draft:review_rerun": ["id"],
   "draft:finalize": ["id", "draft_hash"],
   "trash:list": [],
   "content:versions": ["id"],

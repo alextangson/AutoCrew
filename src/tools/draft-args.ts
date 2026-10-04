@@ -11,7 +11,6 @@ export interface DraftArgs {
   inspiration?: string;
   platform?: string;
   url?: string;
-  pageId?: string;
   quote?: string;
   claim?: string;
   mainLine?: string;
@@ -23,14 +22,30 @@ export interface DraftArgs {
   title?: string;
   body?: string;
   note?: string;
-  rerun: boolean;
-  takeover: boolean;
   citations: unknown;
-  claimToken?: string;
+  /** 读到的版本号；save / angle / prepare_final 必带 */
+  baseVersion?: number;
+  /** Codex 审稿意见（文字或结构）；INVALID = 传了但解析不了 */
+  reviewNotes?: string | Record<string, unknown> | unknown[] | typeof INVALID;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-const bool = (v: unknown): boolean => v === true || v === "true";
+/** 版本号：数字或数字字符串（中转会把数字变字符串）；别的当没传 */
+const intOf = (v: unknown): number | undefined => {
+  const n = typeof v === "string" && v.trim() ? Number(v) : v;
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : undefined;
+};
+export const INVALID: unique symbol = Symbol("invalid-arg");
+const NOTES_MAX = 20_000;
+/** 审稿意见：对象 / 数组直接用；像 JSON 的字符串解析（修引号重试）；普通文字照存；别的类型或解析不了 → INVALID */
+function notesOf(raw: unknown): DraftArgs["reviewNotes"] {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const v = maybeJson(raw);
+  if (v === UNPARSABLE) return INVALID;
+  if (typeof v === "string") return v.slice(0, NOTES_MAX);
+  if (typeof v === "object" && v !== null && JSON.stringify(v).length <= NOTES_MAX) return v as Record<string, unknown> | unknown[];
+  return INVALID;
+}
 
 export function draftArgs(p: Record<string, unknown>): DraftArgs {
   return {
@@ -42,7 +57,6 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     inspiration: str(p.inspiration),
     platform: str(p.platform),
     url: str(p.url),
-    pageId: str(p.page_id),
     quote: typeof p.quote === "string" ? p.quote : undefined,
     claim: str(p.claim),
     mainLine: str(p.main_line),
@@ -54,10 +68,9 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     title: str(p.title),
     body: typeof p.body === "string" ? p.body : undefined,
     note: str(p.note),
-    rerun: bool(p.rerun),
-    takeover: bool(p.takeover),
     citations: p.citations,
-    claimToken: str(p.claim_token),
+    baseVersion: intOf(p.base_version),
+    reviewNotes: notesOf(p.review_notes),
   };
 }
 

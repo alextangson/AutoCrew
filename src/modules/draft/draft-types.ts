@@ -15,13 +15,15 @@ export interface DraftAngle {
   at: string;
 }
 
+export interface DraftReviewNote { version: number; notes: string | Record<string, unknown> | unknown[]; at: string }
+
 /** 稿件上的薄路径标记：有它 = 这篇走 autocrew_draft，工作台据此显示定稿清单 */
 export interface DraftPathRecord {
   kind: "thin";
   startedAt: string;
   angle?: DraftAngle;
-  /** 第一版存下时已自动排过一次 Codex 审稿（之后只在 rerun 时再审） */
-  autoReviewQueued?: boolean;
+  /** agent 自己跑的 Codex 审稿意见（或调不通的原因），按版本号附在稿旁；只是参考 */
+  reviewNotes?: DraftReviewNote[];
 }
 
 /** 创始人在工作台点「定了」的记录：绑定当时的稿件指纹，正文一改即失效 */
@@ -34,8 +36,8 @@ export interface DraftFinalRecord {
 
 export const DRAFT_PLATFORM = "douyin";
 
-/** 能在这条路径上写的状态（写稿段）；approved 及以后要先由创始人在看板拉回 */
-export const DRAFT_WRITABLE: ReadonlySet<string> = new Set(["topic_saved", "drafting", "revision", "needs_evidence", "draft_ready", "reviewing"]);
+/** 版本号 = 已存版本数；乐观并发用它比对 base_version */
+export function currentVersion(c: { versions?: unknown[] }): number { return c.versions?.length ?? 0; }
 
 export function workbenchUrl(contentId: string): string {
   return `http://127.0.0.1:${Number(process.env.AUTOCREW_PORT) || 4317}/#/editor/${encodeURIComponent(contentId)}`;
