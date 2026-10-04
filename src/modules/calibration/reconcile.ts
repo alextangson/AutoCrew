@@ -26,7 +26,14 @@ export async function reconcileDue(dataDir?: string, deps: ReconcileDeps = {}): 
   const now = deps.now ?? new Date();
   const guard = deps.guard ?? (() => assertDataDirWritable(dataDir));
   const status: ReconcileStatus = { at: now.toISOString(), ok: true, written: [], waiting: [], waiting_d7: [], prompts: [] };
-  if (!(await readStateIfExists(dataDir).catch(() => null))) return status; // 还没做过任何预测：不建目录
+  let initialized: boolean;
+  try { initialized = (await readStateIfExists(dataDir)) !== null; } catch (err) {
+    // 只有文件不存在才算「还没初始化」；读不出来 / 解析失败要报出来（Codex 审 P2）
+    const fail = { ...status, ok: false, code: "error", error: `校准状态读不出来，本轮自动对账一行没写：${(err as Error).message}` };
+    await saveReconcileStatus(fail, dataDir, false);
+    return fail;
+  }
+  if (!initialized) return status; // 还没做过任何预测：不建目录
   try { guard(); } catch (err) {
     const fail = { ...status, ok: false, code: lockCode(err), error: `没有资料库写入权，本轮自动对账一行没写：${(err as Error).message}` };
     await saveReconcileStatus(fail, dataDir, false);

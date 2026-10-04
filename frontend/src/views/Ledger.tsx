@@ -26,7 +26,7 @@ function useLedger() {
     load();
     return subscribeEvents((e) => {
       if (e.kind === "reconnect") return load();
-      if (e.kind === "engine" && (e.data as { kind?: string }).kind === "metrics_pull") load();
+      if (e.kind === "engine" && ["metrics_pull", "calibration_ledger"].includes(String((e.data as { kind?: string }).kind))) load();
     });
   }, [load]);
   return { ledger, err };

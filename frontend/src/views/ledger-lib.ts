@@ -78,8 +78,8 @@ export function countsText(c: LedgerSummary["counts"]): string {
 /** 复盘记录的一行说明（详情里按时间列出） */
 export function recordLine(r: Record<string, unknown>): string {
   const at = typeof r.at === "string" ? md(r.at) : "";
-  if (r.type === "retro") return `${at} 数字对账${r.numeric_by === "auto" ? "（自动）" : ""}${typeof r.hypothesis_conclusion === "string" ? ` · 结论：${r.hypothesis_conclusion}` : ""}`;
-  if (r.type === "interpretation") return `${at} 解读：${String(r.hypothesis_conclusion ?? "")}`;
+  if (r.type === "retro") return `${at} 数字对账${r.numeric_by === "auto" ? "（自动）" : ""}${typeof r.hypothesis_conclusion === "string" ? ` · 结论：${r.hypothesis_conclusion}` : ""}${interpretationTail(r)}`;
+  if (r.type === "interpretation") return `${at} 解读：${String(r.hypothesis_conclusion ?? "")}${interpretationTail(r)}`;
   if (r.type === "reading") {
     const v = (r.actual as { views?: unknown } | undefined)?.views;
     return `${at} D+${String(r.day)} 读数 ${typeof v === "number" ? fmtViews(v) : "—"}`;
@@ -87,4 +87,12 @@ export function recordLine(r: Record<string, unknown>): string {
   if (r.type === "correction") return `${at} 修正：${String(r.text ?? "")}`;
   if (r.type === "integrity_warning") return `${at} 完整性警告：${String(r.detail ?? "")}`;
   return `${at} ${String(r.type)}`;
+}
+
+/** 解读部分的尾巴：哪些判断被验证 / 推翻（带说明）、新观察 */
+function interpretationTail(r: Record<string, unknown>): string {
+  const vf = Array.isArray(r.verified_factors) ? (r.verified_factors as Array<{ factor?: unknown; verdict?: unknown; note?: unknown }>) : [];
+  const obs = Array.isArray(r.observations) ? r.observations.filter((x): x is string => typeof x === "string") : [];
+  const parts = vf.map((f) => `${String(f.factor ?? "")}：${String(f.verdict ?? "")}${f.note ? `（${String(f.note)}）` : ""}`);
+  return (parts.length ? ` · 因素：${parts.join("；")}` : "") + (obs.length ? ` · 观察：${obs.join("；")}` : "");
 }

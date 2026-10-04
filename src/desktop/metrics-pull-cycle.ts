@@ -441,6 +441,14 @@ export interface StartMetricsPullCycleOptions extends MetricsPullDeps {
   afterPull?: (dataDir: string | undefined) => Promise<unknown>;
 }
 
+/** 对账跑完（成功失败都）广播一次不落盘的账本刷新：metrics_pull 事件早于对账，单靠它账本会停在旧计数 */
+async function reconcileAndNotify(options: StartMetricsPullCycleOptions, dataDir: string | undefined): Promise<void> {
+  try { await options.afterPull!(dataDir); } finally {
+    const emit = options.emit ?? emitEngineEvent;
+    void Promise.resolve(emit({ role: "analyst", kind: "calibration_ledger", label: "预测账本已刷新" }, dataDir, { persist: false })).catch(() => undefined);
+  }
+}
+
 /** 启动即跑一轮，之后每 30 分钟一轮；返回 stop（server close 时调用） */
 export function startMetricsPullCycle(options: StartMetricsPullCycleOptions): () => void {
   const tickIntervalMs = Math.max(60_000, options.tickIntervalMs ?? METRICS_PULL_TICK_MS);
@@ -453,7 +461,7 @@ export function startMetricsPullCycle(options: StartMetricsPullCycleOptions): ()
     try {
       const dataDir = await options.resolveDataDir();
       try { attempts = await runMetricsPullTick(dataDir, options); }
-      finally { await options.afterPull?.(dataDir); }
+      finally { if (options.afterPull) await reconcileAndNotify(options, dataDir); }
     } catch (error) {
       console.error("[metrics-pull] tick 失败:", error instanceof Error ? error.message : error);
     } finally {

@@ -52,4 +52,14 @@ describe("预测账本文字", () => {
     expect(recordLine({ type: "reading", day: 7, actual: {}, at: "2026-10-08T01:00:00Z" })).toMatch(/D\+7 读数 —/);
     expect(recordLine({ type: "interpretation", hypothesis_conclusion: "钩子撑住了" })).toMatch(/解读：钩子撑住了/);
   });
+
+  it("复盘与解读记录展开时带上验证/推翻的因素和新观察", () => {
+    const vf = [{ factor: "钩子", verdict: "验证", note: "前 3 秒留住了" }, { factor: "议题", verdict: "推翻", note: "" }];
+    for (const type of ["retro", "interpretation"]) {
+      const t = recordLine({ type, hypothesis_conclusion: "结论", verified_factors: vf, observations: ["具体场景开头留人"] });
+      expect(t).toMatch(/钩子：验证（前 3 秒留住了）/);
+      expect(t).toMatch(/议题：推翻/);
+      expect(t).toMatch(/观察：具体场景开头留人/);
+    }
+  });
 });

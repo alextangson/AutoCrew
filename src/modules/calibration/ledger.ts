@@ -34,7 +34,8 @@ type Read = Awaited<ReturnType<typeof readPredictions>>;
 const strip = (r: ChainRecord) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== "fp" && k !== "prev"));
 
 export async function readLedger(dataDir?: string, now = new Date()): Promise<Ledger> {
-  const state = await readStateIfExists(dataDir);
+  const stateErr: string[] = [];
+  const state = await readStateIfExists(dataDir).catch((err: unknown) => { stateErr.push(`state.json：${(err as Error).message}`); return null; });
   const read = await readPredictions(dataDir);
   const rows: LedgerRow[] = [];
   for (const p of activePredictions(read.predictions)) rows.push(await rowOf(p, read, dataDir, now));
@@ -46,7 +47,7 @@ export async function readLedger(dataDir?: string, now = new Date()): Promise<Le
     hit_rate: hitRate(pool.map((s) => ({ platform: s.prediction.platform, hit: s.retro.landed_bucket === s.prediction.body.bucket }))),
     alerts: state ? ledgerAlerts(state, pool) : [],
     counts: countsOf(rows, now),
-    reconcile: await readReconcileStatus(dataDir), integrity_problems: read.integrity.problems,
+    reconcile: await readReconcileStatus(dataDir), integrity_problems: [...stateErr, ...read.integrity.problems],
   };
   return { summary, rows };
 }

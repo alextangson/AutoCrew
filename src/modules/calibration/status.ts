@@ -16,7 +16,10 @@ export async function calibrationStatus(dataDir?: string): Promise<Record<string
 
 /** 晨报与 calib_status 共用的提醒行 */
 export async function calibrationReminders(dataDir?: string, now = new Date()): Promise<string[]> {
-  const state = await readStateIfExists(dataDir);
+  let state;
+  try { state = await readStateIfExists(dataDir); } catch (err) {
+    return [`校准状态读不出来：${(err as Error).message}`];
+  }
   const out: string[] = [];
   if (!state) return out;
   if (state.last_prediction_self_scored) {
