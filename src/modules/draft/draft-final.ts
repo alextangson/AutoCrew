@@ -11,6 +11,7 @@ import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import type { LedgerEntry } from "../research/evidence-ledger.js";
 import { verifyNumbers } from "../writing/number-gate.js";
 import { factualSentences } from "../video/handoff/factual-sentences.js";
+import { maybeJson, UNPARSABLE } from "../publish/review-gate/plan.js";
 
 export const FINAL_FILE = "draft-final.json";
 
@@ -94,18 +95,18 @@ export async function loadChecklist(contentId: string, dataDir?: string): Promis
   catch (e) { if (isMissing(e)) return null; throw e; }
 }
 
-/** 模型可能把映射数组序列化成字符串（中转端点的老毛病）：能解析就解析，解析不了才报错 */
+/** 模型可能把映射数组序列化成字符串、还留着没转义的内部引号（中转端点的老毛病）：原样解析 → 修引号重试 → 都不行才报错 */
 export function normalizeMapping(raw: unknown): MappingInput[] | string {
-  let value = raw;
-  if (typeof value === "string") {
-    try { value = JSON.parse(value); } catch { return "citations 解析不了：传一个数组，每项 {text, evidence_ids}"; }
-  }
+  const value = maybeJson(raw);
+  if (value === UNPARSABLE || typeof value === "string") return "citations 解析不了：传一个数组，每项 {text, evidence_ids}";
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) return "citations 必须是数组，每项 {text, evidence_ids}";
-  return value.map((m) => {
-    const o = (m ?? {}) as Record<string, unknown>;
-    let ids = o.evidence_ids;
-    if (typeof ids === "string") { try { ids = JSON.parse(ids); } catch { ids = ids ? [ids] : []; } }
-    return { text: String(o.text ?? ""), evidence_ids: Array.isArray(ids) ? ids.map(String) : [] };
-  });
+  const out: MappingInput[] = [];
+  for (const m of value) {
+    const o = (maybeJson(m) ?? {}) as Record<string, unknown>;
+    const ids = maybeJson(o.evidence_ids);
+    if (ids === UNPARSABLE) return "citations 里有一项的 evidence_ids 解析不了：传字符串数组";
+    out.push({ text: String(o.text ?? ""), evidence_ids: Array.isArray(ids) ? ids.map(String) : typeof ids === "string" && ids ? [ids] : [] });
+  }
+  return out;
 }

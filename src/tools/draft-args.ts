@@ -1,5 +1,6 @@
 /** autocrew_draft 的参数整理：模型传来的参数不保证类型对（中转会把数组变成字符串），这里统一归一 */
 import { LOCAL_HOST } from "../storage/local-store.js";
+import { maybeJson, UNPARSABLE } from "../modules/publish/review-gate/plan.js";
 
 export interface DraftArgs {
   action: string;
@@ -58,12 +59,11 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
   };
 }
 
-/** 论证链：数组直接用；字符串先当 JSON 解析，解析不了按行切；别的类型报错（不悄悄当空） */
+/** 论证链：数组直接用；像 JSON 的字符串解析（修引号重试），普通字符串按行切；别的类型报错（不悄悄当空） */
 export function normalizeChain(raw: unknown): string[] | null {
-  let v = raw;
-  if (typeof raw === "string") {
-    try { v = JSON.parse(raw); } catch { v = raw.split(/\n+/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.、)])\s*/, "")); }
-  }
+  let v = maybeJson(raw);
+  if (v === UNPARSABLE) return null;
+  if (typeof v === "string") v = v.split(/\n+/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.、)])\s*/, ""));
   if (!Array.isArray(v)) return null;
   return v.map((x) => String(x ?? "").trim()).filter(Boolean);
 }

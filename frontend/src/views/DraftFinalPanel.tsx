@@ -37,6 +37,13 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
     setD(data && typeof data.draft_hash === "string" && data.review && typeof data.review === "object" ? data : null);
   }, [p.contentId]);
   useEffect(() => { void load(); }, [load, p.refreshKey]);
+  // 审稿在后台跑，结果只落 draft-review.json、不改稿件：排着 / 跑着时每 5 秒重读一次
+  const reviewing = d?.review.status === "queued" || d?.review.status === "running";
+  useEffect(() => {
+    if (!reviewing) return;
+    const t = setInterval(() => { void load(); }, 5000);
+    return () => clearInterval(t);
+  }, [reviewing, load]);
   if (!d) return null;
   const rerun = async () => { const r = await invoke("draft:review_rerun", { id: p.contentId }); if (!r.ok) toast(r.error ?? "没排上"); await load(); };
   const finalize = async () => {

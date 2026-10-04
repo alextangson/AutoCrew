@@ -95,6 +95,15 @@ describe("start", () => {
     expect((await getContent(old.id, dir))!.status).toBe("drafting");
   });
 
+  it("接手只存了选题的稿：推进到写作中，之后能定稿", async () => {
+    const topic = await saveTopic({ title: "只有选题", description: "只有选题", tags: [] }, dir);
+    const bare = await saveContent({ title: "只有选题", body: "", platform: "douyin", topicId: topic.id, status: "topic_saved", tags: [], _provenance: HUMAN_WRITE }, dir);
+    expect((await run("start", { content_id: bare.id })).progress).toMatchObject({ status: "drafting", needs_angle: true });
+    await run("angle", { content_id: bare.id, ...ANGLE });
+    expect((await run("save", { content_id: bare.id, body: BODY })).ok).toBe(true);
+    expect(await run("prepare_final", { content_id: bare.id, citations: [] })).toMatchObject({ ok: true, status: "draft_ready" });
+  });
+
   it("边界：已发布不接手；已进剪辑返回重开说明；已定稿让创始人先拉回", async () => {
     const pub = (await saveContent({ title: "t", body: "正文".repeat(50), platform: "douyin", status: "drafting", tags: [], _provenance: HUMAN_WRITE }, dir)).id;
     const c = (await getContent(pub, dir))!;

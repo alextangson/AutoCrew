@@ -63,6 +63,12 @@ describe("prepare_final", () => {
     expect(bad.text).toContain("25%");
   });
 
+  it("中转把 citations 序列化成带未转义内部引号的字符串：修引号后照常用", async () => {
+    const id = await written();
+    const raw = `[{"text":"${SOURCED}","evidence_ids":["ev-d1","ev-d2"],"note":"他说"省时间""}]`;
+    expect(await run("prepare_final", { content_id: id, citations: raw })).toMatchObject({ ok: true, unsourced: 0 });
+  });
+
   it("映射引用了不存在的证据或找不到的句子 → 整批退回", async () => {
     const id = await written();
     const r = await run("prepare_final", { content_id: id, citations: [{ text: "稿里没有的句子", evidence_ids: [] }, { text: SOURCED, evidence_ids: ["ev-d9"] }] });

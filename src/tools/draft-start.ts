@@ -1,7 +1,7 @@
 /**
  * autocrew_draft start：一句灵感建选题 + 抖音稿（写稿中），或接手已有稿；返回三份上下文与当前进度。
  */
-import { getContent, getTopic, saveContent, saveTopic, updateContent, type Content } from "../storage/local-store.js";
+import { getContent, getTopic, saveContent, saveTopic, transitionStatus, updateContent, type Content } from "../storage/local-store.js";
 import { isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { SCRIPT_FROZEN } from "../storage/production-store.js";
 import { firsthandContext, hitsContext, profileContext, seriesContext } from "../modules/draft/draft-context.js";
@@ -65,6 +65,12 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
     const stage = stageRefusal(content);
     if (stage) return stage;
     if (!content.draftPath) content = await updateContent(content.id, { draftPath: { kind: "thin", startedAt: new Date().toISOString() } }, a.dataDir) ?? content;
+    // 只存了选题的稿：接手即进「写作中」，否则之后推不到「等你认稿」
+    if (content.status === "topic_saved") {
+      const moved = await transitionStatus(content.id, "drafting", { host: a.host }, a.dataDir);
+      if (!moved.ok) return { ok: false, code: "transition_failed", error: moved.error ?? "没能推到写作中" };
+      content = moved.content ?? content;
+    }
   } else {
     if (!a.inspiration) return { ok: false, code: "bad_param", error: "start 要带 inspiration（创始人的一句灵感原话）或 content_id（接手已有稿）" };
     content = await createFromInspiration(a.inspiration, a.host, a.dataDir);
