@@ -147,3 +147,20 @@ describe("Codex review P2：台账对得上的数字不能记成创作者自己�
     expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [item.id] }, dir)).toMatchObject({ ok: true });
   });
 });
+
+describe("Codex re-review P2", () => {
+  it("空台账：示意句和另一句同为 52 人，预演的保留条目不能让示意句被拒；清单能出、保留后能定", async () => {
+    const id = await written(`我编个例子，你团队有 52 人。有 52 人报名。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [{ text: "我编个例子，你团队有 52 人。", evidence_ids: [], kind: "example" }] });
+    expect(r.ok).toBe(true);
+    expect(texts(r).map((i) => i.status)).toEqual(["exempt", "unsourced"]);
+    const kept = (r.items as Array<{ id: string; status: string }>).find((i) => i.status === "unsourced")!.id;
+    const c = (await getContent(id, dir))!;
+    expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [kept] }, dir)).toMatchObject({ ok: true });
+  });
+  it("「前」只认相对时间：目前两小时 / 提前两小时 / 之前两天 都照列，两天前和这两天不列", async () => {
+    const id = await written(`目前两小时就能完成。提前两小时到场。之前两天都在下雨。两天前我刷到一条。这两天特别忙。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
+    expect(texts(r).map((i) => i.text)).toEqual(["目前两小时就能完成。", "提前两小时到场。", "之前两天都在下雨。"]);
+  });
+});

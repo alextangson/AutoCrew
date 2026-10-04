@@ -20,6 +20,8 @@ export const FOUNDER_DECISION_SOURCES: ReadonlySet<string> = new Set(["founder-w
 /** The creator's own opinion or first-hand experience: no ledger entry, basis written in `verification`, always shown as unverified. */
 export const CREATOR_OPINION = "creator_opinion";
 export const CREATOR_EVIDENCE_ID = "creator";
+/** 薄路径定稿时创始人保留的未核验项写进台账用的编号前缀 */
+export const KEPT_ENTRY_PREFIX = "user-kept-";
 export interface Citation {
   start: number; end: number; excerpt: string; evidence_id: string;
   sourceType: LedgerSource | typeof CREATOR_OPINION; sourceUrl?: string; quote: string; verification: string;
@@ -38,7 +40,8 @@ export function validateCoverage(content: Content, coverage: CitationCoverage): 
   const entries = content.evidenceLedger?.entries ?? [];
   const errors = coverage.citations.flatMap(c => citationErrors(c, content.body, entries));
   // A number the ledger can back must cite the ledger: the creator slot is for claims that have no ledger source.
-  const backed = verifyNumbers({ title: "", hook: "", body: content.body, cta: "" }, entries).verified;
+  // 定稿时创始人「保留」生成的 user-kept-* 只替它自己那句作保，不算别的句子的出处
+  const backed = verifyNumbers({ title: "", hook: "", body: content.body, cta: "" }, entries.filter(e => !e.id.startsWith(KEPT_ENTRY_PREFIX))).verified;
   // Treat an entire factual sentence as the coverage unit, not an isolated digit.
   for (const s of factualSentences(content.body)) {
     const covering = coverage.citations.filter(c => c.start <= s.start && c.end >= s.end);

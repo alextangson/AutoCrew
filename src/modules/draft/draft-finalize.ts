@@ -7,7 +7,7 @@
 import { draftHash } from "../../storage/draft-hash.js";
 import { contentTransaction, getContent, getDataDir, LOCAL_HOST, transitionStatus, type Content } from "../../storage/local-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
-import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, saveCoverage, validateCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
+import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, KEPT_ENTRY_PREFIX, saveCoverage, validateCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
 import { factualSentences } from "../video/handoff/factual-sentences.js";
 import { currentVersion } from "./draft-types.js";
 import { loadChecklist, type ChecklistItem, type FinalChecklist } from "./draft-final.js";
@@ -21,7 +21,7 @@ function withKeptEntries(c: Content, items: ChecklistItem[]): { entries: LedgerE
   const ledger = restoreEvidenceLedger(c.evidenceLedger ?? { entries: [], lookups: [], budget: { max: 0, used: 0 } });
   const keptIds = new Map<string, string>();
   for (const item of items) {
-    const id = `user-kept-${item.id.split(":").pop()}`;
+    const id = `${KEPT_ENTRY_PREFIX}${item.id.split(":").pop()}`;
     ledger.add({ id, source: "user_claim", quote: item.text, claim: item.text, reason: KEPT_REASON });
     keptIds.set(item.id, id);
   }

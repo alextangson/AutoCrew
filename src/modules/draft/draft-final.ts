@@ -11,6 +11,7 @@ import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import type { LedgerEntry } from "../research/evidence-ledger.js";
 import { EXEMPT_ROLES, extractNumbers, verifyNumbers, type NumberMention } from "../writing/number-gate.js";
 import { factualSentences } from "../video/handoff/factual-sentences.js";
+import { KEPT_ENTRY_PREFIX } from "../video/handoff/project-evidence.js";
 import { maybeJson, UNPARSABLE } from "../publish/review-gate/plan.js";
 
 export const FINAL_FILE = "draft-final.json";
@@ -63,7 +64,8 @@ export function locateMapping(body: string, mapping: MappingInput[], entries: re
   return { spans, errors };
 }
 
-const RELATIVE_BEFORE = /(?:前|这|那|最近)$/;
+/** 前两天 / 这两天 / 最近两天；目前、提前、之前、以前、当前、眼前 里的「前」不算 */
+const RELATIVE_BEFORE = /(?:(?:^|[^目提之以当眼面跟从空事])前|这|那|最近)$/;
 const RELATIVE_AFTER = /^(?:前|以前|之前|后|以后|之后)/;
 /** 「两三个」「一两句」「三四天」：相邻两个数连说 = 约数 */
 const APPROX_PAIR = /^(?:一两|两三|三四|四五|五六|六七|七八|八九)/;
@@ -134,7 +136,9 @@ function itemFor(c: Ctx, at: { start: number; end: number }, evidence: string[],
 
 /** 逐句出清单：必须出处的句子全进；agent 额外映射的非事实句（如无数字的转述）也进 */
 export function buildChecklist(body: string, spans: Span[], entries: readonly LedgerEntry[]): ChecklistItem[] {
-  const backed = new Set(verifyNumbers({ title: "", hook: "", body, cta: "" }, entries).verified.map((v) => v.mention.index));
+  // 和交接出处门同一口径：创始人保留生成的 user-kept-* 不替别的句子作保
+  const real = entries.filter((e) => !e.id.startsWith(KEPT_ENTRY_PREFIX));
+  const backed = new Set(verifyNumbers({ title: "", hook: "", body, cta: "" }, real).verified.map((v) => v.mention.index));
   const ctx: Ctx = { body, spans, entries, backed };
   const items: ChecklistItem[] = [];
   const sentences = checklistSentences(body, backed);
