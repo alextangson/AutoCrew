@@ -21,6 +21,7 @@ import { cardPanel } from "./panel.js";
 import { explainContent } from "./read.js";
 import { reconcileAll, reconcileContent } from "./reconcile.js";
 import { founderApprove, makeEnv, png, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -160,7 +161,7 @@ describe("启用后的出包（闸门 §11）：走真实 ToolRunner", () => {
     const ids = await checkIds(r);
     // seg9：旧预检里闸门没覆盖的项（内容审核、标签、字数…）照跑，只有旧封面审核被登记 + 闸门代替——发布包要齐
     const { updateContent } = await import("../../storage/local-store.js");
-    await updateContent(r.id, { videoKit: { platform: "douyin", postTitle: "AI 老忘事的办法", caption: CAPTION } } as never, env.dir);
+    await updateContent(r.id, { _provenance: HUMAN_WRITE, videoKit: { platform: "douyin", postTitle: "AI 老忘事的办法", caption: CAPTION } } as never, env.dir);
     const runner = new ToolRunner({ ctx: createContext({ data_dir: env.dir }), eventBus: new EventBus() });
     runner.register({ name: "autocrew_publish", label: "publish", description: "", parameters: publishSchema, execute: executePublish });
     const res = await runner.execute("autocrew_publish", { action: "ego_lite_prepare", content_id: r.id, check_ids: [ids.douyin], _host: "claude-code" });

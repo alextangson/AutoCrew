@@ -22,8 +22,7 @@ import {
   softDeleteContent,
   restoreContent,
   getCoverReview,
-  type ContentUpdates,
-} from "../storage/local-store.js";
+  type ContentUpdates, TOPIC_PLACEHOLDER_BODY_PREFIX } from "../storage/local-store.js";
 import type { AdoptionVerdict, Content } from "../storage/local-store.js";
 import { EDITING_VIA_HANDOFF, EDITING_VIA_ONTOLOGY, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
@@ -35,7 +34,9 @@ import { executeMarkReady, executeRecord } from "../modules/production/record.js
 import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
+import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { boardTrashRefusal } from "../modules/production/trash-guard.js";
+import { FirstBodyRefusedError, provenanceOf } from "../storage/first-body-guard.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
@@ -229,7 +230,12 @@ export async function executeContentSave(
   if (params.id === undefined && typeof params.content_id === "string") params.id = params.content_id;
   const dataDir = (params._dataDir as string) || undefined;
   const isMcpCall = typeof params._host === "string";
+  // 模型发起的调用（MCP 注入 _host；OpenClaw 注入 _modelCall）——占位填正文、无选题新建稿这几道护栏都按它判，
+  // 不带标记的人手编辑照旧
+  const modelCall = isModelCall(params);
   const manualImport = params.source === "manual_import" && typeof params.import_reason === "string" && Boolean(params.import_reason.trim());
+  // 写正文的来源交给存储层的选题会卡口（唯一判定点）；这里的提前拒绝只是更好懂的提示
+  const provenance = provenanceOf(params, { manualImport });
   const importReceipt = {
     saved: true, quality_status: "unreviewed", needs_attention: true,
     writing_source: { kind: "manual_import" },
@@ -287,9 +293,9 @@ export async function executeContentSave(
     // and filling it here would skip the writer's preparation, gates and review receipt.
     const fillingBody = typeof params.body === "string" && Boolean(params.body.trim()) && params.body !== oldContent.body;
     const unsubmittedPlaceholder = !oldContent.body.trim()
-      || oldContent.body.startsWith("<!-- Generated from topic:")
+      || oldContent.body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX)
       || Boolean(oldContent.pack && !oldContent.pack.submittedAt && !oldContent.writtenBy);
-    if (isMcpCall && fillingBody && unsubmittedPlaceholder) return {
+    if (modelCall && fillingBody && unsubmittedPlaceholder) return {
       ok: false, code: "writer_submission_required",
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
@@ -315,12 +321,13 @@ export async function executeContentSave(
     let updated: Content | null;
     try {
       if (platformLock) {
-        const checked = await updateContentChecked(id, buildContentUpdates(params), platformLock, dataDir);
+        const checked = await updateContentChecked(id, { ...buildContentUpdates(params), _provenance: provenance }, platformLock, dataDir);
         if (checked && !checked.ok) return { ok: false, code: "platform_locked", error: checked.reason, ...grant };
         updated = checked?.content ?? null;
-      } else updated = await updateContent(id, buildContentUpdates(params), dataDir);
+      } else updated = await updateContent(id, { ...buildContentUpdates(params), _provenance: provenance }, dataDir);
     } catch (err) {
       if (err instanceof ScriptFrozenError) return { ok: false, code: err.code, error: err.message, ...grant };
+      if (err instanceof FirstBodyRefusedError) return { ...err.refusal, ...grant };
       throw err;
     }
     if (!updated) return { ok: false, error: `Content ${id} not found` };
@@ -465,17 +472,28 @@ export async function executeContentSave(
     if (!topicId) return { ok: false, error: "topicId is required for create_variant" };
     if (!platform) return { ok: false, error: "platform is required for create_variant" };
     const hasBody = typeof params.body === "string" && Boolean(params.body.trim());
-    if (isMcpCall && hasBody && !manualImport) return {
+    if (modelCall && hasBody && !manualImport) return {
       ok: false, code: "writer_submission_required",
       error: "平台变体的新正文也必须走 writer pack/submit；只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
       next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: topicId, platform } },
     };
-    const result = await createPlatformVariant(
-      topicId,
-      platform,
-      { title: params.title as string, body: params.body as string, ...(hasBody && manualImport ? { writingSource: importSource(params) } : {}) },
-      dataDir,
-    );
+    // 选题会闸口：模型给还没有真稿的选题开第一篇（占位）要过闸口；人手录入、手动导入的成稿不拦
+    if (modelCall && !(hasBody && manualImport)) {
+      const refused = await newDraftAngleRefusal(topicId, dataDir);
+      if (refused) return refused;
+    }
+    let result: Awaited<ReturnType<typeof createPlatformVariant>>;
+    try {
+      result = await createPlatformVariant(
+        topicId,
+        platform,
+        { title: params.title as string, body: params.body as string, provenance, ...(hasBody && manualImport ? { writingSource: importSource(params) } : {}) },
+        dataDir,
+      );
+    } catch (err) {
+      if (err instanceof FirstBodyRefusedError) return err.refusal;
+      throw err;
+    }
     return result.ok && hasBody && manualImport ? { ...result, ...importReceipt } : result;
   }
 
@@ -499,7 +517,7 @@ export async function executeContentSave(
   }
 
   // MCP must not silently use generic storage as an alternative AI writing pipeline.
-  if (isMcpCall && !manualImport) return {
+  if (modelCall && !manualImport) return {
     ok: false, code: "writer_submission_required",
     error: "新生成稿必须走 workflow prepare → writer pack/submit。只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
     next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: params.topicId, platform: params.platform } },
@@ -511,10 +529,13 @@ export async function executeContentSave(
     return { ok: false, error: "title and body are required for save" };
   }
 
+  // 模型发起的非导入新建稿上面已经拒了（writer_submission_required）；走到这里的是人手录入，不过选题会闸口
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
   if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: (await isOntologyEnabled(params._dataDir as string | undefined)) ? EDITING_VIA_ONTOLOGY : EDITING_VIA_HANDOFF };
-  const content = await saveContent({
+  let content: Content;
+  try { content = await saveContent({
+    _provenance: provenance,
     title,
     body,
     platform: (params.platform as string) || undefined,
@@ -523,7 +544,10 @@ export async function executeContentSave(
     tags: (params.tags as string[]) || [],
     hashtags: (params.hashtags as string[]) || [],
     ...(manualImport ? { writingSource: importSource(params) } : {}),
-  }, dataDir);
+  }, dataDir); } catch (err) {
+    if (err instanceof FirstBodyRefusedError) return err.refusal;
+    throw err;
+  }
 
   return { ok: true, content, ...(manualImport ? importReceipt : {}) };
 }

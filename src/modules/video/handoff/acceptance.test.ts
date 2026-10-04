@@ -11,6 +11,7 @@ import { initializeProjectLayout } from "../../../storage/content-project.js";
 import { callVideo, HAS_FFMPEG, makeFixture, makeMp4, type HandoffFixture } from "./handoff-testkit.js";
 import { saveCoverage } from "./project-evidence.js";
 import { setPullDeps } from "./pull-deps.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 const imported = (extra: Partial<Content> = {}): Content => ({
   id: "content-1", title: "导入稿", body: "正文。", platform: "douyin", status: "draft_ready",
@@ -50,7 +51,7 @@ afterEach(async () => { setPullDeps(null); await fx.cleanup(); });
 
 describe.skipIf(!HAS_FFMPEG)("导入稿经弹窗确认后交接", () => {
   it("录音为准：不审文字也能交，但出处照旧必需", async () => {
-    const c = await saveContent({ title: "已经录好的导入稿", body: "我每天省下两小时。第二句。", status: "draft_ready", platform: "douyin", tags: [],
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "已经录好的导入稿", body: "我每天省下两小时。第二句。", status: "draft_ready", platform: "douyin", tags: [],
       writingSource: { kind: "manual_import", importedAt: "2026-09-27T00:00:00Z", reason: "本地稿导入" } }, fx.dir);
     const aroll = await makeMp4(path.join(fx.outside, "已经录好的导入稿.mp4"));
     const m = await callVideo(fx.dir, { action: "match", aroll_path: aroll, request_id: "m-1" }, "codex");

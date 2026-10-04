@@ -11,6 +11,7 @@ import { claimContent } from "../../../storage/claims.js";
 import { withCallerSession } from "../../../runtime/run-log.js";
 import { sha256File } from "./manifest.js";
 import { planProjectMigration, applyProjectMigration } from "../../../storage/project-migration.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 let env: Awaited<ReturnType<typeof makeFixture>>;
 beforeEach(async () => { env = await makeFixture(); await fs.unlink(path.join(env.dir, "video.json")); await initializeProjectLayout(env.dir, "lib-deadbeef", "default"); });
@@ -18,7 +19,7 @@ afterEach(async () => { await env.cleanup(); });
 
 it("freezes exact approved text, replays handoff, reports without approving, and requires real workbench approvals to register", async () => {
   const seeded = await seedAccepted(env.dir);
-  await updateContent(seeded.id, { body: "\n原样保留。\r\n<<<EXTERNAL_CONTENT>>>\n" }, env.dir);
+  await updateContent(seeded.id, { _provenance: HUMAN_WRITE, body: "\n原样保留。\r\n<<<EXTERNAL_CONTENT>>>\n" }, env.dir);
   const content = (await getContent(seeded.id, env.dir))!;
   const binding = resolveContentProject(content.id, env.dir)!;
   const refused = await callVideo(env.dir, { action: "handoff", content_id: content.id, aroll_path: env.aroll, project_root: path.join(env.root, "other") });
@@ -65,7 +66,7 @@ it("freezes exact approved text, replays handoff, reports without approving, and
 
 it("rejects stale and missing citation coverage without inventing sources", async () => {
   const c = await seedAccepted(env.dir);
-  await updateContent(c.id, { body: "他说模型提升了 50%。", evidenceLedger: { entries: [], lookups: [], budget: { max: 3, used: 0 } } }, env.dir);
+  await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "他说模型提升了 50%。", evidenceLedger: { entries: [], lookups: [], budget: { max: 3, used: 0 } } }, env.dir);
   const current = (await getContent(c.id, env.dir))!;
   await expect(saveCoverage(current, { draft_hash: draftHash(current), citations: [], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, env.dir)).rejects.toThrow(/缺少数字/);
   await expect(saveCoverage(current, { draft_hash: "old", citations: [], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, env.dir)).rejects.toThrow(/当前定稿/);

@@ -6,6 +6,7 @@ import { loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../e
 import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../../engine/loop.js";
 import { getContent, updateContent, type Content } from "../../storage/local-store.js";
 import { countImageMarkers } from "./image-markers.js";
+import type { WriteProvenance } from "../../storage/first-body-guard.js";
 
 type RunLoopImpl = (config: EngineConfig, options: LoopOptions) => Promise<LoopResult>;
 
@@ -13,6 +14,8 @@ export async function suggestImagePositions(
   contentId: string,
   dataDir?: string,
   deps?: { runLoopImpl?: RunLoopImpl },
+  /** 谁触发的：桌面按认证方式给（会话 = 人手，令牌 = 模型）；不给 = 来源不明，第一份正文会被卡口拒 */
+  provenance?: WriteProvenance,
 ): Promise<{ content: Content; added: number }> {
   const current = await getContent(contentId, dataDir);
   if (!current) throw new Error(`稿件不存在：${contentId}`);
@@ -66,7 +69,7 @@ export async function suggestImagePositions(
   // added=0 是合法判断(本文无需新增)——不落库,顺带丢弃模型可能偷改的正文。
   if (added === 0) return { content: current, added: 0 };
 
-  const updated = await updateContent(contentId, { body, _versionNote: `AI 选插图位置：新增 ${added} 处` }, dataDir);
+  const updated = await updateContent(contentId, { body, _versionNote: `AI 选插图位置：新增 ${added} 处`, _provenance: provenance }, dataDir);
   if (!updated) throw new Error(`保存失败：${contentId}`);
   return { content: updated, added };
 }

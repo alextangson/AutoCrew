@@ -61,9 +61,18 @@ export interface HostResearchTask {
   briefRevision?: number;
   /** 锁外在途的读页（同选题至多 4 个）；入账或失败时移除 */
   pageReads?: HostPageRead[];
+  /** 分视角认领（选题会规则 2）：每个视角各自一份令牌，主会话可以把视角派给并行的子代理 */
+  perspectiveClaims?: Partial<Record<PerspectiveName, PerspectiveClaim>>;
+  /** 失败/超时放弃的视角：明摆在回执里，可单独重领重跑，不静默跳过 */
+  perspectiveFailures?: Partial<Record<PerspectiveName, { reason: string; at: string; by: string }>>;
+  /** 第五路「账号数据」视角：由排期会简报确定性生成，不调模型 */
+  accountData?: AccountDataPerspective;
   /** 持有者闲置超 30 分钟被接管的记录：旧持有者的迟到写入据此回 lease_lost */
   takeovers?: Array<{ from: string; to: string; at: string }>;
 }
+
+export interface PerspectiveClaim { token: string; host: string; claimedAt: string; touchedAt: string }
+export interface AccountDataPerspective { status: "ok" | "failed"; summary?: string; reason?: string; builtAt: string }
 
 export class HostResearchError extends Error {
   constructor(

@@ -46,6 +46,8 @@ import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { asFounder, founderAuthored, founderStamped } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -157,8 +159,10 @@ async function pickAngle(topicId: string, brief = makeBrief()): Promise<void> {
   );
 }
 
-const run = (params: Record<string, unknown>, deps = {}) =>
-  executeWriter({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+const run = async (params: Record<string, unknown>, deps = {}) => {
+  await asFounder(testDir, params);
+  return executeWriter({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+};
 
 /** 一份干净的成稿：没有数字、没有镜头标注，三道门全过 */
 const GOOD = {
@@ -438,8 +442,10 @@ describe("writer pack", () => {
 describe("writer pack — 手工建的选题（没有简报）", () => {
   const MANUAL_DESC = "自己扒的转录：三家客户上线后返工工时平均多了 18%，出处见对方的复盘会纪要。";
 
-  const manualTopic = (): Promise<Topic> =>
-    saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
+  const manualTopic = async (): Promise<Topic> => {
+    const topic = await saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
+    return topic;
+  };
 
   it("选题描述与宿主给的 research 都登记成 user_claim——没简报不等于没账本", async () => {
     const topic = await manualTopic();
@@ -619,8 +625,10 @@ describe("writer pack 异步备料", () => {
   it.each(["title", "description"])("选题 %s 更新不能继续复用旧包", async (field) => {
     const first = await pack();
     await updateTopic(first.topicId, { [field]: "创作者更新后的内容规划" }, testDir);
-    expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
-      .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
+    // 选题改了，创始人之前定的角度随之作废：选题会闸口先拦（不复用旧包，也不悄悄换包）
+    const again = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
+    expect(again).toMatchObject({ ok: false, gate: "needs_founder_angle" });
+    expect((await readPackFile(first.content_id)).packId).toBe(first.pack_id);
   });
 
   it("旧包无 request 快照仍可复用，并能从 context.req 识别新要求", async () => {
@@ -641,6 +649,7 @@ describe("writer pack 异步备料", () => {
     await saveBrief(first.topicId, renewed, testDir);
     await upsertJob({ topicId: first.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: renewed.revision, topicHash: topicHashOf(TITLE, DESC), creativeTask: renewed.creativeTask }, testDir);
     await pickAngle(first.topicId, renewed);
+    await founderStamped(testDir, first.topicId); // 创始人改选了新卡（取代之前的自定角度）
     expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
       .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
     const fresh = await run({ action: "pack", topic_id: first.topicId, platform: "douyin", direction: "", force: true });
@@ -1661,6 +1670,8 @@ describe("persisted creative task reaches writing and review", () => {
   it("recovers omitted requirements from the research brief and preserves the original wording", async () => {
     const task = createCreativeTask({ platform: "douyin", requirements: "  写给门店老板\n保留犹豫过程，不要营销口号。  ", direction: "从一次返工经历展开" });
     const topic = await seed(makeBrief({ creativeTask: task }));
+    // 调研任务里继承来的方向也要是创始人记下的那一句
+    await founderAuthored(testDir, topic.id, task.direction!);
     const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
     expect(started.ok).toBe(true);
     const ready = await settle(started.content_id as string);
@@ -1702,7 +1713,7 @@ describe("audience review in the host writing flow", () => {
     const res = await pack();
     const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
     await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: held.impl });
-    await updateContent(res.content_id, { body: "用户在编辑器改过的新正文" }, testDir);
+    await updateContent(res.content_id, { _provenance: HUMAN_WRITE, body: "用户在编辑器改过的新正文" }, testDir);
     held.release();
     await reviewInFlight(res.content_id);
     expect(await run({ action: "submit_status", content_id: res.content_id })).toMatchObject({ quality_status: "stale_review", needs_attention: true });

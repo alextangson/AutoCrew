@@ -7,6 +7,7 @@ import { recordOutcome, listOutcomes } from "../flywheel/outcome-store.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import { addPerformanceEntry } from "../profile/creator-profile.js";
 import { getPack } from "../packs/index.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -108,10 +109,10 @@ describe("buildBaseline from outcome store", () => {
 describe("trackPerformance writes through outcome store", () => {
   it("records into outcome journal with source=paste", async () => {
     const c = await saveContent(
-      { title: "手动回填的稿子", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "手动回填的稿子", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
 
     const r = await trackPerformance(c.id, { views: 500, likes: 20 }, testDir);
     expect(r.ok).toBe(true);
@@ -124,7 +125,7 @@ describe("trackPerformance writes through outcome store", () => {
 
   it("surfaces the rejection reason when metrics are invalid", async () => {
     const c = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "数据有误的稿子",
         body: "正文",
         platform: "douyin",
@@ -155,7 +156,7 @@ async function seedMixedData(): Promise<{ topBody: string }> {
   ];
   for (let i = 0; i < 3; i++) {
     const c = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: `匹配稿${i}`,
         body: bodies[i],
         platform: "douyin",
@@ -190,7 +191,7 @@ describe("buildBaseline with mixed historical + matched data", () => {
   it("compareToBaseline does not report all-poor against fabricated zero traits", async () => {
     const { topBody } = await seedMixedData();
     const draft = await saveContent(
-      { title: "新草稿", body: topBody, platform: "douyin", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "新草稿", body: topBody, platform: "douyin", status: "draft_ready", tags: [] },
       testDir,
     );
 
@@ -207,7 +208,7 @@ describe("buildBaseline with mixed historical + matched data", () => {
       await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");
     }
     const draft = await saveContent(
-      { title: "新草稿", body: "随便写点正文。\n\n第二段内容。", platform: "douyin", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "新草稿", body: "随便写点正文。\n\n第二段内容。", platform: "douyin", status: "draft_ready", tags: [] },
       testDir,
     );
 

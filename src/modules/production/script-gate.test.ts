@@ -14,6 +14,7 @@ import { executeAsset } from "../../tools/asset.js";
 import { reopenScript } from "./reopen.js";
 import { recoverTxns } from "./txn.js";
 import { exists, founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv(); });
@@ -27,7 +28,7 @@ const LOCAL_MODEL = { _host: "local-user" };
 describe("认稿硬门：模型经 save / update / transition / force 推到认稿及之后全拒", () => {
   it.each(["approved", "editing", "cover_pending", "publish_ready", "publishing", "published"])("transition → %s（带 force）", async (target) => {
     const c = await videoContent(env, TITLE);
-    const r = await executeContentSave({ _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: target, force: true });
+    const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: target, force: true });
     expect(r).toMatchObject({ ok: false });
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
     expect(await readProductionDoc(c.id, env.dir)).toBeNull();
@@ -35,27 +36,27 @@ describe("认稿硬门：模型经 save / update / transition / force 推到认�
 
   it("transition → approved 的拒绝码是 founder_decision_required", async () => {
     const c = await videoContent(env, TITLE);
-    expect(await executeContentSave({ _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: "approved", force: true }))
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: "approved", force: true }))
       .toMatchObject({ ok: false, code: "founder_decision_required" });
   });
 
   it("update{status: approved} 拒、正文也不落", async () => {
     // reviewing → approved 在状态图上是合法边，拦它的只能是认稿硬门
     const c = await videoContent(env, TITLE, "reviewing");
-    const r = await executeContentSave({ _dataDir: env.dir, ...MODEL, action: "update", id: c.id, body: "偷改", status: "approved" });
+    const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...MODEL, action: "update", id: c.id, body: "偷改", status: "approved" });
     expect(r).toMatchObject({ ok: false, code: "founder_decision_required" });
-    expect(await executeContentSave({ _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: "approved" })).toMatchObject({ ok: false, code: "founder_decision_required" });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...MODEL, action: "transition", id: c.id, target_status: "approved" })).toMatchObject({ ok: false, code: "founder_decision_required" });
     expect((await getContent(c.id, env.dir))!.body).not.toBe("偷改");
   });
 
   it("save{status: approved}（模型导入）只能落在 draft_ready", async () => {
-    const r = await executeContentSave({ _dataDir: env.dir, ...MODEL, action: "save", title: "导入", body: "正文", platform: "douyin", status: "approved", source: "manual_import", import_reason: "创作者给的成稿" });
+    const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...MODEL, action: "save", title: "导入", body: "正文", platform: "douyin", status: "approved", source: "manual_import", import_reason: "创作者给的成稿" });
     expect(r).toMatchObject({ ok: true, content: { status: "draft_ready" } });
   });
 
   it("OpenClaw 模型调用（_modelCall）同样拒", async () => {
     const c = await videoContent(env, TITLE);
-    expect(await executeContentSave({ _dataDir: env.dir, _modelCall: true, action: "transition", id: c.id, target_status: "approved", force: true })).toMatchObject({ ok: false });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _modelCall: true, action: "transition", id: c.id, target_status: "approved", force: true })).toMatchObject({ ok: false });
   });
 
   it("创始人认稿写认稿决定，绑正文哈希", async () => {
@@ -71,7 +72,7 @@ describe("待录制改稿：创始人改重绑、agent 改作废（§13-C，E34�
     await writeEnabledVersion(env.dir);
     const c = await videoContent(env, TITLE);
     await founderApprove(env, c.id);
-    expect(await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: "创始人改了一句" })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "update", id: c.id, body: "创始人改了一句" })).toMatchObject({ ok: true });
     const doc = (await readProductionDoc(c.id, env.dir))!;
     expect(scriptApprovalFor(doc, "创始人改了一句")).toMatchObject({ source: "founder" });
     expect((await getContent(c.id, env.dir))!.status).toBe("approved");
@@ -81,7 +82,7 @@ describe("待录制改稿：创始人改重绑、agent 改作废（§13-C，E34�
     await writeEnabledVersion(env.dir);
     const c = await videoContent(env, TITLE);
     await founderApprove(env, c.id);
-    expect(await executeContentSave({ _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, body: "AI 改了一句" })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, body: "AI 改了一句" })).toMatchObject({ ok: true });
     const doc = (await readProductionDoc(c.id, env.dir))!;
     expect(scriptApprovalFor(doc, "AI 改了一句")).toBeNull();
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
@@ -91,7 +92,7 @@ describe("待录制改稿：创始人改重绑、agent 改作废（§13-C，E34�
     await writeEnabledVersion(env.dir);
     const c = await videoContent(env, TITLE);
     await founderApprove(env, c.id);
-    await executeContentSave({ _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, title: "换个标题" });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, title: "换个标题" });
     expect((await getContent(c.id, env.dir))!.status).toBe("approved");
     expect(scriptApprovalFor((await readProductionDoc(c.id, env.dir))!, c.body)).not.toBeNull();
   });
@@ -115,14 +116,14 @@ describe("冻结：进剪辑中后所有写正文的口都拒（§2.5，E18）",
 
   it("content update（MCP 与工作台）", async () => {
     const c = await frozenContent();
-    expect(await executeContentSave({ _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, body: "改" })).toMatchObject({ ok: false, code: "script_frozen" });
-    expect(await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: "改" })).toMatchObject({ ok: false, code: "script_frozen" });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, ...LOCAL_MODEL, action: "update", id: c.id, body: "改" })).toMatchObject({ ok: false, code: "script_frozen" });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "update", id: c.id, body: "改" })).toMatchObject({ ok: false, code: "script_frozen" });
   });
 
   it("存储写口：updateContent / updateContentChecked / updateContentIfDraftMatches（writer submit、我的内容回写走这几条）", async () => {
     const c = await frozenContent();
-    await expect(updateContent(c.id, { body: "改" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
-    await expect(updateContent(c.id, { body: "改", _editor: "founder" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
+    await expect(updateContent(c.id, { _provenance: HUMAN_WRITE, body: "改" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
+    await expect(updateContent(c.id, { _provenance: HUMAN_WRITE, body: "改", _editor: "founder" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
     await expect(updateContentChecked(c.id, { body: "改" }, async () => null, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
     await expect(updateContentIfDraftMatches(c.id, c, { body: "改" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
     expect((await getContent(c.id, env.dir))!.body).toBe(c.body);
@@ -130,7 +131,7 @@ describe("冻结：进剪辑中后所有写正文的口都拒（§2.5，E18）",
 
   it("asset 版本回滚（asset.ts revert）", async () => {
     const c = await videoContent(env, TITLE);
-    await updateContent(c.id, { body: "第二版" }, env.dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "第二版" }, env.dir);
     await writeEnabledVersion(env.dir);
     await founderApprove(env, c.id);
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "r1" });
@@ -147,7 +148,7 @@ describe("冻结：进剪辑中后所有写正文的口都拒（§2.5，E18）",
 
   it("只改标题、挂素材这类不动正文的写照常", async () => {
     const c = await frozenContent();
-    expect(await updateContent(c.id, { title: "新标题" }, env.dir)).toMatchObject({ title: "新标题" });
+    expect(await updateContent(c.id, { _provenance: HUMAN_WRITE, title: "新标题" }, env.dir)).toMatchObject({ title: "新标题" });
   });
 });
 
@@ -161,7 +162,7 @@ describe("重开文稿（§2.5，E27）", () => {
     expect(doc).toMatchObject({ round: 2, frozen: null });
     expect(doc.facts[0]).toMatchObject({ round: 1, path: "02-aroll/_作废-1/AI 又忘了怎么办-原片.mov" });
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
-    expect(await updateContent(c.id, { body: "重写" }, env.dir)).toMatchObject({ body: "重写" });
+    expect(await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "重写" }, env.dir)).toMatchObject({ body: "重写" });
   });
 
   it("被 ChatCut 工程引用的原片重开时也不挪（E26）", async () => {

@@ -16,6 +16,7 @@ import { resetProductionReady } from "./service.js";
 import { sha256File } from "../video/handoff/manifest.js";
 import { draftHash } from "../../storage/draft-hash.js";
 import { exists, founderApprove, makeEnv, setContent, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv(); });
@@ -137,7 +138,7 @@ describe("对账（§4）：启用之后", () => {
     await put(path.join(root, "04-edit/rough.mp4"), "rough");
     await fs.writeFile(path.join(root, "00-project/autocrew/execution.json"), JSON.stringify({ schema: 2, generation: 1, session_id: "s", machine: "m", host: "codex", transport_session: null, heartbeat: { request_id: "", session_id: "", result: "", next_action: "", reported_at: "" }, artifacts: [{ path: "04-edit/rough.mp4", sha256: "0".repeat(64), role: "final-cut", generation: 1, reported_at: "x" }] }));
     const cover = await put(path.join(env.outside, "attached.png"), png(900, 1200, "att"));
-    await updateContent(c.id, { assets: [{ filename: "attached.png", libraryPath: path.relative(env.dir, cover), type: "cover", addedAt: "x" }] }, env.dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, assets: [{ filename: "attached.png", libraryPath: path.relative(env.dir, cover), type: "cover", addedAt: "x" }] }, env.dir);
     await reconcileAll(env.dir);
     const doc = (await readProductionDoc(c.id, env.dir))!;
     expect(doc.facts.find((f) => f.kind === "cut")).toMatchObject({ source: "legacy", state: "accepted", path: "04-edit/rough.mp4" });

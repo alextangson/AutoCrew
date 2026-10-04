@@ -18,6 +18,7 @@ import { reconcileAll, reconcileContent } from "../production/reconcile.js";
 import { readInbox } from "../production/inbox-read.js";
 import { makeEnv, type Env } from "../production/testkit.js";
 import { planBackfill, describePlan } from "../../../scripts/backfill-bindings-20261003.mjs";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const DY = "7686140658221976866";
 const SPH = "export/abc";
@@ -103,7 +104,7 @@ describe("P1-3 回填脚本：同日同题多条一律停；09-16 抖音整条�
 describe("P1-4 绑定表读不出时，人工写入与回填计划都停下", () => {
   it("坏 JSON：work_bind 拒绝且不覆盖文件；planBackfill 报错", async () => {
     const dir = await plainDir();
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await fs.writeFile(path.join(dir, "platform-items.json"), "{oops");
     const r = await bindWorkManually(c.id, "wechat_video", SPH, dir);
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("platform-items.json") });
@@ -112,7 +113,7 @@ describe("P1-4 绑定表读不出时，人工写入与回填计划都停下", ()
   });
   it("版本不认也一样", async () => {
     const dir = await plainDir();
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await fs.writeFile(path.join(dir, "platform-items.json"), JSON.stringify({ schemaVersion: 99, items: {} }));
     expect(await bindWorkManually(c.id, "wechat_video", SPH, dir)).toMatchObject({ ok: false });
   });
@@ -121,8 +122,8 @@ describe("P1-4 绑定表读不出时，人工写入与回填计划都停下", ()
 describe("P2-1 改绑后不双计", () => {
   it("快照原本模糊归到 A，人工绑到 B 后只剩 B 的那份", async () => {
     const dir = await plainDir();
-    const a = await saveContent({ title: "A", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
-    const b = await saveContent({ title: "B", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const a = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const b = await saveContent({ _provenance: HUMAN_WRITE, title: "B", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await appendOutcomes([row({ contentId: a.id })], dir);
     expect(await bindWorkManually(b.id, "wechat_video", SPH, dir)).toMatchObject({ ok: true });
     expect((await listOutcomes(dir)).map((o) => o.contentId)).toEqual([b.id]);
@@ -138,7 +139,7 @@ describe("P2-2 autocrew_content 的写动作不受理历史记录", () => {
       { action: "record", content_id: id, kind: "publish", platform: "douyin" },
       { action: "delete", id },
     ]) {
-      expect(await executeContentSave({ _dataDir: dir, ...p })).toMatchObject({ ok: false, error: expect.stringContaining("imported_history") });
+      expect(await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: dir, ...p })).toMatchObject({ ok: false, error: expect.stringContaining("imported_history") });
     }
     expect((await getContent(id, dir))?.body).toBe("");
     expect((await getContent(id, dir))?.deletedAt).toBeFalsy();
@@ -148,7 +149,7 @@ describe("P2-2 autocrew_content 的写动作不受理历史记录", () => {
 describe("P2-3 人工绑定在发布回执里算按 id 对上", () => {
   it("via=manual → metrics_id", async () => {
     const dir = await plainDir();
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await commitBindings([{ platform: "douyin", itemId: DY, contentId: c.id, via: "manual" }], dir);
     const obs = await trustedObservations(c, dir);
     expect(obs.find((o) => o.item_id === DY)?.source).toBe("metrics_id");
@@ -168,8 +169,8 @@ describe("P2-4 并发建同一条历史记录不留孤儿", () => {
 describe("P2-5 多步写入中途失败时如实报已写了什么", () => {
   it("绑定已落盘、补归属读账本失败 → 说清绑定已写入与怎么恢复，不说「没有写入」", async () => {
     const dir = await plainDir();
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
-    await updateContent(c.id, {}, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE,}, dir);
     await fs.mkdir(path.join(dir, "outcomes.jsonl")); // 读账本必失败
     const r = await executeInsights({ action: "work_bind", work: { content_id: c.id, platform: "wechat_video", item_id: SPH }, _dataDir: dir }) as Record<string, unknown>;
     expect(r.ok).toBe(false);

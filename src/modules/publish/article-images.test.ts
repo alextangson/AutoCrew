@@ -15,6 +15,7 @@ import {
   removeArticleImage,
 } from "./article-images.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const generateMock = vi.mocked(generateWechatImageAsset);
 let dir: string;
@@ -34,7 +35,7 @@ afterEach(async () => {
 });
 
 async function seed() {
-  return saveContent({
+  return saveContent({ _provenance: HUMAN_WRITE,
     title: "正文配图",
     body: "## 开场\n第一段\n\n[IMAGE: 一张纸质合同被红线圈住，无文字]\n\n## 结论\n[IMAGE: 数据装进透明行李箱，无文字]",
     platform: "wechat_mp",
@@ -76,11 +77,11 @@ describe("article images workspace", () => {
   it("正文普通改动保留图片；某个 IMAGE 提示词变化只重置对应位置", async () => {
     const content = await seed();
     await generateArticleImages({ contentId: content.id }, dir);
-    await updateContent(content.id, { body: `${content.body}\n\n补充一句普通正文` }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: `${content.body}\n\n补充一句普通正文` }, dir);
     const kept = await getArticleImageReview(content.id, dir);
     expect(kept.entries.every((entry) => entry.status === "ready")).toBe(true);
 
-    await updateContent(content.id, { body: content.body.replace("数据装进透明行李箱", "数据装进纸箱") }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: content.body.replace("数据装进透明行李箱", "数据装进纸箱") }, dir);
     const reset = await getArticleImageReview(content.id, dir);
     expect(reset.entries.map((entry) => entry.status)).toEqual(["ready", "missing"]);
   });
@@ -130,7 +131,7 @@ describe("attachUploadedArticleImage", () => {
   it("正文他处改动后 reconcile 保留上传图与 origin；按提示重做后回到 AI 生成", async () => {
     const content = await seed();
     await attachUploadedArticleImage(content.id, 0, JPG_BYTES, dir);
-    await updateContent(content.id, { body: content.body.replace("第一段", "第一段(改)") }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: content.body.replace("第一段", "第一段(改)") }, dir);
     const after = await getArticleImageReview(content.id, dir);
     expect(after.entries[0]).toMatchObject({ status: "ready", origin: "uploaded" });
 

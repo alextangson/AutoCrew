@@ -1,41 +1,32 @@
 ---
 name: topic-meeting
 description: |
-  选题会：用账号定位 + 回流数据给下一批内容下注，并对上次的下注对账。创作者说「开选题会」「这周写什么」「内容规划」「帮我找选题」「排一下这周的片单」时使用。产出是本周片单和可证伪的下注，不开工写稿。
+  选题会：针对一个选题（或只是一句灵感），派几路调研从不同维度并行查，出 3–4 张立意卡，由创始人用原话定一张或给出自己的角度——定了才能开写。创作者说「开选题会」「这个题怎么写」「帮我想想这个角度」「写一篇新的」，或开写入口回 needs_founder_angle 时使用。产出是创始人选定的立意，不写稿。
 ---
 
 # 选题会
 
-这场会要回答一件事：下一批写什么，凭什么，赌它怎么样。灵感库的入库分和立意卡的证据分都不代表传播潜力，所以数字只从简报里来，判断由创作者拍板。条数和配比当场问，不预设。
+一条内容开写前的最后一道关：先把这个题从几个方向查透，摆出几张真正不同的立意卡，由创始人拍板。你负责查、整理、推荐；选哪张只能是创始人的原话。没有跳过选卡或跳过调研的通道。
 
 ## 开会
 
-1. **读简报** `autocrew_insights {action:"meeting_brief"}`。返回 `ok:false` 就停会：把原始错误告诉创作者，不凭记忆开会。`brief.attention` 里的每一条（回流未开启/过期、未绑定作品、冷启动、量纲未核的指标）开场先说。
-2. **对账** `brief.pendingBets`：逐条报 中 / 没中 / 数据不够 / 未到期 / 无法对账 和 `reason`。「中」= 高于同平台同龄基线中位数。中或没中的，问创作者一句「按当时手里的信息重来，还会这么选吗」，原话记下；「无法对账」的把 `unmatched` 念给他，确认是哪条作品。
-3. **补标签** `brief.untagged`：已发作品缺形式（教学/观点/亲历/案例/测评）或画像（core/adjacent/surprise）的，一次问清，逐条 `autocrew_insights {action:"meeting_tag", tag:{work_key, format, persona_key}}`。
-4. **出候选**：来自灵感库（`autocrew_topic {action:"list"}`）和你提的新题（如爆款续集）。新题用 `autocrew_topic {action:"create", source:"meeting"}` 入库，描述里标「待调研」。灵感库空或都不合适，就只提真想写的，不凑数。每个候选写清：
-   - 给谁看：档案画像层 key + 当前名字（`brief.personas`）
-   - 观众拿走什么：看完能做的一件事或能下的一个判断。「看懂 X」「了解 X」不算，保存时会被拒
-   - 形式与内容线；为什么现在
-   - 数据依据：引简报里具体作品和数字；没有就写「无数据依据，纯判断」
-   - 赌什么：一句可证伪的话，落成 `watch{platform, metric, day: 3|7}`，metric 只能从 `brief.availableMetrics` 该平台里选
-   - 事前验尸：到期没中最可能的一个原因，给最强的那个
-   - 转发尴尬（只提醒、不扣分）：观众把这条转给同事或朋友，会不会暴露 TA 不想暴露的处境？转发本身是安全吐槽或表态的，标出来；这是评分表的候选维度 TS，攒够证据前不进任何分数
-5. **拍板**：创作者选中、改或毙。每个选中位由他给「高于基线中位数」的概率（具体百分数），你不代填。
-6. **落库**：先 `autocrew_insights {action:"meeting_get"}` 拿 `revision`（新会为 0），再
-   `autocrew_insights {action:"meeting_save", meeting:{expected_revision, slots, rejected, reviews}}`；slot 字段见工具说明 `autocrew://tool-guide/autocrew_insights`。一个都没选也要存（空片单 + 毙题理由）。报 `conflict` 说明别的会话刚存过：重读、给创作者看差异，再存。
+1. **定题**：已有选题用 `topic_id`；只有一句灵感就 `autocrew_workflow {action:"prepare", inspiration:"<原话>", platform, requirements}`，会自动建题。创作者自带材料用 `research_mode:"provided"` + `research`，照样要出卡。
+2. **领任务**：prepare 回 `awaiting_host_research` 和 `research_task`。五路调研：受众 audience、证据 evidence、反方 counter、对标 benchmark 四个视角，加一路「账号数据」（工具按排期会简报确定性生成，不用你查）。
+3. **并行查**：能派子代理就并行。对每个缺的视角调 `autocrew_scout {action:"claim", topic_id, task_id, perspective}`，把回执里的 `perspective_token` 和 `pack` 交给一个子代理；子代理的 `search` / `read_page` / `cite` / `perspective` 提交都带这枚令牌。同一视角已被领走会回 `perspective_claimed`，换一个。不能并行就自己按 `next_action` 一路一路做。
+4. **钩子查证**并在证据视角里：开头钩子要用的事实，必须来自 `read_page` 抓回的原文并 `cite` 过。
+5. **失败要看得见**：某一路查不下去就 `fail_perspective{perspective, reason, perspective_token}` 写明原因；回执的 `perspectives` 一直摆着 failed / timed_out（令牌闲置 30 分钟算超时）。补材料后重新 `claim` 那一路重跑；账号数据失败用 `account_data` 重跑。五路不齐 `synthesize` 会拒，不要硬凑。
+6. **综合 → 出卡**：`synthesize` 交综合，再按回执 `pack` 交 `angles`：3–4 张真正不同的卡。每张写清主张、证据、缺口、观众拿走什么（看完能做的一件事或能下的一个判断），以及 `why_may_perform`——只引账号数据里的数字并带 n，没有就照写「无数据依据」。转发尴尬（只提醒、不扣分）：观众把这条转给同事朋友会不会暴露不想暴露的处境，有就在卡上提一句。
 
-## 用数字的规矩
+## 让创始人定
 
-- 引用分组或基线必须带 n；`status:"insufficient"`（n<5）只列数，不下结论。
-- 只在同平台同天龄（D+3/D+7）之间比较；离群作品（`brief.outliers`，>5× 同平台中位数）单独说，不进基线。
-- 冷启动期（回流刚开，前 4–6 周）基线大多不够：照样下注，如实说「数据不够」，不拿累计数冒充同龄比较。
-- 简报里标 `unverified`（「未核」）的指标只能参考。
+- 把每张卡的主张、证据、缺口、观众收获、数据依据摆给他看，说你推荐哪张、为什么；不替他选。
+- 他选了：`autocrew_workflow {action:"select_angle", topic_id, angle_id, brief_revision, founder_words:"<他的原话>"}`；他改了卡面就加 `card`。
+- 他要写自己的角度：`select_angle{topic_id, direction:"<角度>", founder_words:"<他的原话>"}`，之后 prepare / pack 带同一句 `direction`。
+- `founder_words` 照抄他这轮说的话，不转述、不代填；他还没表态就停下来问。
+- 回 `ready_to_write` 才算开完会，按 `next_action` 交给 `write-script`（视频走 `video-session`）。
 
 ## 边界
 
-- 选中≠开工：片单只在看板「选题」列置顶并打「本周片单」标签。写稿仍是一条一个会话（`video-session`），这里不开写稿窗口。
-- 选中的题已经在写或被认领：`meeting_save` 回执的 `topicStatus` 会写明，照实告诉创作者，不新建、不抢认领。
-- 选中的题已有立意卡或选中角度：保存会被拒，先问创作者「重跑立意」还是「接受偏离」，填进该位 `angle_decision`。
-- 会议位让选题免于 3 天自动过期，只到下次开会；下次没再选中就恢复正常过期。
-- 纪要自动出现在「我的内容/选题会」，不要手写文件。
+- 已有真稿的选题（存量稿、改稿、真稿的平台变体）和创作者手动导入的成稿不用开会。
+- 开写入口回 `needs_founder_angle` 就是这场会还没开完；回 `angle_gate_read_failed` 是稿件或选题记录读不出，把原始错误告诉创作者，停下。
+- 排期会（`schedule-meeting`）是可选的周度排期，不替代这里。

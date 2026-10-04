@@ -10,6 +10,7 @@ import { generateImageViaRelay } from "./image-gen.js";
 import { saveContent, getContent } from "../../storage/local-store.js";
 import { editorialDraftHash } from "../../tools/editorial.js";
 import type { runLoop } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -43,7 +44,7 @@ function mockLoop(args: Record<string, unknown>): typeof runLoop {
 }
 
 async function mkVideoContent(platform = "douyin"): Promise<string> {
-  const c = await saveContent({
+  const c = await saveContent({ _provenance: HUMAN_WRITE,
     title: "删AI代码的生意", body: "口播稿正文……", platform,
     status: "approved", tags: [], hashtags: ["AI"],
   }, dir);
@@ -78,7 +79,7 @@ describe("prepareVideoKit", () => {
   });
 
   it("非视频平台 → 拒绝;分镜 <3 行 → 工具打回致失败", async () => {
-    const wechatId = (await saveContent({
+    const wechatId = (await saveContent({ _provenance: HUMAN_WRITE,
       title: "t", body: "b", platform: "wechat_mp", status: "approved", tags: [], hashtags: [],
     }, dir)).id;
     await expect(prepareVideoKit(wechatId, {}, dir, { runLoopImpl: mockLoop(KIT_ARGS) }))

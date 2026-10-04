@@ -41,6 +41,7 @@ import {
   videoTranscriptGetHandler,
   videoTranscriptTextEditHandler,
 } from "./video-handlers.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const STATE: VideoState = {
   schemaVersion: 1,
@@ -159,7 +160,7 @@ beforeEach(async () => {
     shutdown: 0,
   };
   contentId = (
-    await saveContent({ title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
+    await saveContent({ _provenance: HUMAN_WRITE, title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
   ).id;
   setVideoService(stubService(), dir);
 });
@@ -460,7 +461,7 @@ describe("video:review_confirm 与 videoReadyAt", () => {
   });
 
   it("只盖一次：重剪重审不覆盖首次达成的时刻（publishedAt 同款）", async () => {
-    await updateContent(contentId, { videoReadyAt: "2026-01-01T00:00:00.000Z" }, dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, videoReadyAt: "2026-01-01T00:00:00.000Z" }, dir);
     const res = await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
     expect(res).toMatchObject({ ok: true, data: { videoReadyAt: "2026-01-01T00:00:00.000Z" } });
     expect((await getContent(contentId, dir))?.videoReadyAt).toBe("2026-01-01T00:00:00.000Z");

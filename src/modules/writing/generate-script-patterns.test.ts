@@ -17,6 +17,7 @@ import type { PatternCardInput } from "../patterns/pattern-store.js";
 import { getContent, listContents } from "../../storage/local-store.js";
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -25,6 +26,7 @@ const saved: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-patterns-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -51,7 +53,7 @@ const GOOD_PAYLOAD = {
   hashtags: ["#AI赚钱"],
 };
 
-const TEST_REQ = { topic: "AI时代普通人赚钱", platform: "douyin" as const };
+const TEST_REQ = { topic: "AI时代普通人赚钱", platform: "douyin" as const, topicId: "topic-gentest" };
 
 const PATTERN_INPUT: PatternCardInput = {
   sourceUrl: "https://www.douyin.com/video/123",

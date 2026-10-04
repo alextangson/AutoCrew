@@ -22,9 +22,11 @@ import {
   upsertJob,
   type ResearchJob,
 } from "../research/research-job-store.js";
-import { getContent, saveTopic, updateTopic, type Topic } from "../../storage/local-store.js";
+import { getContent, getTopic, saveTopic, updateTopic, type Topic } from "../../storage/local-store.js";
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { TEST_FOUNDER_DIRECTION, saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
+import { recordFounderAngle } from "../research/angle-gate.js";
 
 let testDir: string;
 
@@ -33,6 +35,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-angle-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -61,7 +64,7 @@ const GOOD_PAYLOAD = {
 
 const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比 5 个主流工具的真实提效";
-const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
+const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const, topicId: "topic-gentest" };
 
 const CARD: AngleCard = {
   id: "angle-1",
@@ -121,7 +124,7 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 
 /** 选题 + 简报 + 指向它的 job（写稿时简报块与角度卡都该生效） */
 async function seedResearched(brief = makeBrief()): Promise<Topic> {
-  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
   await saveBrief(topic.id, brief, testDir);
   const job: ResearchJob = {
     topicId: topic.id,
@@ -153,7 +156,7 @@ async function bumpPointer(topicId: string, briefRevision: number): Promise<void
 async function pick(topicId: string, card: AngleCard, briefRevision = 1): Promise<void> {
   await updateTopic(
     topicId,
-    { selectedAngle: { briefRevision, angleId: card.id, card, selectedAt: "2026-08-24T11:00:00.000Z" } },
+    { selectedAngle: { briefRevision, angleId: card.id, card, selectedAt: "2099-01-01T00:00:00.000Z", chosenBy: "founder", founderWords: "就这张" }, founderAngle: undefined },
     testDir,
   );
 }
@@ -191,6 +194,8 @@ describe("生效角度的优先级：direction > 选中卡 > 无", () => {
   it("手写 direction 压过选中的卡：卡的字一个都不注入，也不算「未经点选」", async () => {
     const topic = await seedResearched();
     await pick(topic.id, CARD);
+    // 创始人后来改成自己的角度（真实流程：select_angle{direction, founder_words} 取代之前选的卡）
+    await recordFounderAngle((await getTopic(topic.id, testDir))!, "从被裁掉的初级程序员视角写", "就这么写", testDir);
 
     const { seen, note, contentId } = await write({
       ...TEST_REQ,
@@ -210,15 +215,10 @@ describe("生效角度的优先级：direction > 选中卡 > 无", () => {
     expect(note).toBe("AI 完成初稿");
   });
 
-  it("有候选卡但没选 → prompt 里没有切入点块，版本注记标「未经角度点选」并 warn", async () => {
+  it("有候选卡但创始人没定 → 生成准入拒（选题会规则：没定角度不开第一篇）", async () => {
     const topic = await seedResearched();
-    const warns: string[] = [];
-
-    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
-
-    expect(seen.write!.userMessage).not.toContain("【本稿切入点");
-    expect(note).toBe("AI 完成初稿（未经角度点选）");
-    expect(warns.some((w) => w.includes("未经角度点选开写"))).toBe(true);
+    await updateTopic(topic.id, { founderAngle: undefined }, testDir);
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 
   it("简报没有角度卡（旧简报 / 无证据降级）→ 不算绕闸口，注记与改动前一字不差", async () => {
@@ -226,14 +226,14 @@ describe("生效角度的优先级：direction > 选中卡 > 无", () => {
 
     const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id });
 
-    expect(seen.write!.userMessage).not.toContain("【本稿切入点");
+    // 创始人自定的角度照常进 prompt（请求没带方向时沿用他那句）
+    expect(seen.write!.userMessage).toContain(TEST_FOUNDER_DIRECTION);
     expect(note).toBe("AI 完成初稿");
   });
 
-  it("压根没有 topicId（随手写一篇）→ 角度链整条不参与", async () => {
-    const { seen, note } = await write(TEST_REQ);
-    expect(seen.write!.userMessage).not.toContain("【本稿切入点");
-    expect(note).toBe("AI 完成初稿");
+  it("压根没有 topicId（随手写一篇）→ 生成准入拒", async () => {
+    const { topicId: _drop, ...bare } = TEST_REQ as typeof TEST_REQ & { topicId?: string };
+    await expect(write(bare)).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 });
 
@@ -245,25 +245,16 @@ describe("选择过期", () => {
     await pick(topic.id, CARD, 1);
     await saveBrief(topic.id, makeBrief({ revision: 2, generatedAt: "2026-08-24T12:00:00.000Z" }), testDir);
     await bumpPointer(topic.id, 2);
-    const warns: string[] = [];
-
-    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(note).toBe("AI 完成初稿（未经角度点选）");
-    expect(warns.some((w) => w.includes("选中的角度已过期"))).toBe(true);
+    // 创始人选的卡过期了：生成准入拒，要他重新定
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 
   it("选题文本被改过（简报 topicHash 对不上）→ 同样按没选处理", async () => {
     const topic = await seedResearched();
     await pick(topic.id, CARD);
     await updateTopic(topic.id, { title: "改了标题的同一条选题" }, testDir);
-    const warns: string[] = [];
-
-    const { seen } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(warns.some((w) => w.includes("选中的角度已过期"))).toBe(true);
+    // 选题会规则：选题改过，创始人之前的角度决定一并作废——生成准入直接拒，不再带着过期角度开写
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 
   it("选题被删（简报还在）→ 不注入角度，不炸", async () => {
@@ -271,10 +262,8 @@ describe("选择过期", () => {
     await pick(topic.id, CARD);
     await fs.rm(path.join(testDir, "topics", `${topic.id}.json`), { force: true });
 
-    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id });
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(note).toBe("AI 完成初稿（未经角度点选）");
+    // 选题都不在了就谈不上开过选题会：生成准入拒
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 });
 
@@ -283,20 +272,12 @@ describe("选择过期", () => {
 describe("显式跳过", () => {
   it("angleSkipReason 落 run-log（原话可回溯），但一个字都不进 prompt", async () => {
     const topic = await seedResearched();
-    const warns: string[] = [];
-
-    const { seen, note } = await write(
-      { ...TEST_REQ, topicId: topic.id, angleSkipReason: "用户说：别选角度了，直接写" },
-      warns,
-    );
-
-    expect(warns.some((w) => w.includes("用户明说跳过角度点选") && w.includes("直接写"))).toBe(true);
-    expect(seen.write!.userMessage).not.toContain("别选角度了");
-    // 跳过是显式动作，但这稿确实没经过角度闸口——注记照实说
-    expect(note).toBe("AI 完成初稿（未经角度点选）");
+    // 跳过选卡的通道已关闭：第一篇带 angleSkipReason 在生成准入就被拒
+    await expect(write({ ...TEST_REQ, topicId: topic.id, angleSkipReason: "用户说：别选角度了，直接写" }))
+      .rejects.toMatchObject({ refusal: { code: "skip_removed" } });
   });
 
-  it("既没带上简报也没点角度 → 两条注记并列出现，不互相覆盖", async () => {
+  it("没带上简报（闸口跑不了）→ 注记照实说，创始人自定的角度照常用", async () => {
     const topic = await seedResearched();
     const seen: Seen = {};
 
@@ -308,9 +289,8 @@ describe("显式跳过", () => {
     });
 
     const saved = await getContent(res.contentId, testDir);
-    expect(saved?.versions?.at(-1)?.note).toBe("AI 完成初稿（未带调研简报、未经角度点选）");
+    expect(saved?.versions?.at(-1)?.note).toContain("未带调研简报");
     expect(res.wroteWithoutBrief).toBe(true);
-    expect(res.wroteWithoutAngle).toBe(true);
   });
 });
 
@@ -345,14 +325,11 @@ describe("注入与选卡认同一版简报", () => {
   });
 
   it("台账没有指针（简报文件孤零零躺着）→ 材料与角度卡都不生效，也不算绕闸口", async () => {
-    const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+    const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
     await saveBrief(topic.id, makeBrief(), testDir);
     await pick(topic.id, CARD, 1);
 
-    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id });
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(seen.write!.userMessage).not.toContain("厂商口径与独立评测差了四倍");
-    expect(note).toBe("AI 完成初稿");
+    // 台账没指针 = 没有生效简报 → 创始人选的卡判不了作数：生成准入拒，材料与卡都不会被用上
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 });

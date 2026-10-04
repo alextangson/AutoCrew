@@ -14,12 +14,13 @@ import { blindStep } from "./predict.js";
 import { retro } from "./retro.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
 import { audit, BODY, engine, fakeLoop, predictPublished, SELF } from "./test-fixtures.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const DAY = 86_400_000;
 const NAMES = ["底部", "基础盘", "命中", "小爆", "大爆"];
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-fix-")); });
-const mk = (publishedAt: string | null = null) => saveContent({ title: "AI 周报", body: "正文", platform: "douyin", status: "draft_ready", tags: [], publishedAt } as never, dir);
+const mk = (publishedAt: string | null = null) => saveContent({ _provenance: HUMAN_WRITE, title: "AI 周报", body: "正文", platform: "douyin", status: "draft_ready", tags: [], publishedAt } as never, dir);
 const ER_HEAVY = { weights: { ER: 3, SR: 1.5, HP: 1.5, QL: 1, NA: 1, AB: 1, SAT: 1 }, divisor: 10, multiplier: 2 };
 async function seedPool(n: number, skipFirst = false) {
   for (let i = 0; i < n; i++) {

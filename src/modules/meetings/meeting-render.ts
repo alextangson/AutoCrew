@@ -5,7 +5,7 @@ const TIER_LABEL: Record<string, string> = { core: "核心受众", adjacent: "�
 
 function slotBlock(s: MeetingRecord["slots"][number], i: number): string {
   return [
-    `### ${i + 1}. ${s.title}`,
+    `### ${i + 1}. ${s.title}${s.addedOn ? `（${s.addedOn} 单题会追加）` : ""}`,
     "",
     `- 给谁看：${TIER_LABEL[s.persona.key] ?? s.persona.key}（${s.persona.name}）`,
     `- 观众拿走什么：${s.payoff}`,
@@ -20,9 +20,9 @@ function slotBlock(s: MeetingRecord["slots"][number], i: number): string {
 
 export function renderMeetingMinutes(m: MeetingRecord): string {
   const parts = [
-    `# ${m.date} 选题会纪要`,
+    `# ${m.date} 排期会纪要`,
     "",
-    `只读副本，由 meetings/${m.date}.json（第 ${m.revision} 版）生成。选中≠开工：片单只在看板「选题」列置顶，开写仍是一条一个会话。`,
+    `只读副本，由 meetings/${m.date}.json（第 ${m.revision} 版）生成。排期≠开工：片单只在看板「选题」列置顶，不拦写稿；每条开写前仍要单独开选题会（立意卡由创始人定）。`,
     "",
     "## 上次下注对账",
     "",

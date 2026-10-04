@@ -22,6 +22,7 @@ import { sha256File } from "./manifest.js";
 import { executeDesk } from "../../../tools/desk.js";
 import { hashClaimToken } from "../../../storage/claim-token.js";
 import { getConfigDir } from "../../../storage/storage-roots.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 let fx: HandoffFixture;
 let pick = "";
@@ -257,7 +258,7 @@ describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", { timeout: 30_000 }, () => {
     const res = await pull(a, aroll, await confirmed(aroll, a.title), "h-1");
     const claim = (await getContent(a.id, fx.dir))!.claim!;
     expect(Date.parse(claim.leaseUntil) - Date.now()).toBeGreaterThan(47 * 3600_000);
-    await updateContent(a.id, { claim: { ...claim, lastWriteAt: new Date(Date.now() - 3 * 3600_000).toISOString() } }, fx.dir);
+    await updateContent(a.id, { _provenance: HUMAN_WRITE, claim: { ...claim, lastWriteAt: new Date(Date.now() - 3 * 3600_000).toISOString() } }, fx.dir);
     const take = () => withCallerSession("s2", () => executeDesk({ _dataDir: fx.dir, _host: "codex", action: "claim", content_id: a.id, employee: "editor", takeover: true }));
     expect(await take()).toMatchObject({ ok: false, code: "claim_held" });
     takeoverAnswer = "接管";

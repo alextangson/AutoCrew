@@ -8,13 +8,14 @@ import { setMatchDeps } from "../modules/production/match/deps.js";
 import { matchWorkerIdle } from "../modules/production/match/queue.js";
 import { synth } from "../modules/production/match/synth-fixture.js";
 import { founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "../modules/production/testkit.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await matchWorkerIdle(env.dir); await env.cleanup(); });
 
 const summary = (id: string, since_seq?: unknown) =>
-  executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id, ...(since_seq !== undefined ? { since_seq } : {}) }) as Promise<Record<string, unknown>>;
+  executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id, ...(since_seq !== undefined ? { since_seq } : {}) }) as Promise<Record<string, unknown>>;
 const bytes = (r: unknown) => Buffer.byteLength(JSON.stringify(r));
 
 async function addEvents(id: string, n: number): Promise<void> {
@@ -104,7 +105,7 @@ describe("summary 的制作段字段", () => {
     const seen = new Set<string>();
     let offset: unknown = undefined;
     for (let page = 0; page < 20; page++) {
-      const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
+      const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
       expect(bytes(r)).toBeLessThanOrEqual(1536);
       for (const a of r.aroll as Array<{ fact_id: string }>) seen.add(a.fact_id);
       for (const p of r.pending as Array<{ fact_id: string }>) expect(ids.has(p.fact_id)).toBe(true);
@@ -130,7 +131,7 @@ describe("summary 的制作段字段", () => {
       const seen: string[] = [];
       let offset: unknown = undefined;
       for (let page = 0; page < 30; page++) {
-        const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
+        const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
         expect(bytes(r)).toBeLessThanOrEqual(1536);
         seen.push(...(r.aroll as Array<{ fact_id: string }>).map((a) => a.fact_id));
         if (page === 0) { release(); await matchWorkerIdle(env.dir); }

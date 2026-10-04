@@ -15,6 +15,7 @@ import { executeWriter } from "./writer.js";
 import { readPack, writePack, type ReadyPack } from "./writer-pack.js";
 import { MAX_REVISION_CYCLES, revisionNextAction } from "./writer-revision.js";
 import { runSubmit } from "./writer-submit.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 let engineLoad: ReturnType<typeof vi.spyOn>;
@@ -33,7 +34,7 @@ const revised = (n: number) => `${BODY}第${n}次改稿时，我们把轮班时�
 const blocker = { severity: "blocker", quote: "现在开始商量谁来照顾菜园", rule: "规划遗漏", instruction: "补清楚轮班分工的过程，不编造结果" };
 
 async function seed() {
-  const content = await saveContent({ title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+  const content = await saveContent({ _provenance: HUMAN_WRITE, title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
   const pack: ReadyPack = {
     packId: "writing-pack-1", issuedAt: "2026-09-22T00:00:00Z", state: "ready", host: "claude", briefHash: "provided", angleId: "user-direction",
     ledger: createEvidenceLedger().snapshot(), ledgerBudget: { max: 3, used: 0 }, repair: { max: 0, used: 0 }, reviewRounds: 0, attempts: {},
@@ -44,7 +45,7 @@ async function seed() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
   return { id: content.id, args: { contentId: content.id, packId: pack.packId, attempt: 1, title: "菜园的清晨", body: BODY, host: "claude" } };
 }
 const desk = (args: Record<string, unknown>) => executeReviewDesk({ ...args, _host: "claude", _dataDir: dir });
@@ -125,7 +126,7 @@ describe("draft_ready 直接修订（revision_of）", () => {
     const { id, args } = await seed();
     await submitAndReview(args);
     const reviewed = (await getContent(id, dir))!;
-    await updateContent(id, { body: `${BODY}创作者在编辑器里补了一句。` }, dir);
+    await updateContent(id, { _provenance: HUMAN_WRITE, body: `${BODY}创作者在编辑器里补了一句。` }, dir);
     const before = await getContent(id, dir);
     expect(await runSubmit({ ...args, attempt: 2, body: revised(1), revisionOf: draftHash(reviewed) }, dir)).toMatchObject({ ok: false, code: "stale_draft" });
     expect(await getContent(id, dir)).toEqual(before);
@@ -152,7 +153,7 @@ describe("draft_ready 直接修订（revision_of）", () => {
     expect(await revisionNextAction(ready, dir)).toMatchObject({
       tool: "autocrew_writer", params: { action: "submit", content_id: id, pack_id: args.packId, attempt: 2, revision_of: draftHash(ready) },
     });
-    const withFeedback = (await updateContent(id, { writingFeedback: [{ instruction: "结尾别上价值", scope: "whole", at: new Date().toISOString() }] }, dir))!;
+    const withFeedback = (await updateContent(id, { _provenance: HUMAN_WRITE, writingFeedback: [{ instruction: "结尾别上价值", scope: "whole", at: new Date().toISOString() }] }, dir))!;
     expect(await revisionNextAction(withFeedback, dir)).toMatchObject({ tool: "autocrew_writer", params: { action: "pack", content_id: id, force: true } });
   });
 });

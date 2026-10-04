@@ -13,6 +13,7 @@ import { lookupPlatformItem } from "./platform-items.js";
 import type { PerformanceOutcome } from "./outcome-schema.js";
 import { reviewedRow } from "../insights/metric-review.js";
 import { saveContent } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const TITLE = "AI给自己造了个身体，接管了我家的全屋智能";
 const A_ID = "7686140658221976866";
@@ -56,7 +57,7 @@ describe("已精确绑定的稿，同平台另一条作品不能靠标题挂上�
 
   it("人工绑定把这条作品认给某篇稿后，归属复核理由清掉", async () => {
     await boundHistory();
-    const other = await saveContent({ title: "别的稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const other = await saveContent({ _provenance: HUMAN_WRITE, title: "别的稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await importPerformanceRows("douyin", [{ title: TITLE, publishedAt: "2026-09-17T02:00:00.000Z", platformItemId: B_ID, metrics: { views: 3 } }],
       { source: "auto", metricDate: "2026-10-04", dataDir: dir });
     expect(await bindWorkManually(other.id, "douyin", B_ID, dir)).toMatchObject({ ok: true, reattributed: 1 });
@@ -68,8 +69,8 @@ describe("已精确绑定的稿，同平台另一条作品不能靠标题挂上�
 
 describe("改绑时按跨归属的最新快照取值", () => {
   it("目标稿同数据日期有更旧的快照、原归属有更新的：改绑后保留更新的 7629", async () => {
-    const a = await saveContent({ title: "A", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
-    const b = await saveContent({ title: "B", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const a = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const b = await saveContent({ _provenance: HUMAN_WRITE, title: "B", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     await appendOutcomes([
       row({ contentId: b.id, metrics: { views: 100 }, recordedAt: "2026-10-03T01:00:00.000Z" }),
       row({ contentId: a.id, metrics: { views: 7629 }, recordedAt: "2026-10-03T09:00:00.000Z" }),
@@ -87,7 +88,7 @@ describe("严格读：坏条目不被静默丢掉", () => {
     ["items 是数组", { schemaVersion: 1, items: [] }],
     ["缺 contentId", { schemaVersion: 1, items: { "douyin:1": { boundAt: "t", via: "url" } } }],
   ])("%s → 人工绑定拒绝，文件原样", async (_n, file) => {
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     const raw = JSON.stringify(file);
     await fs.writeFile(path.join(dir, "platform-items.json"), raw);
     expect(await bindWorkManually(c.id, "douyin", A_ID, dir)).toMatchObject({ ok: false, error: expect.stringContaining("platform-items.json") });

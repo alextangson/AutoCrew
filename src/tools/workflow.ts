@@ -24,9 +24,10 @@ import { createResearchRunner, type ResearchRunner } from "../modules/research/r
 import { SEARCH_NOT_CONFIGURED, searchAvailable } from "../modules/research/search-provider.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { startGenerateScript, type ScriptRequest } from "../modules/writing/generate-script.js";
-import { getContent, getDataDir, getTopic, updateTopic } from "../storage/local-store.js";
+import { ANGLE_GATE_COPY, newDraftAngleRefusal, recordFounderAngle, topicHasDraft } from "../modules/research/angle-gate.js";
+import { getContent, getDataDir, getTopic, saveTopic, updateTopic } from "../storage/local-store.js";
 import { angleOptionsView, draftingNote, draftOwnerView, draftView, jobView } from "./workflow-views.js";
-import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest } from "./writing-readiness.js";
+import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest, newDraftGate } from "./writing-readiness.js";
 // 健康视图是桌面与 dsh 共用的那一个（spec §4.1「同一个视图函数」）——doctor 不另写一份
 import { buildEngineHealth, probeAllProviders } from "../desktop/engine-health.js";
 import { storageFailure } from "../storage/storage-error.js";
@@ -50,7 +51,9 @@ export const workflowSchema = Type.Object({
       description: "research 的任务类型：full = 四视角深调研（默认，需要搜索 key）；angles = 在现有简报上只重跑立意",
     }),
   ),
+  inspiration: Type.Optional(Type.String({ description: "prepare：只有一句灵感、还没有选题时传它，自动建选题并开选题会" })),
   angle_id: Type.Optional(Type.String({ description: "select_angle：创始人选中的立意卡 id，如 angle-2" })),
+  founder_words: Type.Optional(Type.String({ description: "select_angle 必填：创始人选卡或给自定角度时的原话，照抄不转述" })),
   card: Type.Optional(
     Type.Object(
       {},
@@ -71,20 +74,16 @@ export const workflowSchema = Type.Object({
     Type.String({ description: `prepare / write：目标平台。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}` }),
   ),
   direction: Type.Optional(
-    Type.String({ description: "prepare / write：创作者自己写的角度（优先级高于选中的卡），有它就不再要求选卡" }),
+    Type.String({ description: "创始人自定角度：先用 select_angle{direction, founder_words} 记下，之后 prepare/pack 带同一句；没记过的 direction 会被拒" }),
   ),
   requirements: Type.Optional(
     Type.String({ description: "prepare / write：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈；补充选中立意，不绕过选卡。" }),
   ),
-  skip_reason: Type.Optional(
-    Type.String({ description: "prepare / write：创作者**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
-  ),
-  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({
-    type: "string", enum: ["auto", "provided", "skip"],
-    description: "prepare / write：默认 auto 要求有效研究；MCP由当前宿主执行scout任务；provided 明确使用已有 research 材料；skip 仅在创作者明确要求跳过调研时使用，必须给 research_reason。direction 不绕过研究。",
+  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided">({
+    type: "string", enum: ["auto", "provided"],
+    description: "默认 auto；provided = 创作者自带材料（放 research），仍要出立意卡、由创始人定。跳过调研/选卡的通道已关闭。",
   })),
   research: Type.Optional(Type.String({ description: "research_mode=provided 时必填的已有材料、来源与摘录；不能伪称 AutoCrew 已调研。" })),
-  research_reason: Type.Optional(Type.String({ description: "research_mode=skip 的创作者明确要求；原样记录，不由 agent 猜测。" })),
   execution: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("engine")], { description: "默认host：研究分析/立意交当前宿主完成，无后台模型调用；仅用户明确选择后台模式时engine，模型API与搜索服务使用独立额度。" })),
   content_id: Type.Optional(Type.String({ description: "draft：稿件 id（write 返回的 contentId）" })),
   probe: Type.Optional(
@@ -96,11 +95,11 @@ export const workflowSchema = Type.Object({
 });
 
 export const WORKFLOW_DESCRIPTION = [
-  "AutoCrew 创作统一入口。用户提出写作需求时，先查询或创建选题，再 prepare{topic_id,platform,requirements,direction?}；完整保留原始要求，不直接 write/generate。",
+  "AutoCrew 创作统一入口 = 选题会：prepare{topic_id 或 inspiration,platform,requirements} → 多路调研出 3–4 张立意卡 → 创始人定 → 才能开写。完整保留原始要求，不直接 write/generate。",
   "prepare 检查材料和立意：默认返回awaiting_host_research和scout任务，由当前宿主分析与提交，不启动后台模型，不轮询等后台；只有显式execution=engine才启动后台调研。",
-  "needs_angle：展示各候选的主张、受众、证据差异和推荐理由，让创作者选择；推荐不会自动选卡。按 next_action 带 angle_id（改写时加 card）调 select_angle 保存选择，它直接回下一步：ready_to_write 时 next_action 就是 writer pack。",
+  "needs_angle：展示各卡的主张、证据、缺口、观众收获和数据依据，让创始人选；不代选。select_angle{angle_id,brief_revision,founder_words（原话）,card?} 保存；创始人自己给角度用 select_angle{direction,founder_words}。ready_to_write 时 next_action 就是 writer pack。",
   "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；AutoCrew 提供材料、检查和编辑帮助。",
-  "已有研究可显式用 research_mode=provided 并交 research；创作者明确免调研才用 skip 并交 research_reason。这两种都如实标注未自动调研，且仍需已选立意、direction 或明确 skip_reason。",
+  "创作者自带材料用 research_mode=provided 交 research，仍需出卡并由创始人定；没有跳过通道。",
   "research{topic_id,kind} 默认领取scout宿主任务；只有用户明确指定execution=engine才启动后台研究。宿主可自带搜索并将URL交scout read_page核验，scout search使用独立搜索服务额度。status只读状态。prepare 不替用户选卡，也不暗中代写。",
   "write{...,execution:'engine'} 仅供用户明确要求后台模型代写；draft{content_id} 查看实际写作、审稿、证据阻塞状态。",
   "doctor{probe?} 检查配置；probe:true 会实际访问端点。不能把配置检查当成真实调用成功。",
@@ -243,13 +242,31 @@ function readinessRequest(params: Record<string, unknown>): WritingReadinessRequ
 async function doPrepare(
   params: Record<string, unknown>, dataDir: string, deps: WorkflowDeps, warn: (m: string) => void,
 ): Promise<WorkflowResult> {
-  const topicId = str(params.topic_id);
-  if (!topicId) return fail("topic_id 必填；先查询或创建选题，再准备创作。");
+  // 只有一句灵感：先建选题，再开这条的选题会（prepare 本身就是选题会的入口，不在这里拦）
+  const inspiration = str(params.inspiration);
+  let topicId = str(params.topic_id);
+  if (!topicId && inspiration) {
+    const created = await saveTopic({ title: Array.from(inspiration).slice(0, 40).join(""), description: inspiration, tags: [], source: "inspiration" }, dataDir);
+    topicId = created.id;
+    params = { ...params, topic_id: topicId };
+  }
+  if (!topicId) return fail("topic_id 必填；先查询或创建选题（或只给一句 inspiration），再准备创作。");
+  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：在派任何调研之前就明说——但先判存量稿，
+  // 已有真稿的选题带着旧的 skip 元数据照常修订（选题会只管第一篇）
+  if (str(params.skip_reason) || params.research_mode === "skip" || str(params.research_reason)) {
+    const refused = await newDraftAngleRefusal(topicId, dataDir);
+    if (refused?.code === "angle_gate_read_failed") return refused as WorkflowResult;
+    if (!(await topicHasDraft(topicId, dataDir))) return fail(ANGLE_GATE_COPY.skipRemoved, { code: "skip_removed" });
+  }
   const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
-  if (params.execution !== "engine" && readiness.research.mode === "auto" && !["ready_to_write", "needs_angle"].includes(readiness.status)) {
+  // 自带材料（provided）也要开选题会：还没有立意卡、也没有创始人自定角度时，同样派宿主调研出卡
+  const providedNeedsCards = readiness.research.mode === "provided" && readiness.status === "needs_angle"
+    && readiness.angle.cards.length === 0 && readiness.angle.status === "missing" && !str(params.direction);
+  if (params.execution !== "engine" && ((readiness.research.mode === "auto" && !["ready_to_write", "needs_angle"].includes(readiness.status)) || providedNeedsCards)) {
     const task = await executeScout(scoutPrepareParams({ ...readiness.continue_params, _host: params._host }, dataDir));
     if (task.ok === false) return { ...task, ok: false, error: String(task.error ?? "宿主调研任务准备失败"), status: "needs_attention", preparation: readiness };
-    return { ok: true, status: "awaiting_host_research", preparation: readiness, creative_task: task.creative_task,
+    return { ok: true, status: "awaiting_host_research", topic_id: topicId, preparation: readiness, creative_task: task.creative_task,
+      ...(providedNeedsCards ? { provided_material_note: "创作者自带的材料：能抓的网址用 scout read_page + cite 核验；只有原话的用 claim_offline 登记成未核验陈述，再照常出卡。" } : {}),
       research_task: task, executed_by: { kind: "host", host: params._host ?? "local-user" }, model_api_calls: 0,
       // 本阶段任务包已在 research_task.pack：下一步直接是按它提交，不必再领一次 scout pack（P6 §3.7）
       next_action: (task.pack as { submit?: unknown } | undefined)?.submit ?? { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: task.task_id } },
@@ -326,9 +343,18 @@ async function doSelectAngle(
 ): Promise<WorkflowResult> {
   const topicId = str(params.topic_id);
   const angleId = str(params.angle_id);
-  if (!topicId || !angleId) return fail("topic_id 与 angle_id 必填");
+  const founderWords = str(params.founder_words);
+  const direction = str(params.direction);
+  if (!topicId || (!angleId && !direction)) return fail("topic_id 必填，并给 angle_id（选卡）或 direction（创始人自定角度）");
+  if (!founderWords) return fail(ANGLE_GATE_COPY.needFounderWords, { code: "founder_words_required" });
   const topic = await getTopic(topicId, dataDir);
   if (!topic) return fail(`选题不存在：${topicId}`);
+  if (!angleId) {
+    // 创始人自己给的角度：记成创始人自定角度（带原话），之后 prepare/pack 带同一句 direction
+    const saved = await recordFounderAngle(topic, direction, founderWords, dataDir);
+    if (!saved) return fail(`选题不存在：${topicId}`);
+    return { ok: true, topic: saved, founder_angle: saved.founderAngle, ...(await inspectWritingReadiness(topicId, readinessRequest({ ...params, direction }), dataDir, warn)) };
+  }
 
   // 唯一「当前有效简报」入口（P1 §3.0）：认台账指针，不认磁盘最大版
   const snap = await resolveEffectiveBrief(topicId, dataDir, warn);
@@ -353,7 +379,7 @@ async function doSelectAngle(
   if (typeof card === "string") return fail(card);
   const updated = await updateTopic(
     topicId,
-    { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
+    { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords }, founderAngle: undefined },
     dataDir,
   );
   if (!updated) return fail(`选题不存在：${topicId}`);
@@ -411,6 +437,8 @@ async function doWrite(
     ...(skipReason ? { angleSkipReason: skipReason } : {}),
   };
 
+  const refused = await newDraftGate(topicId, req, dataDir, warn);
+  if (refused) return refused as WorkflowResult;
   const gated = await angleGate(topicId, req, dataDir, warn);
   if (gated) return gated;
 

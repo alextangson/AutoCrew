@@ -6,6 +6,7 @@ import { buildIpcHandlers } from "./ipc.js";
 import { saveContent, getContent } from "../storage/local-store.js";
 import { listDiffs } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 // 蒸馏这一步不该在收稿测试里真跑模型：门槛与结果由 mock 给，其余导出保持真实
 vi.mock("../modules/learnings/style-distiller.js", async (importOriginal) => ({
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 async function mkContent() {
-  return saveContent({ title: "T", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] }, testDir);
+  return saveContent({ _provenance: HUMAN_WRITE, title: "T", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] }, testDir);
 }
 
 describe("draft:adopt_revision", () => {
@@ -108,7 +109,7 @@ describe("draft:adopt_revision", () => {
   // revise_focus 自己不落库，它的落盘点就是这个 handler（审稿 spec §2.7）
   it("收下改稿 → 审稿结论过期（review.status = stale）", async () => {
     const c = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "T",
         body: "原正文",
         platform: "wechat_mp",

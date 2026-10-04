@@ -14,6 +14,7 @@ import { resolveContentProject } from "./content-project.js";
 import { columnDir, columnOf, scriptText } from "./my-content-plan.js";
 import { readPack } from "../tools/writer-pack.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 export const FOUNDER_EDIT_NOTE = "创始人在「我的内容」里改稿";
 const EDITABLE_DIRS = new Set([columnDir("写稿中"), columnDir("待录制")]);
@@ -44,7 +45,7 @@ async function syncOne(id: string, text: string, viewHash: string, dataDir: stri
   if (blocked) return blocked;
   // 创始人自己改的（§13-C）：待录制时认稿随改稿重绑；已冻结的会被写口拒，照原因保留他的文件
   let updated: Content | null;
-  try { updated = await updateContent(id, { body: text, _versionNote: FOUNDER_EDIT_NOTE, _editor: "founder" }, dataDir); }
+  try { updated = await updateContent(id, { body: text, _versionNote: FOUNDER_EDIT_NOTE, _editor: "founder", _provenance: HUMAN_WRITE }, dataDir); }
   catch (e) { if (e instanceof ScriptFrozenError) return e.message; throw e; }
   if (!updated) return "稿件已经不在了";
   await recordDiff(id, "body", c.body, text, dataDir, FOUNDER_EDIT_NOTE, c.platform);

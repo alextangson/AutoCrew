@@ -11,6 +11,7 @@ import { importPerformanceRows } from "./row-import.js";
 import { lookupPlatformItem, readPlatformItems, commitBindings } from "./platform-items.js";
 import { isTruncatedItemId, type PerformanceOutcome } from "./outcome-schema.js";
 import { saveContent, updateContent, getContent, listContents, transitionStatus } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const GOOD_DY = "7690860367378926899";
 const TRUNC_DY = "7690860367378927000";
@@ -22,8 +23,8 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 async function published(title: string, extra: Record<string, unknown> = {}) {
-  const c = await saveContent({ title, body: "正文", platform: "douyin", status: "published", tags: [] }, dir);
-  await updateContent(c.id, { publishedAt: PUB, ...extra }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "正文", platform: "douyin", status: "published", tags: [] }, dir);
+  await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: PUB, ...extra }, dir);
   return c;
 }
 
@@ -107,7 +108,7 @@ describe("边界：截坏 id 的旧行不参与绑定", () => {
 describe("② 认领放宽：候选含发布包平台，标题含各平台 post_title", () => {
   it("稿子登记成抖音，发布包是视频号 → 视频号的行按 post_title 精确认领并登记 title 绑定", async () => {
     const c = await published("thinking effort 开到 max");
-    await updateContent(c.id, { videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
     expect((await matchDraft("wechat_video", "深度思考开到max反而跑偏", PUB, dir))?.id).toBe(c.id);
     await importPerformanceRows("wechat_video", [{ title: "深度思考开到max反而跑偏", publishedAt: PUB, platformItemId: SPH, metrics: { views: 3 } }], { source: "auto", metricDate: "2026-10-03", dataDir: dir });
     expect(await lookupPlatformItem("wechat_video", SPH, dir)).toMatchObject({ contentId: c.id, via: "title" });
@@ -115,7 +116,7 @@ describe("② 认领放宽：候选含发布包平台，标题含各平台 post_
 
   it("边界：放宽后的模糊命中照常归属但不登记绑定；时间窗不变（超窗不认）", async () => {
     const c = await published("thinking effort 开到 max");
-    await updateContent(c.id, { videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏了吗", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏了吗", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
     const fuzzy = "深度思考开到max反而跑偏";
     const r = await resolveItemBinding({ platform: "wechat_video", platformTitle: fuzzy, publishedAt: PUB, platformItemId: SPH, dataDir: dir });
     expect(r.contentId).toBe(c.id);
@@ -125,7 +126,7 @@ describe("② 认领放宽：候选含发布包平台，标题含各平台 post_
 
   it("没登记过这个平台的稿子不进候选（小红书行不会认到只发了视频号的稿）", async () => {
     const c = await published("thinking effort 开到 max");
-    await updateContent(c.id, { videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoKit: { platform: "wechat_video", postTitle: "深度思考开到max反而跑偏", caption: "", storyboard: [], coverText: "", coverPrompt: "", generatedAt: PUB } }, dir);
     expect(await matchDraft("xiaohongshu", "深度思考开到max反而跑偏", PUB, dir)).toBeNull();
   });
 });

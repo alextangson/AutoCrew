@@ -11,6 +11,7 @@ import { generateScript } from "./generate-script.js";
 import { getContent, listContents } from "../../storage/local-store.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] as const;
@@ -28,6 +29,7 @@ const ENGINE_V2 = {
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-fallback-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify(ENGINE_V2));
   for (const k of ENV_KEYS) {
     saved[k] = process.env[k];
@@ -60,7 +62,7 @@ const GOOD_PAYLOAD = {
   hashtags: ["#AI赚钱"],
 };
 
-const REQ = { topic: "AI时代普通人赚钱", platform: "douyin" as const };
+const REQ = { topic: "AI时代普通人赚钱", platform: "douyin" as const, topicId: "topic-gentest" };
 
 describe("写稿失败的人话（§4.2）", () => {
   it("上游连不上：中断稿 lastError 说「写稿专线 …（主机名）连不上」，不含原始 fetch failed", async () => {

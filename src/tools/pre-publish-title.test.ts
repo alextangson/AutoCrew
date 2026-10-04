@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getContent, saveContent } from "../storage/local-store.js";
 import { executePrePublishTool } from "./pre-publish.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dataDir: string;
 beforeEach(async () => { dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-title-")); });
@@ -17,7 +18,7 @@ const CANDIDATES = [
 ];
 const KIT = { post_title: "开小店的老板用AI回差评", caption: "这期讲清楚小店老板怎么让 AI 先把差评回复理顺，看完就能上手。", cover_text: "差评别硬扛", title_candidates: CANDIDATES, title_method: "identity-call" };
 const mk = (platform = "douyin", extra: Record<string, unknown> = {}) =>
-  saveContent({ title: "口播稿", body: "口播正文讲 3 个步骤。".repeat(100), platform, status: "approved", videoDone: { renderedRevision: 1, at: "2026-10-01T00:00:00.000Z" }, ...extra }, dataDir);
+  saveContent({ _provenance: HUMAN_WRITE, title: "口播稿", body: "口播正文讲 3 个步骤。".repeat(100), platform, status: "approved", videoDone: { renderedRevision: 1, at: "2026-10-01T00:00:00.000Z" }, ...extra }, dataDir);
 const save = (id: string, platform: string, kit: Record<string, unknown>) =>
   executePrePublishTool({ action: "video_kit", content_id: id, platform, kit, _dataDir: dataDir });
 

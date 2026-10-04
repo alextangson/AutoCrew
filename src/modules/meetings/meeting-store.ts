@@ -37,6 +37,8 @@ export interface MeetingSlot {
   watch: MeetingWatch;
   probability: number;
   premortem: string;
+  /** 单题会追加进来的位：追加那天（北京时间）。会上原有的位没有这个字段 */
+  addedOn?: string;
   /** 已有立意卡/选中角度时创始人的决定（边界 7） */
   angleDecision?: "rerun" | "accept_deviation";
 }

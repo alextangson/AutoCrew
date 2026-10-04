@@ -10,6 +10,7 @@ import {
 import { buildWritingContext, contentAttributionOf } from "../writing/generate-script.js";
 import { getContent, saveContent } from "../../storage/local-store.js";
 import { appendHypotheses, bindContentToHypothesis, listHypotheses, type Hypothesis } from "./hypotheses.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 const now = new Date("2026-09-26T04:00:00Z");
@@ -110,7 +111,7 @@ describe("宿主备料到持久化任务书", () => {
     expect(context.inputs.writingContract).toContain(requirements);
     expect(context.inputs.snapshot.text).not.toContain(EDITORIAL_BLOCK_START);
     const attribution = contentAttributionOf(context.inputs);
-    const draft = await saveContent({
+    const draft = await saveContent({ _provenance: HUMAN_WRITE,
       title: "隔离测试稿", body: "隔离测试正文", platform: "douyin", status: "drafting", ...attribution,
     }, testDir);
     expect((await getContent(draft.id, testDir))?.writingContract).toContain(reference);

@@ -37,6 +37,18 @@ export interface SelectedAngle {
   angleId: string;
   card: AngleCard;
   selectedAt: string;
+  /** 选题会规则：只有创始人定的卡才放行开写；没有这两格的旧选择不算数 */
+  chosenBy?: "founder";
+  /** 创始人选卡时的原话（宿主照抄，诚信制） */
+  founderWords?: string;
+}
+
+/** 创始人自己给的角度（「就写这个角度」）：同样要原话，按选题文本指纹判过期 */
+export interface FounderAngle {
+  direction: string;
+  founderWords: string;
+  chosenAt: string;
+  topicHash: string;
 }
 
 export interface Topic {
@@ -63,6 +75,8 @@ export interface Topic {
   angles?: string[];
   /** 创始人选中/改写的角度卡（角度卡 spec §1.3）；未选 = 字段不落，写稿走「未经角度点选」 */
   selectedAngle?: SelectedAngle;
+  /** 创始人自己写的角度（选题会的另一条出口） */
+  founderAngle?: FounderAngle;
   scoredAt?: string;
   createdAt: string;
   /**
@@ -305,6 +319,11 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  /**
+   * 系统建稿时垫的占位正文（create_variant 不带正文）：选题会卡口只认与它一字不差的正文为占位，
+   * 前缀长得像的正文不算。只由系统写，content update 不开放这个字段。
+   */
+  generatedPlaceholder?: string;
   /** 稿件摘要（spec §3 A）：只对 outlineDraftHash 那版正文有效，正文一改即失效（见 series-memory.validOutline） */
   outline?: Outline;
   outlineDraftHash?: string;
@@ -657,6 +676,20 @@ export async function getTopic(id: string, dataDir?: string): Promise<Topic | nu
   }
 }
 
+/** 严格读选题：不存在 → null；读不出或解析不了 → 抛（不把坏记录当成「没有这条选题」） */
+export async function getTopicStrict(id: string, dataDir?: string): Promise<Topic | null> {
+  if (!isTopicId(id)) return null;
+  const file = path.join(getDataDir(dataDir), "topics", `${id}.json`);
+  let raw: string;
+  try { raw = await fs.readFile(file, "utf-8"); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  try { return JSON.parse(raw) as Topic; } catch (err) {
+    throw new Error(`选题记录 topics/${id}.json 读不出：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
   if (!isTopicId(topic.id)) throw new Error("Invalid topic id");
   const dir = await topicsDir(dataDir);
@@ -725,9 +758,15 @@ async function contentProjectDir(id: string, title: string, dataDir?: string, in
 }
 
 export async function saveContent(
-  content: Omit<Content, "id" | "createdAt" | "updatedAt" | "assets" | "versions" | "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData"> & Partial<Pick<Content, "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData">>,
+  input: Omit<Content, "id" | "createdAt" | "updatedAt" | "assets" | "versions" | "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData"> & Partial<Pick<Content, "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData">> & {
+    /** 谁在写这份正文（选题会卡口要看）；带真正文建稿却不标来源会被拒 */
+    _provenance?: WriteProvenance;
+  },
   dataDir?: string,
 ): Promise<Content> {
+  const { _provenance: provenance, ...content } = input;
+  // 选题会唯一卡口：带真正文新建 = 这篇稿的第一份正文
+  await guardFirstBody(null, { body: content.body, topicId: content.topicId, generatedPlaceholder: content.generatedPlaceholder }, provenance, dataDir);
   // 初始态也过阶段门（spec §1.2 收口）：from=to 时只有「这个阶段属不属于这种平台」会响，
   // 挡住的正是「把公众号稿直接建在剪辑阶段」这类跳阶段建稿。
   const initial = normalizeLegacyStatus(content.status);
@@ -833,6 +872,45 @@ async function listContentsRaw(dataDir?: string): Promise<Content[]> {
   return contents.map(withNormalizedStatus).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+export { TOPIC_PLACEHOLDER_BODY_PREFIX, isPlaceholderBody } from "./first-body-guard.js";
+import { guardFirstBody, topicPlaceholderBody, type WriteProvenance } from "./first-body-guard.js";
+
+/**
+ * 严格全量读（含已删）：任何一条读不出、解析不了就抛，不跳过。
+ * 给「读漏一条就会判错」的决策用（片单闸口：漏读一篇已有稿 ≠ 没有稿）。
+ */
+export async function listContentsStrict(dataDir?: string): Promise<Content[]> {
+  if (readProjectRegistry(dataDir)) {
+    const out: Content[] = [];
+    for (const id of await contentIds(dataDir)) {
+      const c = await getContent(id, dataDir);
+      if (!c) throw new Error(`稿件 ${id} 读不出`);
+      out.push(c);
+    }
+    return out;
+  }
+  const dir = path.join(getDataDir(dataDir), "contents");
+  let entries: import("node:fs").Dirent[];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  const read = async (file: string, name: string): Promise<Content> => {
+    try { return withNormalizedStatus(JSON.parse(await fs.readFile(file, "utf-8"))); } catch (err) {
+      throw new Error(`稿件记录 contents/${name} 读不出：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  // 同 listContents：目录里的 meta.json 优先，平铺的旧 <id>.json 只补目录里没有的 id
+  const byId = new Map<string, Content>();
+  for (const e of entries) if (e.isDirectory()) { const c = await read(path.join(dir, e.name, "meta.json"), `${e.name}/meta.json`); byId.set(c.id, c); }
+  for (const e of entries) {
+    if (e.isDirectory() || !e.name.endsWith(".json")) continue;
+    const c = await read(path.join(dir, e.name), e.name);
+    if (!byId.has(c.id)) byId.set(c.id, c);
+  }
+  return [...byId.values()];
+}
+
 /** 稿件移入回收站(软删除,可恢复)。不存在 → null */
 export async function softDeleteContent(id: string, dataDir?: string): Promise<Content | null> {
   return updateContent(id, { deletedAt: new Date().toISOString() }, dataDir);
@@ -890,6 +968,33 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
 }
 
 /**
+ * 严格读稿件：不存在 → null；读不出 / 解析不了 → 抛。不像 getContent 那样把坏记录当成「没有」，
+ * 也不在目录稿读坏时退回平铺旧副本（那份可能是过期的）。
+ */
+export async function getContentStrict(id: string, dataDir?: string): Promise<Content | null> {
+  if (!isContentId(id)) return null;
+  const parse = (raw: string, where: string): Content => {
+    try { return withNormalizedStatus(JSON.parse(raw)); } catch (err) {
+      throw new Error(`稿件记录 ${where} 读不出：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  if (readProjectRegistry(dataDir)) {
+    try { return await getContent(id, dataDir); } catch (err) {
+      if (isFileMissing(err)) return null;
+      throw err;
+    }
+  }
+  const projDir = contentDir(id, dataDir);
+  try { return parse(await fs.readFile(projectFile(projDir, "meta.json"), "utf-8"), `${id}/meta.json`); } catch (err) {
+    if (!isFileMissing(err)) throw err;
+  }
+  try { return parse(await fs.readFile(path.join(getDataDir(dataDir), "contents", `${id}.json`), "utf-8"), `${id}.json`); } catch (err) {
+    if (isFileMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
  * 状态在类型上就不许从这里写（阶段制 spec §1.2 收口）：`status` 的唯一写入通道是
  * `transitionStatus`——只有它在写锁内跑过阶段门。放开这里等于让任何一处 update 跳阶段。
  */
@@ -902,6 +1007,8 @@ export type ContentUpdates = Partial<Omit<Content, "status">> & {
    * 缺省按 agent 算 → 认稿随正文哈希失效。不进 meta。
    */
   _editor?: Editor;
+  /** 谁写的正文（选题会卡口）：第一份真正文不标来源会被拒；不进 meta */
+  _provenance?: WriteProvenance;
 };
 
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
@@ -1013,6 +1120,8 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     throw err;
   }
   const existing: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
+  // 选题会唯一卡口：所有改正文的写口（含流转补丁、带期望正文的写）都汇到这里
+  await guardFirstBody(existing, { body: updates.body, topicId: "topicId" in updates ? updates.topicId : undefined }, updates._provenance, dataDir);
   const now = new Date().toISOString();
   // 本体钩子（§2.5 冻结、§13-C 认稿去留）：所有写正文的口都从这里过
   const scriptPlan = updates.body !== undefined
@@ -1067,7 +1176,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (!readProjectRegistry(dataDir)) await writeTextAtomic(projectFile(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
   }
 
-  const { _versionMeta: _dropVersionMeta, _editor: _dropEditor, ...fields } = updates;
+  const { _versionMeta: _dropVersionMeta, _editor: _dropEditor, _provenance: _dropProvenance, ...fields } = updates;
   const updated: Content = {
     ...existing,
     ...fields,
@@ -1407,7 +1516,7 @@ export async function getVersion(contentId: string, version: number, dataDir?: s
   }
 }
 
-export async function revertToVersion(contentId: string, version: number, dataDir?: string): Promise<Content | null> {
+export async function revertToVersion(contentId: string, version: number, dataDir: string | undefined, provenance: WriteProvenance | undefined): Promise<Content | null> {
   const [body, versions] = await Promise.all([
     getVersion(contentId, version, dataDir),
     listVersions(contentId, dataDir),
@@ -1416,7 +1525,7 @@ export async function revertToVersion(contentId: string, version: number, dataDi
   const target = versions.find((item) => item.version === version);
   return updateContent(
     contentId,
-    { body, ...(target?.title ? { title: target.title } : {}), _versionNote: `回滚到 v${version}` },
+    { body, ...(target?.title ? { title: target.title } : {}), _versionNote: `回滚到 v${version}`, _provenance: provenance },
     dataDir,
   );
 }
@@ -1860,7 +1969,7 @@ export async function describeAllowedTransitions(
 export async function createPlatformVariant(
   topicId: string,
   platform: string,
-  opts?: { title?: string; body?: string; writingSource?: Content["writingSource"] },
+  opts?: { title?: string; body?: string; writingSource?: Content["writingSource"]; provenance?: WriteProvenance },
   dataDir?: string,
 ): Promise<{ ok: boolean; content?: Content; error?: string }> {
   const topic = await getTopic(topicId, dataDir);
@@ -1879,15 +1988,18 @@ export async function createPlatformVariant(
   }
 
   // Create the new content
+  const placeholder = topicPlaceholderBody(topicId, topic.description ?? "");
   const content = await saveContent(
     {
       title: opts?.title || `${topic.title} (${platform})`,
-      body: opts?.body || `<!-- Generated from topic: ${topicId} -->\n\n${topic.description}`,
+      body: opts?.body || placeholder,
+      ...(opts?.body ? {} : { generatedPlaceholder: placeholder }),
       platform,
       topicId,
       status: "topic_saved",
       tags: [...topic.tags],
       ...(opts?.writingSource ? { writingSource: opts.writingSource } : {}),
+      ...(opts?.provenance ? { _provenance: opts.provenance } : {}),
     },
     dataDir,
   );

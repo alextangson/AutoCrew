@@ -47,6 +47,7 @@ import {
   type Content,
   type Topic,
 } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dataDir: string;
 let topic: Topic;
@@ -190,7 +191,7 @@ const listed = (res: Record<string, unknown>) =>
 
 const newContent = (body = "开头\n\n[IMAGE: 一张图]\n\n结尾"): Promise<Content> =>
   saveContent(
-    { title: "稿件", body, status: "draft_ready", tags: [], topicId: topic.id, platform: "wechat_mp" },
+    { _provenance: HUMAN_WRITE, title: "稿件", body, status: "draft_ready", tags: [], topicId: topic.id, platform: "wechat_mp" },
     dataDir,
   );
 

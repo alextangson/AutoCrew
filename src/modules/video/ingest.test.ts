@@ -19,6 +19,7 @@ import {
 } from "./ingest.js";
 import { fakeChild, fakeFfprobe, routedSpawn, seedVideoContent, ensureArollFixture } from "./testkit.js";
 import { readVideoAssets } from "./video-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -49,14 +50,14 @@ describe("checkVideoEligibility", () => {
   });
 
   it("非视频平台 → 拒", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] }, dir);
     const r = await checkVideoEligibility(c.id, dir);
     expect(r.ok === false && r.reason).toContain("只服务视频平台");
   });
 
   it("回收站里的稿件 → 拒", async () => {
     const { contentId } = await seedVideoContent(dir);
-    await updateContent(contentId, { deletedAt: new Date().toISOString() }, dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, deletedAt: new Date().toISOString() }, dir);
     const r = await checkVideoEligibility(contentId, dir);
     expect(r.ok === false && r.reason).toContain("回收站");
   });
@@ -144,14 +145,14 @@ describe("ingestAroll", () => {
   });
 
   it("没有素材 → aroll_missing，指引人去加素材", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
     const r = await ingestAroll(dir, c.id);
     expect(r.ok === false && r.errorCode).toBe("aroll_missing");
     expect(r.ok === false && r.reason).toContain("素材");
   });
 
   it("成片 final-v*.mp4 不会被当成 A-roll（否则第二次构建会剪上一版成片）", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
     const fixture = await ensureArollFixture();
     await fs.mkdir(path.join(dir, "contents", c.id, "assets"), { recursive: true });
     await addAsset(c.id, { filename: "final-v1.mp4", type: "video", sourcePath: fixture }, dir);
@@ -165,7 +166,7 @@ describe("ingestAroll", () => {
 
 /** 造一篇只有 meta 的稿件，素材按角色手写——这里测的是选取规则，不需要真文件 */
 async function seedRoles(assets: Parameters<typeof addAsset>[1][]): Promise<string> {
-  const c = await saveContent({ title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
   await fs.mkdir(path.join(dir, "contents", c.id, "assets"), { recursive: true });
   for (const a of assets) await addAsset(c.id, a, dir);
   return c.id;

@@ -12,8 +12,10 @@ import path from "node:path";
 import { generateScript, startGenerateScript, retryGenerateScript } from "./generate-script.js";
 import type { EnsureBriefOutcome, GeneratedScript, ScriptRequest } from "./generate-script.js";
 import { getContent, listContents, saveContent } from "../../storage/local-store.js";
+import { seedFounderTopic } from "../research/angle-gate.test-helper.js";
 import type { LoopResult, LoopTool, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ const saved: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-test-"));
+  await seedFounderTopic(testDir, ["topic-gentest", "topic-1", "topic-legacy"]);
   // Write a minimal engine.json so loadEngineConfig succeeds
   await fs.writeFile(
     path.join(testDir, "engine.json"),
@@ -95,9 +98,11 @@ const GOOD_PAYLOAD = {
   hashtags: ["#AI赚钱", "#普通人逆袭"],
 };
 
+/** 引擎生成也只给开过选题会的选题开第一篇：测试选题在 beforeEach 里由创始人定了角度 */
 const TEST_REQ = {
   topic: "AI时代普通人赚钱",
   platform: "douyin" as const,
+  topicId: "topic-gentest",
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -439,7 +444,7 @@ function articlePayload(bodyOverride?: string): Record<string, unknown> {
  * 两道门只有在**材料里真有这些数**的时候才同时过得去。所以这条请求自带材料，
  * 里面就是 `articlePayload` 用的那串数（账本按 user_claim 收，正是生产里创始人贴材料的形态）。
  */
-const WECHAT_REQ = { topic: "AI 变现", platform: "wechat_mp" as const, research: ARTICLE_DATA };
+const WECHAT_REQ = { topic: "AI 变现", platform: "wechat_mp" as const, research: ARTICLE_DATA, topicId: "topic-gentest" };
 
 describe("generateScript × quality gate (wechat_mp)", () => {
   it("wechat_mp 路由到图文包：prompt 含写手角色与硬门禁，budget 提升", async () => {
@@ -508,7 +513,7 @@ describe("generateScript × quality gate (wechat_mp)", () => {
       200,
       execResults,
     );
-    const res = await generateScript({ topic: "AI 变现", platform: "xiaohongshu" as const }, testDir, {
+    const res = await generateScript({ topic: "AI 变现", platform: "xiaohongshu" as const, topicId: "topic-gentest" }, testDir, {
       runLoopImpl,
     });
     expect(execResults).toEqual(["已收到脚本"]);
@@ -660,7 +665,7 @@ describe("retryGenerateScript — 中断稿原地重写", () => {
 
   it("老数据没有 genRequest → 降级:选题从标题剥哨兵,平台/血缘取稿件字段", async () => {
     const legacy = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "［生成中断］AI时代普通人赚钱",
         body: "",
         platform: "douyin",
@@ -845,15 +850,12 @@ describe("写作入口自动补深调研", () => {
     expect(spy.calls).toEqual([]);
   });
 
-  it("没有 topicId（随手写）→ 不触发调研", async () => {
+  it("没有 topicId（随手写）→ 生成准入就拒（没开过选题会），不触发调研也不建占位稿", async () => {
     const spy = gateSpy({ state: "ready" });
-    const res = await generateScript(TEST_REQ, testDir, {
-      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
-      ensureBriefImpl: spy.impl,
-    });
-
+    const { topicId: _drop, ...bare } = TEST_REQ;
+    await expect(generateScript(bare, testDir, { runLoopImpl: makeRunLoop([GOOD_PAYLOAD]), ensureBriefImpl: spy.impl })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
     expect(spy.calls).toEqual([]);
-    expect(res.wroteWithoutBrief).toBe(false);
+    expect(await listContents(testDir)).toHaveLength(0);
   });
 
   it("未注入闸口（MCP 同步入口）→ 行为与改动前完全一致", async () => {

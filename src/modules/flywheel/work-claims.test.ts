@@ -17,6 +17,7 @@ import { executeWriter } from "../../tools/writer.js";
 import { executeReviewDesk } from "../../tools/host-review.js";
 import { executeContentSave } from "../../tools/content-save.js";
 import { HISTORY_REFUSAL } from "../../storage/imported-history.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const PUB = "2026-09-24T04:00:00.000Z"; // 北京 09-24
 const TITLE = "什么时候该用 Jev，什么时候该用大模型";
@@ -60,7 +61,7 @@ describe("① 无编号行人工认领", () => {
     if (!r.ok) expect(r.error).toContain(a);
     expect(await journalLines()).toBe(before);
     // 行上已归属（不经认领表，比如按标题猜到的）也拒
-    const c = await saveContent({ title: "普通稿", body: "x", platform: "bilibili", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "普通稿", body: "x", platform: "bilibili", status: "published", tags: [] }, dir);
     await appendOutcomes([row({ platformTitle: "另一条", contentId: c.id })], dir);
     expect(await claimWorkByTitle(a, "bilibili", "另一条", "2026-09-24", dir)).toMatchObject({ ok: false, existing: { contentId: c.id } });
   });
@@ -145,7 +146,7 @@ describe("② 存档原稿：只读查看，不进生产", () => {
   });
 
   it("只挂在历史记录上：普通稿拒绝", async () => {
-    const c = await saveContent({ title: "普通稿", body: "x", platform: "douyin", status: "drafting", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "普通稿", body: "x", platform: "douyin", status: "drafting", tags: [] }, dir);
     const src = await oldDraft();
     const s = { dir: src, oldId: "18yfm1", inferred: false };
     expect(await attachArchiveDraft(c.id, s, await readArchiveSource(s), dir)).toMatchObject({ ok: false, error: expect.stringContaining("imported_history") });
@@ -160,7 +161,7 @@ describe("② 存档原稿：只读查看，不进生产", () => {
     expect(await executeWriter({ action: "pack", content_id: id, _dataDir: dir })).toMatchObject(refused);
     expect(await executeWriter({ action: "submit", content_id: id, title: "t", body: "# 旧稿正文\n第一段。", _dataDir: dir })).toMatchObject(refused);
     expect(await executeReviewDesk({ action: "pack", content_id: id, _dataDir: dir })).toMatchObject(refused);
-    expect(await executeContentSave({ action: "update", id, body: "# 旧稿正文\n第一段。", _dataDir: dir } as never)).toMatchObject(refused);
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id, body: "# 旧稿正文\n第一段。", _dataDir: dir } as never)).toMatchObject(refused);
     expect((await getContent(id, dir))?.body).toBe("");
   });
 });

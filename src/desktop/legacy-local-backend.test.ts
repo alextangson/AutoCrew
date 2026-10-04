@@ -16,6 +16,7 @@ import { recentActionsBlock } from "./recent-actions.js";
 import { conversationRenameHandler } from "./conversation-handlers.js";
 import { buildIpcHandlers } from "./ipc.js";
 import { IPC_CHANNELS } from "./channels.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -125,7 +126,7 @@ describe("按钮派活的说明（内置引擎）", () => {
 describe("删选题", () => {
   it("选题下还有稿件：拒绝并列出稿件", async () => {
     const topic = await saveTopic({ title: "有稿", description: "d", tags: [] }, dir);
-    await saveContent({ title: "稿一", body: "b", platform: "douyin", topicId: topic.id } as never, dir);
+    await saveContent({ _provenance: HUMAN_WRITE, title: "稿一", body: "b", platform: "douyin", topicId: topic.id } as never, dir);
     const r = await executeTopicCreate({ action: "delete", id: topic.id, _dataDir: dir }) as Record<string, unknown>;
     expect(r.code).toBe("topic_has_drafts");
     expect((await getTopic(topic.id, dir))?.deletedAt).toBeFalsy();
