@@ -63,20 +63,19 @@ export function locateMapping(body: string, mapping: MappingInput[], entries: re
   return { spans, errors };
 }
 
-const RELATIVE_BEFORE = /(?:前|这|那|近|过去|最近|头)$/;
-const RELATIVE_AFTER = /^(?:前|后|以前|以后|之前|之后|以来|来|里|内)/;
+const RELATIVE_BEFORE = /(?:前|这|那|最近)$/;
+const RELATIVE_AFTER = /^(?:前|以前|之前|后|以后|之后)/;
 /** 「两三个」「一两句」「三四天」：相邻两个数连说 = 约数 */
 const APPROX_PAIR = /^(?:一两|两三|三四|四五|五六|六七|七八|八九)/;
 
 /**
- * 清单口径（验收 10-04）：相对时间（前两天、三年前）和没有具体数值的约数（一半人、十几个、两三个）不算要出处的数字；
- * 17 分、52 人、67%、两小时、三成照算。只管定稿清单，写稿数字门照旧。
+ * 清单口径（验收 10-04）：只放过真模糊的说法——相对时间（前两天、三年前、这两天）和约数（两三个、十几个）。
+ * 有具体数值的照算：17 分、52 人、67%、两小时内、半小时、一半人（拿不准就列，创始人可以保留）。只管定稿清单，写稿数字门照旧。
  */
 export function isVagueOrRelative(m: Pick<NumberMention, "raw" | "role" | "kind" | "needsHuman">, before: string, after: string): boolean {
   if (m.needsHuman) return true;
   if (m.kind !== "chinese") return false;
-  const raw = m.raw.trim();
-  if (/^(?:一半|半)/.test(raw) || APPROX_PAIR.test(raw)) return true;
+  if (APPROX_PAIR.test(m.raw.trim())) return true;
   return m.role === "duration" && (RELATIVE_BEFORE.test(before) || RELATIVE_AFTER.test(after));
 }
 
@@ -100,34 +99,50 @@ function judge(text: string, evidence: string[], entries: readonly LedgerEntry[]
 
 const overlaps = (s: { start: number; end: number }, t: { start: number; end: number }) => s.start < t.end && t.start < s.end;
 
-/** 必须出处的句子：有归因，或至少有一个不是相对时间 / 约数的数字 */
-function checklistSentences(body: string) {
-  const counted = extractNumbers(body).filter((m) => !EXEMPT_ROLES.has(m.role) && !vagueAt(body, m));
+type Sentence = ReturnType<typeof factualSentences>[number];
+
+/**
+ * 必须出处的句子：有归因，或有一个不是相对时间 / 约数的数字，或有数字在台账里对得上
+ * （对得上的必须引台账——交接出处门不收「创作者自己的话」，见 validateCoverage）
+ */
+function checklistSentences(body: string, backed: ReadonlySet<number>): Sentence[] {
+  const counted = extractNumbers(body).filter((m) => !EXEMPT_ROLES.has(m.role) && (!vagueAt(body, m) || backed.has(m.index)));
   return factualSentences(body).filter((s) => s.attribution || counted.some((m) => m.index >= s.start && m.index < s.end));
 }
 
-/** agent 把这句标成示意 / 判断：不列为没出处，单独一组 */
-function exemptKind(spans: Span[], at: { start: number; end: number }): ChecklistItem["kind"] {
-  return spans.find((m) => m.kind !== "claim" && overlaps(m, at))?.kind as ChecklistItem["kind"];
+const TRAILING_PUNCT = /[。！？!?]+$/;
+
+/**
+ * agent 标的示意 / 判断只在三件事都成立时生效（Codex review P1/P2）：标的文字盖住整句（句末标点可省）、
+ * 句里没有归因、句里没有台账对得上的数字。否则照常核出处，免得半句判断把同句里的事实一起放过。
+ */
+function exemptKind(body: string, spans: Span[], at: { start: number; end: number }, s: Sentence | undefined, backed: ReadonlySet<number>): ChecklistItem["kind"] {
+  if (s && (s.attribution || [...backed].some((i) => i >= s.start && i < s.end))) return undefined;
+  const coreEnd = at.start + body.slice(at.start, at.end).replace(TRAILING_PUNCT, "").length;
+  return spans.find((m) => m.kind !== "claim" && m.start <= at.start && m.end >= coreEnd)?.kind as ChecklistItem["kind"];
 }
 
-function itemFor(body: string, at: { start: number; end: number }, evidence: string[], spans: Span[], entries: readonly LedgerEntry[]): ChecklistItem {
-  const text = body.slice(at.start, at.end);
+interface Ctx { body: string; spans: Span[]; entries: readonly LedgerEntry[]; backed: ReadonlySet<number> }
+
+function itemFor(c: Ctx, at: { start: number; end: number }, evidence: string[], s?: Sentence): ChecklistItem {
+  const text = c.body.slice(at.start, at.end);
   const base = { id: itemId(at.start, text), start: at.start, end: at.end, text, evidence_ids: evidence };
-  const kind = exemptKind(spans, at);
+  const kind = exemptKind(c.body, c.spans, at, s, c.backed);
   if (kind) return { ...base, status: "exempt", kind, numbers_unsourced: [], needs_human: [] };
-  return { ...base, ...judge(text, evidence, entries) };
+  return { ...base, ...judge(text, evidence, c.entries) };
 }
 
 /** 逐句出清单：必须出处的句子全进；agent 额外映射的非事实句（如无数字的转述）也进 */
 export function buildChecklist(body: string, spans: Span[], entries: readonly LedgerEntry[]): ChecklistItem[] {
+  const backed = new Set(verifyNumbers({ title: "", hook: "", body, cta: "" }, entries).verified.map((v) => v.mention.index));
+  const ctx: Ctx = { body, spans, entries, backed };
   const items: ChecklistItem[] = [];
-  const sentences = checklistSentences(body);
+  const sentences = checklistSentences(body, backed);
   for (const s of sentences) {
     const evidence = [...new Set(spans.filter((m) => overlaps(m, s)).flatMap((m) => m.evidence))];
-    items.push(itemFor(body, s, evidence, spans, entries));
+    items.push(itemFor(ctx, s, evidence, s));
   }
-  for (const m of spans.filter((m) => !sentences.some((s) => overlaps(m, s)))) items.push(itemFor(body, m, m.evidence, spans, entries));
+  for (const m of spans.filter((m) => !sentences.some((s) => overlaps(m, s)))) items.push(itemFor(ctx, m, m.evidence));
   return items.sort((a, b) => a.start - b.start);
 }
 

@@ -7,6 +7,7 @@ import { transitionStatus, type Content, type ContentTx } from "../storage/local
 import { draftHash } from "../storage/draft-hash.js";
 import { isRealDraft } from "../storage/first-body-guard.js";
 import { buildChecklist, locateMapping, normalizeMapping, saveChecklist, type FinalChecklist, type MappingInput } from "../modules/draft/draft-final.js";
+import { coverageProblems } from "../modules/draft/draft-finalize.js";
 import { currentVersion, workbenchUrl } from "../modules/draft/draft-types.js";
 import { fail, withVersion } from "./draft-version.js";
 import type { DraftArgs } from "./draft-args.js";
@@ -29,7 +30,10 @@ async function prepare(a: DraftArgs, c: Content, tx: ContentTx, mapping: Mapping
   const located = locateMapping(c.body, mapping, entries);
   if (located.errors.length) return fail("bad_citations", "出处映射有错，改好再交", { errors: located.errors });
   const version = currentVersion(c);
-  const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items: buildChecklist(c.body, located.spans, entries), review: reviewSummary(c, version) };
+  const items = buildChecklist(c.body, located.spans, entries);
+  const problems = coverageProblems(c, items);
+  if (problems.length) return fail("coverage_invalid", "这份清单交接出处门过不了，创始人点「定了」也会被拒：按 errors 改映射或正文再交", { errors: problems });
+  const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items, review: reviewSummary(c, version) };
   await saveChecklist(c.id, checklist, a.dataDir);
   await tx.write({ draftPath: { ...c.draftPath!, checklistAt: checklist.prepared_at } });
   return { ok: true, checklist, expected: { title: c.title, body: c.body, platform: c.platform }, status: c.status };

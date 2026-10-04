@@ -8,6 +8,7 @@ import { getContent } from "../storage/local-store.js";
 import { finalizeByFounder } from "../modules/draft/draft-finalize.js";
 import { draftHash } from "../storage/draft-hash.js";
 import { normalizeMapping } from "../modules/draft/draft-final.js";
+import { setQuoteFetch } from "../modules/draft/verify-quote.js";
 
 let dir: string;
 const PAD = "所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历，标成不许约会，坚持下去看看。别把它再还给别人的会议，也别还给刷不完的消息，那是你自己的时间。";
@@ -24,8 +25,8 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "draft-10
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("清单噪音：相对时间和约数不算要出处的数字", () => {
-  it("前两天 / 一半人 / 几个 / 很多 / 两三个 / 三年前 不进清单；17 分、52 人、67% 照进", async () => {
-    const body = `前两天我刷到一条视频。差不多一半人都这样。有几个人问我。很多人觉得难。两三个同事也试了。三年前我开始做内容。他考了 17 分。有 52 人报名。占比 67%。${PAD}`;
+  it("前两天 / 几个 / 很多 / 两三个 / 三年前 不进清单；17 分、52 人、67% 照进", async () => {
+    const body = `前两天我刷到一条视频。有几个人问我。很多人觉得难。两三个同事也试了。三年前我开始做内容。他考了 17 分。有 52 人报名。占比 67%。${PAD}`;
     const id = await written(body);
     const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
     const listed = texts(r).map((i) => i.text);
@@ -91,10 +92,58 @@ describe("Codex 审稿提示词", () => {
 
 describe("定了：清单忽略的句子交接出处门照样过", () => {
   it("只有相对时间 / 约数的句子不进清单，定了也不报缺出处定位；citations.json 里记为不需要出处", async () => {
-    const id = await written(`前两天我刷到一条视频。差不多一半人都这样。${PAD}`);
+    const id = await written(`前两天我刷到一条视频。十几个人在用。${PAD}`);
     const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
     expect(r.items).toEqual([]);
     const c = (await getContent(id, dir))!;
     expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [] }, dir)).toMatchObject({ ok: true });
+  });
+});
+
+describe("Codex review：示意 / 判断与约数不能洗白事实", () => {
+  it("P1 只标半句判断：同句里的归因和 52 人照样要出处，不保留就定不了", async () => {
+    const id = await written(`我觉得很棒，报告显示有 52 人报名。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [{ text: "我觉得很棒", evidence_ids: [], kind: "judgment" }] });
+    expect(texts(r)[0]).toMatchObject({ status: "unsourced" });
+    const c = (await getContent(id, dir))!;
+    expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [] }, dir)).toMatchObject({ ok: false, code: "unsourced_open" });
+  });
+  it("P1 整句标示意但句里有归因：示意不生效", async () => {
+    const id = await written(`打个比方，据报道有家公司一天招了 52 人。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [{ text: "打个比方，据报道有家公司一天招了 52 人", evidence_ids: [], kind: "example" }] });
+    expect(texts(r)[0]).toMatchObject({ status: "unsourced" });
+  });
+  it("P1 有具体数值的时长照列：两小时内、半小时；一半人拿不准也列", async () => {
+    const id = await written(`两小时内就能做完。半小时就够了。差不多一半人都这样。前两天我刷到一条。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
+    expect(texts(r).map((i) => i.text)).toEqual(["两小时内就能做完。", "半小时就够了。", "差不多一半人都这样。"]);
+  });
+});
+
+describe("Codex review P2：台账对得上的数字不能记成创作者自己的话", () => {
+  afterEach(() => setQuoteFetch(undefined));
+  const ledgered = async (body: string, quote: string) => {
+    setQuoteFetch(async (url) => ({ finalUrl: url, text: `原文：${quote}。` }));
+    const id = await written(body);
+    expect(await run("verify_quote", { content_id: id, url: "https://example.com/r", quote })).toMatchObject({ ok: true });
+    return id;
+  };
+  it("示意句里的 52 人在台账有出处：不再豁免，列出来；保留后能定", async () => {
+    const id = await ledgered(`我编个例子，你团队有 52 人。${PAD}`, "这家公司有 52 人");
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [{ text: "我编个例子，你团队有 52 人。", evidence_ids: [], kind: "example" }] });
+    expect(r.ok).toBe(true);
+    const item = texts(r)[0] as { id: string; status: string };
+    expect(item.status).toBe("unsourced");
+    const c = (await getContent(id, dir))!;
+    expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [item.id] }, dir)).toMatchObject({ ok: true });
+  });
+  it("前两天 vs 台账「两天」：列出来，定了不再报 citations_invalid", async () => {
+    const id = await ledgered(`前两天我刷到一条视频。${PAD}`, "只用了两天");
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
+    expect(r.ok).toBe(true);
+    const item = texts(r)[0] as { id: string; status: string };
+    expect(item).toMatchObject({ status: "unsourced" });
+    const c = (await getContent(id, dir))!;
+    expect(await finalizeByFounder(id, { draftHash: draftHash(c), keep: [item.id] }, dir)).toMatchObject({ ok: true });
   });
 });

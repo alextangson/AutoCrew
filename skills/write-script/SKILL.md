@@ -49,7 +49,7 @@ codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文�
 
 ## 6 定稿
 
-创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。每项可带 `kind`：默认 `claim`（要出处的事实）；类比、编的例子（「打个比方」「我编个例子」）标 `example`，我们自己的判断标 `judgment`——这两种不列为没出处，工作台折叠放在「示意/判断，不需要出处」里。别把真实数据标成 example 来躲出处。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
+创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。每项可带 `kind`：默认 `claim`（要出处的事实）；类比、编的例子（「打个比方」「我编个例子」）标 `example`，我们自己的判断标 `judgment`——这两种不列为没出处，工作台折叠放在「示意/判断，不需要出处」里。`text` 要是整句；句里有归因或台账对得上的数字时，标了也不生效。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
 
 ```json
 { "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }, { "text": "打个比方，……", "evidence_ids": [], "kind": "example" }] }

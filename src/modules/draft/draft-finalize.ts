@@ -7,7 +7,7 @@
 import { draftHash } from "../../storage/draft-hash.js";
 import { contentTransaction, getContent, getDataDir, LOCAL_HOST, transitionStatus, type Content } from "../../storage/local-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
-import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, saveCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
+import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, saveCoverage, validateCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
 import { factualSentences } from "../video/handoff/factual-sentences.js";
 import { currentVersion } from "./draft-types.js";
 import { loadChecklist, type ChecklistItem, type FinalChecklist } from "./draft-final.js";
@@ -55,6 +55,17 @@ function citationsFor(body: string, items: ChecklistItem[], entries: readonly Le
     if (!out.some((c) => c.start <= s.start && c.end >= s.end)) out.push(creatorCitation(body, s, "只有相对时间或约数，没有具体数字"));
   }
   return out;
+}
+
+/**
+ * prepare_final 先按「没出处的全保留」把交接出处门预演一遍（Codex review P2）：
+ * 清单看着能定、点「定了」却被出处门拒，这种情况在出清单时就要报出来。
+ */
+export function coverageProblems(c: Content, items: ChecklistItem[]): string[] {
+  const { entries, keptIds } = withKeptEntries(c, items.filter((i) => i.status === "unsourced"));
+  const simulated = { ...c, evidenceLedger: { ...(c.evidenceLedger ?? { lookups: [], budget: { max: 0, used: 0 } }), entries } } as Content;
+  const coverage: CitationCoverage = { draft_hash: draftHash(simulated), citations: citationsFor(c.body, items, entries, keptIds), reviewed_by: "preflight", reviewed_at: new Date().toISOString() };
+  return validateCoverage(simulated, coverage);
 }
 
 async function checkReady(c: Content, checklist: FinalChecklist | null, hash: string, keep: string[]): Promise<R | null> {
