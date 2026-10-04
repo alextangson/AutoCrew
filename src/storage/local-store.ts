@@ -419,6 +419,11 @@ export interface Content {
   /** 补录的历史作品记录（imported-history.ts）：没有正文，不进任何生产流程 */
   source?: typeof IMPORTED_HISTORY;
   /**
+   * 历史作品记录的「存档原稿」（老作品补齐规格 2026-10-04 ②）：从旧资料库只读复制的 draft.md。
+   * 只供查看——不是 body，不进写稿 / 审稿 / 剪辑 / 发布任何流程（历史记录本身已被各入口拒收）。
+   */
+  archiveDraft?: { body: string; sourcePath: string; oldContentId: string; oldTitle?: string; inferred: boolean; copiedAt: string };
+  /**
    * 发出去的写作包（P3 §5.2）。`submittedAt` 缺席 + 状态 `drafting` = **包发出去了、稿没回来**，
    * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
    * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。

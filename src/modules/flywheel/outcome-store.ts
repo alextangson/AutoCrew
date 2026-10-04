@@ -24,6 +24,7 @@ import {
   type BindingVia,
 } from "./platform-items.js";
 import { parsePublishUrl } from "./publish-url.js";
+import { lookupClaim } from "./work-claims.js";
 import { listContents, getContent, getDataDir, type Content } from "../../storage/local-store.js";
 import { readPublishRecord } from "../../storage/publish-record.js";
 import { assertManagedPathAvailable, assertDataDirWritable } from "../../storage/storage-roots.js";
@@ -362,7 +363,11 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
       ? await matchDraft(req.platform, req.platformTitle, req.publishedAt, req.dataDir)
       : null;
   const contentId = req.contentId !== undefined ? req.contentId : matched?.id ?? null;
-  if (!itemId) return { contentId, reviewReasons: [], pending: null };
+  if (!itemId) {
+    // 无编号行：人工认领过这组（标题@北京发布日）就按认领归属，认领是人确认的事实，优先于标题猜测
+    const claim = await lookupClaim(req.platform, req.platformTitle, req.publishedAt, req.dataDir);
+    return { contentId: claim?.contentId ?? contentId, reviewReasons: [], pending: null };
+  }
 
   const bound = await lookupPlatformItem(req.platform, itemId, req.dataDir);
   if (bound) {
@@ -452,7 +457,7 @@ export function attributedCopies(
 }
 
 /** 账本 latest-wins 视图（含被对账隐藏的未归属行，不含已撤销键） */
-async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOutcome>> {
+export async function latestByKey(dataDir?: string): Promise<Map<string, PerformanceOutcome>> {
   const byKey = new Map<string, PerformanceOutcome>();
   for (const o of await readJournal(dataDir)) byKey.set(outcomeKey(o), { ...o, platform: normalizePlatform(o.platform) });
   for (const [k, o] of byKey) if (o.retracted) byKey.delete(k);

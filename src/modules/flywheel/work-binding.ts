@@ -12,6 +12,7 @@ import { commitManualBinding, readPlatformItemsStrict, platformItemKey, removeBi
 import { isTruncatedItemId, normalizePlatform, normalizeTitle } from "./outcome-schema.js";
 import { reattributeItem, retractContentOutcomes } from "./outcome-store.js";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
+import { removeClaimsForContent } from "./work-claims.js";
 
 /** 回流认得的平台（别名 xhs 先归一） */
 export const BINDABLE_PLATFORMS: readonly string[] = ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"];
@@ -181,6 +182,10 @@ export async function deleteHistoryRecord(contentId: string, dataDir?: string): 
     if (refused) return refused;
     let removedBindings: string[];
     try { removedBindings = await removeBindingsForContent(content.id, dataDir); } catch (err) { return { ok: false, error: errText(err) }; }
+    // 无编号行的人工认领一并撤销：撤了它，后面撤回的行才不会在下次入账时又被认回来
+    try { removedBindings.push(...(await removeClaimsForContent(content.id, dataDir)).map((k) => `认领 ${k}`)); } catch (err) {
+      return partial(`撤销人工认领失败：${errText(err)}`, removedBindings.map((k) => `已删绑定 ${k}`), `绑定已删，认领和数据还在。重跑同一个 history_delete 会接着做完（幂等）。`);
+    }
     const again = `重跑同一个 history_delete 会接着做完（幂等）。`;
     let retracted: number;
     try { retracted = await retractContentOutcomes(content.id, dataDir); } catch (err) {
