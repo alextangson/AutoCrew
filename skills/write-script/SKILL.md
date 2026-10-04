@@ -14,11 +14,12 @@ description: |
 
 - 没有素材不编亲历。一手材料只来自创始人的原话或 `start` 返回的 `firsthand`。
 - 写作规则只有 `start` 返回的档案（`rules`、`voice_samples`、`never`），不另立一套。口播格式只补一条：交纯朗读正文，不写画面、镜头、停顿标注。
+- `save` / `angle` / `prepare_final` 之后的每条回复，结尾都给回执里的 `workbench_url`：`[在工作台打开第 N 版](<workbench_url>)`（N 是回执里的 `version`，`prepare_final` 用你交的 `base_version`）。
 - 存盘失败（`storage_error` / `storage_unavailable`）就停下，把原始错误告诉创始人；不得把稿子写成库外文件继续推进。
 
 ## 1 衍生
 
-`autocrew_draft {action:"start", inspiration:"<创始人原话>"}`（接手已有稿用 `content_id`，按回执的 `progress` 从断点接着做）。从灵感展开 3–5 个方向，每个一行：讲什么、给谁看。参照 `context.series` 别和最近几条撞主线。
+`autocrew_draft {action:"start", inspiration:"<创始人原话>"}`；灵感对应已有选题就加 `topic_id`，一手材料跟着选题带回 `firsthand`（接手已有稿用 `content_id`，按回执的 `progress` 从断点接着做）。从灵感展开 3–5 个方向，每个一行：讲什么、给谁看。参照 `context.series` 别和最近几条撞主线。
 
 ## 2 调研
 
@@ -44,11 +45,11 @@ codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文�
 
 ## 5 改
 
-创始人说改哪里就只改哪里，别的不动，改完 `save`。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写。
+创始人说改哪里就只改哪里，别的不动，改完 `save`。意见是方向性的、没指具体句子（如「缺用户心理洞察」）：先给一段简短诊断和具体改动清单，等他确认再动稿。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写。
 
 ## 6 定稿
 
-创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。它出一份出处清单、把稿推到「等你认稿」。把回执里的 `workbench_url` 给创始人，请他在工作台看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
+创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
 
 ```json
 { "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }] }
