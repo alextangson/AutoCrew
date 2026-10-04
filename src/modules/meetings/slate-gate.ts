@@ -8,7 +8,7 @@
  * 「当前片单」= 最近一场会议记录的 slots（单题会无论哪天开都追加进这份记录）。上一场选中、
  * 这一场没再选中 → 拦。会议记录读不出 → 报读失败，既不放行也不冒充「没开过会」。
  */
-import { listContentsStrict } from "../../storage/local-store.js";
+import { isPlaceholderBody, listContentsStrict, type Content } from "../../storage/local-store.js";
 import { latestMeetingDate, readMeeting } from "./meeting-store.js";
 
 /** 用户可见文案集中在这里（创始人过目） */
@@ -35,12 +35,18 @@ const MEETING_NEXT = {
 } as const;
 
 /**
- * 该选题是否已有真稿（有 = 不是新稿）。真稿 = 未删、未归档、不是 `topic_saved` 占位行
- * （create_variant 不带正文建的那种行只是选题的影子，不能拿来解锁闸口）。
- * 严格读：任何一条稿件记录读不出就抛，不把「漏读」当成「没有」或「有」。
+ * 真稿 = 未删、未归档、存下来的正文（当前 body 或任一版本）不是占位。
+ * 不看 status：status 能被 transition/update 改，靠它判断等于把闸口交给一次状态改写；
+ * 而占位正文（空白 / create_variant 垫的选题描述）在 MCP 上不能绕开 writer submit 填实。
  */
+function isRealDraft(c: Content): boolean {
+  if (c.deletedAt || c.status === "archived") return false;
+  return !isPlaceholderBody(c.body) || (c.versions ?? []).some((v) => !isPlaceholderBody(v.body));
+}
+
+/** 该选题是否已有真稿（有 = 不是新稿）。严格读：任何一条稿件记录读不出就抛 */
 export async function topicHasDraft(topicId: string, dataDir?: string): Promise<boolean> {
-  return (await listContentsStrict(dataDir)).some((c) => c.topicId === topicId && !c.deletedAt && c.status !== "archived" && c.status !== "topic_saved");
+  return (await listContentsStrict(dataDir)).some((c) => c.topicId === topicId && isRealDraft(c));
 }
 
 /** 选题是否在当前有效片单里；读失败直接抛（调用方转成 slate_read_failed） */

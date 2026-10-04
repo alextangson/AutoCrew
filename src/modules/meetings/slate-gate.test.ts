@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { listContents } from "../../storage/local-store.js";
+import { createPlatformVariant, getContent, listContents, listContentsStrict } from "../../storage/local-store.js";
 import { listHypotheses } from "../retro/hypotheses.js";
 import { executeInsights } from "../../tools/insights.js";
 import { executeWorkflow } from "../../tools/workflow.js";
@@ -70,12 +70,55 @@ describe("片单判定 newDraftSlateRefusal", () => {
     expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "douyin", _dataDir: f.data })).toMatchObject({ code: "not_on_slate" });
     expect(await executeContentSave({ action: "save", title: "直接存", body: "正文", topicId: t.id, status: "drafting", _dataDir: f.data })).toMatchObject({ code: "not_on_slate" });
     expect(await listContents(f.data)).toHaveLength(0);
-    // 旧版本留下的 topic_saved 占位行：不算真稿，后续开写照样拦
-    await makeContent(f.data, "新题", { topicId: t.id }, "topic_saved");
+    // 旧版本留下的占位行（正文是选题描述垫的）：不算真稿，后续开写照样拦
+    await createPlatformVariant(t.id, "douyin", undefined, f.data);
     expect(await newDraftSlateRefusal(t.id, f.data)).toMatchObject({ code: "not_on_slate" });
     const generateScriptImpl = vi.fn();
     expect(await executeGenerate({ action: "script", topic: t.title, topic_id: t.id, platform: "douyin", _dataDir: f.data }, { generateScriptImpl })).toMatchObject({ code: "not_on_slate" });
     expect(generateScriptImpl).not.toHaveBeenCalled();
+  });
+
+  it("回归：占位行被 transition / update 改成 drafting 也解锁不了闸口（判定看正文，不看状态）", async () => {
+    const t = await makeTopic(f.data, "新题");
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    const moved = await executeContentSave({ action: "transition", id: ph.id, target_status: "drafting", force: true, _dataDir: f.data });
+    const updated = await executeContentSave({ action: "update", id: ph.id, status: "drafting", force: true, _dataDir: f.data, _host: "claude" });
+    // 至少一条路真把状态改成了 drafting——证明判定确实没看状态
+    expect([moved.ok, updated.ok]).toContain(true);
+    expect((await getContent(ph.id, f.data))?.status).toBe("drafting");
+    expect(await newDraftSlateRefusal(t.id, f.data)).toMatchObject({ code: "not_on_slate" });
+    // MCP 上也不能用 update 把占位正文填实
+    expect(await executeContentSave({ action: "update", id: ph.id, body: "填实的正文", _dataDir: f.data, _host: "claude" })).toMatchObject({ code: "writer_submission_required" });
+    expect(await newDraftSlateRefusal(t.id, f.data)).toMatchObject({ code: "not_on_slate" });
+  });
+
+  it("回归：create_variant 带正文 + manual_import 导入的是真稿 → 之后 prepare / 不带正文的变体都放行", async () => {
+    const t = await makeTopic(f.data, "导入题");
+    expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "douyin", body: "用户自己的成稿正文", source: "manual_import", import_reason: "用户给的旧稿", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: true });
+    expect(await newDraftSlateRefusal(t.id, f.data)).toBeNull();
+    expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "xiaohongshu", _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await executeWorkflow({ action: "prepare", topic_id: t.id, platform: "douyin", _dataDir: f.data })).not.toMatchObject({ code: "not_on_slate" });
+  });
+
+  it("回归：旧版存储目录稿优先于同 id 的平铺旧副本（目录里是占位，平铺副本有正文 → 仍算没稿）", async () => {
+    const legacy = await fs.mkdtemp(path.join(f.temp, "legacy-dup-"));
+    const base = { id: "content-1-dup", topicId: "topic-dup", title: "t", platform: "douyin", tags: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", versions: [] };
+    await fs.mkdir(path.join(legacy, "contents/content-1-dup"), { recursive: true });
+    await fs.writeFile(path.join(legacy, "contents/content-1-dup/meta.json"), JSON.stringify({ ...base, status: "topic_saved", body: "" }));
+    await fs.writeFile(path.join(legacy, "contents/content-1-dup.json"), JSON.stringify({ ...base, status: "draft_ready", body: "旧副本正文" }));
+    expect(await listContentsStrict(legacy)).toHaveLength(1);
+    expect(await newDraftSlateRefusal("topic-dup", legacy)).toMatchObject({ code: "not_on_slate" });
+    await fs.writeFile(path.join(legacy, "contents/content-1-dup/meta.json"), JSON.stringify({ ...base, status: "draft_ready", body: "", deletedAt: "2026-01-02T00:00:00Z" }));
+    expect(await newDraftSlateRefusal("topic-dup", legacy)).toMatchObject({ code: "not_on_slate" });
+  });
+
+  it("content update 不能把稿改挂到别的选题", async () => {
+    const [a, b] = await Promise.all([makeTopic(f.data, "A"), makeTopic(f.data, "B")]);
+    const c = await makeContent(f.data, "A 稿", { topicId: a.id }, "draft_ready");
+    await executeContentSave({ action: "update", id: c.id, topicId: b.id, topic_id: b.id, title: "A 稿改名", _dataDir: f.data });
+    await executeContentSave({ action: "update", id: c.id, topicId: b.id, topic_id: b.id, _dataDir: f.data, _host: "claude" });
+    expect((await getContent(c.id, f.data))?.topicId).toBe(a.id);
+    expect(await newDraftSlateRefusal(b.id, f.data)).toMatchObject({ code: "not_on_slate" });
   });
 
   it("回归 P2：旧版存储里一份稿件 meta 读坏 → slate_read_failed，不放行", async () => {

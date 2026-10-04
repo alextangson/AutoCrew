@@ -828,6 +828,14 @@ async function listContentsRaw(dataDir?: string): Promise<Content[]> {
   return contents.map(withNormalizedStatus).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** create_variant 不带正文时写的占位正文前缀 */
+export const TOPIC_PLACEHOLDER_BODY_PREFIX = "<!-- Generated from topic:";
+
+/** 正文是不是占位：空白，或 create_variant 拿选题描述垫的那段 */
+export function isPlaceholderBody(body: unknown): boolean {
+  return typeof body !== "string" || !body.trim() || body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX);
+}
+
 /**
  * 严格全量读（含已删）：任何一条读不出、解析不了就抛，不跳过。
  * 给「读漏一条就会判错」的决策用（片单闸口：漏读一篇已有稿 ≠ 没有稿）。
@@ -848,15 +856,20 @@ export async function listContentsStrict(dataDir?: string): Promise<Content[]> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
-  const out: Content[] = [];
-  for (const entry of entries) {
-    const file = entry.isDirectory() ? path.join(dir, entry.name, "meta.json") : entry.name.endsWith(".json") ? path.join(dir, entry.name) : null;
-    if (!file) continue;
-    try { out.push(withNormalizedStatus(JSON.parse(await fs.readFile(file, "utf-8")))); } catch (err) {
-      throw new Error(`稿件记录 contents/${entry.name} 读不出：${err instanceof Error ? err.message : String(err)}`);
+  const read = async (file: string, name: string): Promise<Content> => {
+    try { return withNormalizedStatus(JSON.parse(await fs.readFile(file, "utf-8"))); } catch (err) {
+      throw new Error(`稿件记录 contents/${name} 读不出：${err instanceof Error ? err.message : String(err)}`);
     }
+  };
+  // 同 listContents：目录里的 meta.json 优先，平铺的旧 <id>.json 只补目录里没有的 id
+  const byId = new Map<string, Content>();
+  for (const e of entries) if (e.isDirectory()) { const c = await read(path.join(dir, e.name, "meta.json"), `${e.name}/meta.json`); byId.set(c.id, c); }
+  for (const e of entries) {
+    if (e.isDirectory() || !e.name.endsWith(".json")) continue;
+    const c = await read(path.join(dir, e.name), e.name);
+    if (!byId.has(c.id)) byId.set(c.id, c);
   }
-  return out;
+  return [...byId.values()];
 }
 
 /** 稿件移入回收站(软删除,可恢复)。不存在 → null */
@@ -1908,7 +1921,7 @@ export async function createPlatformVariant(
   const content = await saveContent(
     {
       title: opts?.title || `${topic.title} (${platform})`,
-      body: opts?.body || `<!-- Generated from topic: ${topicId} -->\n\n${topic.description}`,
+      body: opts?.body || `${TOPIC_PLACEHOLDER_BODY_PREFIX} ${topicId} -->\n\n${topic.description}`,
       platform,
       topicId,
       status: "topic_saved",

@@ -22,8 +22,7 @@ import {
   softDeleteContent,
   restoreContent,
   getCoverReview,
-  type ContentUpdates,
-} from "../storage/local-store.js";
+  type ContentUpdates, TOPIC_PLACEHOLDER_BODY_PREFIX } from "../storage/local-store.js";
 import type { AdoptionVerdict, Content } from "../storage/local-store.js";
 import { EDITING_VIA_HANDOFF, EDITING_VIA_ONTOLOGY, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
@@ -287,7 +286,7 @@ export async function executeContentSave(
     // and filling it here would skip the writer's preparation, gates and review receipt.
     const fillingBody = typeof params.body === "string" && Boolean(params.body.trim()) && params.body !== oldContent.body;
     const unsubmittedPlaceholder = !oldContent.body.trim()
-      || oldContent.body.startsWith("<!-- Generated from topic:")
+      || oldContent.body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX)
       || Boolean(oldContent.pack && !oldContent.pack.submittedAt && !oldContent.writtenBy);
     if (isMcpCall && fillingBody && unsubmittedPlaceholder) return {
       ok: false, code: "writer_submission_required",

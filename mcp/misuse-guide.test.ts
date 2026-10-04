@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { handleMcpRequest } from "./server.js";
 import { saveContent, saveTopic } from "../src/storage/local-store.js";
+import { putOnSlate } from "../src/modules/meetings/slate.test-helper.js";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "misuse-"));
 const access = { principal: { subject: "workbuddy", plan: "local" as const }, host: "workbuddy" };
@@ -16,6 +17,7 @@ let topicId = "";
 let contentId = "";
 beforeAll(async () => {
   topicId = (await saveTopic({ title: "t", description: "d", tags: [] }, dir)).id;
+  await putOnSlate(dir, topicId);
   contentId = (await saveContent({ title: "x", body: "", platform: "douyin", topicId, status: "drafting" } as never, dir)).id;
 });
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
