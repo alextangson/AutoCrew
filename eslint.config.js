@@ -34,7 +34,6 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/*.test.ts",
       "frontend/",
-      "extension/",
       "spikes/",
       ".worktrees/",
       ".claude/worktrees/",

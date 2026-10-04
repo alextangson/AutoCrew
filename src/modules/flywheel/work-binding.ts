@@ -11,6 +11,7 @@ import { IMPORTED_HISTORY, isImportedHistory } from "../../storage/imported-hist
 import { commitManualBinding, readPlatformItemsStrict, platformItemKey, removeBindingsForContent, type PlatformItemBinding } from "./platform-items.js";
 import { isTruncatedItemId, normalizePlatform, normalizeTitle } from "./outcome-schema.js";
 import { reattributeItem, retractContentOutcomes } from "./outcome-store.js";
+import { assertDataDirWritable } from "../../storage/storage-roots.js";
 
 /** 回流认得的平台（别名 xhs 先归一） */
 export const BINDABLE_PLATFORMS: readonly string[] = ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"];
@@ -50,6 +51,8 @@ export async function bindWorkManually(
   const checked = checkItemRef(platformRaw, itemIdRaw);
   if (!checked.ok) return checked;
   const { platform, itemId } = checked.ref;
+  const refused = writeRefusal(dataDir);
+  if (refused) return refused;
   let result: Awaited<ReturnType<typeof commitManualBinding>>;
   try {
     result = await commitManualBinding(platform, itemId, content.id, dataDir);
@@ -71,6 +74,11 @@ export async function bindWorkManually(
     return partial(`补归属已入账数据失败：${errText(err)}`, [`绑定 ${platform}:${itemId} → ${content.id}（via=manual）`],
       "绑定已写入、已入账的数据还没补归属。修好账本问题后重跑同一个 work_bind 即可补齐（幂等，不会重复追加）。");
   }
+}
+
+/** 绑定表 + 账本 + 稿件是多文件写：没写入权就整体拒绝，不留半截 */
+function writeRefusal(dataDir?: string): { ok: false; error: string } | null {
+  try { assertDataDirWritable(dataDir); return null; } catch (err) { return { ok: false, error: errText(err) }; }
 }
 
 function errText(err: unknown): string {
@@ -135,6 +143,8 @@ export async function createHistoryRecord(raw: { title?: unknown; published_date
 
 async function createLocked(input: { title: string; date: string; items: ItemRef[] }, dataDir?: string): Promise<HistoryCreated> {
   const { title, date, items } = input;
+  const refused = writeRefusal(dataDir);
+  if (refused) return refused;
   const existing = await findHistory(title, date, dataDir);
   let table: Awaited<ReturnType<typeof readPlatformItemsStrict>>;
   try { table = await readPlatformItemsStrict(dataDir); } catch (err) { return { ok: false, error: errText(err) }; }
@@ -167,6 +177,8 @@ export async function deleteHistoryRecord(contentId: string, dataDir?: string): 
   if (!content || content.deletedAt) return { ok: false, error: `稿子 id「${contentId}」不存在` };
   if (!isImportedHistory(content)) return { ok: false, error: "这不是历史作品记录（imported_history），history_delete 只删历史记录" };
   return serializeHistory(dataDir, async () => {
+    const refused = writeRefusal(dataDir);
+    if (refused) return refused;
     let removedBindings: string[];
     try { removedBindings = await removeBindingsForContent(content.id, dataDir); } catch (err) { return { ok: false, error: errText(err) }; }
     const again = `重跑同一个 history_delete 会接着做完（幂等）。`;

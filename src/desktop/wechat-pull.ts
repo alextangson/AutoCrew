@@ -5,7 +5,7 @@
  */
 import { pullWechatMpStats, statsToImportRows } from "../adapters/browser/wechat-mp-stats.js";
 import type { PullResult } from "../adapters/browser/pull-types.js";
-import { rowsToCsvText } from "../bridge/ingest.js";
+import { rowsToCsvText } from "../modules/flywheel/csv-text.js";
 import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
 import { localDateStamp } from "../modules/analytics/quality-baseline.js";
 import { emitEngineEvent } from "./event-hub.js";

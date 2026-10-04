@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { assertManagedPathAvailable } from "../../storage/storage-roots.js";
 
 export const COVER_DIR = "data-covers";
 export const MAX_COVER_BYTES = 10 * 1024 * 1024;
@@ -53,6 +54,7 @@ export async function findCover(dataDir: string, kind: CoverKind, key: string): 
 }
 
 async function removeKind(dataDir: string, kind: CoverKind, key: string): Promise<boolean> {
+  assertManagedPathAvailable(coverDir(dataDir));
   let removed = false;
   for (const ext of EXTS) {
     try { await fs.unlink(path.join(coverDir(dataDir), `${kind}-${hashOf(key)}.${ext}`)); removed = true; }
@@ -62,6 +64,7 @@ async function removeKind(dataDir: string, kind: CoverKind, key: string): Promis
 }
 
 async function write(dataDir: string, kind: CoverKind, key: string, bytes: Uint8Array, ext: CoverExt): Promise<string> {
+  assertManagedPathAvailable(coverDir(dataDir));
   await fs.mkdir(coverDir(dataDir), { recursive: true });
   await removeKind(dataDir, kind, key); // 换格式时别留旧文件
   const name = `${kind}-${hashOf(key)}.${ext}`;

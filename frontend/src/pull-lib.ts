@@ -111,6 +111,8 @@ export function attemptMessage(label: string, attempt: PullAttemptView): string 
     case "timeout":
       return `${label}抓取超时，稍后再试`;
     default:
+      if (attempt.errorCode === "library_writer_lost") return `${label}没抓：当前进程没有资料库写入权（另一个 AutoCrew 服务在占用），一行都没写`;
+      if (attempt.errorCode === "library_unavailable") return `${label}没抓：资料库暂时连不上，一行都没写`;
       return `${label}抓取失败：${attempt.errorCode ?? "unknown"}`;
   }
 }

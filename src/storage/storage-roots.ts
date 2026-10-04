@@ -95,6 +95,11 @@ export function assertManagedPathAvailable(filePath: string): void {
   }
 }
 
+/** Multi-file writers pre-check the whole data dir before their first write, so a refusal leaves nothing partial. */
+export function assertDataDirWritable(dataDir?: string): void {
+  assertManagedPathAvailable(resolveDataDir(dataDir));
+}
+
 /** Rebuildable search indexes/proxies live on this machine, never in the library.
  * Without a library an explicit directory keeps its own cache, like every other root here. */
 export function getWorkspaceCacheDir(customDir?: string): string {

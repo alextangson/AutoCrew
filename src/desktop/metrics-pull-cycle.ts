@@ -26,6 +26,7 @@ import {
 import { importPerformanceRows } from "../modules/flywheel/row-import.js";
 import { saveAutoCover, type FetchLike } from "../modules/flywheel/data-covers.js";
 import { getDataDir } from "../storage/local-store.js";
+import { assertDataDirWritable } from "../storage/storage-roots.js";
 import type { PullResult, PullStatus, TypedRow } from "../adapters/browser/pull-types.js";
 import { emitEngineEvent } from "./event-hub.js";
 
@@ -222,6 +223,8 @@ function eventLabel(attempt: PullAttempt): string {
     case "timeout":
       return `${name}抓取超时，稍后重试`;
     default:
+      if (attempt.errorCode === "library_writer_lost") return `${name}没抓：当前进程没有资料库写入权（另一个 AutoCrew 服务在占用），本次零写入`;
+      if (attempt.errorCode === "library_unavailable") return `${name}没抓：资料库暂时连不上，本次零写入`;
       if (attempt.errorCode === "no_data_response") return `${name}页面没返回作品数据，本次零写入`;
       return `${name}抓取失败：${attempt.errorCode ?? "unknown"}`;
   }
@@ -297,7 +300,21 @@ async function land(platform: PullPlatform, result: PullResult, now: Date, opts:
   }
 }
 
+/** 抓之前先核写入权：没权就不打平台后台、不写状态/账本/事件（这些写也都会被拒） */
+function writeRefusalCode(dataDir?: string): string | null {
+  try { assertDataDirWritable(dataDir); return null; }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return msg.startsWith("library_writer_lost") ? "library_writer_lost" : "library_unavailable";
+  }
+}
+
 async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<PullAttempt> {
+  const refused = writeRefusalCode(opts.dataDir);
+  if (refused) {
+    opts.warn?.(`[metrics-pull] ${platform} 没抓：${refused}`);
+    return { platform, status: "error", rowCount: 0, errorCode: refused };
+  }
   const now = opts.now?.() ?? new Date();
   const trigger = opts.trigger ?? "manual";
   const landing = await land(platform, await callFetcher(platform, opts), now, opts);

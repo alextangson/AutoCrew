@@ -344,6 +344,8 @@ autocrew_style action=absorb_samples samples=["爆款全文1", "爆款全文2"]
 
 ## 九、扩展通道 dogfood（v1 主通道预演）
 
+> **2026-10-04 已退役**：`extension/`、native host 与 `scripts/install-native-host.mts` 已删除，由自动回流 + CSV 导入替代；本节仅留作历史记录。
+
 > 对应 PRD §6 主读数通道 MVP：Chrome 扩展读抖音创作者中心，经 native messaging 进同一导入管线。零重登、无 CDP、真实 profile。
 
 ### 安装（一次性）

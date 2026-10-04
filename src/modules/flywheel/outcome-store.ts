@@ -26,6 +26,7 @@ import {
 import { parsePublishUrl } from "./publish-url.js";
 import { listContents, getContent, getDataDir, type Content } from "../../storage/local-store.js";
 import { readPublishRecord } from "../../storage/publish-record.js";
+import { assertManagedPathAvailable, assertDataDirWritable } from "../../storage/storage-roots.js";
 
 const OUTCOMES_FILE = "outcomes.jsonl";
 
@@ -111,8 +112,8 @@ export async function getOutcomesForContent(
  * 进程内 outcomes 写队列（仿 local-store.ts serializeContentWrite）。
  * 逐条 recordOutcome 与批量 importPerformanceRows 共用同一条链：读全量→判幂等→append
  * 的读-改-写不互相穿插，否则并发批次会各自基于旧快照算 replaced/暴涨。
- * 只护本进程；跨进程（扩展 native-host）仍靠 O_APPEND 行级追加 + 读侧坏行跳过，
- * **不承诺崩溃原子性**：崩溃可能留半行，读侧容错吸收（spec §4.1，codex #6）。
+ * 只护本进程；跨进程写由资料库单写锁拦（appendOutcomes 前 assertManagedPathAvailable），
+ * 读侧仍跳过坏行。**不承诺崩溃原子性**：崩溃可能留半行，读侧容错吸收（spec §4.1，codex #6）。
  */
 const outcomeWriteChains = new Map<string, Promise<unknown>>();
 
@@ -131,6 +132,7 @@ export function serializeOutcomeWrite<T>(dataDir: string | undefined, fn: () => 
 /** 单次 append 落盘（批量入库只写一次；调用方负责已在写队列里） */
 export async function appendOutcomes(outcomes: PerformanceOutcome[], dataDir?: string): Promise<void> {
   if (outcomes.length === 0) return;
+  assertManagedPathAvailable(outcomesPath(dataDir));
   await fs.mkdir(getDataDir(dataDir), { recursive: true });
   const payload = outcomes.map((o) => JSON.stringify(o) + "\n").join("");
   await fs.appendFile(outcomesPath(dataDir), payload, "utf-8");
@@ -175,6 +177,7 @@ export async function recordOutcome(
   }
 
   return serializeOutcomeWrite(dataDir, async () => {
+    assertDataDirWritable(dataDir);
     const existing = await listOutcomes(dataDir);
     // 绑定先于建键：绑定表可能把归属改到另一稿，幂等键跟着归属走（键本身的构成不变）
     const binding = await resolveItemBinding({
@@ -404,12 +407,14 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
 /**
  * 落盘后提交绑定。绑定表是缓存不是账本：写失败只 warn，不回滚已入库的 outcomes——
  * 下一次导入会重新走同样的证据再登记一次（自愈路径本身就是幂等的）。
+ * 例外：失去资料库写入权不是缓存问题，必须抛给调用方。
  */
 export async function commitResolvedBindings(pending: PendingBinding[], dataDir?: string): Promise<void> {
   if (pending.length === 0) return;
   try {
     await commitBindings(pending, dataDir);
   } catch (err) {
+    if ((err as Error).message?.includes("library_writer_lost")) throw err;
     console.warn(`[flywheel] 平台作品绑定写入失败(不影响本批入库)：${(err as Error).message}`);
   }
 }

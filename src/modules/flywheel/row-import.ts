@@ -31,6 +31,7 @@ import {
   type PerformanceOutcome,
 } from "./outcome-schema.js";
 import { localDateStamp } from "../analytics/quality-baseline.js";
+import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import type { TypedRow } from "../../adapters/browser/pull-types.js";
 
 export interface ImportReport {
@@ -141,6 +142,7 @@ export async function importPerformanceRows(
 ): Promise<ImportReport> {
   const rowBase = opts.rowNumberBase ?? 1;
   return serializeOutcomeWrite(opts.dataDir, async () => {
+    assertDataDirWritable(opts.dataDir);
     const existing = await listOutcomes(opts.dataDir);
     const existingKeys = new Set(existing.map((o) => outcomeKey(o)));
     const ctx: RowContext = {

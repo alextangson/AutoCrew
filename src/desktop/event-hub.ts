@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+import { assertManagedPathAvailable } from "../storage/storage-roots.js";
 
 /** editor = 剪辑师（视频生产线入职，视频 spec §8.4）；与 chat-router 的席位名同一套 */
 export type EngineEventRole = "scout" | "writer" | "review" | "analyst" | "publisher" | "editor" | "system";
@@ -54,6 +55,7 @@ export async function emitEngineEvent(
   try {
     if (opts.persist !== false) {
       const dir = getDataDir(dataDir);
+      assertManagedPathAvailable(path.join(dir, "events.jsonl"));
       await fs.mkdir(dir, { recursive: true });
       await fs.appendFile(path.join(dir, "events.jsonl"), JSON.stringify(full) + "\n", "utf-8");
     }

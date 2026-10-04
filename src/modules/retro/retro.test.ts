@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { generateRetro, listRetros, readRetro } from "./retro.js";
 import { appendHypotheses, listHypotheses, type Hypothesis } from "./hypotheses.js";
+import { shanghaiDate } from "../flywheel/outcome-schema.js";
 import { readEditorialExperiments, selectEditorialExperiment } from "./editorial-experiments.js";
 import { setGoal } from "../profile/goal.js";
 import { saveContent, updateContent, recordAdoption } from "../../storage/local-store.js";
@@ -159,7 +160,8 @@ describe("generateRetro", () => {
 
 const DAY = 86_400_000;
 const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * DAY).toISOString();
-const dateOf = (daysAgo: number) => iso(daysAgo).slice(0, 10);
+// 数据日期是北京日历日（与 ageInDays 同口径）；取 UTC 日期会在北京 0–8 点把龄期算少一天
+const dateOf = (daysAgo: number) => shanghaiDate(iso(daysAgo));
 
 function outcomeLine(o: Record<string, unknown>): string {
   return JSON.stringify({
