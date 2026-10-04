@@ -293,6 +293,13 @@ describe("Codex 审 main...HEAD（10-04 跟进）回归", () => {
     expect(said(await run("start", { topic_id: topic.id })).founder_words).toBe("我想聊聊 AI 越用越忙");
   });
 
+  it("P2 补丁前 start{inspiration} 建的稿（灵感只在 source=autocrew_draft 的选题描述里）接手时原话还在", async () => {
+    const topic = await saveTopic({ title: "旧薄路径题", description: "我想聊 AI 时代怎么学", tags: [], source: "autocrew_draft" }, dir);
+    const fh = said(await run("start", { topic_id: topic.id }));
+    expect(fh.founder_words).toBe("我想聊 AI 时代怎么学");
+    expect(fh.founder_said.map((x) => x.text)).toContain("我想聊 AI 时代怎么学");
+  });
+
   it("P2 start{topic_id, inspiration} 的灵感存在稿上，接手时仍在，选题不被改写", async () => {
     const topic = await saveTopic({ title: "共享题", description: "摘要", tags: [], source: "radar:x" }, dir);
     const id = (await run("start", { topic_id: topic.id, inspiration: "我做过一条克隆声音的讲解视频" })).content_id as string;

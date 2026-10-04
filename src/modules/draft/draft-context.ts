@@ -80,8 +80,12 @@ export async function seriesContext(content: Pick<Content, "id" | "topicId">, da
   }));
 }
 
-/** 选题描述只有创始人一句灵感建的选题（source=inspiration）才是他的原话；雷达摘要、搜索片段、手建题都证明不了 */
-const founderTopicText = (t: Topic): string | undefined => (t.source === "inspiration" ? t.description?.trim() || undefined : undefined);
+/**
+ * 选题描述只有创始人一句灵感建的选题才是他的原话：workflow prepare 建的（source=inspiration），
+ * 和 autocrew_draft start{inspiration} 建的（source=autocrew_draft，描述就是那句灵感）。雷达摘要、搜索片段、手建题都证明不了。
+ */
+const FOUNDER_TOPIC_SOURCES = new Set(["inspiration", "autocrew_draft"]);
+const founderTopicText = (t: Topic): string | undefined => (FOUNDER_TOPIC_SOURCES.has(t.source ?? "") ? t.description?.trim() || undefined : undefined);
 
 /** 选题上有创始人出处的原话：灵感建题、选卡 / 自定角度原话、最新简报里的原始要求、同选题各稿 start 时的灵感与立意原话 */
 async function founderSaid(topic: Topic, dataDir?: string): Promise<Array<{ source: string; text: string }>> {
