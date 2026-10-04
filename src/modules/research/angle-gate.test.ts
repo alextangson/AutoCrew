@@ -499,3 +499,39 @@ describe("账号数据视角：发布计划读坏", () => {
     expect(await buildAccountData(f.data)).toMatchObject({ status: "failed", reason: expect.stringContaining("publish-plan.json") });
   });
 });
+
+describe("第七轮", () => {
+  it("OpenClaw 后台代写（_modelCall）：方向必须是创始人自定那句；第一篇带跳过参数拒", async () => {
+    const t = await makeTopic(f.data, "开爪题");
+    await founderAuthored(f.data, t.id, "创始人的那句");
+    const generateScriptImpl = vi.fn();
+    const call = (extra: Record<string, unknown>) => executeGenerate({ action: "script", topic: t.title, topic_id: t.id, platform: "douyin", _modelCall: true, _dataDir: f.data, ...extra }, { generateScriptImpl });
+    expect(await call({ direction: "模型自己换的方向" })).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect(await call({ research_mode: "skip", research_reason: "不想查" })).toMatchObject({ ok: false, code: "skip_removed" });
+    expect(await call({ skip_reason: "直接写" })).toMatchObject({ ok: false, code: "skip_removed" });
+    expect(generateScriptImpl).not.toHaveBeenCalled();
+    generateScriptImpl.mockResolvedValue({ contentId: "c", title: "t", body: "b", hashtags: [], violations: [], tokensUsed: 1 });
+    expect(await call({ direction: "创始人的那句" })).toMatchObject({ ok: true });
+  });
+
+  it("聊天：存量稿的选题有未选的立意卡也照常重写（不弹选卡）", async () => {
+    const t = await makeTopic(f.data, "存量有卡题");
+    await withCards(t.id);
+    await makeContent(f.data, "存量有卡题", { topicId: t.id }, "draft_ready");
+    const startGenerate = vi.fn(async () => ({ contentId: "c-new", runId: "r", completion: Promise.resolve() }));
+    const chat = buildChatTools([], f.data, { startGenerate, content: vi.fn(async () => ({ ok: true, contents: [] })) });
+    const out = JSON.parse(await chat.find((x) => x.name === "generate_script")!.execute({ topic: t.title, platform: "douyin", topic_id: t.id, skip_reason: "旧习惯" }) as string);
+    expect(out).toMatchObject({ ok: true, pending: true });
+    expect(startGenerate).toHaveBeenCalledOnce();
+  });
+
+  it("空的 publish-plan.json 也算读坏：账号数据记失败", async () => {
+    const { buildAccountData } = await import("../../tools/scout-parallel.js");
+    const { writePlan } = await import("../meetings/meeting-fixture.test-helper.js");
+    const c = await makeContent(f.data, "空计划稿", {}, "published");
+    await writePlan(f.data, c.id, []);
+    const { resolveContentProject } = await import("../../storage/content-project.js");
+    await fs.writeFile(path.join(resolveContentProject(c.id, f.data)!.project_root, "06-publish/publish-plan.json"), "");
+    expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
+  });
+});

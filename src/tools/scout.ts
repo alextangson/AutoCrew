@@ -327,6 +327,8 @@ async function attachEvidence(
   evidence: HostCitation | HostOfflineClaim,
   args: Record<string, unknown>,
   dir: string,
+  /** 发起这次调用、已认证的宿主（视角令牌持有者也是它本人）——绝不用任务持有者顶替 */
+  caller: string,
 ): Promise<Record<string, unknown>> {
   const contentId = str(args.content_id),
     packId = str(args.pack_id);
@@ -346,7 +348,8 @@ async function attachEvidence(
     claim: evidence.claim,
     ...(evidence.source === "verified_quote" ? { sourceId: evidence.sourceId, sourceUrl: evidence.sourceUrl } : {}),
   };
-  const target = { contentId, packId, topicId: task.topicId, host: task.host, claimToken: str(args.claim_token), dir };
+  // 稿件写权限按调用者本人判（认领令牌、跨宿主保护），与研究任务归谁无关
+  const target = { contentId, packId, topicId: task.topicId, host: caller, claimToken: str(args.claim_token), dir };
   return attachContentEvidence(target, () => entry);
 }
 
@@ -564,7 +567,7 @@ export async function executeScout(
             ...view(task),
             citation,
             claim_verification: "not_semantically_reviewed",
-            ...(await attachEvidence(task, citation, args, dir)),
+            ...(await attachEvidence(task, citation, args, dir, host)),
           };
         }
         if (action === "claim_offline") {
@@ -590,7 +593,7 @@ export async function executeScout(
             claim_id: item.id,
             claim: item,
             verified: false,
-            ...(await attachEvidence(task, item, args, dir)),
+            ...(await attachEvidence(task, item, args, dir, host)),
           };
         }
         const payload = args.payload as Record<string, unknown> | undefined;

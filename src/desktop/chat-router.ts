@@ -772,8 +772,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             }
             const retried = await retryInterrupted(req);
             if (retried) return retried;
-            const gatedExempt = angleId || req.direction ? null : await angleGate(req, "");
-            if (gatedExempt) return gatedExempt;
+            // 存量稿的重写不再弹选卡：稿子本身带着立意（旧的 skip_reason 也只当留痕）
             const startedExempt = await d.startGenerate(req, dataDir);
             effects?.contentIds.add(startedExempt.contentId);
             return JSON.stringify({ ok: true, pending: true, contentId: startedExempt.contentId, note: "写作已在后台开始（约 1-3 分钟）。占位卡已在看板「在写」列,写完自动转正并出现在任务带——告诉用户去看板看,不要编造成稿内容。" });

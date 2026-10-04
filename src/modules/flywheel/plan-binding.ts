@@ -55,7 +55,7 @@ export async function loadPlanEntries(dataDir?: string, contents?: Content[]): P
 export async function assertPlanEntriesReadable(dataDir: string | undefined, contents: Content[]): Promise<void> {
   for (const c of contents.filter((x) => x.status !== "archived")) {
     const raw = await readPublishPlanRaw(c.id, getDataDir(dataDir));
-    if (!raw) continue;
+    if (raw === null) continue; // 不存在才算没有；空文件 = 读坏，下面解析时报出来
     try { JSON.parse(raw); } catch (err) {
       throw new Error(`稿件 ${c.id} 的发布计划 publish-plan.json 读不出：${err instanceof Error ? err.message : String(err)}`);
     }

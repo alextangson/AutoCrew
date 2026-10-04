@@ -251,3 +251,22 @@ export async function newDraftGate(topicId: string, req: WritingReadinessRequest
   const readiness = await inspectWritingReadiness(topicId, req, dataDir, warn);
   return readiness.ready ? refused : { ...writingReadinessFailure(readiness), gate: refused.code };
 }
+
+/**
+ * 不走写前检查的开写入口（OpenClaw / 桌面后台代写）也要按请求核一遍：第一篇稿不许带跳过参数，
+ * 带来的 direction 必须就是创始人最近一次自定的那句。已有真稿的修订不受限。null = 放行。
+ */
+export async function firstDraftRequestRefusal(topicId: string | undefined, req: WritingReadinessRequest, dataDir?: string): Promise<Record<string, unknown> | null> {
+  if (!topicId) return null; // 没选题的由选题会闸口拒
+  if (await topicHasDraft(topicId, dataDir)) return null;
+  if (req.researchMode === "skip" || req.angleSkipReason?.trim() || req.researchReason?.trim()) {
+    return { ok: false, code: "skip_removed", error: ANGLE_GATE_COPY.skipRemoved };
+  }
+  const direction = req.direction?.trim();
+  if (!direction) return null;
+  const topic = await getTopic(topicId, dataDir);
+  const authored = topic && latestDecision(topic) === "authored" ? topic.founderAngle : undefined;
+  if (authored?.direction === direction) return null;
+  return { ok: false, code: "needs_founder_angle", error: ANGLE_GATE_COPY.bareDirection,
+    next_action: { tool: "autocrew_workflow", params: { action: "select_angle", topic_id: topicId, direction, founder_words: "<创始人原话>" } } };
+}

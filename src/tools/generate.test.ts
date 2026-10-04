@@ -56,6 +56,7 @@ const slated = <T extends Record<string, unknown>>(p: T) => ({ topic_id: SLATED,
 
 describe("executeGenerate", () => {
   it("本次要求与手写角度独立透传，不混入 research", async () => {
+    await founderAuthored(slateDir, SLATED, "只讲返工成本"); // 带来的方向要是创始人自定的那句
     let seen: Record<string, unknown> | undefined;
     await executeGenerate(slated({
       action: "script", topic: "AI技能", platform: "douyin", research: "用户的实测材料",

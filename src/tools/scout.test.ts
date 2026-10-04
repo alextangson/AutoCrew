@@ -699,3 +699,17 @@ it("账号数据：稿件记录读坏 → 这一路记失败（不冒充数据�
   await prepare();
   expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "account", status: "failed", last_failure: expect.stringContaining("读不出") })]) });
 });
+
+it("任务归 local-user 时，别的宿主凭视角令牌补证入稿：按调用者本人判写权限，不借任务持有者的人手身份", async () => {
+  const owned = await run("prepare", { platform: "wechat_mp", requirements: REQUIREMENTS }, "local-user");
+  taskId = owned.task_id as string;
+  await run("read_page", { perspective: "evidence", url: URL }, "local-user");
+  const { content, pack, target } = await seedPack();
+  await writePack(content.id, { ...pack, host: "local-user" }, dir); // 本机人手的包
+  const claimed = await claimContent(content.id, "writer", "claude", dir); // 另一宿主正认领着这篇
+  if (!claimed.ok) throw new Error(claimed.error);
+  const token = (await run("claim", { perspective: "evidence" }, "agent-x")).perspective_token;
+  const r = await run("cite", { ...target, source_id: "p1", quote: QUOTE, claim: "共同浇水", perspective_token: token }, "agent-x");
+  expect(r, JSON.stringify(r).slice(0, 300)).toMatchObject({ ok: false });
+  expect(await loadHostEvidence(content.id, dir)).toEqual([]);
+});
