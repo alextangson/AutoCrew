@@ -46,17 +46,17 @@ async function progressOf(c: Content, dataDir?: string): Promise<Record<string, 
   };
 }
 
-function newDraft(topic: Topic, host: string, dataDir?: string): Promise<Content> {
+function newDraft(topic: Topic, host: string, dataDir?: string, inspiration?: string): Promise<Content> {
   return saveContent({
     title: topic.title, body: "", platform: DRAFT_PLATFORM, topicId: topic.id, status: "drafting", tags: [],
-    draftPath: { kind: "thin", startedAt: new Date().toISOString() }, _provenance: modelWrite(host),
+    draftPath: { kind: "thin", startedAt: new Date().toISOString(), ...(inspiration ? { inspiration } : {}) }, _provenance: modelWrite(host),
   }, dataDir);
 }
 
 async function createFromInspiration(inspiration: string, host: string, dataDir?: string): Promise<Content> {
   const title = Array.from(inspiration.replace(/\s+/g, " ").trim()).slice(0, 40).join("");
   const topic = await saveTopic({ title, description: inspiration.trim(), tags: [], source: "autocrew_draft" }, dataDir);
-  return newDraft(topic, host, dataDir);
+  return newDraft(topic, host, dataDir, inspiration.trim());
 }
 
 async function resume(a: DraftArgs): Promise<Content | Record<string, unknown>> {
@@ -79,7 +79,7 @@ async function create(a: DraftArgs): Promise<Content | Record<string, unknown>> 
   if (a.topicId) {
     const topic = await getTopic(a.topicId, a.dataDir);
     if (!topic || topic.deletedAt) return { ok: false, code: "topic_not_found", error: `选题不存在或已删除：${a.topicId}。不带 topic_id 就从灵感新建选题` };
-    return newDraft(topic, a.host, a.dataDir);
+    return newDraft(topic, a.host, a.dataDir, a.inspiration);
   }
   if (!a.inspiration) return { ok: false, code: "bad_param", error: "start 要带 inspiration（创始人的一句灵感原话）、topic_id（复用已有选题）或 content_id（接手已有稿）" };
   return createFromInspiration(a.inspiration, a.host, a.dataDir);
@@ -93,12 +93,12 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
   const content = got as Content;
   const topic = content.topicId ? await getTopic(content.topicId, a.dataDir) : null;
   const [profile, hits, series, firsthand, progress] = await Promise.all([
-    profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration), progressOf(content, a.dataDir),
+    profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration ?? content.draftPath?.inspiration), progressOf(content, a.dataDir),
   ]);
   return {
     ok: true, content_id: content.id, topic_id: content.topicId ?? null, resumed: Boolean(a.contentId),
     context: { profile, hits, series, firsthand }, progress,
     workbench_url: workbenchUrl(content.id),
-    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length > 0 }) },
+    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
   };
 }

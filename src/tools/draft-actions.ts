@@ -86,6 +86,6 @@ export async function draftSave(a: DraftArgs): Promise<R> {
   // 已出过定稿清单的稿又改了：退回写作中（锁外推进，状态机照常校验）
   if (r.ok && r.status === "draft_ready") await transitionStatus(a.contentId!, "drafting", { host: a.host }, a.dataDir);
   if (!r.ok) return r;
-  const note = draftNextNote({ id: a.contentId!, status: "drafting", needsAngle: false, hasBody: true, reviewed: r.reviewed as boolean });
+  const note = draftNextNote({ id: a.contentId!, status: "drafting", needsAngle: false, hasBody: true, reviewed: r.reviewed as boolean, checklistCurrent: false });
   return { ...r, status: undefined, reviewed: undefined, workbench_url: workbenchUrl(a.contentId!), next_action: { note } };
 }

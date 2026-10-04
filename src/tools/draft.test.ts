@@ -236,7 +236,7 @@ describe("验收 10-04 跟进", () => {
   });
 
   it("start{topic_id} 复用已有选题，带出选题上创始人的原话与同选题转写", async () => {
-    const topic = await saveTopic({ title: "卡帕西看好 AI 讲解视频", description: "我做过一条讲大模型怎么工作的讲解视频，声音是克隆的", tags: [] }, dir);
+    const topic = await saveTopic({ title: "卡帕西看好 AI 讲解视频", description: "我做过一条讲大模型怎么工作的讲解视频，声音是克隆的", tags: [], source: "inspiration" }, dir);
     const old = await saveContent({ title: "旧稿", body: "旧正文".repeat(40), platform: "douyin", topicId: topic.id, status: "drafting", tags: [], draftPath: { kind: "thin", startedAt: "2026-10-01T00:00:00Z", angle: { ...ANGLE, version: 1, founder_words: "讲我那条克隆声音的视频", at: "x" } }, _provenance: HUMAN_WRITE }, dir);
     const r = await run("start", { topic_id: topic.id, inspiration: "AI 时代普通人怎么学" });
     expect(r).toMatchObject({ ok: true, topic_id: topic.id });
@@ -275,5 +275,40 @@ describe("验收 10-04 跟进", () => {
     expect(note(await run("start", { content_id: id }))).toContain("只改他说的地方");
     await run("prepare_final", { content_id: id, base_version: 3, citations: [] });
     expect(note(await run("start", { content_id: id }))).toMatch(/等你认稿.*\/#\/editor\//);
+  });
+});
+
+describe("Codex 审 main...HEAD（10-04 跟进）回归", () => {
+  const said = (r: Record<string, unknown>) => (r.context as { firsthand: { founder_words: unknown; founder_said: Array<{ text: string }> } }).firsthand;
+
+  it("P1 选题描述是搜索摘要 / 模型摘要时不算创始人原话，也不顶 founder_words", async () => {
+    const topic = await saveTopic({ title: "雷达题", description: "我上周亲自去了发布会现场（模型写的摘要）", tags: [], source: "radar:36氪" }, dir);
+    const fh = said(await run("start", { topic_id: topic.id }));
+    expect(fh.founder_words).toBeNull();
+    expect(fh.founder_said.map((x) => x.text)).not.toContain(topic.description);
+  });
+
+  it("P1 创始人一句灵感建的选题（source=inspiration）仍算原话", async () => {
+    const topic = await saveTopic({ title: "灵感", description: "我想聊聊 AI 越用越忙", tags: [], source: "inspiration" }, dir);
+    expect(said(await run("start", { topic_id: topic.id })).founder_words).toBe("我想聊聊 AI 越用越忙");
+  });
+
+  it("P2 start{topic_id, inspiration} 的灵感存在稿上，接手时仍在，选题不被改写", async () => {
+    const topic = await saveTopic({ title: "共享题", description: "摘要", tags: [], source: "radar:x" }, dir);
+    const id = (await run("start", { topic_id: topic.id, inspiration: "我做过一条克隆声音的讲解视频" })).content_id as string;
+    const fh = said(await run("start", { content_id: id }));
+    expect(fh.founder_words).toBe("我做过一条克隆声音的讲解视频");
+    expect(fh.founder_said.map((x) => x.text)).toContain("我做过一条克隆声音的讲解视频");
+    expect((await getTopic(topic.id, dir))!.description).toBe("摘要");
+  });
+
+  it("P2 等你认稿但清单缺失 / 过期 → 提示重新 prepare_final，不让创始人去点定了", async () => {
+    const { id, version } = await angled();
+    await run("save", { content_id: id, base_version: version, body: BODY });
+    await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
+    await fs.rm(contentFile(id, dir, "draft-final.json"), { force: true });
+    const note = ((await run("start", { content_id: id })).next_action as { note: string }).note;
+    expect(note).toContain("prepare_final");
+    expect(note).not.toContain("点「定了」");
   });
 });

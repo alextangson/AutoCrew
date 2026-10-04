@@ -80,16 +80,22 @@ export async function seriesContext(content: Pick<Content, "id" | "topicId">, da
   }));
 }
 
-/** 选题上创始人留过的原话：选题描述、选卡 / 自定角度原话、最新简报里的原始要求、同选题其他稿立意时的原话 */
+/** 选题描述只有创始人一句灵感建的选题（source=inspiration）才是他的原话；雷达摘要、搜索片段、手建题都证明不了 */
+const founderTopicText = (t: Topic): string | undefined => (t.source === "inspiration" ? t.description?.trim() || undefined : undefined);
+
+/** 选题上有创始人出处的原话：灵感建题、选卡 / 自定角度原话、最新简报里的原始要求、同选题各稿 start 时的灵感与立意原话 */
 async function founderSaid(topic: Topic, dataDir?: string): Promise<Array<{ source: string; text: string }>> {
   const brief = await loadLatestBrief(topic.id, getDataDir(dataDir)).catch(() => null);
   const others = (await listContents(dataDir)).filter((c) => c.topicId === topic.id && !c.deletedAt);
   const raw: Array<[string, string | undefined]> = [
-    ["选题", topic.description || topic.title],
+    ["灵感建题原话", founderTopicText(topic)],
     ["选卡原话", topic.selectedAngle?.founderWords],
     ["自定角度原话", topic.founderAngle?.founderWords],
     ["创作要求", brief?.creativeTask?.requirements],
-    ...others.map((c): [string, string | undefined] => [`稿件「${c.title}」立意原话`, c.draftPath?.angle?.founder_words]),
+    ...others.flatMap((c): Array<[string, string | undefined]> => [
+      [`稿件「${c.title}」灵感原话`, c.draftPath?.inspiration],
+      [`稿件「${c.title}」立意原话`, c.draftPath?.angle?.founder_words],
+    ]),
   ];
   const seen = new Set<string>();
   return raw.filter(([, t]) => { const k = t?.trim(); if (!k || seen.has(k)) return false; seen.add(k); return true; })
@@ -101,7 +107,7 @@ export async function firsthandContext(topic: Topic | null, dataDir?: string, in
   if (!topic) return { founder_words: inspiration ?? null, founder_said: [], transcripts: [] };
   const material = await collectOwnMaterial(getDataDir(dataDir), { id: topic.id, title: topic.title, description: topic.description }, { maxChars: 6000 });
   return {
-    founder_words: inspiration || topic.description || topic.title,
+    founder_words: inspiration || founderTopicText(topic) || null,
     founder_said: await founderSaid(topic, dataDir),
     transcripts: material.chunks.filter((c) => c.kind === "transcript").map((c) => ({ id: c.id, title: c.title, text: c.text, same_topic: c.sameTopic })),
     rule: "亲历只能来自这里；没有就不写亲历",
