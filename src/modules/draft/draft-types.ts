@@ -24,6 +24,8 @@ export interface DraftPathRecord {
   angle?: DraftAngle;
   /** agent 自己跑的 Codex 审稿意见（或调不通的原因），按版本号附在稿旁；只是参考 */
   reviewNotes?: DraftReviewNote[];
+  /** 最近一次 prepare_final 出清单的时间：稿件随之更新，工作台面板据此重读清单 */
+  checklistAt?: string;
 }
 
 /** 创始人在工作台点「定了」的记录：绑定当时的稿件指纹，正文一改即失效 */

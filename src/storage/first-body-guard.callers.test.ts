@@ -17,7 +17,6 @@ const NO_BODY_WRITES: Record<string, { reason: string; placeholderBody?: true }>
   "src/desktop/board-actions.ts#updateContent#1": { reason: "只改 manualPublications（我发了）" },
   "src/desktop/board-actions.ts#updateContent#2": { reason: "只改 manualPublications（撤销我发了）" },
   "src/desktop/board-actions.ts#updateContent#3": { reason: "只改 manualPublications" },
-  "src/modules/draft/draft-finalize.ts#updateContent#1": { reason: "只写证据台账（创始人保留的未核验引用）" },
   "src/desktop/orphan-reconcile.ts#updateContent#1": { reason: "只改标题前缀与 lastError（中断标记）" },
   "src/modules/flywheel/work-binding.ts#saveContent#1": { reason: "历史作品登记，空正文", placeholderBody: true },
   "src/modules/video/handoff/register-commit.ts#updateContent#1": { reason: "只写成片登记与认领" },

@@ -44,3 +44,14 @@ describe("审稿意见（agent 用 save{review_notes} 附上）", () => {
     expect(html).toContain("当前版");
   });
 });
+
+describe("审稿意见形状不对时退回原文（不崩）", () => {
+  it.each([
+    [{ main_line: { verdict: "pass", reason: "x" }, payoff: { verdict: "fail", reason: "y", quotes: "一句" }, opening: { verdict: "pass", reason: "z" } }],
+    [{ main_line: { verdict: "pass", reason: { a: 1 } }, payoff: { verdict: "pass", reason: "y" }, opening: { verdict: "pass", reason: "z" } }],
+    [{ main_line: { verdict: "pass", reason: "x" }, payoff: { verdict: "pass", reason: "y" }, opening: { verdict: "pass", reason: "z" }, advisories: [{ quote: 1 }] }],
+  ])("%o", (notes) => {
+    const html = renderToStaticMarkup(createElement(ReviewNotes, { notes: [{ version: 1, at: "x", notes }], version: 1 }));
+    expect(html).toContain("<pre");
+  });
+});

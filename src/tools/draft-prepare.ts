@@ -3,7 +3,7 @@
  * 「定了」不在这里——只有创始人在工作台点（src/desktop/draft-handlers.ts）。没出处的项不拦，列给创始人决定。
  * 版本比对与清单落盘在同一把单稿写锁里；状态推进在锁外，带 expectedDraft，期间正文变了就推不过去。
  */
-import { transitionStatus, type Content } from "../storage/local-store.js";
+import { transitionStatus, type Content, type ContentTx } from "../storage/local-store.js";
 import { draftHash } from "../storage/draft-hash.js";
 import { isRealDraft } from "../storage/first-body-guard.js";
 import { buildChecklist, locateMapping, normalizeMapping, saveChecklist, type FinalChecklist, type MappingInput } from "../modules/draft/draft-final.js";
@@ -13,7 +13,7 @@ import type { DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
 
-async function prepare(a: DraftArgs, c: Content, mapping: MappingInput[]): Promise<R> {
+async function prepare(a: DraftArgs, c: Content, tx: ContentTx, mapping: MappingInput[]): Promise<R> {
   if (!await isRealDraft(c, a.dataDir)) return fail("empty_body", "还没有正文：先 save 一版再定稿");
   const entries = c.evidenceLedger?.entries ?? [];
   const located = locateMapping(c.body, mapping, entries);
@@ -22,13 +22,14 @@ async function prepare(a: DraftArgs, c: Content, mapping: MappingInput[]): Promi
   const reviewed = (c.draftPath?.reviewNotes ?? []).some((n) => n.version === version);
   const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items: buildChecklist(c.body, located.spans, entries), review: { version, has_notes: reviewed } };
   await saveChecklist(c.id, checklist, a.dataDir);
+  await tx.write({ draftPath: { ...c.draftPath!, checklistAt: checklist.prepared_at } });
   return { ok: true, checklist, expected: { title: c.title, body: c.body, platform: c.platform }, status: c.status };
 }
 
 export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
   const mapping = normalizeMapping(a.citations);
   if (typeof mapping === "string") return fail("bad_param", mapping);
-  const r = await withVersion(a, (c) => prepare(a, c, mapping));
+  const r = await withVersion(a, (c, tx) => prepare(a, c, tx, mapping));
   if (!r.ok) return r;
   const checklist = r.checklist as FinalChecklist;
   if (r.status !== "draft_ready") {

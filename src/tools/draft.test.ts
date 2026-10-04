@@ -164,7 +164,7 @@ describe("save", () => {
     expect(await run("save", { content_id: id, base_version: 2, body: `${BODY}再补一句。`, review_notes: "codex 没登录：Not logged in" })).toMatchObject({ ok: true, version: 3 });
     const panel = await buildIpcHandlers()["draft:final_get"]({ id, _dataDir: dir }, { authMethod: "session" });
     expect((panel.data as { review_notes: unknown[] }).review_notes).toEqual([
-      expect.objectContaining({ version: 2, notes: verdicts }),
+      expect.objectContaining({ version: 2, notes: { main_line: { ...verdicts.main_line, quotes: [] }, payoff: verdicts.payoff, opening: { ...verdicts.opening, quotes: [] }, advisories: [] } }),
       expect.objectContaining({ version: 3, notes: "codex 没登录：Not logged in" }),
     ]);
   });

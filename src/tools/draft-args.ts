@@ -37,14 +37,45 @@ const intOf = (v: unknown): number | undefined => {
 };
 export const INVALID: unique symbol = Symbol("invalid-arg");
 const NOTES_MAX = 20_000;
+const VERDICT_KEYS = ["main_line", "payoff", "opening"] as const;
+const isStructured = (v: object) => !Array.isArray(v) && [...VERDICT_KEYS, "advisories"].some((k) => k in v);
+
+/** 一组字符串：数组（元素须是字符串）直接用；像 JSON 的字符串解析（修引号重试）；普通字符串当一条；缺省为空 */
+function strings(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null) return [];
+  const v = maybeJson(raw);
+  if (typeof v === "string") return v.trim() ? [v] : [];
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v as string[] : null;
+}
+
+/** 按审稿提示词的结构交的意见：三项结论 + 建议，全形状校验并归一；有一处不对就整条拒 */
+function structuredNotes(o: Record<string, unknown>): Record<string, unknown> | typeof INVALID {
+  const out: Record<string, unknown> = {};
+  for (const k of VERDICT_KEYS) {
+    const x = maybeJson(o[k]) as Record<string, unknown> | null;
+    const quotes = strings(x?.quotes);
+    if (!x || typeof x !== "object" || (x.verdict !== "pass" && x.verdict !== "fail") || typeof x.reason !== "string" || !quotes) return INVALID;
+    out[k] = { verdict: x.verdict, reason: x.reason, quotes };
+  }
+  const adv = maybeJson(o.advisories ?? []);
+  if (!Array.isArray(adv)) return INVALID;
+  const advisories = [];
+  for (const a of adv) {
+    const x = maybeJson(a) as Record<string, unknown> | null;
+    if (!x || typeof x !== "object" || typeof x.text !== "string" || (x.quote !== undefined && typeof x.quote !== "string")) return INVALID;
+    advisories.push({ text: x.text, ...(x.quote ? { quote: x.quote } : {}) });
+  }
+  return { ...out, advisories };
+}
+
 /** 审稿意见：对象 / 数组直接用；像 JSON 的字符串解析（修引号重试）；普通文字照存；别的类型或解析不了 → INVALID */
 function notesOf(raw: unknown): DraftArgs["reviewNotes"] {
   if (raw === undefined || raw === null || raw === "") return undefined;
   const v = maybeJson(raw);
   if (v === UNPARSABLE) return INVALID;
   if (typeof v === "string") return v.slice(0, NOTES_MAX);
-  if (typeof v === "object" && v !== null && JSON.stringify(v).length <= NOTES_MAX) return v as Record<string, unknown> | unknown[];
-  return INVALID;
+  if (typeof v !== "object" || v === null || JSON.stringify(v).length > NOTES_MAX) return INVALID;
+  return isStructured(v) ? structuredNotes(v as Record<string, unknown>) : v as Record<string, unknown> | unknown[];
 }
 
 export function draftArgs(p: Record<string, unknown>): DraftArgs {

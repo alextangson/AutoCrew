@@ -20,9 +20,17 @@ export function finalizeBlock(d: DraftPanelData, keep: ReadonlySet<string>, dirt
 
 export const VERDICT_LABEL: Record<string, string> = { main_line: "主线", payoff: "收获", opening: "开头" };
 
-/** 审稿意见是不是按提示词的三项结论结构交的（不是就原文展示） */
+/** 审稿意见是不是按提示词的三项结论结构交的（全形状都对才算；不是就原文展示，不崩） */
 export function structuredReview(notes: unknown): StructuredReview | null {
-  const n = notes as Partial<StructuredReview> | null;
-  const ok = (v: unknown) => Boolean(v && typeof v === "object" && ((v as DraftVerdict).verdict === "pass" || (v as DraftVerdict).verdict === "fail"));
-  return n && typeof n === "object" && ok(n.main_line) && ok(n.payoff) && ok(n.opening) ? n as StructuredReview : null;
+  const n = notes as Record<string, unknown> | null;
+  const isStr = (x: unknown) => typeof x === "string";
+  const verdict = (v: unknown) => {
+    const x = v as Record<string, unknown> | null;
+    return Boolean(x && typeof x === "object" && (x.verdict === "pass" || x.verdict === "fail") && isStr(x.reason)
+      && (x.quotes === undefined || (Array.isArray(x.quotes) && x.quotes.every(isStr))));
+  };
+  const advice = (a: unknown) => { const x = a as Record<string, unknown> | null; return Boolean(x && typeof x === "object" && isStr(x.text) && (x.quote === undefined || isStr(x.quote))); };
+  if (!n || typeof n !== "object" || !verdict(n.main_line) || !verdict(n.payoff) || !verdict(n.opening)) return null;
+  if (n.advisories !== undefined && !(Array.isArray(n.advisories) && n.advisories.every(advice))) return null;
+  return n as unknown as StructuredReview;
 }

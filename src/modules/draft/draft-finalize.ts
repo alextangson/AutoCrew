@@ -5,7 +5,7 @@
  * 由现有的创始人流转写认稿决定（production-hooks），并在同一次落盘盖 draftFinal。
  */
 import { draftHash } from "../../storage/draft-hash.js";
-import { getContent, getDataDir, LOCAL_HOST, transitionStatus, updateContent, type Content } from "../../storage/local-store.js";
+import { contentTransaction, getContent, getDataDir, LOCAL_HOST, transitionStatus, type Content } from "../../storage/local-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
 import { saveCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
 import { currentVersion } from "./draft-types.js";
@@ -61,9 +61,16 @@ export async function finalizeByFounder(contentId: string, input: { draftHash: s
   const blocked = await checkReady(c, checklist, input.draftHash, input.keep);
   if (blocked) return blocked;
   const kept = checklist!.items.filter((i) => i.status === "unsourced");
-  const { entries, keptIds } = withKeptEntries(c, kept);
-  const updated = await updateContent(c.id, { evidenceLedger: { ...(c.evidenceLedger ?? { lookups: [], budget: { max: 0, used: 0 } }), entries } }, dataDir);
-  if (!updated) return fail("not_found", `稿件不存在：${contentId}`);
+  // 台账读-并-写在同一把单稿写锁里：期间别的写入（verify_quote 新登记的证据）不会被旧快照盖掉
+  const merged = await contentTransaction(c.id, dataDir, async (tx) => {
+    const cur = await tx.read();
+    if (!cur) return null;
+    const { entries, keptIds } = withKeptEntries(cur, kept);
+    const updated = await tx.write({ evidenceLedger: { ...(cur.evidenceLedger ?? { lookups: [], budget: { max: 0, used: 0 } }), entries } });
+    return updated ? { updated, entries, keptIds } : null;
+  });
+  if (!merged) return fail("not_found", `稿件不存在：${contentId}`);
+  const { updated, entries, keptIds } = merged;
   const coverage: CitationCoverage = { draft_hash: draftHash(updated), citations: citationsFor(updated.body, checklist!.items, entries, keptIds), reviewed_by: "founder-workbench", reviewed_at: new Date().toISOString() };
   try { await saveCoverage(updated, coverage, getDataDir(dataDir)); }
   catch (err) { return fail("citations_invalid", `出处映射没写进去：${err instanceof Error ? err.message : String(err)}`); }
