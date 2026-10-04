@@ -1,7 +1,7 @@
 /** The MCP host receives this workflow without needing repository skills. */
 export const WRITING_INSTRUCTIONS = [
   "AutoCrew 的调研、立意、写作、语义审稿默认全部由当前宿主模型完成；产品负责任务、抓页验引文、确定性检查和保存。普通 MCP 流程无需配置 engine。",
-  "抖音口播新稿走 autocrew_draft（write-script 技能的 6 步）：start → read / cite → angle（创始人原话）→ save → 改 → prepare_final，「定了」由创始人在工作台点。下面的 workflow / writer 流程用于其他平台。",
+  "抖音口播新稿走 autocrew_draft（write-script 技能的 6 步）：start → verify_quote 核引文 → angle（创始人原话）→ save（带 base_version）→ 改 → prepare_final，「定了」由创始人在工作台点。下面的 workflow / writer 流程用于其他平台。",
   "用户提出新稿需求：从对话整理完整 requirements，复用或用 autocrew_topic create 建立选题，然后调用 autocrew_workflow prepare{topic_id,platform,requirements}。不要直接 generate、workflow write 或 content save。",
   "prepare 返回的 research_task 已带 task_id 和本阶段任务包，照做后按 next_action 提交，不能轮询等待后台模型。所有后续 scout 研究动作带 topic_id 和 task_id。",
   "宿主可用自己的搜索工具查来源，再用 scout read_page{perspective,url} 直接抓页，无需第三方搜索 key；scout search 使用独立搜索服务额度。cite{source_id,claim,quote} 由产品核对抓取正文中的逐字引文；claim_offline{claim,reason} 明确记录未核验主张，不能冒充验证来源。",
@@ -29,7 +29,7 @@ export const WRITING_INSTRUCTIONS = [
 export const MCP_INSTRUCTIONS = [
   "AutoCrew 是创作者的编辑部：调研、立意、写作、审稿由你（当前宿主模型）完成；AutoCrew 负责任务、抓页验引文、确定性检查和保存。",
   "动笔前先读资源 autocrew://writing-guide（写作守则）；某个工具怎么用，读 autocrew://tool-guide/<工具名>。",
-  "抖音口播新稿走 autocrew_draft（write-script 技能）：start → 调研 read / cite → 创始人选立意 angle → save → 按意见改 → prepare_final，把工作台链接给创始人点「定了」。",
+  "抖音口播新稿走 autocrew_draft（write-script 技能）：start → 调研并 verify_quote 核引文 → 创始人选立意 angle → save（带 base_version）→ 按意见改 → prepare_final，把工作台链接给创始人点「定了」。",
   "其他平台写新稿先开选题会（topic-meeting 技能）：autocrew_topic 复用或建选题（只有一句灵感就 prepare 带 inspiration）→ autocrew_workflow prepare → 按 research_task 用 autocrew_scout 五路调研（视角可 claim 后派子代理并行）→ 出 3–4 张立意卡 → 创始人用原话定，workflow select_angle 带 founder_words → autocrew_writer pack 领包写稿 → writer submit → autocrew_review_desk submit 审稿。没有跳过调研或选卡的通道。",
   "每一步都照返回里的 next_action 走；被拒时读 error 和 next_action 改正后再调，不要绕开。不要直接 content save 新稿或用 generate 代写。",
   "requirements 保留创作者原话里的提纲、篇幅、口吻、必写和禁写；只用有依据的事实，不编造亲历。",

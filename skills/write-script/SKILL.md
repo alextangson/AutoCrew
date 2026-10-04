@@ -22,34 +22,42 @@ description: |
 
 ## 2 调研
 
-查这个方向的真事、真数据、同类视频怎么讲、哪条爆了。搜索用你自己的工具；要引用的网页用 `read{content_id,url}` 抓原文，再 `cite{content_id,page_id,quote}` 逐字登记，拿到证据编号。`cite` 被拒说明那段不在原文里，重新从 `read` 的原文复制。不用问创始人。
+查这个方向的真事、真数据、同类视频怎么讲、哪条爆了。搜索、读网页都用你自己的工具。要在稿里引用的原话或数字，用 `verify_quote{content_id, url, quote}` 登记：服务端现抓原网页逐字比对，过了才进证据台账、回证据编号。被拒说明那段不在原文里，回原网页重新逐字复制。不用问创始人。
 
 ## 3 立意
 
 给 3 个立意，每个包含：我们的判断（一句）、给谁看、开头 15 秒原话、为什么可能爆（引 `context.hits` 或对标视频的真实数字，没有就写没有）、4–6 行论证链。主线必须是我们自己的判断，外部资料只做证据。
 
-创始人选定或改写后，`angle{content_id, main_line, for_whom, opening, why_viral, chain, founder_words}`，`founder_words` 照抄他的原话。
+创始人选定或改写后，`angle{content_id, base_version, main_line, for_whom, opening, why_viral, chain, founder_words}`，`founder_words` 照抄他的原话。
 
 ## 4 写
 
-按选定的主线和论证链写全文，`save{content_id, title, body}`。第一版存下后 Codex 会在后台审一次（主线、收获、开头），只是提示：`review{content_id}` 取结果，摆给创始人参考，不据此自己大改。`format_warnings` 有内容就改掉再存。
+按选定的主线和论证链写全文，`save{content_id, base_version, title, body}`。`format_warnings` 有内容就改掉再存。
+
+第一版存下后，自己跑一次 Codex 审稿（只看主线、收获、开头，只是参考）：把本技能目录下 `codex-review-prompt.md` 里的 `{{RULES}}`、`{{ANGLE}}`、`{{BODY}}` 换成档案规则、选定的立意、当前正文，存成一个临时文件，再跑
+
+```bash
+codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文件
+```
+
+最长等 8 分钟。把它输出的 JSON 原样用 `save{content_id, base_version, body:<同一版正文>, review_notes}` 附在这一版上，再摆给创始人参考；别据此自己大改。Codex 没装、没登录、超时或输出不合格，就把原因原文当 `review_notes` 附上，照常往下走。
 
 ## 5 改
 
-创始人说改哪里就只改哪里，别的不动，改完 `save`。不再重审；他要再审才 `review{rerun:true}`。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写。
+创始人说改哪里就只改哪里，别的不动，改完 `save`。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写。
 
 ## 6 定稿
 
-创始人在对话里说「定了」，你调 `prepare_final{content_id, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。它出一份出处清单、把稿推到「等你认稿」。把回执里的 `workbench_url` 给创始人，请他在工作台看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
+创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。它出一份出处清单、把稿推到「等你认稿」。把回执里的 `workbench_url` 给创始人，请他在工作台看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
 
 ```json
-{ "action": "prepare_final", "content_id": "…", "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }] }
+{ "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }] }
 ```
 
 ## 「你定」
 
 第 1 步或第 3 步创始人说「你定」：你可以自己选，但把选了哪个、为什么摆出来；第 3 步的 `founder_words` 记「你定」原话。
 
-## 被占用
+## 版本号
 
-回 `claim_held` 是另一个会话在写这篇：照实告诉创始人。回执说已闲置满 10 分钟时，他同意了才带 `takeover:true` 重试。
+`save` / `angle` / `prepare_final` 都带 `base_version`：你最后读到的版本号（`start` 的 `progress.version`，之后每次 `save` 回执里的 `version`）。回 `version_conflict` 说明中间有人改过稿，多半是创始人在工作台手改：读回执里的 `latest_body` 和 `diff`，在最新版上重改，带 `latest_version` 再交，不要拿旧稿盖回去。
