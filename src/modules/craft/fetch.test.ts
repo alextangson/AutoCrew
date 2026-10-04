@@ -42,7 +42,10 @@ function fake(infos: Record<string, Record<string, unknown>>, handler: Handler =
         { text: "reply", like_count: 99, parent: "abc" },
       ] }), stderr: "" };
     }
-    return { stdout: JSON.stringify(infos[id]), stderr: "" };
+    // 真实 yt-dlp：默认客户端有字幕轨没热度条，mweb 有热度条没字幕轨
+    const { heatmap, subtitles, automatic_captions, ...rest } = infos[id];
+    const mweb = args.includes("youtube:player_client=mweb");
+    return { stdout: JSON.stringify(mweb ? { ...rest, heatmap, subtitles: {}, automatic_captions: {} } : { ...rest, subtitles, automatic_captions }), stderr: "" };
   };
 }
 
@@ -93,7 +96,36 @@ describe("craft:fetch 成功路径", () => {
     const root = path.join(dir, "root");
     const s = await runCraftFetch({ urls: [url(A)], craftRoot: root, exec: fake({ [A]: baseInfo(A) }), sleep: async () => {} });
     expect(s.outDir).toBe(path.join(root, "dankoetalks"));
-    expect(calls.filter((c) => c.includes("-J")).length).toBe(1);
+    expect(calls.filter((c) => c.includes("-J") && !c.includes("youtube:player_client=mweb")).length).toBe(1);
+  });
+});
+
+describe("热度条走 mweb、字幕走默认客户端", () => {
+  it("每条两次元数据调用：热度条来自 mweb，字幕来自默认客户端的字幕轨", async () => {
+    await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A) }) });
+    const rec = await readJson(`${A}.json`);
+    expect(rec.heatmap).toHaveLength(20);
+    expect(rec.heatmap_reason).toBeNull();
+    expect(rec.subtitles).toMatchObject({ status: "ok", source: "manual" });
+    const j = calls.filter((c) => c.includes("-J"));
+    expect(j.map((c) => c.includes("youtube:player_client=mweb"))).toEqual([false, true]);
+  });
+
+  it("mweb 失败：用默认元数据，热度条记取不到并写原因，字幕照常", async () => {
+    const exec = fake({ [A]: baseInfo(A) }, (args) => (args.includes("youtube:player_client=mweb") ? new YtdlpError("failed", "mweb broke") : undefined));
+    const s = await run({ urls: [url(A)], exec });
+    expect(s).toMatchObject({ ok: true, done: 1 });
+    const rec = await readJson(`${A}.json`);
+    expect(rec).toMatchObject({ heatmap: null, view_count: 1000, subtitles: { status: "ok" } });
+    expect(rec.heatmap_reason).toContain("mweb broke");
+    expect((await readJson(`${A}.peaks.json`)).note).toContain("mweb broke");
+    expect((await readJson("index.json")).videos[0].heatmap_reason).toContain("mweb broke");
+  });
+
+  it("mweb 的 429 也算进连续限流", async () => {
+    const exec = fake({ [A]: baseInfo(A) }, (args) => (args.includes("youtube:player_client=mweb") ? new YtdlpError("rate_limited", "429") : undefined));
+    const s = await run({ urls: [url(A)], exec });
+    expect(s.stopped).toContain("429");
   });
 });
 
@@ -183,7 +215,7 @@ describe("网址校验与清理", () => {
 
   it("youtu.be 短链和带 list 参数的单条视频网址都规范成单条视频", async () => {
     await run({ urls: [`https://youtu.be/${A}`, `https://www.youtube.com/watch?v=${A}&list=PL1`], exec: fake({ [A]: baseInfo(A) }) });
-    expect(calls.filter((c) => c.includes("-J")).map((c) => c.at(-1))).toEqual([url(A)]);
+    expect(calls.filter((c) => c.includes("-J") && !c.includes("youtube:player_client=mweb")).map((c) => c.at(-1))).toEqual([url(A)]);
   });
 
   it("--clean 只删博主目录", async () => {

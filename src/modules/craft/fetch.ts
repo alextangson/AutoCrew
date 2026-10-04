@@ -31,7 +31,7 @@ export interface FetchOptions {
 
 export interface IndexEntry {
   id: string; url: string; status: "ok" | "failed" | "not_attempted"; reason?: string; title?: string | null;
-  subtitles?: string; heatmap?: boolean; comments?: string; resumed?: boolean;
+  subtitles?: string; heatmap?: boolean; heatmap_reason?: string; comments?: string; resumed?: boolean;
 }
 
 export interface FetchSummary {
@@ -73,8 +73,11 @@ async function call(ctx: Ctx, args: string[], timeoutMs: number): Promise<{ stdo
   }
 }
 
-async function fetchInfo(ctx: Ctx, id: string): Promise<Record<string, unknown>> {
-  const { stdout } = await call(ctx, ["-J", canonicalUrl(id)], ctx.opts.timeouts.info);
+export const MWEB_ARGS = ["--extractor-args", "youtube:player_client=mweb"];
+
+/** 默认客户端带字幕轨但不带热度条；mweb 客户端带热度条但不带字幕轨——所以元数据分两次取 */
+async function fetchInfo(ctx: Ctx, id: string, mweb = false): Promise<Record<string, unknown>> {
+  const { stdout } = await call(ctx, [...(mweb ? MWEB_ARGS : []), "-J", canonicalUrl(id)], ctx.opts.timeouts.info);
   try { return JSON.parse(stdout) as Record<string, unknown>; } catch { throw new YtdlpError("failed", "yt-dlp 输出的元数据不是合法 JSON"); }
 }
 
@@ -121,6 +124,19 @@ async function fetchComments(ctx: Ctx, id: string): Promise<CommentResult> {
   }
 }
 
+interface HeatInfo { meta: Record<string, unknown>; reason: string | null }
+
+/** mweb 取元数据和热度条；失败就用默认客户端的元数据，热度条记为取不到并写原因 */
+async function fetchMweb(ctx: Ctx, id: string, fallback: Record<string, unknown>): Promise<HeatInfo> {
+  try {
+    const meta = await fetchInfo(ctx, id, true);
+    return { meta, reason: normalizeHeatmap(meta.heatmap) ? null : "这条视频没有热度条（新视频或播放量小）" };
+  } catch (e) {
+    if (e instanceof StopRun || (e instanceof YtdlpError && e.kind === "missing")) throw e;
+    return { meta: { ...fallback, heatmap: null }, reason: `mweb 客户端取热度条失败：${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 function videoRecord(id: string, info: Record<string, unknown>, subs: SubResult, comments: CommentResult) {
   return {
     id, url: canonicalUrl(id),
@@ -137,20 +153,28 @@ function videoRecord(id: string, info: Record<string, unknown>, subs: SubResult,
 
 async function fetchOne(ctx: Ctx, id: string, dir: string, preInfo?: Record<string, unknown>): Promise<IndexEntry> {
   const info = preInfo ?? await fetchInfo(ctx, id);
+  const heat = await fetchMweb(ctx, id, info);
   const subs = await fetchSubtitles(ctx, id, info, dir);
   const comments = ctx.stopped ? { status: "failed" as const, reason: "整批已停下，评论没抓", items: [] } : await fetchComments(ctx, id);
-  const rec = videoRecord(id, info, subs, comments);
+  const rec = { ...videoRecord(id, { ...info, ...pickMeta(heat.meta) }, subs, comments), heatmap_reason: heat.reason };
   if (subs.cues) await writeTextAtomic(path.join(dir, `${id}.txt`), transcriptText(subs.cues));
   const peaks = rec.heatmap
     ? { metric: "replay_intensity", note: "重看强度：观众在这里反复回看的程度，不是留存率，不推断谁留下谁流失", ...replayPeaks(rec.heatmap, subs.cues) }
-    : { metric: "replay_intensity", note: "这条视频没有热度条（新视频或播放量小），没有重看强度数据", top: [], bottom: [] };
+    : { metric: "replay_intensity", note: `没有重看强度数据：${heat.reason}`, top: [], bottom: [] };
   await writeJsonAtomic(path.join(dir, `${id}.peaks.json`), peaks);
   await writeJsonAtomic(path.join(dir, `${id}.json`), rec);
   return {
     id, url: rec.url, status: "ok", title: rec.title, heatmap: Boolean(rec.heatmap), comments: comments.status,
     subtitles: subs.status === "ok" ? `${subs.source}:${subs.lang}` : subs.status,
+    ...(heat.reason ? { heatmap_reason: heat.reason } : {}),
     ...(subs.reason || comments.reason ? { reason: [subs.reason, comments.reason].filter(Boolean).join("；") } : {}),
   };
+}
+
+/** mweb 那次的数字和热度条优先；缺的字段保留默认客户端的值 */
+function pickMeta(m: Record<string, unknown>): Record<string, unknown> {
+  const keys = ["title", "channel", "view_count", "like_count", "comment_count", "duration", "upload_date", "heatmap"];
+  return Object.fromEntries(keys.filter((k) => m[k] !== undefined && m[k] !== null || k === "heatmap").map((k) => [k, m[k]]));
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
