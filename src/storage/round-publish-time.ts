@@ -6,6 +6,7 @@
  * 旧稿（没按本体走）照用 publishedAt。
  */
 import type { Content } from "./local-store.js";
+import { isImportedHistory } from "./imported-history.js";
 import { readProductionDocOrEmpty } from "./production-store.js";
 import { ontologyApplies } from "../modules/production/publish-gate.js";
 import { explainContent, explainContext } from "../modules/production/read.js";
@@ -42,6 +43,8 @@ export async function publishedSet(contents: Content[], data: string, keepN = KE
   const published: Content[] = [];
   const errors: PublishedSet["errors"] = [];
   for (const c of contents) {
+    // 历史作品记录没有素材，也不占「最近 5 条」的名额；视图与 NAS 归档共用这份名单
+    if (isImportedHistory(c)) continue;
     try {
       if ((await explainContent(c, data, ctx)).column !== "已发布") continue;
       published.push({ ...c, publishedAt: await roundPublishTime(c, data) });
