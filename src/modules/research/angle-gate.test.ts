@@ -196,7 +196,7 @@ describe("每个开写入口走同一判定", () => {
     expect(await executeWorkflow({ action: "write", topic_id: t.id, platform: "douyin", execution: "engine", _dataDir: f.data }, { startGenerateScriptImpl, onWarn: () => {} })).toMatchObject({ ok: false });
     expect(await executeWriter({ action: "pack", topic_id: t.id, platform: "douyin", _dataDir: f.data }, { onWarn: () => {} })).toMatchObject({ ok: false, gate: "needs_founder_angle" });
     const placeholder = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
-    await executeContentSave({ action: "transition", id: placeholder.id, target_status: "drafting", force: true, _dataDir: f.data });
+    await executeContentSave({ _provenance: HUMAN_WRITE, action: "transition", id: placeholder.id, target_status: "drafting", force: true, _dataDir: f.data });
     expect(await executeWriter({ action: "pack", content_id: placeholder.id, platform: "douyin", force: true, _dataDir: f.data }, { onWarn: () => {} })).toMatchObject({ ok: false });
     expect(await executeGenerate({ action: "script", topic: t.title, topic_id: t.id, platform: "douyin", _dataDir: f.data }, { generateScriptImpl })).toMatchObject(NEEDS);
     expect(await executeGenerate({ action: "script", topic: t.title, topic_id: t.id, platform: "douyin", execution: "engine", _host: "claude", _dataDir: f.data }, { generateScriptImpl })).toMatchObject({ ok: false });
@@ -240,12 +240,12 @@ describe("每个开写入口走同一判定", () => {
 
   it("content：模型 create_variant 开第一篇 / 模型非导入新建 / 模型（_host 或 OpenClaw _modelCall）填占位正文 → 拒", async () => {
     const t = await makeTopic(f.data, "没开会");
-    expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "douyin", _dataDir: f.data, _modelCall: true })).toMatchObject(NEEDS);
-    expect(await executeContentSave({ action: "save", title: "直接存", body: "正文", topicId: t.id, status: "drafting", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: false, code: "writer_submission_required" });
-    expect(await executeContentSave({ action: "save", title: "模型直接存", body: "正文", _dataDir: f.data, _modelCall: true })).toMatchObject({ ok: false, code: "writer_submission_required" });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "create_variant", topicId: t.id, platform: "douyin", _dataDir: f.data, _modelCall: true })).toMatchObject(NEEDS);
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "save", title: "直接存", body: "正文", topicId: t.id, status: "drafting", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: false, code: "writer_submission_required" });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "save", title: "模型直接存", body: "正文", _dataDir: f.data, _modelCall: true })).toMatchObject({ ok: false, code: "writer_submission_required" });
     const placeholder = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
     for (const marker of [{ _host: "claude" }, { _modelCall: true }]) {
-      expect(await executeContentSave({ action: "update", id: placeholder.id, body: "模型填的正文", _dataDir: f.data, ...marker })).toMatchObject({ ok: false, code: "writer_submission_required" });
+      expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id: placeholder.id, body: "模型填的正文", _dataDir: f.data, ...marker })).toMatchObject({ ok: false, code: "writer_submission_required" });
     }
     expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
   });
@@ -265,7 +265,7 @@ describe("每个开写入口走同一判定", () => {
   it("占位行被 transition 或 update 改成 drafting 也解锁不了（判定看正文，不看状态）", async () => {
     const t = await makeTopic(f.data, "没开会");
     const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
-    await executeContentSave({ action: "transition", id: ph.id, target_status: "drafting", force: true, _dataDir: f.data });
+    await executeContentSave({ _provenance: HUMAN_WRITE, action: "transition", id: ph.id, target_status: "drafting", force: true, _dataDir: f.data });
     expect((await getContent(ph.id, f.data))?.status).toBe("drafting");
     expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
   });
@@ -274,9 +274,9 @@ describe("每个开写入口走同一判定", () => {
 describe("豁免照常放行", () => {
   it("人手（不带模型标记）给新选题存正文 / 建变体：不用标 manual_import，也不过闸口", async () => {
     const t = await makeTopic(f.data, "人手新题");
-    expect(await executeContentSave({ action: "save", title: "我自己写的", body: "创始人自己写的正文", topicId: t.id, _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "save", title: "我自己写的", body: "创始人自己写的正文", topicId: t.id, _dataDir: f.data })).toMatchObject({ ok: true });
     const t2 = await makeTopic(f.data, "人手新题2");
-    expect(await executeContentSave({ action: "create_variant", topicId: t2.id, platform: "douyin", body: "人手正文", _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "create_variant", topicId: t2.id, platform: "douyin", body: "人手正文", _dataDir: f.data })).toMatchObject({ ok: true });
   });
 
   it("已有真稿：改稿重领包、真稿的平台变体、手动导入成稿、人手编辑", async () => {
@@ -284,19 +284,19 @@ describe("豁免照常放行", () => {
     const c = await makeContent(f.data, "老题", { topicId: t.id }, "draft_ready");
     expect(await executeWriter({ action: "pack", content_id: c.id, platform: "douyin", force: true, research_mode: "provided", research: "补的材料", _dataDir: f.data }, { onWarn: () => {} }))
       .not.toMatchObject({ code: "needs_founder_angle" });
-    expect(await executeContentSave({ action: "create_variant", topicId: t.id, platform: "xiaohongshu", _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "create_variant", topicId: t.id, platform: "xiaohongshu", _dataDir: f.data })).toMatchObject({ ok: true });
     const fresh = await makeTopic(f.data, "新题没开会");
-    expect(await executeContentSave({ action: "save", title: "我自己写好的", body: "成稿正文。", topicId: fresh.id, source: "manual_import", import_reason: "用户给的旧稿", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: true });
-    expect(await executeContentSave({ action: "create_variant", topicId: (await makeTopic(f.data, "导入题")).id, platform: "douyin", body: "用户自己的成稿", source: "manual_import", import_reason: "用户给的旧稿", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "save", title: "我自己写好的", body: "成稿正文。", topicId: fresh.id, source: "manual_import", import_reason: "用户给的旧稿", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "create_variant", topicId: (await makeTopic(f.data, "导入题")).id, platform: "douyin", body: "用户自己的成稿", source: "manual_import", import_reason: "用户给的旧稿", _dataDir: f.data, _host: "claude" })).toMatchObject({ ok: true });
     const ph = (await createPlatformVariant((await makeTopic(f.data, "人手题")).id, "douyin", undefined, f.data)).content!;
-    expect(await executeContentSave({ action: "update", id: ph.id, body: "创始人自己在编辑器里写的", _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id: ph.id, body: "创始人自己在编辑器里写的", _dataDir: f.data })).toMatchObject({ ok: true });
   });
 
   it("content update 不能把稿改挂到别的选题", async () => {
     const [a, b] = await Promise.all([makeTopic(f.data, "A"), makeTopic(f.data, "B")]);
     const c = await makeContent(f.data, "A 稿", { topicId: a.id }, "draft_ready");
-    await executeContentSave({ action: "update", id: c.id, topicId: b.id, topic_id: b.id, title: "A 稿改名", _dataDir: f.data });
-    await executeContentSave({ action: "update", id: c.id, topicId: b.id, topic_id: b.id, _dataDir: f.data, _host: "claude" });
+    await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id: c.id, topicId: b.id, topic_id: b.id, title: "A 稿改名", _dataDir: f.data });
+    await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id: c.id, topicId: b.id, topic_id: b.id, _dataDir: f.data, _host: "claude" });
     expect((await getContent(c.id, f.data))?.topicId).toBe(a.id);
     expect(await newDraftAngleRefusal(b.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
   });
@@ -313,26 +313,28 @@ describe("豁免照常放行", () => {
 describe("存储层唯一卡口（第一份真正文）", () => {
   it("绕过所有入口直接写存储：模型来源没定角度 → 拒；来源不明 → 拒；人手 / 导入 → 放行", async () => {
     const t = await makeTopic(f.data, "直写题");
-    await expect(saveContent({ title: "模型直写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite("claude") }, f.data))
+    await expect(saveContent({ _provenance: HUMAN_WRITE, title: "模型直写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite("claude") }, f.data))
       .rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
     await expect(saveContent({ title: "没标来源", body: "正文", topicId: t.id, status: "drafting", tags: [] }, f.data))
       .rejects.toMatchObject({ refusal: { code: "unknown_write_provenance" } });
     const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
-    await expect(updateContent(ph.id, { body: "模型填实", _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    await expect(updateContent(ph.id, { _provenance: HUMAN_WRITE, body: "模型填实", _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
     await expect(updateContent(ph.id, { body: "没标来源填实" }, f.data)).rejects.toMatchObject({ refusal: { code: "unknown_write_provenance" } });
     expect((await getContent(ph.id, f.data))?.body).toBe(ph.body);
-    expect(await updateContent(ph.id, { body: "创始人自己写的", _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ body: "创始人自己写的" });
+    expect(await updateContent(ph.id, { _provenance: HUMAN_WRITE, body: "创始人自己写的", _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ body: "创始人自己写的" });
     // 已经是真稿 → 先于一切来源判定放行（来源不明的改稿、回滚照常）
     expect(await updateContent(ph.id, { body: "再改一版" }, f.data)).toMatchObject({ body: "再改一版" });
+    // 没挂选题也一样：来源不明 → 拒
+    await expect(saveContent({ title: "没挂选题没标来源", body: "正文", status: "drafting", tags: [] }, f.data)).rejects.toMatchObject({ refusal: { code: "unknown_write_provenance" } });
     // 没挂选题：模型写拒，人手放行
-    await expect(saveContent({ title: "模型裸写", body: "正文", status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
-    expect(await saveContent({ title: "人手裸写", body: "正文", status: "drafting", tags: [], _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ title: "人手裸写" });
+    await expect(saveContent({ _provenance: HUMAN_WRITE, title: "模型裸写", body: "正文", status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    expect(await saveContent({ _provenance: HUMAN_WRITE, title: "人手裸写", body: "正文", status: "drafting", tags: [], _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ title: "人手裸写" });
   });
 
   it("模型来源 + 创始人定过且仍作数的角度 → 放行", async () => {
     const t = await makeTopic(f.data, "定过题");
     await founderAuthored(f.data, t.id);
-    expect(await saveContent({ title: "模型写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).toMatchObject({ topicId: t.id });
+    expect(await saveContent({ _provenance: HUMAN_WRITE, title: "模型写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).toMatchObject({ topicId: t.id });
   });
 
   it("平台改写（autocrew_rewrite / batch_adapt）从占位稿起步 → 准入就拒，不调模型", async () => {
@@ -437,5 +439,63 @@ describe("聊天：存量稿先判豁免", () => {
     const retryChat = buildChatTools([], f.data, { retryGenerate, content: vi.fn(async () => ({ ok: true, contents: [{ id: real.id, topicId: t.id, platform: "douyin", lastError: "断流" }] })) });
     expect(JSON.parse(await retryChat.find((x) => x.name === "generate_script")!.execute({ topic: t.title, platform: "douyin", topic_id: t.id, direction: "换个讲法" }) as string))
       .toMatchObject({ ok: true, pending: true, contentId: real.id });
+  });
+});
+
+describe("第六轮：来源显式 + 严格读", () => {
+  it("桌面令牌调 content:update 填占位稿 → 按模型算、没定角度被拒；浏览器会话里人改 → 放行", async () => {
+    const t = await makeTopic(f.data, "令牌填稿题");
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    const update = buildIpcHandlers()["content:update"];
+    expect(await update({ id: ph.id, body: "令牌塞进来的正文", _dataDir: f.data }, { authMethod: "bearer" })).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect(await update({ id: ph.id, body: "没有认证上下文", _dataDir: f.data })).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect((await getContent(ph.id, f.data))?.body).toBe(ph.body);
+    expect(await update({ id: ph.id, body: "创始人在编辑器里写的", _dataDir: f.data }, { authMethod: "session" })).toMatchObject({ ok: true });
+  });
+
+  it("调研台账最新一行损坏 → 不让旧记录复活：angle_gate_read_failed", async () => {
+    const t = await makeTopic(f.data, "台账坏题");
+    await withCards(t.id);
+    await updateTopic(t.id, { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords: "就这张" } }, f.data);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toBeNull();
+    const journal = (await fs.readdir(path.join(f.data, "research"))).find((n) => n.endsWith(".jsonl"))!;
+    await fs.appendFile(path.join(f.data, "research", journal), `{"topicId":"${t.id}","briefRevision":2,`);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "angle_gate_read_failed" });
+  });
+
+  it("模型由一篇没挂选题的真稿改写出新稿：凭可核验的源稿放行；源稿是占位就拒", async () => {
+    const source = await saveContent({ _provenance: HUMAN_WRITE, title: "裸真稿", body: "真正文", status: "draft_ready", tags: [] }, f.data);
+    expect(await saveContent({ title: "适配稿", body: "适配后的正文", status: "draft", tags: [], _provenance: { kind: "model", derivedFrom: source.id } }, f.data)).toMatchObject({ title: "适配稿" });
+    const t = await makeTopic(f.data, "占位源题");
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    await expect(saveContent({ title: "占位改写", body: "正文", status: "draft", tags: [], _provenance: { kind: "model", derivedFrom: ph.id } }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+  });
+
+  it("存量稿带旧 skip 参数 prepare → 不报 skip_removed；brief 没卡 + 旧 skip_reason 的存量 auto 稿 → 照常就绪", async () => {
+    const t = await makeTopic(f.data, "存量skip题");
+    await makeContent(f.data, "存量skip题", { topicId: t.id }, "draft_ready");
+    const prep = await executeWorkflow({ action: "prepare", topic_id: t.id, platform: "douyin", research_mode: "skip", research_reason: "本人日记", skip_reason: "直接写", _dataDir: f.data, _host: "claude" });
+    expect(prep).not.toMatchObject({ code: "skip_removed" });
+    const t2 = await makeTopic(f.data, "存量无卡题");
+    const topic2 = (await getTopic(t2.id, f.data))!;
+    const hash = topicHashOf(topic2.title, topic2.description);
+    await saveBrief(t2.id, { schemaVersion: BRIEF_SCHEMA_VERSION, summary: "s", perspectives: [], tensions: [], angleSuggestions: [], angleCards: [], evidence: [], assetPicks: [], missingPerspectives: [], gaps: [], generatedAt: "2026-10-01T00:00:00.000Z", revision: 1, topicHash: hash }, f.data);
+    await upsertJob({ topicId: t2.id, status: "succeeded", startedAt: "2026-10-01T00:00:00.000Z", perspectives: [], briefRevision: 1, topicHash: hash }, f.data);
+    await makeContent(f.data, "存量无卡题", { topicId: t2.id }, "draft_ready");
+    const { inspectWritingReadiness } = await import("../../tools/writing-readiness.js");
+    expect(await inspectWritingReadiness(t2.id, { platform: "douyin", angleSkipReason: "当时说直接写" }, f.data)).toMatchObject({ ready: true });
+  });
+});
+
+describe("账号数据视角：发布计划读坏", () => {
+  it("某篇 06-publish/publish-plan.json 解析不了 → 账号数据记失败，不冒充数据齐了", async () => {
+    const { buildAccountData } = await import("../../tools/scout-parallel.js");
+    const { writePlan } = await import("../meetings/meeting-fixture.test-helper.js");
+    const c = await makeContent(f.data, "有计划的稿", {}, "published");
+    await writePlan(f.data, c.id, [{ platform: "douyin", title: "t", scheduled_at: "2026-09-01T20:00:00+08:00" }]);
+    expect(await buildAccountData(f.data)).toMatchObject({ status: "ok" });
+    const { resolveContentProject } = await import("../../storage/content-project.js");
+    await fs.writeFile(path.join(resolveContentProject(c.id, f.data)!.project_root, "06-publish/publish-plan.json"), "{ 坏");
+    expect(await buildAccountData(f.data)).toMatchObject({ status: "failed", reason: expect.stringContaining("publish-plan.json") });
   });
 });

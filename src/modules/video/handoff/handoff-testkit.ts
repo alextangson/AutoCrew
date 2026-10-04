@@ -19,6 +19,7 @@ import { resolveContentProject } from "../../../storage/content-project.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { founderProjectReview } from "./founder-review.js";
 import { saveCoverage } from "./project-evidence.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 export const HAS_FFMPEG =
   spawnSync("ffmpeg", ["-version"]).status === 0 && spawnSync("ffprobe", ["-version"]).status === 0;
@@ -50,8 +51,8 @@ export const BODY = "今天聊聊我怎么用 AI 工具省下每天两小时。�
 
 /** 一篇审稿结论 accepted 的抖音草稿 */
 export async function seedAccepted(dir: string, title = "AI 工具分享: 第一期/上"): Promise<Content> {
-  const content = await saveContent({ title, body: BODY, status: "draft_ready", platform: "douyin", tags: [] }, dir);
-  await updateContent(content.id, {
+  const content = await saveContent({ _provenance: HUMAN_WRITE, title, body: BODY, status: "draft_ready", platform: "douyin", tags: [] }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE,
     review: { status: "passed", rounds: 1, fixed: 0, issues: [], reviewedAt: new Date().toISOString() },
   }, dir);
   return content;

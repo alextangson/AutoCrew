@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { bigramSimilarity, deriveAdoptionVerdict, deriveAndRecordAdoption } from "./adoption-derive.js";
 import { saveContent, updateContent, recordAdoption, getContent } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -83,12 +84,12 @@ const AI_SAVED_AT = "2020-01-01T00:00:00.010Z";
 /** 造一篇「占位稿 v1 → AI 成稿 v2（盖 draftReadyAt）」的稿件，与 generate-script 的落盘顺序一致 */
 async function mkGeneratedDraft(aiBody = AI_BODY) {
   const placeholder = await saveContent(
-    { title: "占位", body: "正在生成…", platform: "wechat_mp", status: "drafting", tags: [] },
+    { _provenance: HUMAN_WRITE, title: "占位", body: "正在生成…", platform: "wechat_mp", status: "drafting", tags: [] },
     testDir,
   );
   const updated = await updateContent(
     placeholder.id,
-    { title: "AI 标题", body: aiBody, status: "draft_ready", draftReadyAt: READY_AT },
+    { _provenance: HUMAN_WRITE, title: "AI 标题", body: aiBody, status: "draft_ready", draftReadyAt: READY_AT },
     testDir,
   );
   const metaPath = path.join(testDir, "contents", updated!.id, "meta.json");
@@ -103,7 +104,7 @@ describe("deriveAndRecordAdoption", () => {
   it("draftReadyAt 锚定基线：占位稿 v1 不参与比较，人手小改判 light_edit", async () => {
     const draft = await mkGeneratedDraft();
     const edited = AI_BODY.replace("十有八九", "十次里有九次");
-    await updateContent(draft.id, { body: edited }, testDir);
+    await updateContent(draft.id, { _provenance: HUMAN_WRITE, body: edited }, testDir);
 
     const record = await deriveAndRecordAdoption(draft.id, testDir);
     expect(record?.verdict).toBe("light_edit");
@@ -126,7 +127,7 @@ describe("deriveAndRecordAdoption", () => {
     const first = await deriveAndRecordAdoption(draft.id, testDir);
     expect(first?.verdict).toBe("adopted");
 
-    await updateContent(draft.id, { body: "发布后又整篇重写了一遍,内容完全不同的另一篇稿子。" }, testDir);
+    await updateContent(draft.id, { _provenance: HUMAN_WRITE, body: "发布后又整篇重写了一遍,内容完全不同的另一篇稿子。" }, testDir);
     expect(await deriveAndRecordAdoption(draft.id, testDir)).toBeNull();
     expect((await getContent(draft.id, testDir))?.adoption?.verdict).toBe("adopted");
   });
@@ -143,10 +144,10 @@ describe("deriveAndRecordAdoption", () => {
 
   it("旧稿无 draftReadyAt → 回落 v1 当基线（已知偏严边界）", async () => {
     const legacy = await saveContent(
-      { title: "老稿", body: AI_BODY, platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "老稿", body: AI_BODY, platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
-    await updateContent(legacy.id, { body: AI_BODY.replace("十有八九", "十次里有九次") }, testDir);
+    await updateContent(legacy.id, { _provenance: HUMAN_WRITE, body: AI_BODY.replace("十有八九", "十次里有九次") }, testDir);
 
     const record = await deriveAndRecordAdoption(legacy.id, testDir);
     expect(record?.verdict).toBe("light_edit");

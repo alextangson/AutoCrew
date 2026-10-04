@@ -8,6 +8,7 @@ import { founderProjectReview } from "./founder-review.js";
 import { coverPairHash, sha256File } from "./manifest.js";
 import { gateView, normalizeApprovals, type GateContext } from "./gate-state.js";
 import type { StoredExecution } from "./execution-index.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 let env: Awaited<ReturnType<typeof makeFixture>>;
 beforeEach(async () => { env = await makeFixture(); await fs.unlink(path.join(env.dir, "video.json")); await initializeProjectLayout(env.dir, "lib-deadbeef", "default"); });
@@ -86,7 +87,7 @@ it("稿子在批准后被改：批准失效", async () => {
   const r = await writePng(path.join(v.root, "04-edit/sb.png"), "s");
   await v.report([{ file: r, role: "storyboard" }]);
   await founderProjectReview(v.id, env.dir, { action: "approve", which: "storyboard", manifest_hash: v.manifestHash, files: [{ path: rel(v.root, r), sha256: await sha256File(r) }] });
-  await updateContent(v.id, { body: (await getContent(v.id, env.dir))!.body + "补一句。" }, env.dir);
+  await updateContent(v.id, { _provenance: HUMAN_WRITE, body: (await getContent(v.id, env.dir))!.body + "补一句。" }, env.dir);
   const gates = (await founderProjectReview(v.id, env.dir)).gates as Record<string, { status: string; reason?: string }>;
   expect(gates.gate2).toMatchObject({ status: "invalidated", reason: "稿件已改" });
 });
@@ -134,7 +135,7 @@ describe("创始人撤回交接（看板）", () => {
     expect(await founderProjectReview(seeded.id, env.dir, { action: "revoke", manifest_hash: "h" })).toMatchObject({ ok: false, code: "nothing_to_revoke" });
     const v = await handedOff(env.dir, env.aroll);
     const c = (await getContent(v.id, env.dir))!;
-    await updateContent(v.id, { status: "cover_pending", video: { ...c.video } }, env.dir);
+    await updateContent(v.id, { _provenance: HUMAN_WRITE, status: "cover_pending", video: { ...c.video } }, env.dir);
     expect(await founderProjectReview(v.id, env.dir, { action: "revoke", manifest_hash: v.manifestHash })).toMatchObject({ ok: false, code: "not_editing" });
   });
 

@@ -179,7 +179,7 @@ describe("submit contract with outline (spec §4)", () => {
     const { buildSeriesSnapshot } = await import("../modules/writing/series-memory.js");
     const before = buildSeriesSnapshot([(await getContent(p.content_id, dir))!], "douyin", {});
     expect(before.items[0]).toMatchObject({ insufficient: false, outline_version: 1 });
-    await updateContent(p.content_id, { body: "编辑器里改过的正文。" }, dir);
+    await updateContent(p.content_id, { _provenance: HUMAN_WRITE, body: "编辑器里改过的正文。" }, dir);
     const after = buildSeriesSnapshot([(await getContent(p.content_id, dir))!], "douyin", {});
     expect(after.items[0]).toMatchObject({ insufficient: true, outline_version: 0 });
   });

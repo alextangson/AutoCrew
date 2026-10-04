@@ -17,6 +17,7 @@ import { importPerformanceRows } from "./row-import.js";
 import { commitBindings, lookupPlatformItem, readPlatformItems } from "./platform-items.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import type { TypedRow } from "../../adapters/browser/pull-types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const DY_ID = "7412345678901234567";
 const PUB = "2026-06-01T10:00:00.000Z";
@@ -33,8 +34,8 @@ afterEach(async () => {
 });
 
 async function publish(title: string, over: { publishUrl?: string; publishedAt?: string } = {}) {
-  const c = await saveContent({ title, body: "正文", platform: "douyin", status: "published", tags: [] }, dir);
-  await updateContent(c.id, { publishedAt: over.publishedAt ?? PUB, publishUrl: over.publishUrl ?? null }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "正文", platform: "douyin", status: "published", tags: [] }, dir);
+  await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: over.publishedAt ?? PUB, publishUrl: over.publishUrl ?? null }, dir);
   return c;
 }
 

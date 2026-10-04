@@ -8,12 +8,13 @@ import { initializeProjectLayout, resolveContentProject } from "../storage/conte
 import { saveContent, type Content } from "../storage/local-store.js";
 import { draftHash } from "../storage/draft-hash.js";
 import { sha256File } from "../modules/video/handoff/manifest.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string, server: http.Server, base: string, content: Content;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-project-http-"));
   await initializeProjectLayout(dir, "lib-deadbeef", "default");
-  content = await saveContent({ title: "审核样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
+  content = await saveContent({ _provenance: HUMAN_WRITE, title: "审核样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
   const route = createProjectReviewHandler({
     authorize: req => req.headers.cookie === "fixture-session" ? "session" : req.headers.authorization ? "bearer" : null,
     originAllowed: req => req.headers.origin === base,

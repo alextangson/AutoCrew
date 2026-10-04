@@ -8,6 +8,7 @@ import path from "node:path";
 import type { spawn } from "node:child_process";
 import { openContentFolder } from "./folder-open.js";
 import { saveContent } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -30,7 +31,7 @@ function mockSpawn(): { impl: typeof spawn; calls: Array<[string, string[]]> } {
 
 describe("openContentFolder", () => {
   it("darwin:spawn open <文件夹>,返回 opened:true 与路径", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
     const { impl, calls } = mockSpawn();
     const r = await openContentFolder(c.id, dir, { spawnImpl: impl, platform: "darwin" });
     expect(r).toMatchObject({ ok: true, opened: true });
@@ -40,7 +41,7 @@ describe("openContentFolder", () => {
   });
 
   it("非 darwin:不 spawn,只返回路径", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
     const { impl, calls } = mockSpawn();
     const r = await openContentFolder(c.id, dir, { spawnImpl: impl, platform: "linux" });
     expect(r).toMatchObject({ ok: true, opened: false });
@@ -54,7 +55,7 @@ describe("openContentFolder", () => {
   });
 
   it("spawn 抛错 → 降级为返回路径,不炸", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
     const boom = (() => {
       throw new Error("no open binary");
     }) as unknown as typeof spawn;
@@ -64,7 +65,7 @@ describe("openContentFolder", () => {
   });
 
   it("draft.md 本就随存稿常新(人机协同的另一半,回归锚)", async () => {
-    const c = await saveContent({ title: "标题甲", body: "正文乙", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "标题甲", body: "正文乙", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
     const md = await fs.readFile(path.join(dir, "contents", c.id, "draft.md"), "utf-8");
     expect(md).toBe("# 标题甲\n\n正文乙\n");
   });

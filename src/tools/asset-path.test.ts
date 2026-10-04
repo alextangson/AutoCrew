@@ -7,13 +7,14 @@ import { executeAsset } from "./asset.js";
 import { initializeProjectLayout, resolveContentProject } from "../storage/content-project.js";
 import { getContent, saveContent } from "../storage/local-store.js";
 import { hostPolicy } from "../../mcp/host-policy.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string, outside: string, id: string, root: string;
 beforeEach(async () => {
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-asset-path-")));
   outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-asset-outside-")));
   await initializeProjectLayout(dir, "lib-deadbeef", "default");
-  id = (await saveContent({ title: "素材登记", body: "正文", status: "draft_ready", platform: "douyin", tags: [] }, dir)).id;
+  id = (await saveContent({ _provenance: HUMAN_WRITE, title: "素材登记", body: "正文", status: "draft_ready", platform: "douyin", tags: [] }, dir)).id;
   root = resolveContentProject(id, dir)!.project_root;
 });
 afterEach(async () => { for (const d of [dir, outside]) await fs.rm(d, { recursive: true, force: true }); });

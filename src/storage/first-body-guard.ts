@@ -8,26 +8,45 @@
  * 判定顺序：
  * 1. 这篇稿本身已是真稿（当前正文或任一版本是真的）→ 改稿/回滚，放行。
  * 2. 写完仍是占位 → 不是「第一份正文」，放行。
- * 3. 来源（provenance）：人手（工作台、我的内容回写）与手动导入 → 放行；
- *    模型/宿主 → 走选题会判定（选题已有别的真稿放行，否则要创始人亲口定的、仍作数的角度）；
- *    没标来源 → 拒（宁可报错，也不让漏标的写口悄悄开出第一篇）。
- *    没挂选题的稿：模型写 → 拒；人手/导入 → 放行；没标来源 → 不属于「选题的第一篇」，放行。
+ * 3. 来源必须显式（`_provenance`）：没标 → 拒，挂没挂选题都一样。
+ * 4. 人手（可信入口按认证方式注入：浏览器会话、我的内容回写）与手动导入 → 放行。
+ * 5. 模型：改写自一篇可核验的真稿（derivedFrom）→ 放行；没挂选题 → 拒；
+ *    选题已有别的真稿 → 放行；否则要创始人亲口定的、仍作数的最新角度决定。
  */
 import type { Content } from "./local-store.js";
 
 /** 写正文的来源：调用方必须显式传（`_provenance`），不传按「来源不明」处理 */
-export type WriteProvenance = { kind: "human" } | { kind: "import" } | { kind: "model"; host?: string };
+export type WriteProvenance =
+  | { kind: "human" }
+  | { kind: "import" }
+  /** derivedFrom：由哪篇已有稿件改写而来（平台适配）；卡口会严格读它确认是真稿 */
+  | { kind: "model"; host?: string; derivedFrom?: string };
 
 export const HUMAN_WRITE: WriteProvenance = { kind: "human" };
 export const IMPORT_WRITE: WriteProvenance = { kind: "import" };
 export const modelWrite = (host?: string): WriteProvenance => ({ kind: "model", ...(host ? { host } : {}) });
 
-/** 工具参数里的模型标记（MCP 注入 `_host`，OpenClaw 注入 `_modelCall`）→ 来源；都没有 = 人手 */
-export function provenanceOf(params: Record<string, unknown>, opts: { manualImport?: boolean } = {}): WriteProvenance {
+function isProvenance(v: unknown): v is WriteProvenance {
+  const kind = (v as { kind?: unknown } | null)?.kind;
+  return kind === "human" || kind === "import" || kind === "model";
+}
+
+/**
+ * 工具参数 → 写正文的来源。只认可信层注入的标记：`_provenance`（桌面 IPC 按认证方式注入，
+ * 外部 payload 的下划线键在入口就被剥掉）、`_host`（MCP 按令牌注入）、`_modelCall`（OpenClaw 注入）。
+ * 都没有 = 来源不明（undefined），由卡口拒绝第一份正文——不再默认当成人手。
+ */
+export function provenanceOf(params: Record<string, unknown>, opts: { manualImport?: boolean } = {}): WriteProvenance | undefined {
   // 手动导入的是创作者自己的成稿（谁搬进来都一样）：豁免
   if (opts.manualImport) return IMPORT_WRITE;
   if (typeof params._host === "string" || params._modelCall === true) return modelWrite(typeof params._host === "string" ? params._host : undefined);
-  return HUMAN_WRITE;
+  if (isProvenance(params._provenance)) return params._provenance;
+  return undefined;
+}
+
+/** 桌面 IPC：浏览器登录会话 = 人手；令牌（宿主/模型可达）或认证方式不明 = 模型 */
+export function provenanceFromAuth(authMethod: "session" | "bearer" | undefined): WriteProvenance {
+  return authMethod === "session" ? HUMAN_WRITE : modelWrite("desktop-token");
 }
 
 /** create_variant 不带正文时写的占位正文前缀 */
@@ -64,21 +83,26 @@ export async function guardFirstBody(
 ): Promise<void> {
   if (existing && isRealDraft(existing)) return;
   if (next.body === undefined || isPlaceholderBody(next.body)) return;
-  const topicId = next.topicId ?? existing?.topicId;
+  // 来源必须显式：没标就拒（挂没挂选题都一样），漏标来源的写口不能悄悄开出第一篇
+  if (!provenance) throw new FirstBodyRefusedError({ ok: false, code: "unknown_write_provenance", error: UNKNOWN_PROVENANCE });
+  if (provenance.kind === "human" || provenance.kind === "import") return;
   const { ANGLE_GATE_COPY, newDraftAngleRefusal, topicHasDraft } = await import("../modules/research/angle-gate.js");
+  const readFailed = (err: unknown) => new FirstBodyRefusedError({ ok: false, code: "angle_gate_read_failed", error: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` });
+  // 模型改写一篇已有真稿（平台适配等）：凭可核验的源稿 id 放行，与新稿挂不挂选题无关
+  if (provenance.derivedFrom) {
+    const { getContentStrict } = await import("./local-store.js");
+    let source: Content | null;
+    try { source = await getContentStrict(provenance.derivedFrom, dataDir); } catch (err) { throw readFailed(err); }
+    if (source && isRealDraft(source)) return;
+  }
+  const topicId = next.topicId ?? existing?.topicId;
   if (!topicId) {
-    if (provenance?.kind !== "model") return;
     throw new FirstBodyRefusedError({ ok: false, code: "needs_founder_angle", error: ANGLE_GATE_COPY.noTopic, next_action: { skill: "topic-meeting", tool: "autocrew_workflow", params: { action: "prepare" } } });
   }
-  // 选题已有别的真稿：这不是它的第一篇（存量、真稿的平台变体），先于一切来源与角度元数据放行
+  // 选题已有别的真稿：这不是选题的第一篇（存量、真稿的平台变体），不再看角度元数据
   let hasDraft: boolean;
-  try { hasDraft = await topicHasDraft(topicId, dataDir); } catch (err) {
-    throw new FirstBodyRefusedError({ ok: false, code: "angle_gate_read_failed", error: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` });
-  }
+  try { hasDraft = await topicHasDraft(topicId, dataDir); } catch (err) { throw readFailed(err); }
   if (hasDraft) return;
-  if (provenance?.kind === "human" || provenance?.kind === "import") return;
-  // 选题会已开过但来源不明也拒：漏标来源的写口不能靠「碰巧已定角度」过关
-  if (!provenance) throw new FirstBodyRefusedError({ ok: false, code: "unknown_write_provenance", error: UNKNOWN_PROVENANCE });
   const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused) throw new FirstBodyRefusedError(refused);
 }

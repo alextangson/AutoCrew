@@ -23,6 +23,7 @@ import type { VideoService } from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
 import { executeVideo } from "./video.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const STATE: VideoState = {
   schemaVersion: 1,
@@ -79,7 +80,7 @@ beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-tool-"));
   seen = [];
   contentId = (
-    await saveContent({ title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
+    await saveContent({ _provenance: HUMAN_WRITE, title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
   ).id;
   setVideoService(stubService(), dir);
 });

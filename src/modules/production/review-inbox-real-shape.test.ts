@@ -13,6 +13,7 @@ import { scopedId } from "./inbox.js";
 import { cardPanel } from "./panel.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -85,7 +86,7 @@ describe("说法是人话（量词、原因、没有路径与开发者用词）"
     await record(env, { content_id: c.id, kind: "cover", path: await put(path.join(env.outside, "外面.png"), png(900, 1200, "o")), request_id: "o" });
     await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.outside, "外面.mp4"), "oc"), request_id: "oc" });
     const f = await put(path.join(projectRoot(env, c.id), "04-edit/看看.png"), png(10, 10));
-    await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [f] });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [f] });
     await put(path.join(env.inbox, "IMG_0001.mov"), "unmatched");
     await reconcileAll(env.dir);
     const list = await items();

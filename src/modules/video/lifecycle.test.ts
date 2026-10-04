@@ -26,6 +26,7 @@ import {
 import { createReviewGate } from "./review-gate.js";
 import { readVersioned, readVideoState, videoDir, writeVersioned } from "./video-store.js";
 import type { VideoReviewDecision, VideoState } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 let contentId: string;
@@ -308,7 +309,7 @@ describe("素材说明改了之后（§1 / §4 #5）", () => {
     const content = (await getContent(contentId, dir))!;
     await updateContent(
       contentId,
-      { assets: content.assets.map((a) => (a.role === "broll" ? { ...a, description: "屏录：改过说明的那一条" } : a)) },
+      { _provenance: HUMAN_WRITE, assets: content.assets.map((a) => (a.role === "broll" ? { ...a, description: "屏录：改过说明的那一条" } : a)) },
       dir,
     );
     // 手里那份 plan 一个字没变——它是当时的事实，不是对素材库的实时引用

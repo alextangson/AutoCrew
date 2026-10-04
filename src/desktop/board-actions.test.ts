@@ -8,6 +8,7 @@ import { initializeProjectLayout, resolveContentProject } from "../storage/conte
 import { getContent, listContents, saveContent, saveTopic, softDeleteTopic, type Topic } from "../storage/local-store.js";
 import { claudeLink, markPublished, startPrompt, startWriting, unmarkPublished } from "./board-actions.js";
 import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string, topic: Topic, exitCode: number;
 const spawnImpl = vi.fn(() => { const c = new EventEmitter(); setImmediate(() => c.emit("exit", exitCode)); return c; }) as unknown as typeof spawn;
@@ -79,7 +80,7 @@ it("指令短：标题截断，链接里的 q 是编码过的", () => {
 });
 
 it("我发了：记手动发布并同步为已发布；撤销后没有别的平台发出去就退回待发布", async () => {
-  const c = await saveContent({ title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
   const marked = await markPublished(c.id, "wechat_video", "https://channels.weixin.qq.com/x", dir);
   expect(marked).toMatchObject({ ok: true, content: { status: "published", manualPublications: [{ platform: "wechat_video", url: "https://channels.weixin.qq.com/x" }] } });
   const undone = await unmarkPublished(c.id, "wechat_video", dir);
@@ -87,7 +88,7 @@ it("我发了：记手动发布并同步为已发布；撤销后没有别的平�
 });
 
 it("撤销时计划里还有已提交的平台：留在已发布", async () => {
-  const c = await saveContent({ title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
   const root = resolveContentProject(c.id, dir)!.project_root;
   await fs.mkdir(path.join(root, "06-publish"), { recursive: true });
   await fs.writeFile(path.join(root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", publication: { status: "scheduled", scheduled_at: "2099-01-01T00:00:00Z" } }] }));
@@ -96,15 +97,15 @@ it("撤销时计划里还有已提交的平台：留在已发布", async () => {
 });
 
 it("我发了：链接不是 http(s)、还没到发布阶段都拒", async () => {
-  const c = await saveContent({ title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
   expect(await markPublished(c.id, "douyin", "javascript:alert(1)", dir)).toMatchObject({ ok: false, code: "bad_request" });
-  const early = await saveContent({ title: "草稿", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
+  const early = await saveContent({ _provenance: HUMAN_WRITE, title: "草稿", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
   expect(await markPublished(early.id, "douyin", undefined, dir)).toMatchObject({ ok: false, code: "wrong_stage" });
 });
 
 it("我发了：非视频稿认过（approved，看板在待发布）可以记；视频稿 approved 还在待录制，拒", async () => {
-  const mp = await saveContent({ title: "图文", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
+  const mp = await saveContent({ _provenance: HUMAN_WRITE, title: "图文", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
   expect(await markPublished(mp.id, "wechat_mp", undefined, dir)).toMatchObject({ ok: true, content: { status: "published", manualPublications: [{ platform: "wechat_mp" }] } });
-  const video = await saveContent({ title: "口播", body: "正文", status: "approved", platform: "douyin", tags: [] }, dir);
+  const video = await saveContent({ _provenance: HUMAN_WRITE, title: "口播", body: "正文", status: "approved", platform: "douyin", tags: [] }, dir);
   expect(await markPublished(video.id, "douyin", undefined, dir)).toMatchObject({ ok: false, code: "wrong_stage" });
 });

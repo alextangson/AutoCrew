@@ -12,6 +12,7 @@ import { UNREGISTERED_PUBLISH } from "./derive.js";
 import { LEGACY_REGISTERED, LEGACY_REGISTERED_RECUT } from "./explain.js";
 import { cardPanel } from "./panel.js";
 import { founderApprove, makeEnv, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -23,7 +24,7 @@ async function publishedOldFlow(opts: { registered: boolean }) {
   const c = await videoContent(env, "深度思考");
   await founderApprove(env, c.id);
   if (opts.registered) {
-    await updateContent(c.id, { video: { final: { path: "/x/final.mp4", asset_filename: "final.mp4", sha256: "a".repeat(64), duration_ms: 1000, register_hash: "reg1", at: REG_AT } } } as never, env.dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, video: { final: { path: "/x/final.mp4", asset_filename: "final.mp4", sha256: "a".repeat(64), duration_ms: 1000, register_hash: "reg1", at: REG_AT } } } as never, env.dir);
   }
   await founderDecision(c.id, "i_published", { platform: "xiaohongshu" }, env.dir);
   return c;
@@ -72,7 +73,7 @@ describe("旧流程登记的已发布稿", () => {
       d.round += 1;
       return { value: null, events: [] };
     });
-    await updateContent(c.id, { video: { final: { path: "/x/final.mp4", asset_filename: "final.mp4", sha256: "b".repeat(64), duration_ms: 1000, register_hash: "reg-ont-1", at: REG_AT } } } as never, env.dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, video: { final: { path: "/x/final.mp4", asset_filename: "final.mp4", sha256: "b".repeat(64), duration_ms: 1000, register_hash: "reg-ont-1", at: REG_AT } } } as never, env.dir);
     await founderApprove(env, c.id);
     await founderDecision(c.id, "i_published", { platform: "douyin" }, env.dir);
     const { panel, item } = await views(c.id);

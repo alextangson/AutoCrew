@@ -31,6 +31,7 @@ import {
   writeVersioned,
 } from "./video-store.js";
 import type { VideoCut, VideoEditUnits, VideoJob, VideoState } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 let contentId: string;
@@ -196,7 +197,7 @@ describe("阶段推进", () => {
       { uv: fakeUvSpawn("ok", fixtureDenseTranscript()) },
       {
         runLoopImpl: (async () => {
-          await updateContent(contentId, { body: "换了一份完全不同的稿子" }, dir);
+          await updateContent(contentId, { _provenance: HUMAN_WRITE, body: "换了一份完全不同的稿子" }, dir);
           return { finalMessage: "", turns: 0, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" as const };
         }) as Deps["runLoopImpl"],
       },
@@ -240,7 +241,7 @@ describe("阶段推进", () => {
     await first.whenIdle();
     const before = (await readVideoJobs(dir)).filter((j) => j.phase === "transcribe").at(-1)!;
 
-    await updateContent(contentId, { body: "换了一份完全不同的稿子" }, dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, body: "换了一份完全不同的稿子" }, dir);
     await forceState({ phase: "transcribe", state: "queued", revisions: { transcript: 1, clean: 1, cut: 1 } });
     const again = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     again.enqueue(contentId);

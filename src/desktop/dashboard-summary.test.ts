@@ -9,6 +9,7 @@ import { recordOutcome } from "../modules/flywheel/outcome-store.js";
 import { PULL_STATE_FILE, defaultPullState, writePullState } from "../modules/flywheel/pull-state.js";
 import type { OutcomeMetrics } from "../modules/flywheel/outcome-schema.js";
 import type { CreatorProfile, WritingRule } from "../modules/profile/creator-profile.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 const NOW = new Date("2026-07-08T12:00:00Z").getTime();
@@ -42,10 +43,10 @@ async function seedOutcome(over: {
 
 async function seedContent(over: Partial<Content> & { title: string }): Promise<Content> {
   const c = await saveContent(
-    { title: over.title, body: "正文", platform: over.platform ?? "wechat_mp", status: "drafting" },
+    { _provenance: HUMAN_WRITE, title: over.title, body: "正文", platform: over.platform ?? "wechat_mp", status: "drafting" },
     testDir,
   );
-  const patched = await updateContent(c.id, {
+  const patched = await updateContent(c.id, { _provenance: HUMAN_WRITE,
     status: over.status ?? "drafting",
     ...(over.publishedAt !== undefined ? { publishedAt: over.publishedAt } : {}),
     ...(over.performanceData !== undefined ? { performanceData: over.performanceData } : {}),

@@ -47,6 +47,7 @@ import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
 import { asFounder, founderAuthored, founderStamped } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -1712,7 +1713,7 @@ describe("audience review in the host writing flow", () => {
     const res = await pack();
     const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
     await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: held.impl });
-    await updateContent(res.content_id, { body: "用户在编辑器改过的新正文" }, testDir);
+    await updateContent(res.content_id, { _provenance: HUMAN_WRITE, body: "用户在编辑器改过的新正文" }, testDir);
     held.release();
     await reviewInFlight(res.content_id);
     expect(await run({ action: "submit_status", content_id: res.content_id })).toMatchObject({ quality_status: "stale_review", needs_attention: true });

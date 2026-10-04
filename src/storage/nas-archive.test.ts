@@ -12,6 +12,7 @@ import { archivePublished, type ArchiveOptions } from "./nas-archive.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { writeProductionDoc } from "./production-store.js";
 import { emptyProductionDoc } from "./production-types.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let release: () => void;
 let temp: string, lib: string, data: string, view: string, nas: string;
@@ -45,7 +46,7 @@ const archive = (opts: ArchiveOptions = {}) =>
   archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0, ...opts });
 
 async function make(title: string, patch: Partial<Content>): Promise<Content> {
-  const c = await saveContent({ title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
   const next = { ...(await getContent(c.id, data))!, createdAt: new Date(2026, 8, 1).toISOString(), ...patch };
   await commitProjectContent(next, data);
   await fs.mkdir(path.join(root(next), "02-aroll"), { recursive: true });

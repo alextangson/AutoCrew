@@ -6,6 +6,7 @@ import { suggestImagePositions } from "./suggest-images.js";
 import { saveContent, getContent } from "../../storage/local-store.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -25,7 +26,7 @@ const done = (): LoopResult => ({ finalMessage: "done", turns: 2, totalTokens: 3
 describe("suggestImagePositions", () => {
   it("inserts markers, saves a new version, reports the added count", async () => {
     const c = await saveContent(
-      { title: "T", body: "第一段。\n\n第二段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "T", body: "第一段。\n\n第二段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
@@ -42,7 +43,7 @@ describe("suggestImagePositions", () => {
 
   it("zero additions is a valid outcome — no new version, sneaked prose edits discarded", async () => {
     const c = await saveContent(
-      { title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
@@ -59,7 +60,7 @@ describe("suggestImagePositions", () => {
 
   it("throws when the model deletes existing markers", async () => {
     const c = await saveContent(
-      { title: "T", body: "一段。\n\n[IMAGE: 已有图]\n\n二段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "T", body: "一段。\n\n[IMAGE: 已有图]\n\n二段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
@@ -72,7 +73,7 @@ describe("suggestImagePositions", () => {
 
   it("throws when the model never submits", async () => {
     const c = await saveContent(
-      { title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (): Promise<LoopResult> => done();

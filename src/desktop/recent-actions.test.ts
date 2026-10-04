@@ -11,6 +11,7 @@ import { runChatTurn } from "./chat-router.js";
 import { buildIpcHandlers } from "./ipc.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -93,7 +94,7 @@ describe("工作区挂接点", () => {
   };
 
   it("content:transition 成功后进环（带标题与目标列），失败的流转不进环", async () => {
-    const saved = (await executeContentSave({
+    const saved = (await executeContentSave({ _provenance: HUMAN_WRITE,
       action: "save", title: "AI 写作趋势", body: "正文", platform: "wechat_mp", status: "draft_ready", _dataDir: dir,
     })) as { content: { id: string } };
     const transition = buildIpcHandlers()["content:transition"];

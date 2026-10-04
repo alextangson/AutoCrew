@@ -6,11 +6,12 @@ import path from "node:path";
 import { executeContentSave } from "../../tools/content-save.js";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { founderApprove, makeEnv, put, record, setContent, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await env.cleanup(); });
-const agent = (p: Record<string, unknown>) => executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>;
+const agent = (p: Record<string, unknown>) => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>;
 
 describe("归档的稿", () => {
   it("ask / mark_ready / record 都拒，什么都不记", async () => {

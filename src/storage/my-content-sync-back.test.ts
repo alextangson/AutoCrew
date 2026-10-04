@@ -9,6 +9,7 @@ import { acquireLibraryLock } from "./library-lock.js";
 import { syncMyContentView, VIEW_DIR, VIEW_MANIFEST, ERROR_FILE } from "./my-content-view.js";
 import { listDiffs } from "../modules/learnings/diff-tracker.js";
 import { writePack, type WritingPackFile } from "../tools/writer-pack.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let release: () => void;
 let temp: string, lib: string, data: string, view: string;
@@ -42,7 +43,7 @@ const root = (c: Content) => resolveContentProject(c.id, data)!.project_root;
 const founderDiffs = async (c: Content) => (await listDiffs({ contentId: c.id }, data)).filter((d) => d.changeType === "创始人在「我的内容」里改稿");
 
 async function make(title: string, status: ContentStatus, extra: Partial<Content> = {}): Promise<Content> {
-  const c = await saveContent({ title, body: `${title} 的正文`, platform: "douyin", status: "drafting", tags: [] }, data);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: `${title} 的正文`, platform: "douyin", status: "drafting", tags: [] }, data);
   return setState(c, { status, createdAt: new Date(2026, 8, 20, 12).toISOString(), ...extra });
 }
 async function setState(c: Content, patch: Partial<Content>): Promise<Content> {

@@ -1511,7 +1511,7 @@ export async function getVersion(contentId: string, version: number, dataDir?: s
   }
 }
 
-export async function revertToVersion(contentId: string, version: number, dataDir?: string): Promise<Content | null> {
+export async function revertToVersion(contentId: string, version: number, dataDir: string | undefined, provenance: WriteProvenance | undefined): Promise<Content | null> {
   const [body, versions] = await Promise.all([
     getVersion(contentId, version, dataDir),
     listVersions(contentId, dataDir),
@@ -1520,7 +1520,7 @@ export async function revertToVersion(contentId: string, version: number, dataDi
   const target = versions.find((item) => item.version === version);
   return updateContent(
     contentId,
-    { body, ...(target?.title ? { title: target.title } : {}), _versionNote: `回滚到 v${version}` },
+    { body, ...(target?.title ? { title: target.title } : {}), _versionNote: `回滚到 v${version}`, _provenance: provenance },
     dataDir,
   );
 }

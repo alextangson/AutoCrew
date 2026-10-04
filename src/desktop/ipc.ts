@@ -258,7 +258,7 @@ import {
   campaignSetAutonomyHandler,
   campaignTransitionHandler,
 } from "./campaign-handlers.js";
-import { HUMAN_WRITE, modelWrite } from "../storage/first-body-guard.js";
+import { provenanceFromAuth } from "../storage/first-body-guard.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -322,7 +322,7 @@ export const CHANNEL_ACTIONS = {
  * Exported for action-injection testability.
  */
 export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
-  return async (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  return async (payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> => {
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
       return {
         ok: false,
@@ -330,7 +330,8 @@ export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
       };
     }
     try {
-      return await fn({ ...payload, action });
+      // 写正文的来源按可信的认证方式注入（会话 = 人，令牌 = 模型），不信 payload 自带的标记
+      return await fn({ ...payload, action, _provenance: provenanceFromAuth(ctx?.authMethod) });
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -878,7 +879,7 @@ async function contentVersionsHandler(payload: Record<string, unknown>): Promise
   }
 }
 
-async function contentRevertHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function contentRevertHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
@@ -889,7 +890,7 @@ async function contentRevertHandler(payload: Record<string, unknown>): Promise<R
     return { ok: false, error: "需要合法 version（正整数）" };
   }
   try {
-    const content = await revertToVersion(id, version, (payload._dataDir as string) || undefined);
+    const content = await revertToVersion(id, version, (payload._dataDir as string) || undefined, provenanceFromAuth(ctx?.authMethod));
     if (!content) return { ok: false, error: "回滚失败：稿件或版本不存在" };
     return { ok: true, data: { content } };
   } catch (err) {
@@ -938,7 +939,7 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>, ctx?:
         ...(title ? { title } : {}),
         _versionNote: note,
         // 浏览器会话里人点「收下」= 人手；令牌调用（宿主/模型可达）按模型算
-        _provenance: ctx?.authMethod === "session" ? HUMAN_WRITE : modelWrite(),
+        _provenance: provenanceFromAuth(ctx?.authMethod),
         ...(changed && feedback ? { writingFeedback: appendWritingFeedback(before0.writingFeedback, feedback, feedbackScope, {
           ...(feedbackScope === "selection" && typeof payload.selection === "string" ? { selection: payload.selection } : {}),
         }) } : {}),

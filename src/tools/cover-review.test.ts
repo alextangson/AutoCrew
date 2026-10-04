@@ -31,6 +31,7 @@ import { generateWideCover } from "../modules/cover/wide-crop.js";
 import { saveContent, getContent, getCoverReview, saveCoverReview } from "../storage/local-store.js";
 import { claimContent } from "../storage/claims.js";
 import { encodePng } from "../modules/cover/png-crop.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const planMock = vi.mocked(designCoverPlan);
 const reviseMock = vi.mocked(reviseCoverDesign);
@@ -97,7 +98,7 @@ afterEach(async () => {
 
 async function seedContent(status = "draft_ready", platform = "wechat_mp"): Promise<string> {
   const c = await saveContent(
-    { title: "AI 写码的账", body: "正文内容", platform, status: status as never, tags: [], hashtags: [] },
+    { _provenance: HUMAN_WRITE, title: "AI 写码的账", body: "正文内容", platform, status: status as never, tags: [], hashtags: [] },
     dir,
   );
   return c.id;

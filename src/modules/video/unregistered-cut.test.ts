@@ -13,6 +13,7 @@ import { executeDesk } from "../../tools/desk.js";
 import { executeAsset } from "../../tools/asset.js";
 import { initializeProjectLayout, resolveContentProject } from "../../storage/content-project.js";
 import { addAsset, getContent, saveContent, transitionStatus, type ContentStatus } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const T1 = "客户问一句「你们用 AI 吗」，你答得上来吗";
 const T2 = "你每天纠正 AI 同一件事？它根本不会从纠正里学";
@@ -44,7 +45,7 @@ beforeEach(async () => {
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 async function seed(title: string, status: ContentStatus = "approved", platform = "douyin"): Promise<string> {
-  const c = await saveContent({ title, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [] }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [] }, dir);
   if (status === "editing") await transitionStatus(c.id, "editing", { viaHandoff: true }, dir);
   return c.id;
 }

@@ -48,6 +48,20 @@ export async function loadPlanEntries(dataDir?: string, contents?: Content[]): P
   return out;
 }
 
+/**
+ * 严格版：任何一篇的发布计划读不出或解析不了就抛（不存在不算错）。给「数据必须完整才能下结论」的地方用，
+ * 例如选题会的账号数据视角——少一篇计划就少一批作品绑定，不能报「数据齐了」。
+ */
+export async function assertPlanEntriesReadable(dataDir: string | undefined, contents: Content[]): Promise<void> {
+  for (const c of contents.filter((x) => x.status !== "archived")) {
+    const raw = await readPublishPlanRaw(c.id, getDataDir(dataDir));
+    if (!raw) continue;
+    try { JSON.parse(raw); } catch (err) {
+      throw new Error(`稿件 ${c.id} 的发布计划 publish-plan.json 读不出：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
 /** 唯一命中的 contentId；没命中或多篇命中 → null */
 export function matchPlanEntry(entries: PlanEntry[], platform: string, title: string, publishedAt: string | null): string | null {
   const norm = normalizeTitle(title);

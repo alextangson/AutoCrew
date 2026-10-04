@@ -12,6 +12,7 @@ import { pullPlatformNow, writeRefusalFor } from "../../desktop/metrics-pull-cyc
 import { pullStatusHandler } from "../../desktop/metrics-pull-handlers.js";
 import type { PerformanceOutcome } from "./outcome-schema.js";
 import type { TypedRow } from "../../adapters/browser/pull-types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let temp: string, lib: string, data: string;
 let release: () => void = () => {};
@@ -102,7 +103,7 @@ describe("非持锁进程", () => {
 describe("多文件写的整体预检", () => {
   it("bindWorkManually / createHistoryRecord / deleteHistoryRecord 非持锁 → ok:false，文件不动", async () => {
     release = acquireLibraryLock(lib);
-    const draft = await saveContent({ title: "稿", body: "正文", platform: "douyin", status: "drafting", tags: [] }, data);
+    const draft = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "正文", platform: "douyin", status: "drafting", tags: [] }, data);
     const history = await createHistoryRecord({ title: "旧作", published_date: "2025-01-01", items: [{ platform: "douyin", item_id: "7500000000000000002" }] }, data);
     expect(history.ok).toBe(true);
     await appendOutcomes([outcome()], data);

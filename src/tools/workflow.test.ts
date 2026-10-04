@@ -30,6 +30,7 @@ import type { ResearchRunner, TriggerResult } from "../modules/research/research
 import { SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
 import { getTopic, saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
 import { TEST_FOUNDER_WORDS, asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -546,8 +547,8 @@ describe("workflow write", () => {
 
 describe("workflow draft", () => {
   async function makeContent(status: string, over: Record<string, unknown> = {}): Promise<string> {
-    const saved = await saveContent({ title: "［生成中］横评", body: "", platform: "douyin", hashtags: [] }, testDir);
-    await updateContent(saved.id, { status, ...over } as never, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "［生成中］横评", body: "", platform: "douyin", hashtags: [] }, testDir);
+    await updateContent(saved.id, { _provenance: HUMAN_WRITE, status, ...over } as never, testDir);
     return saved.id;
   }
 

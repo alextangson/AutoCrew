@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeReview } from "./review.js";
 import { getContent, saveContent } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dataDir: string;
 
@@ -38,7 +39,7 @@ describe("legacy review remains mechanical and read-only", () => {
   for (const hasHit of [false, true]) {
     it(`读取 full_review 不会${hasHit ? "因词表命中而退回" : "因机械检查通过而批准"}稿件`, async () => {
       if (hasHit) await addCustomWord("返工记录");
-      const content = await saveContent({ title: "昨天的记录", body: "我们整理了返工记录。", platform: "douyin", status: "reviewing" }, dataDir);
+      const content = await saveContent({ _provenance: HUMAN_WRITE, title: "昨天的记录", body: "我们整理了返工记录。", platform: "douyin", status: "reviewing" }, dataDir);
       const before = await getContent(content.id, dataDir);
       const result = await review({ action: "full_review", content_id: content.id });
       expect(result).toMatchObject({ passed: !hasHit, quality_status: "mechanical_checks_only", semantic_review: false });
@@ -71,7 +72,7 @@ describe("legacy review remains mechanical and read-only", () => {
   it("auto_fix 仅清空白，不替换敏感词或主语，也不把标题复制进正文", async () => {
     await addCustomWord("闭环");
     const body = "  我们记录问题。  \r\n我们形成闭环。\r\n我们继续复盘。  ";
-    const content = await saveContent({ title: "保留原来的标题", body, platform: "douyin", status: "reviewing" }, dataDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "保留原来的标题", body, platform: "douyin", status: "reviewing" }, dataDir);
     const result = await review({ action: "auto_fix", content_id: content.id });
     expect(result).toMatchObject({
       quality_status: "mechanical_checks_only",

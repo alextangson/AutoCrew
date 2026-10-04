@@ -11,13 +11,14 @@ import { readPredictionBody } from "./predict-input.js";
 import { BODY, fakeLoop, SELF } from "./test-fixtures.js";
 import { ALL_DIMS } from "./rubric.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 
 const DEFAULT_NAMES = ["底部", "基础盘", "命中", "小爆", "大爆"];
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "calib-p-")); });
-const mk = (extra: Record<string, unknown> = {}) => saveContent({ title: "AI 写的周报被领导看出来了", body: "下班前领导一句明早给我……", platform: "douyin", status: "draft_ready", tags: [], ...extra } as never, dir);
+const mk = (extra: Record<string, unknown> = {}) => saveContent({ _provenance: HUMAN_WRITE, title: "AI 写的周报被领导看出来了", body: "下班前领导一句明早给我……", platform: "douyin", status: "draft_ready", tags: [], ...extra } as never, dir);
 
 describe("§二 派生表", () => {
   it("Confidence 只由样本数决定（0/1-2/3-5/6-10/11-20/21+）", () => {

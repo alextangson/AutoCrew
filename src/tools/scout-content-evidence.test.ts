@@ -45,7 +45,7 @@ async function seedProvidedDraft() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
   return { contentId: content.id, pack, target: { content_id: content.id, pack_id: pack.packId } };
 }
 

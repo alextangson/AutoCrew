@@ -6,6 +6,7 @@ import path from "node:path";
 import { executeInsights } from "./insights.js";
 import { saveContent } from "../storage/local-store.js";
 import { lookupPlatformItem } from "../modules/flywheel/platform-items.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-insights-works-")); });
@@ -13,7 +14,7 @@ afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetr
 
 describe("work_bind / history_create / history_delete", () => {
   it("work 是 JSON 字符串也照收；items 再串一层也照收", async () => {
-    const c = await saveContent({ title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "b", platform: "douyin", status: "published", tags: [] }, dir);
     const bound = await executeInsights({ action: "work_bind", work: JSON.stringify({ content_id: c.id, platform: "xhs", item_id: "6ab916a5000000001303d9ac" }), _dataDir: dir });
     expect(bound).toMatchObject({ ok: true, status: "bound", platform: "xiaohongshu" });
     expect((await lookupPlatformItem("xiaohongshu", "6ab916a5000000001303d9ac", dir))?.via).toBe("manual");

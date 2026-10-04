@@ -19,6 +19,7 @@ import { ASSETS, aroll, broll, timeline } from "./fixtures.js";
 import type { Json, SnapshotAsset } from "./snapshot-types.js";
 import { SUGGEST } from "./suggest.js";
 import { hostPolicy } from "../../../../mcp/host-policy.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 let env: Env, ccRoot: string;
 let media: (f: string) => Promise<MediaInfo | { error: string }>;
@@ -303,7 +304,7 @@ describe("触发、缓存与范围（E15、E16、E18、E20）", () => {
     await writeProject([gapTimeline(5)]);
     const s = await setup();
     const before = (await readProductionDoc(s.c.id, env.dir))!.revision;
-    const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "check_slivers", content_id: s.c.id }) as Json;
+    const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "check_slivers", content_id: s.c.id }) as Json;
     expect(r).toMatchObject({ ok: true, status: "slivers", written: false, slivers: [{ start_frame: 100, end_frame: 105 }] });
     expect((await readProductionDoc(s.c.id, env.dir))!.revision).toBe(before);
     expect(hostPolicy("codex", "autocrew_content", { action: "check_slivers" })).toEqual({ ok: true });

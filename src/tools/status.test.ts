@@ -59,7 +59,7 @@ async function seedContent(status: ContentStatus, platform: string, topicId?: st
 /** 视频稿进待发布只有封面台一个入口（阶段门，强推也不让）：成片审过 → 封面定稿 → 封面台 → 待发布 */
 async function seedPublishReady(platform: string): Promise<string> {
   const id = await seedContent("editing", platform);
-  await updateContent(id, { videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" } }, dir);
+  await updateContent(id, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" } }, dir);
   await saveCoverReview(id, { platform, status: "review_pending", variants: [{ label: "a", imagePaths: { "3:4": "/tmp/a.png" } }] }, dir);
   await approveCoverVariant(id, "a", dir);
   expect(await transitionStatus(id, "cover_pending", undefined, dir)).toMatchObject({ ok: true });
@@ -88,7 +88,7 @@ describe("autocrew_status brief", () => {
     // 已派工待登记：在剪辑台、这一版成片还没审过；审过片的不算
     await seedContent("editing", "douyin");
     const reviewed = await seedContent("editing", "wechat_video");
-    await updateContent(reviewed, { videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" } }, dir);
+    await updateContent(reviewed, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" } }, dir);
     // 待发布：不分平台
     await seedContent("publish_ready", "wechat_mp");
     await seedPublishReady("douyin");

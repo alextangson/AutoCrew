@@ -9,6 +9,7 @@ import { generateAudiencePersonaProposal, savePersonaCalibrated, gatherPersonaSi
 import { saveProfile, loadProfile } from "./creator-profile.js";
 import { saveContent, recordAdoption } from "../../storage/local-store.js";
 import type { runLoop } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -100,7 +101,7 @@ describe("数据回流信号（V5.6）", () => {
       "utf-8",
     );
     for (const [title, verdict] of [["稿1", "adopted"], ["稿2", "light_edit"], ["稿3", "rewritten"]] as const) {
-      const c = await saveContent({ title, body: "正文", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
+      const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "正文", platform: "xiaohongshu", status: "draft_ready", tags: [], hashtags: [] }, dir);
       await recordAdoption(c.id, verdict, dir);
     }
   }

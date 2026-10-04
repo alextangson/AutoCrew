@@ -6,6 +6,7 @@ import { Type } from "@sinclair/typebox";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { COVER_ASSET_WARNING } from "../modules/video/unregistered-cut.js";
 import { addAsset, addAssetByPath, getContent, getDataDir, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
+import { provenanceOf } from "../storage/first-body-guard.js";
 
 /**
  * autocrew_asset — manage media files (covers, B-Roll, images, videos, subtitles)
@@ -108,7 +109,7 @@ export async function executeAsset(params: Record<string, unknown>) {
   if (action === "revert") {
     const ver = params.version as number;
     if (!ver) return { ok: false, error: "version number is required" };
-    const content = await revertToVersion(contentId, ver, dataDir);
+    const content = await revertToVersion(contentId, ver, dataDir, provenanceOf(params));
     if (!content) return { ok: false, error: `Failed to revert to version ${ver}` };
     return { ok: true, content };
   }

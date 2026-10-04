@@ -24,7 +24,7 @@ import { createResearchRunner, type ResearchRunner } from "../modules/research/r
 import { SEARCH_NOT_CONFIGURED, searchAvailable } from "../modules/research/search-provider.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { startGenerateScript, type ScriptRequest } from "../modules/writing/generate-script.js";
-import { ANGLE_GATE_COPY, recordFounderAngle } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, newDraftAngleRefusal, recordFounderAngle, topicHasDraft } from "../modules/research/angle-gate.js";
 import { getContent, getDataDir, getTopic, saveTopic, updateTopic } from "../storage/local-store.js";
 import { angleOptionsView, draftingNote, draftOwnerView, draftView, jobView } from "./workflow-views.js";
 import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest, newDraftGate } from "./writing-readiness.js";
@@ -251,8 +251,13 @@ async function doPrepare(
     params = { ...params, topic_id: topicId };
   }
   if (!topicId) return fail("topic_id 必填；先查询或创建选题（或只给一句 inspiration），再准备创作。");
-  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：在派任何调研之前就明说
-  if (str(params.skip_reason) || params.research_mode === "skip" || str(params.research_reason)) return fail(ANGLE_GATE_COPY.skipRemoved, { code: "skip_removed" });
+  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：在派任何调研之前就明说——但先判存量稿，
+  // 已有真稿的选题带着旧的 skip 元数据照常修订（选题会只管第一篇）
+  if (str(params.skip_reason) || params.research_mode === "skip" || str(params.research_reason)) {
+    const refused = await newDraftAngleRefusal(topicId, dataDir);
+    if (refused?.code === "angle_gate_read_failed") return refused as WorkflowResult;
+    if (!(await topicHasDraft(topicId, dataDir))) return fail(ANGLE_GATE_COPY.skipRemoved, { code: "skip_removed" });
+  }
   const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
   // 自带材料（provided）也要开选题会：还没有立意卡、也没有创始人自定角度时，同样派宿主调研出卡
   const providedNeedsCards = readiness.research.mode === "provided" && readiness.status === "needs_angle"

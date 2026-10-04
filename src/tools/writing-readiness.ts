@@ -195,7 +195,7 @@ export async function inspectWritingReadiness(
     result.research.executedBy = snap.brief.executedBy ?? job?.executedBy ?? { kind: "engine" };
     result.research.autoResearched = result.research.executedBy.kind !== "host";
     result.research.matchesRequestedTask = true;
-    if (angleCardsOf(snap.brief).length === 0 && !req.direction?.trim()) {
+    if (!existingDraft && angleCardsOf(snap.brief).length === 0 && !req.direction?.trim()) {
       return { ...result, status: "needs_attention", note: "调研已有简报，但没有形成可选立意；需要补跑立意，不能直接冒充写前准备完成。", next_action: next("research", { kind: "angles" }) };
     }
   }

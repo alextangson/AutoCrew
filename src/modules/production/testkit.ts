@@ -17,6 +17,7 @@ import { resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
 import { setMatchDeps } from "./match/deps.js";
 import { matchWorkerIdle, resetMatchQueue } from "./match/queue.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 export interface Env { dir: string; inbox: string; chatcut: string; jianying: string; outside: string; cleanup: () => Promise<void> }
 
@@ -71,7 +72,7 @@ const CREATABLE = new Set<ContentStatus>(["drafting", "draft_ready", "reviewing"
 
 /** 造一条视频稿；阶段门不许直接建的旧状态（剪辑中 / 封面 / 待发布）直接写 meta，模拟旧库里的现状 */
 export async function videoContent(env: Env, title: string, status: ContentStatus = "draft_ready", body = `${title} 的定稿正文。`, extra: Partial<Content> = {}): Promise<Content> {
-  const c = await saveContent({ title, body, platform: "douyin", status: CREATABLE.has(status) ? status : "approved", tags: [] }, env.dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body, platform: "douyin", status: CREATABLE.has(status) ? status : "approved", tags: [] }, env.dir);
   if (CREATABLE.has(status) && !Object.keys(extra).length) return c;
   const next = { ...(await getContent(c.id, env.dir))!, status, ...extra };
   await commitProjectContent(next, env.dir);
@@ -87,7 +88,7 @@ export async function setContent(env: Env, id: string, patch: Partial<Content>):
 
 /** 创始人认稿：工作台（非模型）把 draft_ready 推到 approved，写认稿决定 */
 export async function founderApprove(env: Env, id: string): Promise<void> {
-  const r = await executeContentSave({ _dataDir: env.dir, action: "transition", id, target_status: "approved", force: true });
+  const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "transition", id, target_status: "approved", force: true });
   if (!(r as { ok: boolean }).ok) throw new Error(`认稿失败：${JSON.stringify(r)}`);
 }
 
@@ -96,7 +97,7 @@ export function projectRoot(env: Env, id: string): string {
 }
 
 export function record(env: Env, params: Record<string, unknown>, host = "codex"): Promise<Record<string, unknown>> {
-  return executeContentSave({ _dataDir: env.dir, _host: host, action: "record", ...params }) as Promise<Record<string, unknown>>;
+  return executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: host, action: "record", ...params }) as Promise<Record<string, unknown>>;
 }
 
 export async function exists(p: string): Promise<boolean> {

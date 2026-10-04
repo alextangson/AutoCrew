@@ -11,6 +11,7 @@ import {
   diceSimilarity,
 } from "./outcome-store.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -169,10 +170,10 @@ describe("diceSimilarity", () => {
 describe("matchDraft", () => {
   async function publishContent(title: string, publishedAt: string) {
     const c = await saveContent(
-      { title, body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title, body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt }, testDir);
     return c;
   }
 
@@ -240,10 +241,10 @@ describe("matchDraft", () => {
 
   it("matches a draft saved with platform alias 'xhs' against a xiaohongshu import", async () => {
     const c = await saveContent(
-      { title: "小红书笔记标题", body: "正文", platform: "xhs", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "小红书笔记标题", body: "正文", platform: "xhs", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
     const hit = await matchDraft("xiaohongshu", "小红书笔记标题", null, testDir);
     expect(hit?.id).toBe(c.id);
   });

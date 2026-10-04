@@ -16,6 +16,7 @@ import { pullDeps, setPullDeps } from "./pull-deps.js";
 import type { DialogOutcome, DialogRunner } from "./dialog.js";
 import { IMPORT_LINE, readConfirmation } from "./confirm.js";
 import { executeVideo } from "../../../tools/video.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 /** 假原片只是几个字节：媒体探测换成放行，真探测在 verify-edges / pull-handoff 用真 mp4 测 */
 const okProbe = async () => ({ ok: true as const });
@@ -133,7 +134,7 @@ describe("confirm", () => {
   });
 
   it("导入稿：弹窗多一行说明，确认记录带 recorded_as_is", async () => {
-    const imported = await saveContent({ title: "导入的稿子标题", body: "我自己录的。第二句。", status: "draft_ready", platform: "douyin", tags: [],
+    const imported = await saveContent({ _provenance: HUMAN_WRITE, title: "导入的稿子标题", body: "我自己录的。第二句。", status: "draft_ready", platform: "douyin", tags: [],
       writingSource: { kind: "manual_import", importedAt: "2026-09-27T00:00:00Z", reason: "本地稿导入" } }, fx.dir);
     await cited(imported);
     const shown = fakeDialog(["first", { kind: "ok", value: "确认" }]);

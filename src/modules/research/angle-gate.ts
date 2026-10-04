@@ -15,7 +15,7 @@ import {
 } from "../../storage/local-store.js";
 import { activeAngleCard } from "./angle-cards.js";
 import { FirstBodyRefusedError } from "../../storage/first-body-guard.js";
-import { resolveEffectiveBrief } from "./brief-snapshot.js";
+import { resolveEffectiveBriefStrict } from "./brief-snapshot.js";
 import { topicHashOf } from "./research-job-store.js";
 
 /** 用户可见文案集中在这里（创始人过目） */
@@ -79,10 +79,8 @@ export function latestDecision(topic: Topic): "card" | "authored" | null {
 
 /** 创始人选的卡在当前生效简报里还作数（同 writing-readiness 的 activeAngleCard 口径） */
 async function selectedCardFresh(topic: Topic, dataDir?: string): Promise<boolean> {
-  // 严格读：简报或台账读坏不能被当成「选择过期」，抛出去由调用方报 angle_gate_read_failed
-  const problems: string[] = [];
-  const snap = await resolveEffectiveBrief(topic.id, getDataDir(dataDir), (m) => problems.push(m));
-  if (problems.length) throw new Error(problems.join("；"));
+  // 严格读：简报或台账读坏不能被当成「选择过期」，也不能让坏掉的最新行把旧选择复活；抛出去由调用方报读失败
+  const snap = await resolveEffectiveBriefStrict(topic.id, getDataDir(dataDir));
   return Boolean(snap && activeAngleCard(topic.selectedAngle, snap.brief, topicHashOf(topic.title, topic.description ?? "")));
 }
 

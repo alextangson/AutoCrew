@@ -16,6 +16,7 @@ import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -354,8 +355,8 @@ describe("整分支审（2a vs main）", () => {
     const it0 = (await items(d.id)).find((i) => i.type === "draft")!;
     await decideItem({ content_id: d.id, item_id: it0.item_id, gen: it0.gen, action: "approve_script" }, env.dir);
     const { executeContentSave } = await import("../../tools/content-save.js");
-    await executeContentSave({ _dataDir: env.dir, action: "transition", id: d.id, target_status: "reviewing", force: true });
-    await executeContentSave({ _dataDir: env.dir, action: "transition", id: d.id, target_status: "draft_ready", force: true });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "transition", id: d.id, target_status: "reviewing", force: true });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "transition", id: d.id, target_status: "draft_ready", force: true });
     const back = (await items(d.id)).find((i) => i.type === "draft");
     expect(back).toBeDefined();
     expect(back!.gen).not.toBe(it0.gen);
@@ -412,7 +413,7 @@ describe("整分支审 3", () => {
     const c = await editing();
     const { executeContentSave } = await import("../../tools/content-save.js");
     const vid = await put(path.join(projectRoot(env, c.id), "04-edit/样片.mp4"), "0123456789");
-    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "样片", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [vid] }) as Record<string, unknown>;
+    const q = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "样片", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [vid] }) as Record<string, unknown>;
     const { createBoardHandler } = await import("../../desktop/board-route.js");
     const { PassThrough } = await import("node:stream");
     const get = async (range?: string) => {
@@ -464,12 +465,12 @@ describe("整分支审 4", () => {
     const card = await cardPanel(c.id, env.dir) as { draft_item: { item_id: string; gen: string } };
     const boardItem = (await boardData(env.dir)).items.find((i) => i.id === c.id)!;
     const loaded = c.body;
-    await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: `${loaded}\n别的会话加了一句。` });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "update", id: c.id, body: `${loaded}\n别的会话加了一句。` });
     const fromCard = await decideItem({ content_id: c.id, ...card.draft_item, action: "approve_script" }, env.dir);
     expect(fromCard).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
     const fromBoard = await decideItem({ content_id: c.id, ...boardItem.draftRef!, action: "approve_script" }, env.dir);
     expect(fromBoard).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
-    const fromEditor = await executeContentSave({ _dataDir: env.dir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: bodyHash(loaded) }) as Record<string, unknown>;
+    const fromEditor = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: bodyHash(loaded) }) as Record<string, unknown>;
     expect(fromEditor).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
     const { getContent } = await import("../../storage/local-store.js");
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
@@ -567,11 +568,11 @@ describe("verifier 2a 修复（第二批）", () => {
   it("创始人答请示写的一句话，agent 在 asks[] 里拿到全文（不再截成 10 个字）", async () => {
     const c = await editing();
     const { executeContentSave } = await import("../../tools/content-save.js");
-    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] }) as Record<string, unknown>;
+    const q = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] }) as Record<string, unknown>;
     const it = (await items(c.id)).find((i) => i.type === "ask")!;
     const note = "开头那段客户问话留着，后面两段重复的解释删掉一段，结尾那句金句前面停半拍。";
     await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "no", note }, env.dir);
-    const s = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id }) as Record<string, unknown>;
+    const s = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id: c.id }) as Record<string, unknown>;
     expect((s.asks as Array<{ note?: string }>)[0].note).toBe(note);
     void q;
   });

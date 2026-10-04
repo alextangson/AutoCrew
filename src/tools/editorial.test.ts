@@ -9,12 +9,13 @@ import { buildScriptPrompts } from "../modules/writing/script-prompt.js";
 import { KOUBO_PACK } from "../modules/packs/koubo.js";
 import { claimContent } from "../storage/claims.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 let dir: string;
 const run = (args: Record<string, unknown>) => executeEditorial({ ...args, _dataDir: dir });
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "editorial-")); });
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 async function draft() {
-  const content = await saveContent({ title: "仓库的一天", body: "先看仓管怎么工作，再讨论工具。", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
+  const content = await saveContent({ _provenance: HUMAN_WRITE, title: "仓库的一天", body: "先看仓管怎么工作，再讨论工具。", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
   const inspected = await run({ action: "inspect", content_id: content.id });
   return { content, args: { action: "feedback", content_id: content.id, draft_hash: inspected.draft_hash, event_id: "event-1", feedback: "结尾停在那个真实场景，不要强行总结", user_confirmed: true } };
 }
@@ -49,7 +50,7 @@ describe("editorial user feedback", () => {
     const { content, args } = await draft();
     expect(await run({ ...args, verdict: "adopted" })).toMatchObject({ ok: true });
     expect((await getContent(content.id, dir))?.adoption?.verdict).toBe("adopted");
-    await updateContent(content.id, { body: "后来改成了另一版。" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: "后来改成了另一版。" }, dir);
     expect(await run({ ...args, event_id: "event-2", verdict: "adopted" })).toMatchObject({ ok: false, status: "stale_draft" });
     const current = await run({ action: "inspect", content_id: content.id });
     await run({ ...args, draft_hash: current.draft_hash, event_id: "event-3", verdict: "rejected", feedback: "这一版不满意" });

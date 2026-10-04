@@ -109,6 +109,26 @@ function jobsPath(dataDir: string): string {
   return path.join(dataDir, RESEARCH_DIR, JOBS_FILE);
 }
 
+/** 严格读台账：任何一行解析不了就抛（闸口不能让损坏的最新行把旧记录「复活」） */
+export async function getJobStrict(topicId: string, dataDir: string): Promise<ResearchJob | null> {
+  let raw: string;
+  try { raw = await fs.readFile(jobsPath(dataDir), "utf-8"); } catch (err) {
+    if ((err as { code?: string }).code === "ENOENT") return null;
+    throw err;
+  }
+  let found: ResearchJob | null = null;
+  raw.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    let parsed: ResearchJob;
+    try { parsed = JSON.parse(line) as ResearchJob; } catch (err) {
+      throw new Error(`调研台账第 ${i + 1} 行损坏：${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!parsed || typeof parsed.topicId !== "string") throw new Error(`调研台账第 ${i + 1} 行不是有效记录`);
+    if (parsed.topicId === topicId) found = parsed;
+  });
+  return found;
+}
+
 async function readJournal(dataDir: string): Promise<ResearchJob[]> {
   let raw: string;
   try {

@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { getContent, revertToVersion, saveContent, transitionStatus, updateContent, updateContentIfDraftMatches } from "./local-store.js";
 import { seriesTransaction } from "./series-transaction.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-series-lock-")); });
@@ -27,16 +28,16 @@ const settledWithin = (p: Promise<unknown>, ms = 50) =>
 
 describe("writes to in-scope content wait for the series lock", () => {
   it("updateContent, updateContentIfDraftMatches, revertToVersion and leaving the range all queue behind a review check", async () => {
-    const neighbour = await saveContent({ title: "邻居", body: "旧正文", platform: "douyin", status: "drafting", tags: [] }, dir);
+    const neighbour = await saveContent({ _provenance: HUMAN_WRITE, title: "邻居", body: "旧正文", platform: "douyin", status: "drafting", tags: [] }, dir);
     await transitionStatus(neighbour.id, "draft_ready", { force: true }, dir);
-    const outside = await saveContent({ title: "范围外", body: "写稿中", platform: "douyin", status: "drafting", tags: [] }, dir);
+    const outside = await saveContent({ _provenance: HUMAN_WRITE, title: "范围外", body: "写稿中", platform: "douyin", status: "drafting", tags: [] }, dir);
 
     const release = await holdSeriesLock();
-    const edit = updateContent(neighbour.id, { body: "审稿期间改的正文" }, dir);
+    const edit = updateContent(neighbour.id, { _provenance: HUMAN_WRITE, body: "审稿期间改的正文" }, dir);
     const matched = updateContentIfDraftMatches(neighbour.id, neighbour, { title: "改标题" }, dir);
     const revert = revertToVersion(neighbour.id, 1, dir);
     const leave = transitionStatus(neighbour.id, "revision", { force: true }, dir);
-    const unrelated = updateContent(outside.id, { body: "范围外随便改" }, dir);
+    const unrelated = updateContent(outside.id, { _provenance: HUMAN_WRITE, body: "范围外随便改" }, dir);
     // 「应当完成」给宽裕窗口：全量并发时单次落盘可能超过 50ms；若它真被系列锁挡住，锁不放就永远不会完成
     expect(await settledWithin(unrelated, 5000)).toBe(true);
     expect(await settledWithin(edit)).toBe(false);

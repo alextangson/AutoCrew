@@ -18,6 +18,7 @@ import { addWritingRule, loadProfile, rulesForPlatform, ruleStatus, updateProfil
 import { executeEditorial } from "../tools/editorial.js";
 import { saveContent } from "../storage/local-store.js";
 import { draftHash } from "../storage/draft-hash.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const PENDING = "开头先说结论，不要铺垫";
 let dir: string;
@@ -43,7 +44,7 @@ async function expectStillPending(): Promise<void> {
 
 describe("a model cannot activate a pending rule through any existing entry", () => {
   it("MCP editorial feedback with user_confirmed:true and long-term scope only (re)records a pending proposal", async () => {
-    const c = await saveContent({ title: "稿", body: "正文。", platform: "douyin", status: "draft_ready", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "稿", body: "正文。", platform: "douyin", status: "draft_ready", tags: [] }, dir);
     for (const [i, scope] of (["voice", "platform"] as const).entries()) {
       const res = await executeEditorial({
         _dataDir: dir, action: "feedback", content_id: c.id, draft_hash: draftHash(c), event_id: `model-${i}`,

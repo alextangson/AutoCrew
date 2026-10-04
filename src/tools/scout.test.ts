@@ -360,7 +360,7 @@ async function seedPack() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
   return { content, pack, target: { content_id: content.id, pack_id: pack.packId } };
 }
 
@@ -387,7 +387,7 @@ describe("host evidence supplementation", () => {
     expect((await getContent(content.id, dir))?.evidenceLedger?.entries).toHaveLength(12);
     await prepare({ force: true });
     await writePack(content.id, { ...pack, packId: "pack-2" }, dir);
-    await updateContent(content.id, { pack: { packId: "pack-2", issuedAt: "now", host: "claude" } }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: "pack-2", issuedAt: "now", host: "claude" } }, dir);
     expect(
       await run("claim_offline", { ...claimed, pack_id: "pack-2", claim: "第十三条", reason: "无原页" }),
     ).toMatchObject({ code: "evidence_quota" });
@@ -403,9 +403,9 @@ describe("host evidence supplementation", () => {
     await writePack(content.id, { ...pack, host: "other" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "stale_pack" });
     await writePack(content.id, pack, dir);
-    await updateContent(content.id, { topicId: "topic-123456-other" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, topicId: "topic-123456-other" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "wrong_content" });
-    await updateContent(content.id, { topicId, status: "approved" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, topicId, status: "approved" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "content_not_writable" });
     expect(await loadHostEvidence(content.id, dir)).toEqual([]);
     expect((await readPack(content.id, dir))?.ledger.entries).toEqual([]);

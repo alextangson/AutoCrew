@@ -10,6 +10,7 @@ import { decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -17,7 +18,7 @@ afterEach(async () => { await env.cleanup(); });
 
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;
 const items = async (id: string) => (await readInbox(env.dir, { contentId: id })).items;
-const agent = (p: Record<string, unknown>) => executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>;
+const agent = (p: Record<string, unknown>) => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>;
 async function editing(title = "二轮回归") {
   const c = await videoContent(env, title);
   await founderApprove(env, c.id);

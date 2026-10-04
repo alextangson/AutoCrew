@@ -15,6 +15,7 @@ import { getContent, listContents, saveContent } from "../../storage/local-store
 import { seedFounderTopic } from "../research/angle-gate.test-helper.js";
 import type { LoopResult, LoopTool, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -664,7 +665,7 @@ describe("retryGenerateScript — 中断稿原地重写", () => {
 
   it("老数据没有 genRequest → 降级:选题从标题剥哨兵,平台/血缘取稿件字段", async () => {
     const legacy = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "［生成中断］AI时代普通人赚钱",
         body: "",
         platform: "douyin",

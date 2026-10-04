@@ -12,6 +12,7 @@ import { explainContent } from "./read.js";
 import { getContent } from "../../storage/local-store.js";
 import { reconcileAll } from "./reconcile.js";
 import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -144,7 +145,7 @@ describe("R12 「可以审了」只能 agent 标，创始人可挑任一版", ()
     const { c, v2 } = await twoCuts();
     const miss = async () => (await explainContent((await getContent(c.id, env.dir))!, env.dir)).missing;
     expect(await miss()).not.toContain("成片待你审");
-    const mark = (p: Record<string, unknown>) => executeContentSave({ _dataDir: env.dir, _host: "codex", action: "mark_ready", content_id: c.id, ...p }) as Promise<Record<string, unknown>>;
+    const mark = (p: Record<string, unknown>) => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "mark_ready", content_id: c.id, ...p }) as Promise<Record<string, unknown>>;
     expect(await mark({ fact_id: v2.fact_id })).toMatchObject({ ok: true, marked: true });
     expect(await mark({ fact_id: v2.fact_id })).toMatchObject({ ok: true, note: expect.stringContaining("标过") });
     expect((await doc(c.id)).ready_marks).toHaveLength(1);

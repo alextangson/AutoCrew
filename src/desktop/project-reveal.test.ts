@@ -7,6 +7,7 @@ import { contentFile, initializeProjectLayout, resolveContentProject } from "../
 import { saveContent, type Content } from "../storage/local-store.js";
 import { sha256File } from "../modules/video/handoff/manifest.js";
 import { revealProjectPath } from "./project-reveal.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string, content: Content, root: string, finalSha: string;
 const spawnImpl = vi.fn(() => ({ unref() {} })) as unknown as typeof spawn;
@@ -15,7 +16,7 @@ const mac = { platform: "darwin" as const, spawnImpl };
 beforeEach(async () => {
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-reveal-")));
   await initializeProjectLayout(dir, "lib-deadbeef", "default");
-  content = await saveContent({ title: "访达样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
+  content = await saveContent({ _provenance: HUMAN_WRITE, title: "访达样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
   root = resolveContentProject(content.id, dir)!.project_root;
   await fs.mkdir(path.join(root, "07-delivery"), { recursive: true });
   const file = path.join(root, "07-delivery/final.mp4");

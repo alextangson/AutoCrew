@@ -14,6 +14,7 @@ import { matchAroll, readReceipt, receiptProblem, type MatchReceipt } from "./ma
 import { setPullDeps } from "./pull-deps.js";
 import { putArollLock } from "./pull-store.js";
 import { executeVideo } from "../../../tools/video.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 /** 假原片只是几个字节：媒体探测换成放行，真探测在 verify-edges / pull-handoff 用真 mp4 测 */
 const okProbe = async () => ({ ok: true as const });
@@ -76,7 +77,7 @@ const match = (extra: Record<string, unknown> = {}, host = "codex") =>
 describe("match", () => {
   it("match-is-read-only：不改稿件与认领；回执落盘；标定前不出 proposed", async () => {
     const a = await seedAccepted(fx.dir, "怎么把重复工作交给 AI");
-    await updateContent(a.id, { body: LONG + LONG }, fx.dir);
+    await updateContent(a.id, { _provenance: HUMAN_WRITE, body: LONG + LONG }, fx.dir);
     await seedAccepted(fx.dir, "周末爬山装备清单");
     const before = JSON.stringify(await getContent(a.id, fx.dir));
     const res = await match();
@@ -118,15 +119,15 @@ describe("match", () => {
   });
 
   it("导入稿进候选并标 unreviewed_import；没审的普通稿进 near_misses", async () => {
-    const imported = await saveContent({ title: "导入的稿", body: LONG, status: "draft_ready", platform: "douyin", tags: [],
+    const imported = await saveContent({ _provenance: HUMAN_WRITE, title: "导入的稿", body: LONG, status: "draft_ready", platform: "douyin", tags: [],
       writingSource: { kind: "manual_import", importedAt: "2026-09-27T00:00:00Z", reason: "本地稿导入" } }, fx.dir);
     const res = await match();
     expect((res.candidates as Array<Record<string, unknown>>)[0]).toMatchObject({ content_id: imported.id, unreviewed_import: true });
     // 创始人在看板认稿（draft_ready → approved）后照样是候选
-    await updateContent(imported.id, { status: "approved" }, fx.dir);
+    await updateContent(imported.id, { _provenance: HUMAN_WRITE, status: "approved" }, fx.dir);
     const approved = await match({ request_id: "m-approved" });
     expect((approved.candidates as Array<Record<string, unknown>>)[0]).toMatchObject({ content_id: imported.id, unreviewed_import: true });
-    await updateContent(imported.id, { writingSource: undefined }, fx.dir);
+    await updateContent(imported.id, { _provenance: HUMAN_WRITE, writingSource: undefined }, fx.dir);
     const none = await match({ request_id: "m-3" });
     expect(none).toMatchObject({ status: "no_candidate" });
     expect((none.near_misses as Array<Record<string, unknown>>)[0]).toMatchObject({ content_id: imported.id, reason: "这一版还没通过审稿" });
@@ -144,7 +145,7 @@ describe("match", () => {
     const res = await match();
     const receipt = (await readReceipt(fx.dir, String(res.receipt_id))) as MatchReceipt;
     expect(await receiptProblem(receipt, fx.dir)).toBeNull();
-    await updateContent(a.id, { body: "改过的正文" }, fx.dir);
+    await updateContent(a.id, { _provenance: HUMAN_WRITE, body: "改过的正文" }, fx.dir);
     expect(await receiptProblem(receipt, fx.dir)).toContain("改过");
     setPullDeps({ probe: okProbe, now: () => Date.now() + 31 * 60_000 });
     expect(await receiptProblem(receipt, fx.dir)).toContain("过期");

@@ -8,6 +8,7 @@ import { appendOutcomes, listOutcomes } from "./outcome-store.js";
 import { importPerformanceRows } from "./row-import.js";
 import { ATTRIBUTION_REVIEW_PREFIX, type PerformanceOutcome } from "./outcome-schema.js";
 import { saveContent } from "../../storage/local-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const TITLE = "AI给自己造了个身体，接管了我家的全屋智能";
 const A_ID = "7686140658221976866";
@@ -20,7 +21,7 @@ const row = (over: Partial<PerformanceOutcome>): PerformanceOutcome => ({
   contentId: null, platform: "douyin", platformTitle: TITLE, publishedAt: "2026-09-16T14:31:37.000Z", metricDate: "2026-10-03",
   platformItemId: A_ID, metrics: { views: 7629 }, source: "auto", recordedAt: "2026-10-03T08:00:00.000Z", needsReview: false, reviewReasons: [], ...over,
 });
-const draft = (title = "稿") => saveContent({ title, body: "b", platform: "douyin", status: "published", tags: [] }, dir);
+const draft = (title = "稿") => saveContent({ _provenance: HUMAN_WRITE, title, body: "b", platform: "douyin", status: "published", tags: [] }, dir);
 
 describe("P1-1 目标键已有快照", () => {
   it("目标稿同日有更新的无 id 快照（手填）：不被旧的作品快照盖掉", async () => {

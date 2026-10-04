@@ -33,6 +33,7 @@ import type {
   VideoState,
   VideoTranscript,
 } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 let contentId: string;
@@ -205,7 +206,7 @@ describe("transcribe 的热词与清洗装配", () => {
     const hit = await runPhase(ctx("transcribe", { transcript: 1, clean: 1, cut: 1 }, { uv: fakeUvSpawn("crash") }));
     expect(hit.ok).toBe(true);
     // 换一个专名 → 热词 hash 翻转 → 缓存作废 → 真去调 sidecar（这次它崩了，所以看得见）
-    await updateContent(contentId, { body: "今天聊聊 Harness" }, dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, body: "今天聊聊 Harness" }, dir);
     const miss = await executePhase(ctx("transcribe", { transcript: 2, clean: 2, cut: 2 }, { uv: fakeUvSpawn("crash") }));
     expect(miss.ok === false && miss.errorCode).toBe("asr_exit_1");
   });

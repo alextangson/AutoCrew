@@ -14,6 +14,7 @@ import { retro } from "./retro.js";
 import { calibrationReminders } from "./status.js";
 import { appendLog, calibrationDir, ensureCalibration, serializeCalibration } from "./store.js";
 import { BODY, predictPublished, SELF } from "./test-fixtures.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const DAY = 86_400_000;
 const ok = () => {};
@@ -93,7 +94,7 @@ describe("自动数字对账（预测账本规格 §二）", () => {
   });
 
   it("事后补记（reconstructed）：跳过、不进样本，账本标事后补记", async () => {
-    const c = await saveContent({ title: "旧片", body: "b", platform: "douyin", status: "draft_ready", tags: [], publishedAt: new Date(Date.now() - 5 * DAY).toISOString() } as never, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "旧片", body: "b", platform: "douyin", status: "draft_ready", tags: [], publishedAt: new Date(Date.now() - 5 * DAY).toISOString() } as never, dir);
     const b = await blindStep({ content_id: c.id, self_scores: SELF, reconstructed: true }, dir);
     const p = await commitPrediction({ blind_run_id: b.blind_run_id, ...BODY(["底部", "基础盘", "命中", "小爆", "大爆"]) }, dir);
     await outcome(c.id, pubOf(c), 3, { views: 500 });

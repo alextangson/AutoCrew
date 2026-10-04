@@ -22,6 +22,7 @@ import { createConversation, appendTurn } from "../storage/conversation-store.js
 import { addAssets as libAddAssets } from "../storage/library-store.js";
 import { saveContent } from "../storage/local-store.js";
 import { claimJob, releaseJob, isJobClaimed, GENERATE_JOB_KEY } from "./job-claims.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -176,28 +177,28 @@ describe("wrapExecute — action injection", () => {
     const spy = vi.fn().mockResolvedValue({ ok: true, data: {} });
     const handler = wrapExecute(spy, "report");
     await handler({ foo: "bar" });
-    expect(spy).toHaveBeenCalledWith({ action: "report", foo: "bar" });
+    expect(spy).toHaveBeenCalledWith({ action: "report", foo: "bar", _provenance: { kind: "model", host: "desktop-token" } });
   });
 
   it("publish:confirm maps to action=confirm_published", async () => {
     const spy = vi.fn().mockResolvedValue({ ok: true, data: {} });
     const handler = wrapExecute(spy, "confirm_published");
     await handler({ content_id: "x" });
-    expect(spy).toHaveBeenCalledWith({ action: "confirm_published", content_id: "x" });
+    expect(spy).toHaveBeenCalledWith({ action: "confirm_published", content_id: "x", _provenance: { kind: "model", host: "desktop-token" } });
   });
 
   it("style:absorb maps to action=absorb_samples", async () => {
     const spy = vi.fn().mockResolvedValue({ ok: true, data: {} });
     const handler = wrapExecute(spy, "absorb_samples");
     await handler({ samples: ["a"] });
-    expect(spy).toHaveBeenCalledWith({ action: "absorb_samples", samples: ["a"] });
+    expect(spy).toHaveBeenCalledWith({ action: "absorb_samples", samples: ["a"], _provenance: { kind: "model", host: "desktop-token" } });
   });
 
   it("payload cannot override the injected action — channel whitelist holds", async () => {
     const spy = vi.fn().mockResolvedValue({ ok: true, data: {} });
     const handler = wrapExecute(spy, "list");
     await handler({ action: "update", id: "x", body: "mutated" });
-    expect(spy).toHaveBeenCalledWith({ action: "list", id: "x", body: "mutated" });
+    expect(spy).toHaveBeenCalledWith({ action: "list", id: "x", body: "mutated", _provenance: { kind: "model", host: "desktop-token" } });
   });
 });
 
@@ -437,7 +438,7 @@ describe("generate:retry — 投递闸", () => {
 
   it("没有中断记录的稿件 → 原因原样透出，claim 当场释放（不许卡住后续重试）", async () => {
     const c = await saveContent(
-      { title: "好稿", body: "正文", platform: "douyin", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "好稿", body: "正文", platform: "douyin", status: "draft_ready", tags: [] },
       testDir,
     );
     const handlers = buildIpcHandlers();
@@ -709,7 +710,7 @@ describe("content versions / revert handlers", () => {
     void saved;
     // 直接经 update 路径覆盖：先用 content-save 的 save action 建一篇
     const { executeContentSave } = await import("../tools/content-save.js");
-    const made = await executeContentSave({
+    const made = await executeContentSave({ _provenance: HUMAN_WRITE,
       action: "save", title: "T", body: "v1 正文", platform: "douyin", status: "draft_ready", _dataDir: testDir,
     } as never);
     const id = ((made as Record<string, unknown>).content as Record<string, unknown>).id as string;
@@ -866,7 +867,7 @@ describe("content asset attach", () => {
     await fs.writeFile(src, "img-bytes", "utf-8");
     const { added } = await libAddAssets([src], null, testDir);
     const content = await saveContent(
-      { title: "测试稿", body: "正文", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      { _provenance: HUMAN_WRITE, title: "测试稿", body: "正文", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
       testDir,
     );
     const res = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
@@ -885,7 +886,7 @@ describe("content asset attach", () => {
     const { added } = await libAddAssets([src], null, testDir);
     await fs.unlink(src);
     const content = await saveContent(
-      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      { _provenance: HUMAN_WRITE, title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
       testDir,
     );
     const res = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
@@ -905,7 +906,7 @@ describe("content asset attach", () => {
     await fs.writeFile(src, "bytes", "utf-8");
     const { added } = await libAddAssets([src], null, testDir);
     const content = await saveContent(
-      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      { _provenance: HUMAN_WRITE, title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
       testDir,
     );
     const first = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
@@ -928,7 +929,7 @@ describe("content asset attach", () => {
     const { added } = await libAddAssets([srcA, srcB], null, testDir);
     expect(added).toHaveLength(2);
     const content = await saveContent(
-      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      { _provenance: HUMAN_WRITE, title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
       testDir,
     );
     const first = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
@@ -959,7 +960,7 @@ describe("today:summary handler", () => {
   it("counts a seeded draft in the pipeline", async () => {
     const handlers = buildIpcHandlers();
     await saveContent(
-      { title: "稿A", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      { _provenance: HUMAN_WRITE, title: "稿A", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
       testDir,
     );
     const res = await handlers["today:summary"]({ _dataDir: testDir });

@@ -13,6 +13,7 @@ import {
   INTERRUPTED_TITLE_PREFIX,
   RESEARCHING_TITLE_PREFIX,
 } from "../modules/writing/generate-script.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let tmpHome: string;
 let savedEnv: string | undefined;
@@ -54,7 +55,7 @@ describe("reconcileOrphanDrafts", () => {
   });
 
   it("崩在等调研简报那一段的孤儿(［调研中］)同样被标中断——只认「生成中」就扫不到它", async () => {
-    const orphan = await saveContent({
+    const orphan = await saveContent({ _provenance: HUMAN_WRITE,
       ...placeholder("等简报时崩的稿"),
       title: `${RESEARCHING_TITLE_PREFIX}等简报时崩的稿`,
     });
@@ -68,16 +69,16 @@ describe("reconcileOrphanDrafts", () => {
   });
 
   it("不误伤:手工 drafting 稿(无哨兵前缀)、已标失败的稿、非 drafting 稿都不动", async () => {
-    const manual = await saveContent({
+    const manual = await saveContent({ _provenance: HUMAN_WRITE,
       title: "手工存的半成品", body: "草稿内容", platform: "wechat_mp",
       status: "drafting", tags: [], hashtags: [],
     });
-    const alreadyFailed = await saveContent({
+    const alreadyFailed = await saveContent({ _provenance: HUMAN_WRITE,
       ...placeholder("已失败的稿"),
       title: `${INTERRUPTED_TITLE_PREFIX}已失败的稿`,
       lastError: "空闲超时:45s 无字节",
     });
-    const done = await saveContent({
+    const done = await saveContent({ _provenance: HUMAN_WRITE,
       title: "成品稿", body: "正文", platform: "wechat_mp",
       status: "draft_ready", tags: [], hashtags: [],
     });
