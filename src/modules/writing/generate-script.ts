@@ -213,6 +213,17 @@ async function withFounderDirection(req: ScriptRequest, dataDir?: string): Promi
   return own ? { ...req, direction: own } : req;
 }
 
+/**
+ * 落正文时的写作请求：没带方向就是按卡写——带上备料那一刻冻结的卡（id + 指纹 + 简报版本），
+ * 卡口要求它与创始人最新选的那张一致；没有卡身份就拒（不能「匹配任何卡」）。
+ */
+function finalWriteRequest(req: ScriptRequest, attribution: Attribution): WriteRequest {
+  const base = scriptWriteRequest(req);
+  if (base.direction) return base;
+  const used = attribution.usedAngle;
+  return { ...base, cardRequired: true, ...(used ? { card: { id: used.id, hash: used.hash, briefRevision: attribution.usedBriefRevision } } : {}) };
+}
+
 /** 生成请求 → 选题会卡口要对照的写作请求 */
 export function scriptWriteRequest(req: ScriptRequest): WriteRequest {
   const direction = req.direction?.trim() || undefined;
@@ -1343,7 +1354,7 @@ async function finalizeBlocked(args: FinalizeCommon & { written: WriterRun }): P
     {
       title: written.payload.title,
       body: humanizedText,
-      _provenance: modelWrite("engine", scriptWriteRequest(req)),
+      _provenance: modelWrite("engine", finalWriteRequest(req, args.attribution)),
       hashtags: written.payload.hashtags.map((t) => t.trim()).filter(Boolean),
       // genRequest **不清**：这稿还要重写，重写的依据就是它
       lastError: null,
@@ -1410,7 +1421,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     {
       title,
       body: humanizedText,
-      _provenance: modelWrite("engine", scriptWriteRequest(req)),
+      _provenance: modelWrite("engine", finalWriteRequest(req, args.attribution)),
       // 生产计时的「稿成」节点:转正这一刻就是稿成:起点是占位稿的 createdAt(开写)
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,

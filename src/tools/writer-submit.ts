@@ -69,6 +69,7 @@ import {
 import { hostReviewPack } from "./host-review.js";
 import { directRevisionRefusal, openRevisionCycle, takeRevisionVersion } from "./writer-revision.js";
 import { modelWrite, type WriteRequest } from "../storage/first-body-guard.js";
+import { angleCardHash } from "../modules/research/angle-cards.js";
 
 export type SubmitFailure = { ok: false; error: string } & Record<string, unknown>;
 export type SubmitResult = ({ status: SubmitPhase } & Record<string, unknown>) | SubmitFailure;
@@ -241,8 +242,10 @@ async function record(
 function packRequest(pack: ReadyPack): WriteRequest {
   const req = pack.context?.req;
   const direction = req?.direction?.trim() || undefined;
+  const card = pack.context?.angleCard;
   return {
-    ...(direction ? { direction } : pack.angleId && pack.angleId !== "user-direction" ? { angleId: pack.angleId } : {}),
+    ...(direction ? { direction } : card ? { card: { id: card.id, hash: angleCardHash(card), briefRevision: pack.context?.readiness?.research.briefRevision } } : {}),
+    cardRequired: true,
     skip: req?.researchMode === "skip" || Boolean(req?.angleSkipReason?.trim()) || Boolean(req?.researchReason?.trim()),
   };
 }

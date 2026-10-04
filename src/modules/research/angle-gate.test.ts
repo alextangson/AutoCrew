@@ -21,7 +21,7 @@ import { buildChatTools } from "../../desktop/chat-router.js";
 import { saveBrief, BRIEF_SCHEMA_VERSION, type AngleCardV3 } from "./brief-store.js";
 import { topicHashOf, upsertJob } from "./research-job-store.js";
 import { createCreativeTask } from "../writing/creative-task.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle } from "./angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, isRealDraft, newDraftAngleRefusal, recordFounderAngle } from "./angle-gate.js";
 import { TEST_FOUNDER_WORDS, founderAuthored, founderStamped } from "./angle-gate.test-helper.js";
 import { dropFixture, makeContent, makeFixture, makeTopic, type Fixture } from "../meetings/meeting-fixture.test-helper.js";
 
@@ -578,5 +578,51 @@ describe("第八轮：冻结的请求对照最新决定 + 占位核验", () => {
     expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
     await fs.writeFile(path.join(f.data, "metrics-pull.json"), "{ 坏");
     expect(await buildAccountData(f.data)).toMatchObject({ status: "failed" });
+  });
+});
+
+describe("第九轮", () => {
+  const OUTLINE = { thesis: "t", points: [{ text: "p", kind: "case", seconds: 20 }], structure: { opening: "o", progression: "p", ending: "e" }, said: [{ id: "a", kind: "concept", text: "p" }] };
+
+  it("升级前的老占位行（没记 generatedPlaceholder）：选题描述改了也仍是占位，模型写第一份正文照样要创始人定角度", async () => {
+    const t = await makeTopic(f.data, "老占位题");
+    const legacyBody = `<!-- Generated from topic: ${t.id} -->\n\n${t.description}`;
+    const legacy = await saveContent({ _provenance: HUMAN_WRITE, title: "老占位题 (douyin)", body: legacyBody, platform: "douyin", topicId: t.id, status: "topic_saved", tags: [] }, f.data);
+    expect(legacy.generatedPlaceholder).toBeUndefined();
+    await updateTopic(t.id, { description: "创始人后来改了描述" }, f.data);
+    expect(await isRealDraft((await getContent(legacy.id, f.data))!, f.data)).toBe(false);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
+    await expect(updateContent(legacy.id, { body: "模型写的正文", _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    await expect(updateContent(legacy.id, { body: `${legacyBody}\n\n模型接在后面的正文`, _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+  });
+
+  it("创始人改了卡面（同一个 id 重新选）→ 按旧卡领的包交稿被拒", async () => {
+    const t = await makeTopic(f.data, "改卡面题");
+    await withCards(t.id);
+    await executeWorkflow({ action: "select_angle", topic_id: t.id, angle_id: "angle-1", brief_revision: 1, founder_words: "第一张", _dataDir: f.data });
+    const packed = await executeWriter({ action: "pack", topic_id: t.id, platform: "douyin", research_mode: "provided", research: "材料", _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(packed).toMatchObject({ ok: true, status: "ready" });
+    const edited = await executeWorkflow({ action: "select_angle", topic_id: t.id, angle_id: "angle-1", brief_revision: 1, founder_words: "第一张，但论点改一下",
+      card: { ...CARD, evidenceNeeds: ["一线返工工时"], thesis: "创始人改过的论点：返工其实来自验收标准缺失" }, _dataDir: f.data });
+    expect(edited, JSON.stringify(edited).slice(0, 300)).toMatchObject({ ok: true });
+    const submitted = await executeWriter({ action: "submit", content_id: packed.content_id, pack_id: packed.pack_id, claim_token: packed.claim_token, attempt: 1,
+      title: "标题", body: "第一段。\n\n第二段。", hashtags: [], review: "none", outline: OUTLINE, _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(submitted).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    expect((await getContent(packed.content_id as string, f.data))?.body ?? "").toBe("");
+  });
+
+  it("按卡写的落正文请求：没带卡身份 → 拒（不能匹配任何卡）；带的是换掉之前那张 → 拒；一致才放行", async () => {
+    const t = await makeTopic(f.data, "引擎换卡题");
+    await withCards(t.id);
+    await executeWorkflow({ action: "select_angle", topic_id: t.id, angle_id: "angle-1", brief_revision: 1, founder_words: "第一张", _dataDir: f.data });
+    const { angleCardHash } = await import("./angle-cards.js");
+    const first = (await getTopic(t.id, f.data))!.selectedAngle!.card;
+    const write = (request: Record<string, unknown>) => saveContent({ title: "引擎稿", body: "引擎写的正文", topicId: t.id, status: "drafting", tags: [], _provenance: { kind: "model", host: "engine", request } }, f.data);
+    await expect(write({ cardRequired: true })).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    // 生成途中创始人改选了第二张
+    await executeWorkflow({ action: "select_angle", topic_id: t.id, angle_id: "angle-2", brief_revision: 1, founder_words: "还是第二张", _dataDir: f.data });
+    await expect(write({ cardRequired: true, card: { id: "angle-1", hash: angleCardHash(first), briefRevision: 1 } })).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    const second = (await getTopic(t.id, f.data))!.selectedAngle!.card;
+    expect(await write({ cardRequired: true, card: { id: "angle-2", hash: angleCardHash(second), briefRevision: 1 } })).toMatchObject({ topicId: t.id });
   });
 });

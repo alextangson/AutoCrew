@@ -27,7 +27,14 @@ export type WriteProvenance =
  * 给了 direction 就得是创始人最近自定的那句；没给 direction 就得是最近选了卡（angleId 给了还得同一张）；
  * 带跳过参数一律不行。
  */
-export interface WriteRequest { direction?: string; angleId?: string; skip?: boolean }
+export interface WriteRequest {
+  direction?: string;
+  /** 按卡写时冻结的那张卡：id + 内容指纹（angleCardHash）+ 选它时的简报版本 */
+  card?: { id: string; hash: string; briefRevision?: number };
+  /** 落第一份正文时置真：没带方向就必须带卡身份，否则拒 */
+  cardRequired?: boolean;
+  skip?: boolean;
+}
 
 export const HUMAN_WRITE: WriteProvenance = { kind: "human" };
 export const IMPORT_WRITE: WriteProvenance = { kind: "import" };
@@ -69,30 +76,39 @@ export function topicPlaceholderBody(topicId: string, description: string): stri
   return `${TOPIC_PLACEHOLDER_BODY_PREFIX} ${topicId} -->\n\n${description}`;
 }
 
-type PlaceholderRef = { topicId?: string; generatedPlaceholder?: string };
+type PlaceholderRef = { generatedPlaceholder?: string; legacyPlaceholder?: string };
+
+/**
+ * 升级前建的占位行没记 generatedPlaceholder：用它自己的不可变痕迹认身份——正文是
+ * 「<!-- Generated from topic: 本稿选题 -->」结构，且每个版本的正文都和当前正文一字不差（从没被改过正文）。
+ * 不依赖选题当前的描述：描述后来改了，没动过的老占位照样是占位（Codex 第九轮）。
+ * 选了这种「从行本身推导」而不是启动时迁移打标：推导是纯函数、读时即得，不用在启动时批量写资料库
+ * （资料库可能只读或被锁），也没有「迁移跑了一半」的中间态；判据只用到写入后就不会变的版本历史。
+ */
+export function legacyPlaceholderOf(c: Pick<Content, "body" | "versions" | "topicId" | "generatedPlaceholder">): string | undefined {
+  if (c.generatedPlaceholder !== undefined || !c.topicId || typeof c.body !== "string") return undefined;
+  if (!c.body.startsWith(`${TOPIC_PLACEHOLDER_BODY_PREFIX} ${c.topicId} -->\n\n`)) return undefined;
+  const versions = c.versions ?? [];
+  return versions.length > 0 && versions.every((v) => v.body === c.body) ? c.body : undefined;
+}
 
 /**
  * 一段正文算不算「核验过的占位」：空白；或与系统建稿时记下的那段占位一字不差；
- * 或与该选题当前描述生成的模板一字不差（老数据没记那段占位）。前缀长得像不算——
+ * 或（升级前的老占位行）与它自己从没改过的那段占位一字不差。前缀长得像不算——
  * 在占位前缀后面接一段正文照样是真正文（Codex 第八轮：前缀可以被伪造）。
  */
-export async function isVerifiedPlaceholder(body: unknown, ref: PlaceholderRef, dataDir?: string): Promise<boolean> {
+export function isVerifiedPlaceholder(body: unknown, ref: PlaceholderRef): boolean {
   if (typeof body !== "string" || !body.trim()) return true;
   if (!body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX)) return false;
-  if (ref.generatedPlaceholder !== undefined && body === ref.generatedPlaceholder) return true;
-  if (!ref.topicId) return false;
-  const { getTopicStrict } = await import("./local-store.js");
-  const topic = await getTopicStrict(ref.topicId, dataDir);
-  return Boolean(topic && body === topicPlaceholderBody(ref.topicId, topic.description ?? ""));
+  return (ref.generatedPlaceholder !== undefined && body === ref.generatedPlaceholder)
+    || (ref.legacyPlaceholder !== undefined && body === ref.legacyPlaceholder);
 }
 
-/** 真稿：未删、未归档、正文（当前或任一版本）不是核验过的占位。严格读：选题读坏就抛 */
-export async function isRealDraft(c: Pick<Content, "deletedAt" | "status" | "body" | "versions" | "topicId" | "generatedPlaceholder">, dataDir?: string): Promise<boolean> {
+/** 真稿：未删、未归档、正文（当前或任一版本）不是核验过的占位 */
+export async function isRealDraft(c: Pick<Content, "deletedAt" | "status" | "body" | "versions" | "topicId" | "generatedPlaceholder">, _dataDir?: string): Promise<boolean> {
   if (c.deletedAt || c.status === "archived") return false;
-  for (const body of [c.body, ...(c.versions ?? []).map((v) => v.body)]) {
-    if (!(await isVerifiedPlaceholder(body, c, dataDir))) return true;
-  }
-  return false;
+  const ref = { generatedPlaceholder: c.generatedPlaceholder, legacyPlaceholder: legacyPlaceholderOf(c) };
+  return [c.body, ...(c.versions ?? []).map((v) => v.body)].some((body) => !isVerifiedPlaceholder(body, ref));
 }
 
 export class FirstBodyRefusedError extends Error {
@@ -120,8 +136,8 @@ export async function guardFirstBody(
     if (existing && await isRealDraft(existing, dataDir)) return;
     if (next.body === undefined) return;
     // 写完仍是核验过的占位（系统记下的那段 / 该选题模板 / 空白）才不算第一份正文；伪造前缀不算
-    const ref = { topicId, generatedPlaceholder: next.generatedPlaceholder ?? existing?.generatedPlaceholder };
-    if (await isVerifiedPlaceholder(next.body, ref, dataDir)) return;
+    const ref = { generatedPlaceholder: next.generatedPlaceholder ?? existing?.generatedPlaceholder, legacyPlaceholder: existing ? legacyPlaceholderOf(existing) : undefined };
+    if (isVerifiedPlaceholder(next.body, ref)) return;
   } catch (err) { throw readFailed(err); }
   // 来源必须显式：没标就拒（挂没挂选题都一样），漏标来源的写口不能悄悄开出第一篇
   if (!provenance) throw new FirstBodyRefusedError({ ok: false, code: "unknown_write_provenance", error: UNKNOWN_PROVENANCE });

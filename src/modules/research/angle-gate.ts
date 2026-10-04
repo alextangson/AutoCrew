@@ -13,7 +13,7 @@ import {
   getContentStrict, getDataDir, getTopicStrict, listContentsStrict, updateTopic,
   type Content, type Topic,
 } from "../../storage/local-store.js";
-import { activeAngleCard } from "./angle-cards.js";
+import { activeAngleCard, angleCardHash } from "./angle-cards.js";
 import { FirstBodyRefusedError, isRealDraft, type WriteRequest } from "../../storage/first-body-guard.js";
 import { resolveEffectiveBriefStrict } from "./brief-snapshot.js";
 import { topicHashOf } from "./research-job-store.js";
@@ -177,9 +177,17 @@ export async function decisionRequestRefusal(topicId: string | undefined, reques
   if (!topic) return refusal("needs_founder_angle", ANGLE_GATE_COPY.noTopic, { topic_id: topicId });
   const latest = latestDecision(topic);
   const direction = request.direction?.trim();
+  const sel = topic.selectedAngle;
+  // 按卡写：冻结的卡（id + 内容指纹 + 简报版本）要和创始人最新选的那张一字不差；
+  // 落正文时（cardRequired）没带卡身份 = 认不出依据的是哪张卡，拒，不能「匹配任何卡」
+  const cardMatches = () => {
+    if (!request.card) return !request.cardRequired;
+    return Boolean(sel) && sel!.angleId === request.card.id && angleCardHash(sel!.card) === request.card.hash
+      && (request.card.briefRevision === undefined || sel!.briefRevision === request.card.briefRevision);
+  };
   const ok = direction
     ? latest === "authored" && topic.founderAngle?.direction.trim() === direction
-    : latest === "card" && (!request.angleId || topic.selectedAngle?.angleId === request.angleId);
+    : latest === "card" && cardMatches();
   return ok ? null : refusal("needs_founder_angle", ANGLE_GATE_COPY.decisionChanged, { topic_id: topicId });
 }
 
