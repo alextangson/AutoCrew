@@ -43,9 +43,22 @@ describe("executeContentSave", () => {
       const diffs = await listDiffs({ contentId }, testDir);
       expect(diffs).toHaveLength(1);
       expect(diffs[0].field).toBe("body");
-      expect(diffs[0].author).toBe("ai");
+      // 没有 _host 的 update 来自工作台编辑器的手动保存：记作创始人
+      expect(diffs[0].author).toBe("founder");
       expect(diffs[0].before).toBe("Original body");
       expect(diffs[0].after).toBe("Updated body");
+    });
+
+    it("records a model-host update as an AI diff", async () => {
+      const createRes = await executeContentSave({ action: "save", title: "Test", body: "Original body", _dataDir: testDir });
+      const contentId = (createRes.content as any).id;
+      const updateRes = await executeContentSave({
+        action: "update", id: contentId, body: "Host body", _host: "claude-desktop-test", _dataDir: testDir,
+      });
+      expect(updateRes.ok).toBe(true);
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].author).toBe("ai");
     });
 
     it("should not record a diff when body doesn't change", async () => {
