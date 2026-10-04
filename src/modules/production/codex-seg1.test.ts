@@ -16,6 +16,7 @@ import { reopenScript } from "./reopen.js";
 import { reconcileAll } from "./reconcile.js";
 import { productionServiceDir } from "../../storage/production-store.js";
 import { exists, founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv(); });
@@ -56,7 +57,7 @@ describe("[Codex P1 production-hooks.ts:84] 认稿落盘时同步投影与冻结
     await founderApprove(env, c.id);
     expect((await getContent(c.id, env.dir))!.status).toBe("editing");
     expect((await readProductionDoc(c.id, env.dir))!.frozen).toMatchObject({ round: 1 });
-    await expect(updateContent(c.id, { body: "改" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
+    await expect(updateContent(c.id, { _provenance: HUMAN_WRITE, body: "改" }, env.dir)).rejects.toBeInstanceOf(ScriptFrozenError);
   });
 });
 

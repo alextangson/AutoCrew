@@ -60,7 +60,7 @@ const PIPELINE_TEMPLATES: Record<string, Omit<PipelineDefinition, "id" | "create
     description: "每天早上 9 点自动调研 3 个选题，保存到本地。",
     schedule: "0 9 * * *",
     steps: [
-      { skill: "topic-meeting", params: { topic_count: 3, direction: "auto" } },
+      { skill: "schedule-meeting", params: { topic_count: 3, direction: "auto" } },
     ],
   },
   "weekly-content": {
@@ -84,7 +84,7 @@ const PIPELINE_TEMPLATES: Record<string, Omit<PipelineDefinition, "id" | "create
     description: "周一调研选题 → 周二批量写稿 → 周三到周五每天发布一篇。",
     schedule: "0 9 * * 1",
     steps: [
-      { skill: "topic-meeting", params: { topic_count: 5, direction: "auto" } },
+      { skill: "schedule-meeting", params: { topic_count: 5, direction: "auto" } },
       { skill: "spawn-batch-writer", params: { batch_count: 5 } },
       { skill: "publish-content", params: { count: 1, status_filter: "approved" } },
     ],

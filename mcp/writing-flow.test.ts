@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { handleMcpRequest } from "./server.js";
-import { saveTopic, saveContent, getTopic, getContent, listContents, listTopics } from "../src/storage/local-store.js";
+import { saveTopic, saveContent, getTopic, getContent, listContents, listTopics, createPlatformVariant } from "../src/storage/local-store.js";
+import { executeReview } from "../src/tools/review.js";
 import * as engineConfig from "../src/engine/config.js";
 import * as engineLoop from "../src/engine/loop.js";
 import * as pages from "../src/modules/inbox/fetch-external.js";
@@ -12,6 +13,8 @@ import { getJob, PERSPECTIVE_NAMES } from "../src/modules/research/research-job-
 import { reviewInFlight } from "../src/tools/writer-review.js";
 import * as styleDistiller from "../src/modules/learnings/style-distiller.js";
 import { listDiffs } from "../src/modules/learnings/diff-tracker.js";
+import { asFounder, founderAuthored } from "../src/modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../src/storage/first-body-guard.js";
 
 let dataDir: string;
 /** MCP 往返计数（P6 §5 预算：首稿 ≤25） */
@@ -24,6 +27,7 @@ afterEach(async () => {
 });
 async function call(name: string, args: Record<string, unknown>) {
   roundTrips += 1;
+  if (name === "autocrew_writer" || name === "autocrew_workflow" || name === "autocrew_generate") await asFounder(dataDir, args);
   const response = await handleMcpRequest({ id: 1, method: "tools/call", params: { name, arguments: args } }, access, dataDir);
   return (response!.result as { structuredContent: Record<string, any> }).structuredContent;
 }
@@ -64,7 +68,7 @@ function gardenAngles() {
       { angle: "公告板上的轮班表", thesis: "一张共同填写的时间表解释志愿协作怎样安排", anti_scope: "不讲种植技术，不回顾个人成长" },
       { angle: "参与之后仍要观察什么", thesis: "现有轮班记录能说明参与方式但不能证明长期效果", anti_scope: "不提供活动宣传，不承诺社区关系改善" },
     ].map(candidate => ({
-      ...candidate, primary_persona: "grow", evidence_level: "grounded", core_evidence_ids: ["ev-1"],
+      ...candidate, why_may_perform: "无数据依据", primary_persona: "grow", evidence_level: "grounded", core_evidence_ids: ["ev-1"],
       mechanism: "材料记载了共同浇水与轮班安排。", payoff: "读者了解从哪里参与。", next_action: "理解参与方式与边界。",
       counter_response: "没有长期效果材料，不做效果承诺。", persona_gains: { grow: "了解参与过程", trust: "", convert: "" },
       elements: [], evidence_needs: ["参与者后续是否持续参与"], structure: "story", hook_draft: "公告板上写着本周的浇水安排。",
@@ -136,7 +140,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const distill = vi.spyOn(styleDistiller, "distillStyleRules").mockRejectedValue(new Error("implicit distillation is forbidden"));
     const absorb = vi.spyOn(styleDistiller, "analyzeStyleSamples").mockRejectedValue(new Error("implicit sample model is forbidden"));
     const topic = await saveTopic({ title: "已有稿的表达", description: "保留原稿与用户修改记录", tags: [] }, dataDir);
-    const content = await saveContent({ title: "用户已有稿", body: "这是用户已经写好的正文。", topicId: topic.id, platform: "douyin", status: "draft_ready" }, dataDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "用户已有稿", body: "这是用户已经写好的正文。", topicId: topic.id, platform: "douyin", status: "draft_ready" }, dataDir);
     const profileBefore = await call("autocrew_editorial", { action: "profile" });
     let claimToken: string | undefined;
     for (const body of ["先把事情发生的经过说清楚。", "接着解释交接记录里缺了什么。", "最后保留需要向当事人核对的地方。"]) {
@@ -301,6 +305,9 @@ describe("Claude MCP writing journey without external model calls", () => {
 
   it("cannot jump from a new topic straight to a pack, engine generation, or generic save", async () => {
     const topic = await saveTopic({ title: "门店返工", description: "观察团队的交接问题", tags: [] }, dataDir);
+    // 选题会闸口：真实 MCP 面上，没开过选题会的新题领包 / 后台代写都被同一判定拦下（顺带回就绪检查的下一步）
+    expect(await call("autocrew_writer", { action: "pack", topic_id: topic.id, platform: "douyin" })).toMatchObject({ ok: false, gate: "needs_founder_angle" });
+    expect(await call("autocrew_generate", { action: "script", topic: topic.title, topic_id: topic.id, platform: "douyin", execution: "engine" })).toMatchObject({ ok: false, gate: "needs_founder_angle" });
     const pack = await call("autocrew_writer", { action: "pack", topic_id: topic.id, platform: "douyin", direction: "写交接问题" });
     expect(pack).toMatchObject({ ok: false, needsResearch: true, preparation: { research: { status: "not_started" } } });
     expect(pack.next_action.params.action).toBe("prepare");
@@ -335,6 +342,18 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect((await getContent(started.content_id, dataDir))?.writtenBy).toMatchObject({ kind: "host", host: access.host });
   });
 
+  it("后台改稿（autocrew_revise engine）/ 审稿自动修（review auto_fix）动不了没开过选题会的占位稿", async () => {
+    const topic = await saveTopic({ title: "占位题", description: "还没开选题会", tags: [] }, dataDir);
+    const placeholder = (await createPlatformVariant(topic.id, "douyin", undefined, dataDir)).content!;
+    const revise = await call("autocrew_revise", { content_id: placeholder.id, instruction: "写成正文", execution: "engine" });
+    expect(revise).toMatchObject({ ok: false, code: "needs_founder_angle" });
+    // 占位正文改动会被拒；占位正文本身没有可修的就原样不写——两种都不会让它变成真稿
+    const fixed = await executeReview({ action: "auto_fix", content_id: placeholder.id, _dataDir: dataDir, _host: "claude" });
+    if (fixed.ok !== false) expect((await getContent(placeholder.id, dataDir))?.body).toBe(placeholder.body);
+    else expect(fixed).toMatchObject({ code: "needs_founder_angle" });
+    expect((await getContent(placeholder.id, dataDir))?.body).toBe(placeholder.body);
+  });
+
   it("manual import remains available but cannot claim semantic approval", async () => {
     const imported = await call("autocrew_content", {
       action: "save", title: "用户已有稿", body: "用户已经写好的原稿。", status: "approved",
@@ -347,7 +366,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("external calls are forbidden in this journey"));
     try {
       const topic = await saveTopic({ title: "走访后的交接", description: "团队走访后核对交接记录", tags: [] }, dataDir);
-      const requirements = "保留我们作为叙述者，按真实走访顺序写，不添加关注引导";
+        const requirements = "保留我们作为叙述者，按真实走访顺序写，不添加关注引导";
       const request = {
         topic_id: topic.id, platform: "douyin", research_mode: "provided",
         research: "团队先走访门店，再检查交接记录，发现交接记录没有写清责任人。",

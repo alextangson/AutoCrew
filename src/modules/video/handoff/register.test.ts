@@ -33,6 +33,7 @@ import {
   writePng,
   type HandoffFixture,
 } from "./handoff-testkit.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 type Approvals = Record<"final_cut" | "covers", Record<string, string>>;
 
@@ -329,7 +330,7 @@ describe.skipIf(!HAS_FFMPEG)("四样同事务（register-atomic）", () => {
     await fs.mkdir(path.dirname(journalFile), { recursive: true });
     await fs.writeFile(journalFile, JSON.stringify(journal));
     // 模拟崩溃前已盖的戳
-    await updateContent(contentId, { videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00Z" } }, fx.dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00Z" } }, fx.dir);
 
     const res = await register({ final_path: path.join(project, "07-delivery", "x.mp4") });
     expect(res).toMatchObject({ ok: false, code: "path_missing" });

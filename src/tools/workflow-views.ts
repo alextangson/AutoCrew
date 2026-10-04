@@ -59,6 +59,8 @@ export function cardView(card: AngleCard): Record<string, unknown> {
     misconception: card.misconception,
     mechanism: card.mechanism,
     payoff: card.payoff,
+    // 选题会规则 3：每张卡说清凭什么可能跑得好；来源只能是账号数据视角，没有就明说
+    whyMayPerform: card.whyMayPerform?.trim() || "无数据依据",
     nextAction: card.nextAction,
     counterResponse: card.counterResponse,
     structure: card.structure,

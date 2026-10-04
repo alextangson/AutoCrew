@@ -12,6 +12,7 @@ vi.mock("./event-hub.js", () => ({ emitEngineEvent: vi.fn(async () => {}) }));
 import { wechatPullHandler } from "./wechat-pull.js";
 import { saveContent } from "../storage/local-store.js";
 import { listOutcomes } from "../modules/flywheel/outcome-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -25,7 +26,7 @@ afterEach(async () => {
 describe("flywheel:wechat_pull", () => {
   it("登录态有效 → 行数据进导入管线,标题匹配稿件,返回导入报告", async () => {
     const c = await saveContent(
-      { title: "AI 写码的账", body: "b", platform: "wechat_mp", status: "published" as never, tags: [], hashtags: [] },
+      { _provenance: HUMAN_WRITE, title: "AI 写码的账", body: "b", platform: "wechat_mp", status: "published" as never, tags: [], hashtags: [] },
       dir,
     );
     const pull = vi.fn(async () => ({

@@ -29,6 +29,7 @@ import {
   type ContentStatus,
 } from "../storage/local-store.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -79,7 +80,7 @@ async function seedContent(
 ): Promise<Content> {
   // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
   const c = await saveContent(
-    { title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}), ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
+    { _provenance: HUMAN_WRITE, title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}), ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
     dir,
   );
   if (status !== "editing") return c;
@@ -140,7 +141,7 @@ describe("inbox cover / editor", () => {
   it("剪辑桌：在剪辑台且成片没审过；盖了 videoDone 就下桌", async () => {
     const open = await seedContent("editing", "douyin");
     const done = await seedContent("editing", "douyin");
-    await updateContent(done.id, { videoDone: { renderedRevision: 1, at: new Date().toISOString() } }, dir);
+    await updateContent(done.id, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: new Date().toISOString() } }, dir);
     const r = await inbox("editor");
     expect(r.items!.map((i) => i.content_id)).toEqual([open.id]);
   });
@@ -203,7 +204,7 @@ describe("claim / release", () => {
     // 10 分钟内还在写：takeover 照样拒；闲置满 11 分钟后才换新令牌
     expect(await claim({ takeover: true })).toMatchObject({ ok: false, code: "claim_held" });
     const held = (await getContent(c.id, dir))!;
-    await updateContent(c.id, { claim: { ...held.claim!, lastWriteAt: new Date(Date.now() - 11 * 60_000).toISOString() } }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, claim: { ...held.claim!, lastWriteAt: new Date(Date.now() - 11 * 60_000).toISOString() } }, dir);
     const taken = (await claim({ takeover: true })) as { ok: boolean; claim_token: string };
     expect(taken.ok).toBe(true);
     expect(taken.claim_token).not.toBe(first.claim_token);
@@ -280,7 +281,7 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
     const held = await getContent(c.id, dir);
     await updateContent(
       c.id,
-      { claim: { ...held!.claim!, leaseUntil: new Date(Date.now() - 1000).toISOString() } },
+      { _provenance: HUMAN_WRITE, claim: { ...held!.claim!, leaseUntil: new Date(Date.now() - 1000).toISOString() } },
       dir,
     );
     const r = (await executeWriter({
@@ -302,7 +303,7 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
   it("autocrew_content transition / update 同样过门", async () => {
     const c = await seedContent("drafting");
     await claimContent(c.id, "writer", "codex", dir);
-    const moved = (await executeContentSave({
+    const moved = (await executeContentSave({ _provenance: HUMAN_WRITE,
       action: "transition",
       id: c.id,
       target_status: "draft_ready",
@@ -312,7 +313,7 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
     expect(moved.ok).toBe(false);
     expect(moved.error).toContain("codex");
 
-    const edited = (await executeContentSave({
+    const edited = (await executeContentSave({ _provenance: HUMAN_WRITE,
       action: "update",
       id: c.id,
       title: "改个标题",
@@ -326,7 +327,7 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
   it("工作台（无 _host = local-user）越得过门，稿件视图不带令牌", async () => {
     const c = await seedContent("drafting");
     await claimContent(c.id, "writer", "codex", dir);
-    const moved = (await executeContentSave({
+    const moved = (await executeContentSave({ _provenance: HUMAN_WRITE,
       action: "transition",
       id: c.id,
       target_status: "draft_ready",
@@ -345,12 +346,12 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
 
     // 再挂一枚活的认领，验视图脱敏：list / get 都要看得到认领、看不到令牌
     await claimContent(c.id, "cover", "codex", dir);
-    const list = (await executeContentSave({ action: "list", _dataDir: dir })) as {
+    const list = (await executeContentSave({ _provenance: HUMAN_WRITE, action: "list", _dataDir: dir })) as {
       contents: Array<{ claim?: Record<string, unknown> }>;
     };
     expect(list.contents[0].claim).toMatchObject({ host: "codex", employee: "cover" });
     expect(list.contents[0].claim).not.toHaveProperty("token");
-    const got = (await executeContentSave({ action: "get", id: c.id, _dataDir: dir })) as {
+    const got = (await executeContentSave({ _provenance: HUMAN_WRITE, action: "get", id: c.id, _dataDir: dir })) as {
       content: { claim?: Record<string, unknown> };
     };
     expect(got.content.claim).toMatchObject({ host: "codex" });
@@ -364,14 +365,14 @@ describe("封面桌按状态机的真实路径（真机 2026-09-06）", () => {
     const { saveContent, transitionStatus, updateContent } = await import("../storage/local-store.js");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-desk-cover-"));
     try {
-      const wx = await saveContent({ title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      const wx = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       for (const st of ["reviewing", "approved"] as const) expect((await transitionStatus(wx.id, st, {}, dir)).ok).toBe(true);
-      const vid = await saveContent({ title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
+      const vid = await saveContent({ _provenance: HUMAN_WRITE, title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
       for (const st of ["reviewing", "approved", "editing"] as const) expect((await transitionStatus(vid.id, st, { viaHandoff: st === "editing" }, dir)).ok).toBe(true);
-      await saveContent({ title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      await saveContent({ _provenance: HUMAN_WRITE, title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       let r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
       expect(r.items.map((i) => i.content_id)).toEqual([wx.id]);
-      await updateContent(vid.id, { videoDone: true }, dir);
+      await updateContent(vid.id, { _provenance: HUMAN_WRITE, videoDone: true }, dir);
       r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
       expect(r.items.map((i) => i.content_id).sort()).toEqual([wx.id, vid.id].sort());
     } finally {

@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runChatTurn, buildChatTools, chatProgressEvent, dedupeDraftCards, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 import { releaseJob, GENERATE_JOB_KEY } from "./job-claims.js";
+import { TEST_FOUNDER_DIRECTION, founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -18,6 +19,12 @@ beforeEach(async () => {
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "test-key", baseUrl: "https://fake.local" }),
   );
+  // 后台写稿开的都是新稿：测试用的选题先进片单
+  for (const id of ["topic-1", "topic-slated"]) {
+    await fs.mkdir(path.join(testDir, "topics"), { recursive: true });
+    await fs.writeFile(path.join(testDir, "topics", `${id}.json`), JSON.stringify({ id, title: id, description: "", tags: [], createdAt: "2026-01-01T00:00:00.000Z" }));
+  }
+  await founderAuthored(testDir, ["topic-1", "topic-slated"]);
 });
 
 afterEach(async () => {
@@ -60,6 +67,9 @@ describe("dedupeDraftCards", () => {
   });
 });
 
+/** 已有源稿（adapt_platform 只改写已有稿件） */
+const SOURCE_DRAFT = vi.fn(async () => ({ ok: true, content: { id: "c1", title: "原稿", body: "原稿正文" } }));
+
 describe("buildChatTools", () => {
   it("generate_script starts a background run and returns pending immediately (契约 P1 后台化)", async () => {
     const sink: ChatCard[] = [];
@@ -70,7 +80,7 @@ describe("buildChatTools", () => {
 
     const tool = tools.find((t) => t.name === "generate_script");
     expect(tool).toBeDefined();
-    const out = await tool!.execute({ topic: "Excel 快捷键", platform: "douyin" });
+    const out = await tool!.execute({ topic: "Excel 快捷键", platform: "douyin", topic_id: "topic-slated" });
 
     expect(startGenerate).toHaveBeenCalledWith(
       expect.objectContaining({ topic: "Excel 快捷键", platform: "douyin" }),
@@ -108,8 +118,9 @@ describe("buildChatTools", () => {
     })) as string);
 
     // 用户这一轮说的话跟着走：换了角度就按新角度重写，不是照抄崩掉那次的请求
+    // 创始人在选题会上自定的角度跟着重写走
     expect(retryGenerate).toHaveBeenCalledWith("c-stale", testDir, {
-      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topicId: "topic-1",
+      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topicId: "topic-1", direction: TEST_FOUNDER_DIRECTION,
     });
     expect(startGenerate).not.toHaveBeenCalled(); // 没有第二张卡
     expect(out).toMatchObject({ ok: true, pending: true, contentId: "c-stale" });
@@ -128,16 +139,25 @@ describe("buildChatTools", () => {
       topic: "AI 焦虑", platform: "douyin", topic_id: "topic-1",
     });
 
-    expect(Object.keys(override ?? {}).sort()).toEqual(["platform", "topic", "topicId"]);
+    expect(Object.keys(override ?? {}).sort()).toEqual(["direction", "platform", "topic", "topicId"]);
   });
 
-  it("没有中断稿 / 换了平台 / 没带 topic_id → 照旧新建", async () => {
+  it("随手写没带 topic_id / 选题不在片单 → 片单闸口拦下，不新建", async () => {
+    for (const args of [{ topic: "t", platform: "douyin" }, { topic: "t", platform: "douyin", topic_id: "topic-off" }]) {
+      const startGenerate = vi.fn();
+      const tools = buildChatTools([], testDir, { content: listWith(), startGenerate });
+      const out = JSON.parse((await tools.find((t) => t.name === "generate_script")!.execute(args)) as string);
+      expect(out).toMatchObject({ ok: false, code: "needs_founder_angle", next_action: { skill: "topic-meeting" } });
+      expect(startGenerate).not.toHaveBeenCalled();
+    }
+  });
+
+  it("没有中断稿 / 换了平台 → 照旧新建", async () => {
     const cases: Array<[string, Record<string, unknown>, Array<Record<string, unknown>>]> = [
       ["库里没有中断稿", { topic: "t", platform: "douyin", topic_id: "topic-1" }, []],
       ["同选题但别的平台", { topic: "t", platform: "xiaohongshu", topic_id: "topic-1" }, [STALE]],
       ["同选题同平台但没崩过", { topic: "t", platform: "douyin", topic_id: "topic-1" },
         [{ ...STALE, lastError: null }]],
-      ["随手写没带 topic_id", { topic: "t", platform: "douyin" }, [STALE]],
     ];
     for (const [label, args, contents] of cases) {
       const retryGenerate = vi.fn();
@@ -274,10 +294,25 @@ describe("buildChatTools", () => {
     expect(out.note).toContain("缩小范围");
   });
 
+  it("adapt_platform 只改写已有稿件：没 content_id / 稿件不存在 → 拒，不把裸 title/body 存成新稿", async () => {
+    const rewrite = vi.fn();
+    const tools = buildChatTools([], testDir, { rewrite, content: vi.fn(async () => ({ ok: false, error: "not found" })) });
+    const adapt = tools.find((t) => t.name === "adapt_platform")!;
+    for (const args of [{ title: "裸标题", body: "裸正文", target_platform: "xiaohongshu" }, { content_id: "content-1-nope", target_platform: "xiaohongshu", body: "裸正文" }]) {
+      expect(JSON.parse(await adapt.execute(args) as string)).toMatchObject({ ok: false });
+    }
+    expect(rewrite).not.toHaveBeenCalled();
+    const realRewrite = vi.fn(async (_p: Record<string, unknown>) => ({ ok: false, error: "x" }));
+    const ok = buildChatTools([], testDir, { rewrite: realRewrite, content: SOURCE_DRAFT });
+    await ok.find((t) => t.name === "adapt_platform")!.execute({ content_id: "c1", target_platform: "xiaohongshu", title: "塞进来的", body: "塞进来的正文" });
+    expect(realRewrite.mock.calls[0][0]).not.toHaveProperty("body");
+    expect(realRewrite.mock.calls[0][0]).not.toHaveProperty("title");
+  });
+
   it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
-    const tools = buildChatTools(sink, testDir, { rewrite });
+    const tools = buildChatTools(sink, testDir, { rewrite, content: SOURCE_DRAFT });
     await tools.find((t) => t.name === "adapt_platform")!.execute({
       content_id: "c1", target_platform: "xiaohongshu", _dataDir: "/tmp/evil",
     });
@@ -288,7 +323,7 @@ describe("buildChatTools", () => {
   it("strips _dataDir entirely when no dataDir is configured", async () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
-    const tools = buildChatTools(sink, undefined, { rewrite });
+    const tools = buildChatTools(sink, undefined, { rewrite, content: SOURCE_DRAFT });
     await tools.find((t) => t.name === "adapt_platform")!.execute({
       content_id: "c1", target_platform: "xiaohongshu", _dataDir: "/tmp/evil",
     });
@@ -303,7 +338,7 @@ describe("buildChatTools", () => {
       notes: [], hashtags: ["#tag"],
       content: { id: "c2", title: "新标题" },
     }));
-    const tools = buildChatTools(sink, testDir, { rewrite });
+    const tools = buildChatTools(sink, testDir, { rewrite, content: SOURCE_DRAFT });
     const out = await tools.find((t) => t.name === "adapt_platform")!.execute({
       content_id: "c1", target_platform: "xiaohongshu",
     });
@@ -530,7 +565,7 @@ describe("runChatTurn", () => {
               type: "function",
               function: {
                 name: "generate_script",
-                arguments: JSON.stringify({ topic: "Excel", platform: "douyin" }),
+                arguments: JSON.stringify({ topic: "Excel", platform: "douyin", topic_id: "topic-slated" }),
               },
             },
           ]),

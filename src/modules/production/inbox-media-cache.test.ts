@@ -1,6 +1,7 @@
 /** 整分支审 8 P2：拖进度（Range）不再每次整份重算 sha；文件身份变了才重算，字节不对照样 409 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const hashed: string[] = [];
 vi.mock("../video/handoff/manifest.js", async (orig) => {
@@ -39,7 +40,7 @@ describe("预览 / 附件的字节核对按文件身份缓存", () => {
     await founderApprove(env, c.id);
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "附件缓存稿-原片.mov"), "raw"), request_id: "a" });
     const vid = await put(path.join(projectRoot(env, c.id), "04-edit/样片.mp4"), "sample");
-    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "样片", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [vid] }) as Record<string, unknown>;
+    const q = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "样片", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [vid] }) as Record<string, unknown>;
     const before = hashed.filter((h) => h.endsWith("样片.mp4")).length;
     await openAttachment(c.id, String(q.ask_id), 0, env.dir);
     await openAttachment(c.id, String(q.ask_id), 0, env.dir);

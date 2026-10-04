@@ -18,6 +18,7 @@ import { rewriteSelection } from "../writing/selection-rewrite.js";
 import { openaiSseResponse, bodyText } from "../../engine/sse-fixtures.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, runLoop } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 const ACTIVE_CORE = "生效的内核规则：句子要短";
@@ -73,7 +74,7 @@ describe("pending / rejected / legacy-disabled rules never reach a writing path"
   });
 
   it("whole-draft revision (reviseDraft)", async () => {
-    const c = await saveContent({ title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
     let system = "";
     const runLoopImpl = async (_c: EngineConfig, o: LoopOptions): Promise<LoopResult> => {
       system = o.systemPrompt ?? "";
@@ -85,7 +86,7 @@ describe("pending / rejected / legacy-disabled rules never reach a writing path"
   });
 
   it("focused revision (reviseFocus)", async () => {
-    const c = await saveContent({ title: "标题", body: "第一段。\n\n第二段。", platform: "douyin", status: "draft_ready", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "标题", body: "第一段。\n\n第二段。", platform: "douyin", status: "draft_ready", tags: [] }, dir);
     let system = "";
     const runLoopImpl = async (_c: EngineConfig, o: LoopOptions): Promise<LoopResult> => {
       system = o.systemPrompt ?? "";
@@ -97,7 +98,7 @@ describe("pending / rejected / legacy-disabled rules never reach a writing path"
   });
 
   it("selection rewrite takes the platform from the target content", async () => {
-    const c = await saveContent({ title: "标题", body: "第一段。需要改的句子。", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "标题", body: "第一段。需要改的句子。", platform: "wechat_mp", status: "draft_ready", tags: [] }, dir);
     let system = "";
     const fetchImpl = (async (_u: unknown, init?: RequestInit) => {
       const messages = (JSON.parse(bodyText(init as { body?: unknown })) as { messages: Array<{ role: string; content: string }> }).messages;

@@ -14,6 +14,8 @@ import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCardV3, type ResearchBrief }
 import { pendingPerspectives, topicHashOf, upsertJob } from "../modules/research/research-job-store.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 import { getContent, saveContent, saveTopic, transitionStatus, updateContent, updateTopic } from "../storage/local-store.js";
+import { asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 const TITLE = "AI 编程助手横评";
@@ -48,7 +50,7 @@ async function freshTopic(): Promise<string> {
   return topic.id;
 }
 
-const run = (params: Record<string, unknown>) => executeWriter({ ...params, _dataDir: dir }, { onWarn: () => {} }) as Promise<Record<string, any>>;
+const run = async (params: Record<string, unknown>) => { await asFounder(dir, params); return executeWriter({ ...params, _dataDir: dir }, { onWarn: () => {} }) as Promise<Record<string, any>>; };
 
 async function pack(topicId: string, over: Record<string, unknown> = {}): Promise<Record<string, any>> {
   const started = await run({ action: "pack", topic_id: topicId, platform: "douyin", ...over });
@@ -79,9 +81,9 @@ const submit = (p: Record<string, any>, attempt: number, over: Record<string, un
 describe("writing pack freezes series memory and the technique catalog", () => {
   it("renders the same-platform snapshot (other topics only) and the approved catalog; re-pack keeps the same frozen snapshot", async () => {
     const otherTopic = await saveTopic({ title: "别的选题", description: "x", tags: [] }, dir);
-    const neighbour = await saveContent({ title: "上周那条", body: "开头。\n\n结尾。", platform: "douyin", topicId: otherTopic.id, status: "drafting", tags: [] }, dir);
+    const neighbour = await saveContent({ _provenance: HUMAN_WRITE, title: "上周那条", body: "开头。\n\n结尾。", platform: "douyin", topicId: otherTopic.id, status: "drafting", tags: [] }, dir);
     await transitionStatus(neighbour.id, "draft_ready", { force: true }, dir);
-    const wechat = await saveContent({ title: "公众号那条", body: "别的平台。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+    const wechat = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号那条", body: "别的平台。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
     await transitionStatus(wechat.id, "draft_ready", { force: true }, dir);
 
     const topicId = await freshTopic();
@@ -98,7 +100,7 @@ describe("writing pack freezes series memory and the technique catalog", () => {
     expect(p.pack_md).toContain("先规划再动笔");
 
     // 冻结之后进入范围的稿不会悄悄进同一个包
-    const later = await saveContent({ title: "后来的", body: "后来。", platform: "douyin", topicId: (await saveTopic({ title: "t3", description: "", tags: [] }, dir)).id, status: "drafting", tags: [] }, dir);
+    const later = await saveContent({ _provenance: HUMAN_WRITE, title: "后来的", body: "后来。", platform: "douyin", topicId: (await saveTopic({ title: "t3", description: "", tags: [] }, dir)).id, status: "drafting", tags: [] }, dir);
     await transitionStatus(later.id, "draft_ready", { force: true }, dir);
     const again = await pack(topicId);
     expect(again.pack_id).toBe(p.pack_id);
@@ -177,7 +179,7 @@ describe("submit contract with outline (spec §4)", () => {
     const { buildSeriesSnapshot } = await import("../modules/writing/series-memory.js");
     const before = buildSeriesSnapshot([(await getContent(p.content_id, dir))!], "douyin", {});
     expect(before.items[0]).toMatchObject({ insufficient: false, outline_version: 1 });
-    await updateContent(p.content_id, { body: "编辑器里改过的正文。" }, dir);
+    await updateContent(p.content_id, { _provenance: HUMAN_WRITE, body: "编辑器里改过的正文。" }, dir);
     const after = buildSeriesSnapshot([(await getContent(p.content_id, dir))!], "douyin", {});
     expect(after.items[0]).toMatchObject({ insufficient: true, outline_version: 0 });
   });

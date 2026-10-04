@@ -18,6 +18,7 @@ import { matchWorkerIdle } from "./match/queue.js";
 import { plainReason } from "./plain-reason.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -192,7 +193,7 @@ describe("回归护栏（克隆实跑通过的行为，补成测试）", () => {
   it("稿子刚改过：旧代次认稿回「稿子刚改过，重新看一眼」，不写", async () => {
     const c = await videoContent(env, "改稿代次稿");
     const it0 = (await itemStarting(c.id, "draft"))!;
-    await executeContentSave({ _dataDir: env.dir, _host: "claude-code", action: "update", id: c.id, body: "改过的正文。" });
+    await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "claude-code", action: "update", id: c.id, body: "改过的正文。" });
     const r = await decideItem({ item_id: it0.item_id, gen: it0.gen, action: "approve_script", content_id: c.id }, env.dir);
     expect(r).toMatchObject({ ok: false, code: "stale", error: "稿子刚改过，重新看一眼" });
     expect((await videoContent(env, "无关稿")).status).toBe("draft_ready");
@@ -200,9 +201,9 @@ describe("回归护栏（克隆实跑通过的行为，补成测试）", () => {
 
   it("分镜请示与花费请示不收 agent 转述（R7）", async () => {
     const c = await editing("转述边界稿");
-    const ask = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "cost", kind: "花费", question: "要花 12 元，做吗？",
+    const ask = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "cost", kind: "花费", question: "要花 12 元，做吗？",
       options: [{ id: "yes", label: "做" }, { id: "no", label: "不做" }] }) as Record<string, unknown>;
-    const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "answer_ask", content_id: c.id, ask_id: ask.ask_id, option_id: "yes", founder_quote: "做吧" }) as Record<string, unknown>;
+    const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "answer_ask", content_id: c.id, ask_id: ask.ask_id, option_id: "yes", founder_quote: "做吧" }) as Record<string, unknown>;
     expect(r).toMatchObject({ ok: false, code: "founder_only" });
   });
 });

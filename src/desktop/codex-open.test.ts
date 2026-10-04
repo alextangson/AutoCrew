@@ -7,6 +7,7 @@ import type { spawn } from "node:child_process";
 import { contentFile, initializeProjectLayout } from "../storage/content-project.js";
 import { saveContent, type Content } from "../storage/local-store.js";
 import { openCodexForContent } from "./codex-open.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const THREAD = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 let dir: string, content: Content, exitCode: number;
@@ -18,7 +19,7 @@ const writeSession = (session_id: string) => fs.writeFile(contentFile(content.id
 beforeEach(async () => {
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-codex-open-")));
   await initializeProjectLayout(dir, "lib-deadbeef", "default");
-  content = await saveContent({ title: "发布样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
+  content = await saveContent({ _provenance: HUMAN_WRITE, title: "发布样例", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
   exitCode = 0;
   vi.mocked(spawnImpl).mockClear();
 });

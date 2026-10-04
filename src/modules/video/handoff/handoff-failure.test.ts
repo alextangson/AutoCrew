@@ -18,6 +18,7 @@ import { sha256File } from "./manifest.js";
 import { arollLockOf } from "./pull-store.js";
 import { recoverArollMoves } from "./aroll-move.js";
 import { hashClaimToken } from "../../../storage/claim-token.js";
+import { HUMAN_WRITE } from "../../../storage/first-body-guard.js";
 
 vi.mock("../../../storage/local-store.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../../storage/local-store.js")>();
@@ -64,7 +65,7 @@ describe.skipIf(!HAS_FFMPEG)("交接缺料在认领写入之前拒绝", () => {
     const after = (await getContent(c.id, env.dir))!;
     expect(after.claim).toEqual(before);
     expect(after.status).toBe("draft_ready");
-    const write = await executeContentSave({ action: "update", id: c.id, title: "改个标题", claim_token: token, _host: "claude-code", _dataDir: env.dir });
+    const write = await executeContentSave({ _provenance: HUMAN_WRITE, action: "update", id: c.id, title: "改个标题", claim_token: token, _host: "claude-code", _dataDir: env.dir });
     expect(write).toMatchObject({ ok: true });
   });
 

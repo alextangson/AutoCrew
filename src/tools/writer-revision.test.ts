@@ -8,12 +8,13 @@ import { packPreparation } from "./writer-prepare.js";
 import { readPack } from "./writer-pack.js";
 import { claimContent } from "../storage/claims.js";
 import { getContent, getTopic, listContents, listTopics, saveContent, saveTopic, type Content } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "writer-revision-")); });
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); });
 const run = (args: Record<string, unknown>) => executeWriter({ _dataDir: dir, _host: "claude-test", ...args });
-const draft = (overrides: Partial<Content> = {}) => saveContent({ title: "社区菜园的记录", body: "邻居们共同浇水，轮班时间写在公告板上。", status: "draft_ready", platform: "douyin", ...overrides }, dir);
+const draft = (overrides: Partial<Content> = {}) => saveContent({ _provenance: HUMAN_WRITE, title: "社区菜园的记录", body: "邻居们共同浇水，轮班时间写在公告板上。", status: "draft_ready", platform: "douyin", ...overrides }, dir);
 
 describe("existing draft revision pack", () => {
   it.each([

@@ -11,6 +11,7 @@ import { retro } from "./retro.js";
 import { EARLY_RETRO_WEIGHT } from "./constants.js";
 import { bumpSuggestion, directionOf, retroStateUpdate } from "./retro-state.js";
 import { calibrationDir, ensureCalibration, readLog } from "./store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const NAMES = ["底部", "基础盘", "命中", "小爆", "大爆"];
 const DAY = 86_400_000;
@@ -62,7 +63,7 @@ describe("§三 复盘", () => {
     expect(await calibrationPool(dir)).toHaveLength(0);
   });
   it("Reconstructed 不进池", async () => {
-    const c = await saveContent({ title: "旧片", body: "b", platform: "douyin", status: "draft_ready", tags: [], publishedAt: new Date(Date.now() - 5 * DAY).toISOString() } as never, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "旧片", body: "b", platform: "douyin", status: "draft_ready", tags: [], publishedAt: new Date(Date.now() - 5 * DAY).toISOString() } as never, dir);
     const b = await blindStep({ content_id: c.id, self_scores: SELF, reconstructed: true }, dir);
     const p = await commitPrediction({ blind_run_id: b.blind_run_id, ...BODY(NAMES) }, dir);
     const r = await retro({ prediction_id: p.prediction_id, hypothesis_conclusion: "x", manual_metrics: { views: 50 } }, dir);

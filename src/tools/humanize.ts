@@ -1,6 +1,9 @@
 import { Type } from "@sinclair/typebox";
 import { getContent, updateContent } from "../storage/local-store.js";
 import { humanizeZh } from "../modules/humanizer/zh.js";
+import { aiContentWriteRefusal } from "../modules/research/angle-gate.js";
+import { isModelCall } from "../storage/stage-guard.js";
+import { provenanceOf } from "../storage/first-body-guard.js";
 
 export const humanizeSchema = Type.Object({
   action: Type.Unsafe<"humanize_zh">({
@@ -39,11 +42,15 @@ export async function executeHumanize(params: Record<string, unknown>) {
 
   const result = humanizeZh({ text });
   if (contentId && params.save_back) {
+    // 模型把占位稿「润色」存回去 = 给选题塞第一份正文；只有模型调用要过选题会闸口
+    const refused = isModelCall(params) ? await aiContentWriteRefusal(contentId, dataDir) : null;
+    if (refused) return refused;
     const updated = await updateContent(
       contentId,
       {
         title: title || undefined,
         body: result.humanizedText,
+        _provenance: provenanceOf(params),
       },
       dataDir,
     );

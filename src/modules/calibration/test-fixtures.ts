@@ -7,6 +7,7 @@ import { appendOutcomes } from "../flywheel/outcome-store.js";
 import { commitPrediction } from "./commit.js";
 import { blindStep, bucketsFor } from "./predict.js";
 import { ALL_DIMS } from "./rubric.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const DAY = 86_400_000;
 
@@ -30,7 +31,7 @@ process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "test-key";
 
 export async function predictPublished(d: string, views: number | null, title = "AI 周报", scores: Record<string, number> = SELF, skipBlind = false) {
   const published = new Date(Date.now() - 1 * DAY);
-  const c = await saveContent({ title, body: "下班前领导一句明早给我……", platform: "douyin", status: "draft_ready", tags: [], publishedAt: published.toISOString() } as never, d);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "下班前领导一句明早给我……", platform: "douyin", status: "draft_ready", tags: [], publishedAt: published.toISOString() } as never, d);
   const b = await blindStep({ content_id: c.id, self_scores: scores, seen_data: false, skip_blind: skipBlind }, d, { runLoopImpl: fakeLoop(scores) });
   const scheme = await bucketsFor("douyin", d);
   const body = BODY(scheme.buckets.map((x) => x.name));

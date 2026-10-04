@@ -31,6 +31,7 @@ import {
   normalizeLegacyStatus,
   type CoverReview,
 } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let testDir: string;
 
@@ -93,7 +94,7 @@ describe("Topics", () => {
 describe("Content", () => {
   it("saveContent creates content with id and defaults", async () => {
     const content = await saveContent(
-      { title: "Test", body: "Hello world", tags: ["test"], status: "draft_ready" },
+      { _provenance: HUMAN_WRITE, title: "Test", body: "Hello world", tags: ["test"], status: "draft_ready" },
       testDir,
     );
     expect(content.id).toBeTruthy();
@@ -103,14 +104,14 @@ describe("Content", () => {
   });
 
   it("listContents returns saved content", async () => {
-    await saveContent({ title: "C1", body: "b1", tags: [], status: "draft_ready" }, testDir);
-    await saveContent({ title: "C2", body: "b2", tags: [], status: "draft_ready" }, testDir);
+    await saveContent({ _provenance: HUMAN_WRITE, title: "C1", body: "b1", tags: [], status: "draft_ready" }, testDir);
+    await saveContent({ _provenance: HUMAN_WRITE, title: "C2", body: "b2", tags: [], status: "draft_ready" }, testDir);
     const items = await listContents(testDir);
     expect(items).toHaveLength(2);
   });
 
   it("getContent retrieves by id", async () => {
-    const saved = await saveContent({ title: "Find", body: "me", tags: [], status: "draft_ready" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "Find", body: "me", tags: [], status: "draft_ready" }, testDir);
     const found = await getContent(saved.id, testDir);
     expect(found).not.toBeNull();
     expect(found!.title).toBe("Find");
@@ -122,8 +123,8 @@ describe("Content", () => {
   });
 
   it("updateContent merges fields", async () => {
-    const saved = await saveContent({ title: "Original", body: "body", tags: [], status: "draft_ready" }, testDir);
-    const updated = await updateContent(saved.id, { title: "Updated", _versionNote: "优化标题" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "Original", body: "body", tags: [], status: "draft_ready" }, testDir);
+    const updated = await updateContent(saved.id, { _provenance: HUMAN_WRITE, title: "Updated", _versionNote: "优化标题" }, testDir);
     expect(updated).not.toBeNull();
     expect(updated!.title).toBe("Updated");
     expect(updated!.body).toBe("body");
@@ -132,15 +133,15 @@ describe("Content", () => {
   });
 
   it("updateContent creates a new version when body changes", async () => {
-    const saved = await saveContent({ title: "V", body: "v1 body", tags: [], status: "draft_ready" }, testDir);
-    await updateContent(saved.id, { body: "v2 body" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "V", body: "v1 body", tags: [], status: "draft_ready" }, testDir);
+    await updateContent(saved.id, { _provenance: HUMAN_WRITE, body: "v2 body" }, testDir);
     const content = await getContent(saved.id, testDir);
     expect(content!.versions.length).toBeGreaterThanOrEqual(2);
     expect(content!.versions[1].title).toBe("V");
   });
 
   it("updateContent returns null for nonexistent", async () => {
-    const result = await updateContent("nope", { title: "x" }, testDir);
+    const result = await updateContent("nope", { _provenance: HUMAN_WRITE, title: "x" }, testDir);
     expect(result).toBeNull();
   });
 });
@@ -149,33 +150,33 @@ describe("Content", () => {
 
 describe("Content write safety", () => {
   it("updateContent returns null for a well-formed id that does not exist", async () => {
-    const result = await updateContent("content-nope", { title: "x" }, testDir);
+    const result = await updateContent("content-nope", { _provenance: HUMAN_WRITE, title: "x" }, testDir);
     expect(result).toBeNull();
   });
 
   it("updateContent throws on corrupt meta.json instead of returning null", async () => {
-    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     await fs.writeFile(path.join(testDir, "contents", saved.id, "meta.json"), "not json{", "utf-8");
-    await expect(updateContent(saved.id, { title: "x" }, testDir)).rejects.toThrow();
+    await expect(updateContent(saved.id, { _provenance: HUMAN_WRITE, title: "x" }, testDir)).rejects.toThrow();
   });
 
   it("updateContent surfaces write failures instead of returning null", async () => {
-    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     const projDir = path.join(testDir, "contents", saved.id);
     await fs.chmod(projDir, 0o555);
     try {
       // digest-only 更新:不触发版本快照,首个写盘动作就落在只读目录里
-      await expect(updateContent(saved.id, { digest: "钩子" }, testDir)).rejects.toThrow();
+      await expect(updateContent(saved.id, { _provenance: HUMAN_WRITE, digest: "钩子" }, testDir)).rejects.toThrow();
     } finally {
       await fs.chmod(projDir, 0o755);
     }
   });
 
   it("concurrent updateContent calls do not overwrite each other's fields", async () => {
-    const saved = await saveContent({ title: "原稿", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "原稿", body: "b", tags: [], status: "draft_ready" }, testDir);
     await Promise.all([
-      updateContent(saved.id, { digest: "摘要钩子" }, testDir),
-      updateContent(saved.id, { title: "新标题" }, testDir),
+      updateContent(saved.id, { _provenance: HUMAN_WRITE, digest: "摘要钩子" }, testDir),
+      updateContent(saved.id, { _provenance: HUMAN_WRITE, title: "新标题" }, testDir),
     ]);
     const final = await getContent(saved.id, testDir);
     expect(final!.digest).toBe("摘要钩子");
@@ -183,9 +184,9 @@ describe("Content write safety", () => {
   });
 
   it("concurrent updateContent and addAsset both land", async () => {
-    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     const [updated, assetRes] = await Promise.all([
-      updateContent(saved.id, { digest: "并发摘要" }, testDir),
+      updateContent(saved.id, { _provenance: HUMAN_WRITE, digest: "并发摘要" }, testDir),
       addAsset(saved.id, { filename: "cover.png", type: "cover" }, testDir),
     ]);
     expect(updated).not.toBeNull();
@@ -200,7 +201,7 @@ describe("Content write safety", () => {
 
 describe("Assets", () => {
   it("addAsset adds to content assets list", async () => {
-    const content = await saveContent({ title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
     const dummyFile = path.join(testDir, "test-image.jpg");
     await fs.writeFile(dummyFile, "fake image data");
 
@@ -217,13 +218,13 @@ describe("Assets", () => {
   });
 
   it("listAssets returns empty for content with no assets", async () => {
-    const content = await saveContent({ title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
     const assets = await listAssets(content.id, testDir);
     expect(assets).toEqual([]);
   });
 
   it("removeAsset removes from list", async () => {
-    const content = await saveContent({ title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
     const dummyFile = path.join(testDir, "remove-me.png");
     await fs.writeFile(dummyFile, "data");
     await addAsset(content.id, { filename: "remove-me.png", type: "image", sourcePath: dummyFile }, testDir);
@@ -240,7 +241,7 @@ describe("Assets", () => {
 
 describe("addAsset 硬链接语义", () => {
   async function seedContentAndSource(name: string, bytes: string) {
-    const content = await saveContent({ title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
     const src = path.join(testDir, name);
     await fs.writeFile(src, bytes);
     return { content, src, dest: path.join(testDir, "contents", content.id, "assets", name) };
@@ -300,20 +301,20 @@ describe("addAsset 硬链接语义", () => {
 
 describe("Versions", () => {
   it("listVersions returns version history", async () => {
-    const content = await saveContent({ title: "V", body: "v1", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "V", body: "v1", tags: [], status: "draft_ready" }, testDir);
     const versions = await listVersions(content.id, testDir);
     expect(versions.length).toBeGreaterThanOrEqual(1);
   });
 
   it("getVersion retrieves specific version body", async () => {
-    const content = await saveContent({ title: "V", body: "original body", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "V", body: "original body", tags: [], status: "draft_ready" }, testDir);
     const body = await getVersion(content.id, 1, testDir);
     expect(body).toBe("original body");
   });
 
   it("revertToVersion restores old body", async () => {
-    const content = await saveContent({ title: "V", body: "v1 body", tags: [], status: "draft_ready" }, testDir);
-    await updateContent(content.id, { body: "v2 body" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "V", body: "v1 body", tags: [], status: "draft_ready" }, testDir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: "v2 body" }, testDir);
 
     const reverted = await revertToVersion(content.id, 1, testDir);
     expect(reverted).not.toBeNull();
@@ -325,7 +326,7 @@ describe("Versions", () => {
 
 describe("Cover Review", () => {
   it("saveCoverReview + getCoverReview round-trip", async () => {
-    const content = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     const review: CoverReview = {
       platform: "xhs",
       status: "review_pending",
@@ -340,7 +341,7 @@ describe("Cover Review", () => {
   });
 
   it("approveCoverVariant sets approvedLabel and status", async () => {
-    const content = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     const review: CoverReview = {
       platform: "xhs",
       status: "review_pending",
@@ -359,7 +360,7 @@ describe("Cover Review", () => {
   });
 
   it("getCoverReview returns null when no review exists", async () => {
-    const content = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
     const review = await getCoverReview(content.id, testDir);
     expect(review).toBeNull();
   });
@@ -369,7 +370,7 @@ describe("Cover Review", () => {
 
 describe("Status Transitions", () => {
   it("transitionStatus moves to allowed state", async () => {
-    const content = await saveContent({ title: "T", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "T", body: "b", tags: [], status: "draft_ready" }, testDir);
     // draft_ready → reviewing is allowed
     const result = await transitionStatus(content.id, "reviewing", undefined, testDir);
     expect(result.ok).toBe(true);
@@ -378,7 +379,7 @@ describe("Status Transitions", () => {
   });
 
   it("transitionStatus rejects invalid transition", async () => {
-    const content = await saveContent({ title: "T", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "T", body: "b", tags: [], status: "draft_ready" }, testDir);
     // draft_ready → published is not allowed directly
     const result = await transitionStatus(content.id, "published", undefined, testDir);
     expect(result.ok).toBe(false);
@@ -408,7 +409,7 @@ describe("Status Transitions", () => {
   });
 
   it("缺证据稿走重试回 drafting：状态机认这条边，不必 force", async () => {
-    const content = await saveContent({ title: "T", body: "b", tags: [], status: "drafting" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "T", body: "b", tags: [], status: "drafting" }, testDir);
     const blocked = await transitionStatus(content.id, "needs_evidence", undefined, testDir);
     expect(blocked.ok).toBe(true);
     const back = await transitionStatus(content.id, "drafting", undefined, testDir);
@@ -417,7 +418,7 @@ describe("Status Transitions", () => {
   });
 
   it("缺证据 → reviewing 不通：没成的稿不许直接送审", async () => {
-    const content = await saveContent({ title: "T", body: "b", tags: [], status: "drafting" }, testDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "T", body: "b", tags: [], status: "drafting" }, testDir);
     await transitionStatus(content.id, "needs_evidence", undefined, testDir);
     const jump = await transitionStatus(content.id, "reviewing", undefined, testDir);
     expect(jump.ok).toBe(false);
@@ -435,9 +436,9 @@ describe("Status Transitions", () => {
 
 describe("阶段门 · 收口通道", () => {
   const video = async () =>
-    saveContent({ title: "口播稿", body: "b", tags: [], platform: "douyin", status: "approved" }, testDir);
+    saveContent({ _provenance: HUMAN_WRITE, title: "口播稿", body: "b", tags: [], platform: "douyin", status: "approved" }, testDir);
   const text = async () =>
-    saveContent({ title: "长文", body: "b", tags: [], platform: "wechat_mp", status: "approved" }, testDir);
+    saveContent({ _provenance: HUMAN_WRITE, title: "长文", body: "b", tags: [], platform: "wechat_mp", status: "approved" }, testDir);
 
   it("视频稿 approved 直通 publish_ready 被门拦下,状态一个字没动", async () => {
     const c = await video();
@@ -472,16 +473,16 @@ describe("阶段门 · 收口通道", () => {
     const c = await video();
     await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir);
     // 首次达成的指标戳在，但这一版成片没审过——不许放行过时成片
-    await updateContent(c.id, { videoReadyAt: new Date().toISOString() }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoReadyAt: new Date().toISOString() }, testDir);
     expect((await transitionStatus(c.id, "cover_pending", undefined, testDir)).blocked).toBe(true);
 
-    await updateContent(c.id, { videoDone: { renderedRevision: 1, at: new Date().toISOString() } }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: new Date().toISOString() } }, testDir);
     expect((await transitionStatus(c.id, "cover_pending", undefined, testDir)).ok).toBe(true);
   });
 
   it("cover_pending → publish_ready 要封面已批准", async () => {
     const c = await video();
-    await updateContent(c.id, { videoDone: { renderedRevision: 1, at: "x" } }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: "x" } }, testDir);
     await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir);
     await transitionStatus(c.id, "cover_pending", undefined, testDir);
     expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).blocked).toBe(true);
@@ -503,14 +504,14 @@ describe("阶段门 · 收口通道", () => {
     }
     expect((await getContent(c.id, testDir))!.status).toBe("approved");
     await expect(
-      saveContent({ title: "x", body: "b", tags: [], platform: "douyin", status: "editing" }, testDir),
+      saveContent({ _provenance: HUMAN_WRITE, title: "x", body: "b", tags: [], platform: "douyin", status: "editing" }, testDir),
     ).rejects.toThrow(/只能由交接进入/);
     expect((await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir)).ok).toBe(true);
   });
 
   it("saveContent 也过门：公众号稿建不进剪辑阶段", async () => {
     await expect(
-      saveContent({ title: "x", body: "b", tags: [], platform: "wechat_mp", status: "editing" }, testDir),
+      saveContent({ _provenance: HUMAN_WRITE, title: "x", body: "b", tags: [], platform: "wechat_mp", status: "editing" }, testDir),
     ).rejects.toThrow(/剪辑阶段只属于视频平台/);
   });
 
@@ -654,7 +655,7 @@ describe("adoption verdicts", () => {
 
   it("recordAdoption 落库、可改判覆盖、重启可读回", async () => {
     const { saveContent, recordAdoption, getContent } = await import("./local-store.js");
-    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
     const updated = await recordAdoption(c.id, "light_edit", adoptDir);
     expect(updated?.adoption?.verdict).toBe("light_edit");
     const again = await recordAdoption(c.id, "adopted", adoptDir);
@@ -675,7 +676,7 @@ describe("adoption verdicts", () => {
     expect(empty.judged).toBe(0);
     expect(empty.rate).toBeNull();
 
-    const mk = () => saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    const mk = () => saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
     const a = await mk();
     const b = await mk();
     const c = await mk();
@@ -710,7 +711,7 @@ describe("soft delete + trash", () => {
 
   it("content:删除后 listContents 不见、trash 可见、恢复后回来", async () => {
     const { saveContent, softDeleteContent, restoreContent, listContents, listTrash } = await import("./local-store.js");
-    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
     expect(await softDeleteContent(c.id, trashDir)).not.toBeNull();
     expect((await listContents(trashDir)).find((x) => x.id === c.id)).toBeUndefined();
     const trash = await listTrash(trashDir);
@@ -733,7 +734,7 @@ describe("soft delete + trash", () => {
 
   it("已删稿不进采纳率分母", async () => {
     const { saveContent, recordAdoption, softDeleteContent, adoptionStats } = await import("./local-store.js");
-    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
     await recordAdoption(c.id, "adopted", trashDir);
     await softDeleteContent(c.id, trashDir);
     expect((await adoptionStats(trashDir)).judged).toBe(0);

@@ -82,6 +82,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, founderDirectionFor, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -257,6 +258,7 @@ import {
   campaignSetAutonomyHandler,
   campaignTransitionHandler,
 } from "./campaign-handlers.js";
+import { provenanceFromAuth } from "../storage/first-body-guard.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -275,6 +277,8 @@ export type IpcHandlerContext = {
   onChatDelta?: (e: { turnId: string; seq: number; ev: "delta" | "reset" | "done"; text?: string }) => void;
   requestApproval?: (binding: ApprovalBinding) => { token: string; expiresAt: string };
   consumeApproval?: (token: string, binding: ApprovalBinding) => { ok: true } | { ok: false; error: string };
+  /** 调用方怎么认证的：session = 浏览器里登录的人；bearer = 令牌（宿主/模型也拿得到） */
+  authMethod?: "session" | "bearer";
 };
 export type IpcHandler = (
   payload: Record<string, unknown>,
@@ -318,7 +322,7 @@ export const CHANNEL_ACTIONS = {
  * Exported for action-injection testability.
  */
 export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
-  return async (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  return async (payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> => {
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
       return {
         ok: false,
@@ -326,7 +330,8 @@ export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
       };
     }
     try {
-      return await fn({ ...payload, action });
+      // 写正文的来源按可信的认证方式注入（会话 = 人，令牌 = 模型），不信 payload 自带的标记
+      return await fn({ ...payload, action, _provenance: provenanceFromAuth(ctx?.authMethod) });
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -531,13 +536,20 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
     return { ok: false, error: "Invalid payload: expected object" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
+  // 选题会闸口：后台写稿每次都开新稿，选题必须先开过选题会、由创始人定了角度
+  const topicId = typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined;
+  const refused = await newDraftAngleRefusal(topicId, dataDir);
+  if (refused) return refused;
+  // 创始人最近一次是自定角度：按他那句写
+  const founderDirection = await founderDirectionFor(topicId, dataDir);
   try {
     const started = await startGenerateScript(
       {
         topic: String(payload.topic ?? ""),
         platform: payload.platform as never,
         research: typeof payload.research === "string" ? payload.research : undefined,
-        topicId: typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined,
+        topicId,
+        ...(founderDirection ? { direction: founderDirection } : {}),
         // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
         ...(payload.use_patterns === false ? { usePatterns: false } : {}),
       },
@@ -568,6 +580,9 @@ async function generateRetryHandler(payload: Record<string, unknown>): Promise<R
   const contentId = typeof payload.content_id === "string" ? payload.content_id.trim() : "";
   if (!contentId) return { ok: false, error: "generate:retry 需要 content_id" };
   const dataDir = (payload._dataDir as string) || undefined;
+  // 选题会闸口：重写一张空占位稿 = 在给它的选题开第一篇，和新开写同一判定；真稿的重写放行
+  const refused = await aiContentWriteRefusal(contentId, dataDir);
+  if (refused) return refused;
   const key = GENERATE_JOB_KEY(contentId);
   if (!claimJob(key)) return { ok: false, error: "这篇已经在写了——等它跑完再重试" };
   let held = false;
@@ -868,7 +883,7 @@ async function contentVersionsHandler(payload: Record<string, unknown>): Promise
   }
 }
 
-async function contentRevertHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function contentRevertHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
@@ -879,7 +894,7 @@ async function contentRevertHandler(payload: Record<string, unknown>): Promise<R
     return { ok: false, error: "需要合法 version（正整数）" };
   }
   try {
-    const content = await revertToVersion(id, version, (payload._dataDir as string) || undefined);
+    const content = await revertToVersion(id, version, (payload._dataDir as string) || undefined, provenanceFromAuth(ctx?.authMethod));
     if (!content) return { ok: false, error: "回滚失败：稿件或版本不存在" };
     return { ok: true, data: { content } };
   } catch (err) {
@@ -903,7 +918,7 @@ async function rewriteSelectionHandler(payload: Record<string, unknown>): Promis
 }
 
 /** 收下一版对话式修改：存新版本 + 采纳即学习闸门（有 before+feedback 才沉淀）。 */
-async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function draftAdoptRevisionHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
   if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
   const body = typeof payload.body === "string" ? payload.body : "";
@@ -927,6 +942,8 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
         body,
         ...(title ? { title } : {}),
         _versionNote: note,
+        // 浏览器会话里人点「收下」= 人手；令牌调用（宿主/模型可达）按模型算
+        _provenance: provenanceFromAuth(ctx?.authMethod),
         ...(changed && feedback ? { writingFeedback: appendWritingFeedback(before0.writingFeedback, feedback, feedbackScope, {
           ...(feedbackScope === "selection" && typeof payload.selection === "string" ? { selection: payload.selection } : {}),
         }) } : {}),
@@ -1607,7 +1624,7 @@ async function topicDeleteHandler(payload: Record<string, unknown>): Promise<Rec
  * 2. `angle_id` 必须在那版简报里；改写版（可选 `card`）还要过一遍字段与证据引用校验，
  *    创始人能改任何文字，但改不出简报里没有的证据。
  */
-async function topicSelectAngleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function topicSelectAngleHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
   const angleId = typeof payload.angle_id === "string" ? payload.angle_id.trim() : "";
   const revision = payload.brief_revision;
@@ -1616,6 +1633,10 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
     return { ok: false, error: "brief_revision 必须是整数" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
+  // 只有浏览器会话（人在界面上点）才能用「桌面点选」当原话；令牌调用（宿主/模型可达）必须带创始人原话
+  const givenWords = typeof payload.founder_words === "string" ? payload.founder_words.trim() : "";
+  if (!givenWords && ctx?.authMethod !== "session") return { ok: false, code: "founder_words_required", error: ANGLE_GATE_COPY.needFounderWords };
+  const founderWords = givenWords || `（桌面界面点选 ${angleId}）`;
   try {
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
@@ -1633,7 +1654,8 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
     if (typeof card === "string") return { ok: false, error: card };
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      // 桌面界面上是创始人本人点的卡（人手操作）：记成创始人选定，原话缺省就记这次点选
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords }, founderAngle: undefined },
       dataDir,
     );
     // 两个后端都从「最近工作区动作」得知创作者选了哪个角度（bug A3）
@@ -1649,7 +1671,8 @@ async function topicClearAngleHandler(payload: Record<string, unknown>): Promise
   const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
   if (!topicId) return { ok: false, error: "topic_id 必填" };
   try {
-    const topic = await updateTopic(topicId, { selectedAngle: undefined }, (payload._dataDir as string) || undefined);
+    // 撤回 = 清掉创始人的角度决定（选卡与自定角度一起清，旧的那句不能借机复活）
+    const topic = await updateTopic(topicId, { selectedAngle: undefined, founderAngle: undefined }, (payload._dataDir as string) || undefined);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
     await appendAction((payload._dataDir as string) || undefined, { kind: "angle_cleared", title: topic.title });
     return { ok: true, topic };

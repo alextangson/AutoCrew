@@ -5,6 +5,7 @@ import path from "node:path";
 import { executeFlywheel, expandPath } from "./flywheel.js";
 import { saveContent, updateContent } from "../storage/local-store.js";
 import { listOutcomes } from "../modules/flywheel/outcome-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -37,10 +38,10 @@ describe("executeFlywheel", () => {
 
   it("record: manual paste entry for a known content", async () => {
     const c = await saveContent(
-      { title: "口播稿A", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "口播稿A", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
 
     const r = (await executeFlywheel({
       action: "record",
@@ -64,7 +65,7 @@ describe("executeFlywheel", () => {
 
   it("record: honors metric_date for backfill", async () => {
     const c = await saveContent(
-      { title: "口播稿B", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "口播稿B", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
     const r = (await executeFlywheel({
@@ -82,7 +83,7 @@ describe("executeFlywheel", () => {
 
   it("record: rejects non-numeric metric values with a helpful error", async () => {
     const c = await saveContent(
-      { title: "口播稿C", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "口播稿C", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
     const r = (await executeFlywheel({
@@ -98,7 +99,7 @@ describe("executeFlywheel", () => {
 
   it("record: passes through outcome validator errors", async () => {
     const c = await saveContent(
-      { title: "口播稿D", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "口播稿D", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
     const r = (await executeFlywheel({
@@ -173,10 +174,10 @@ describe("executeFlywheel", () => {
 
   it("record: platform_title supersedes the unmatched historical CSV entry", async () => {
     const c = await saveContent(
-      { title: "我的草稿标题", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "我的草稿标题", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
 
     // CSV 标题与草稿差异大 → matchDraft 失败，落为 historical
     const csvPath = path.join(testDir, "douyin.csv");

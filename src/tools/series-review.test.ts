@@ -16,6 +16,7 @@ import { runSubmit } from "./writer-submit.js";
 import { executeReviewDesk } from "./host-review.js";
 import { loadSeriesSnapshot, type Outline } from "../modules/writing/series-memory.js";
 import { techniqueCatalog } from "../modules/writing/technique-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-series-review-")); });
@@ -36,14 +37,14 @@ const OTHER_OUTLINE: Outline = {
 
 /** 已经发过的一条同平台稿（进快照范围），带有效摘要 */
 async function publishedNeighbour(title: string) {
-  const c = await saveContent({ title, body: "阳台种菜，先看光照。\n\n每天至少六小时直射。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
-  await updateContent(c.id, { outline: OTHER_OUTLINE }, dir);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: "阳台种菜，先看光照。\n\n每天至少六小时直射。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+  await updateContent(c.id, { _provenance: HUMAN_WRITE, outline: OTHER_OUTLINE }, dir);
   await transitionStatus(c.id, "draft_ready", { force: true }, dir);
   return c;
 }
 
 async function seedNewContractPack() {
-  const content = await saveContent({ title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+  const content = await saveContent({ _provenance: HUMAN_WRITE, title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
   const pack: ReadyPack = {
     packId: "writing-pack-1", issuedAt: "2026-09-28T00:00:00Z", state: "ready", host: "claude", briefHash: "provided", angleId: "user-direction",
     series: await loadSeriesSnapshot("wechat_mp", { contentId: content.id }, dir),
@@ -56,7 +57,7 @@ async function seedNewContractPack() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
   const saved = await runSubmit({ contentId: content.id, packId: pack.packId, attempt: 1, title: "菜园的清晨", body, outline: OUTLINE, host: "claude" }, dir);
   expect(saved).toMatchObject({ status: "awaiting_host_review" });
   const review = (saved as { review_pack: Record<string, any> }).review_pack;
@@ -140,7 +141,7 @@ describe("series review lands only on the reviewed draft version (Codex P1)", ()
     const real = seriesMemory.loadSeriesSnapshot;
     // 审稿台已过入口的 draft_hash 核对、正在核对快照时，编辑器改了正文
     vi.spyOn(seriesMemory, "loadSeriesSnapshot").mockImplementationOnce(async (...args) => {
-      await updateContent(content.id, { body: "审稿期间编辑器改过的正文。" }, dir);
+      await updateContent(content.id, { _provenance: HUMAN_WRITE, body: "审稿期间编辑器改过的正文。" }, dir);
       return real(...args);
     });
     const res = await desk({ action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [], series_review: coverAll(review.series_snapshot) });

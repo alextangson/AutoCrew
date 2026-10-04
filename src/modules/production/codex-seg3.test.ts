@@ -16,6 +16,7 @@ import { cardPanel } from "./panel.js";
 import { reconcileAll } from "./reconcile.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env, waiveSliverCheck } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -38,7 +39,7 @@ describe("Codex 审 seg3", () => {
   });
 
   it("[P2 closed.ts:17] 图文稿不关旧入口（图文不动）", async () => {
-    const c = await saveContent({ title: "长文", body: "正文", platform: "wechat_mp", status: "approved", tags: [] }, env.dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "长文", body: "正文", platform: "wechat_mp", status: "approved", tags: [] }, env.dir);
     expect(await oldEntryClosed(env.dir, c.id)).toBe(false);
   });
 

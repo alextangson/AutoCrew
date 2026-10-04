@@ -13,6 +13,7 @@ import { archivePublished } from "./nas-archive.js";
 import { backupPublished, type BackupOptions } from "./nas-backup.js";
 import { keptName, sha256File } from "./nas-archive-copy.js";
 import { readBackupState } from "./nas-backup-state.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let release: () => void;
 let temp: string, lib: string, data: string, view: string, nas: string;
@@ -54,7 +55,7 @@ async function put(c: Content, rel: string, text: string): Promise<void> {
 
 /** 带登记成片、字幕、原片、封面的已发布视频稿 */
 async function make(title: string, patch: Partial<Content>): Promise<Content> {
-  const c = await saveContent({ title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
   const base = (await getContent(c.id, data))!;
   const r = resolveContentProject(c.id, data)!.project_root;
   const video = {

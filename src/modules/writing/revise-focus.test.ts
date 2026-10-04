@@ -8,6 +8,7 @@ import { updateProfile } from "../profile/creator-profile.js";
 import { addApprovedRuleForTest } from "../profile/rule-fixtures.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -27,7 +28,7 @@ const done = (): LoopResult => ({ finalMessage: "done", turns: 2, totalTokens: 4
 
 async function mkContent() {
   return saveContent(
-    { title: "标题", body: "第一段。\n\n第二段偏书面。\n\n第三段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+    { _provenance: HUMAN_WRITE, title: "标题", body: "第一段。\n\n第二段偏书面。\n\n第三段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
     testDir,
   );
 }
@@ -60,7 +61,7 @@ describe("reviseFocus", () => {
   it("选区修订沿用原稿规划，本次反馈只覆盖被明确改变的部分", async () => {
     const writingContract = "写给店主，只讲积压诊断，不写工具推荐。";
     const c = await saveContent(
-      { title: "库存", body: "开头。\n\n中间待改。\n\n结尾。", platform: "douyin", status: "draft_ready", tags: [], writingContract },
+      { _provenance: HUMAN_WRITE, title: "库存", body: "开头。\n\n中间待改。\n\n结尾。", platform: "douyin", status: "draft_ready", tags: [], writingContract },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
@@ -82,7 +83,7 @@ describe("reviseFocus", () => {
       { instruction: "这段保留三条清单", scope: "selection" as const, at: "2026-09-21T01:00:00.000Z", selection: "盘点清单这一段" },
     ];
     const c = await saveContent(
-      { title: "库存", body: "现在改结尾", platform: "douyin", status: "draft_ready", tags: [], writingFeedback },
+      { _provenance: HUMAN_WRITE, title: "库存", body: "现在改结尾", platform: "douyin", status: "draft_ready", tags: [], writingFeedback },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {

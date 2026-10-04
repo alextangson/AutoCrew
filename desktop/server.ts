@@ -460,6 +460,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
       if (wsDir) clean._dataDir = wsDir;
     }
     const ctx: IpcHandlerContext = {
+      authMethod,
       requestApproval: (binding) => APPROVALS.issue(binding),
       consumeApproval: (token, binding) => APPROVALS.consume(token, binding),
       // 流式正文（设计 §Phase 3）:与工具进度同一条 SSE 连接,事件名分开——

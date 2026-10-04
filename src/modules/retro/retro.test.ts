@@ -13,6 +13,7 @@ import { readEditorialExperiments, selectEditorialExperiment } from "./editorial
 import { setGoal } from "../profile/goal.js";
 import { saveContent, updateContent, recordAdoption } from "../../storage/local-store.js";
 import type { runLoop } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -50,10 +51,10 @@ function mockLoop(markdown: string | null, captured?: Captured[]): typeof runLoo
 
 async function seedFacts(): Promise<void> {
   await setGoal({ statement: "三个月破万粉" }, dir);
-  const c1 = await saveContent({ title: "本周稿件A", body: "b", platform: "wechat_mp", status: "draft_ready", tags: [], hashtags: [] }, dir);
+  const c1 = await saveContent({ _provenance: HUMAN_WRITE, title: "本周稿件A", body: "b", platform: "wechat_mp", status: "draft_ready", tags: [], hashtags: [] }, dir);
   await recordAdoption(c1.id, "adopted", dir);
-  const c2 = await saveContent({ title: "已发稿B", body: "b", platform: "xiaohongshu", status: "published", tags: [], hashtags: [] }, dir);
-  await updateContent(c2.id, { publishedAt: new Date().toISOString() } as never, dir);
+  const c2 = await saveContent({ _provenance: HUMAN_WRITE, title: "已发稿B", body: "b", platform: "xiaohongshu", status: "published", tags: [], hashtags: [] }, dir);
+  await updateContent(c2.id, { _provenance: HUMAN_WRITE, publishedAt: new Date().toISOString() } as never, dir);
   const today = new Date().toISOString().slice(0, 10);
   await fs.writeFile(
     path.join(dir, "outcomes.jsonl"),
@@ -118,15 +119,15 @@ describe("generateRetro", () => {
   it("生产用时:代码算好的事实进 prompt,并随产物结构化返回(不由模型算)", async () => {
     const HOUR = 3600_000;
     // 有全套戳的稿:开写 → 2h 稿成 → 26h 发布
-    const timed = await saveContent({ title: "带戳稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
+    const timed = await saveContent({ _provenance: HUMAN_WRITE, title: "带戳稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
     const base = Date.parse(timed.createdAt);
-    await updateContent(timed.id, {
+    await updateContent(timed.id, { _provenance: HUMAN_WRITE,
       draftReadyAt: new Date(base + 2 * HOUR).toISOString(),
       publishedAt: new Date(base + 26 * HOUR).toISOString(),
     }, dir);
     // 戳上线前的旧稿:只有发布戳,分段必须跳过并被点名
-    const legacy = await saveContent({ title: "缺戳旧稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
-    await updateContent(legacy.id, { publishedAt: new Date(Date.parse(legacy.createdAt) + HOUR).toISOString() }, dir);
+    const legacy = await saveContent({ _provenance: HUMAN_WRITE, title: "缺戳旧稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
+    await updateContent(legacy.id, { _provenance: HUMAN_WRITE, publishedAt: new Date(Date.parse(legacy.createdAt) + HOUR).toISOString() }, dir);
 
     const captured: Captured[] = [];
     const result = await generateRetro("weekly", dir, { runLoopImpl: mockLoop(REPORT_MD, captured) });

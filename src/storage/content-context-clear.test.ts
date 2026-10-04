@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getContent, reviewContextHash, saveContent, updateContent } from "./local-store.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ctx-clear-")); });
@@ -19,11 +20,11 @@ const OUTLINE = {
 
 describe("explicit undefined clears context consistently", () => {
   it("content, the new version record and the review-context fingerprint all agree after clearing", async () => {
-    const c = await saveContent({ title: "标题", body: "第一版", platform: "douyin", status: "drafting", tags: [] }, dir);
-    await updateContent(c.id, { body: "第二版", outline: OUTLINE, technique_ids: [{ id: "minto-scq-intro", version: 1 }], seriesSnapshotId: "snap-1" }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "标题", body: "第一版", platform: "douyin", status: "drafting", tags: [] }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "第二版", outline: OUTLINE, technique_ids: [{ id: "minto-scq-intro", version: 1 }], seriesSnapshotId: "snap-1" }, dir);
     expect((await getContent(c.id, dir))?.reviewContextHash).toBeTruthy();
 
-    await updateContent(c.id, { body: "第三版（旧包交稿）", outline: undefined, technique_ids: undefined, seriesSnapshotId: undefined }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "第三版（旧包交稿）", outline: undefined, technique_ids: undefined, seriesSnapshotId: undefined }, dir);
     const after = (await getContent(c.id, dir))!;
     expect(after.outline).toBeUndefined();
     expect(after.technique_ids).toBeUndefined();
@@ -37,8 +38,8 @@ describe("explicit undefined clears context consistently", () => {
     expect(last.reviewContextHash).toBeUndefined();
 
     // 只清掉手法卡：指纹按实际剩下的状态算
-    await updateContent(c.id, { body: "第四版", outline: OUTLINE, technique_ids: [{ id: "minto-scq-intro", version: 1 }], seriesSnapshotId: "snap-2" }, dir);
-    await updateContent(c.id, { technique_ids: undefined }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "第四版", outline: OUTLINE, technique_ids: [{ id: "minto-scq-intro", version: 1 }], seriesSnapshotId: "snap-2" }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, technique_ids: undefined }, dir);
     const partial = (await getContent(c.id, dir))!;
     expect(partial.technique_ids).toBeUndefined();
     expect(partial.reviewContextHash).toBe(reviewContextHash(partial, partial));

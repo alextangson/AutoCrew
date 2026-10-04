@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { backfillImportSource, DEFAULT_TAG } from "../../scripts/backfill-import-source.mjs";
 import { getContent, saveContent } from "./local-store.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-backfill-")); });
@@ -11,9 +12,9 @@ afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("backfill-import-source（§13.4-B 一次性补写）", () => {
   it("默认只预览；--apply 才给带标签、缺来源的稿补写，重复跑不再改", async () => {
-    const tagged = await saveContent({ title: "导入稿", body: "正文", status: "draft_ready", tags: [DEFAULT_TAG] }, dir);
-    const other = await saveContent({ title: "普通稿", body: "正文", status: "draft_ready", tags: ["别的"] }, dir);
-    const already = await saveContent({
+    const tagged = await saveContent({ _provenance: HUMAN_WRITE, title: "导入稿", body: "正文", status: "draft_ready", tags: [DEFAULT_TAG] }, dir);
+    const other = await saveContent({ _provenance: HUMAN_WRITE, title: "普通稿", body: "正文", status: "draft_ready", tags: ["别的"] }, dir);
+    const already = await saveContent({ _provenance: HUMAN_WRITE,
       title: "已有来源", body: "正文", status: "draft_ready", tags: [DEFAULT_TAG],
       writingSource: { kind: "manual_import", importedAt: "2026-09-27T00:00:00.000Z", reason: "原因" },
     }, dir);

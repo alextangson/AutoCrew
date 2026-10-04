@@ -17,6 +17,7 @@ import {
 import { getContent, saveContent, removeAsset as removeContentAsset } from "../storage/local-store.js";
 import { ensureArollFixture } from "../modules/video/testkit.js";
 import { attachLibraryAsset } from "./content-asset-attach.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 let contentId: string;
@@ -40,7 +41,7 @@ async function assets() {
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-attach-"));
   contentId = (
-    await saveContent({ title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir)
+    await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir)
   ).id;
   await fs.mkdir(path.join(dir, "contents", contentId, "assets"), { recursive: true });
 });

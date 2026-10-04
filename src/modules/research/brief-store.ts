@@ -195,6 +195,8 @@ export interface AngleCardV3 {
   forPersona?: { key: "core" | "adjacent" | "surprise"; name: string };
   /** 开头/叙事类型：亲历/观点/反常识/教学/案例；可选 */
   hookType?: "亲历" | "观点" | "反常识" | "教学" | "案例";
+  /** 凭什么可能跑得好：引账号数据视角里的具体数字（带 n），没有就写「无数据依据」 */
+  whyMayPerform?: string;
   /** 有会议位时偏离会上定的画像/形式的理由（由创始人选） */
   meetingDeviation?: string;
   /** 证据支撑分，不代表传播潜力；永不自动写 selectedAngle */

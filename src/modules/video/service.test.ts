@@ -24,6 +24,7 @@ import {
 import { runProcess } from "./proc.js";
 import { readVersioned, videoDir, writeVersioned } from "./video-store.js";
 import type { RenderManifest, VideoCut, VideoEditUnits, VideoState } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 let contentId: string;
@@ -90,7 +91,7 @@ afterEach(async () => {
 
 describe("startBuild", () => {
   it("不合格的稿件直接拒（抛人话错误，不留半个状态）", async () => {
-    const c = await saveContent({ title: "t", body: "b", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] }, dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] }, dir);
     await expect(service.startBuild(c.id)).rejects.toThrow(/只服务视频平台/);
     expect(await service.getStatus(c.id)).toBeNull();
   });

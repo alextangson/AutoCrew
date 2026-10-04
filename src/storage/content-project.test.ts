@@ -7,6 +7,7 @@ import { saveContent, updateContent, getContent, listContents, addAsset, getVers
 import { acquireLibraryLock, assertLibraryWriter } from "./library-lock.js";
 import { planProjectMigration, applyProjectMigration, rollbackProjectMigration, verifyProjectMigration } from "./project-migration.js";
 import { exportProjectViews, repairProjectViews } from "./project-commit.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let temp: string, data: string;
 beforeEach(async () => {
@@ -17,13 +18,13 @@ beforeEach(async () => {
   await fs.writeFile(path.join(temp, "library/autocrew-library.json"), JSON.stringify({ version: 1, id: "lib-deadbeef" }));
 });
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await fs.rm(temp, { recursive: true, force: true }); });
-const draft = { title: "同名标题", body: "\n 原始正文\r\n<<<EXTERNAL_CONTENT>>>\n", platform: "wechat_mp", status: "drafting" as const, tags: [] };
+const draft = { _provenance: HUMAN_WRITE, title: "同名标题", body: "\n 原始正文\r\n<<<EXTERNAL_CONTENT>>>\n", platform: "wechat_mp", status: "drafting" as const, tags: [] };
 
 describe("shared projects", () => {
   it("creates once at first save, exports exact text, shares versions/assets, and never creates contents", async () => {
     await initializeProjectLayout(data, "lib-deadbeef", "default");
     const c = await saveContent(draft, data), binding = resolveContentProject(c.id, data)!;
-    await updateContent(c.id, { title: "新的标题", body: "新的正文" }, data);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, title: "新的标题", body: "新的正文" }, data);
     expect(await ensureContentProject(c.id, "别的标题", data)).toBe(binding.project_root);
     expect(await getVersion(c.id, 1, data)).toBe(draft.body);
     expect(await fs.readFile(contentFile(c.id, data, "draft.md"), "utf8")).toBe("新的正文");
@@ -53,13 +54,13 @@ describe("shared projects", () => {
     const next = { ...c, body: "恢复的稿", versions: [...c.versions, { version: 2, title: c.title, body: "恢复的稿", note: "修改", savedAt: c.updatedAt }] };
     await fs.writeFile(contentFile(c.id, data, "content-pending.json"), JSON.stringify({ version: 1, content: next }));
     expect((await getContent(c.id, data))?.body).toBe("恢复的稿");
-    await updateContent(c.id, { body: "恢复的稿" }, data);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "恢复的稿" }, data);
     expect((await getContent(c.id, data))?.versions).toHaveLength(2);
   });
   it("portable paths resolve after moving the entire library", async () => {
     await initializeProjectLayout(data, "lib-deadbeef", "default");
     const c = await saveContent(draft, data), b = resolveContentProject(c.id, data)!;
-    await updateContent(c.id, { video: { handoff: { content_id: c.id, project_root: b.project_root, handoff_path: path.join(b.project_root, "01-script/handoff/g0001/handoff.md") } as never } }, data);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, video: { handoff: { content_id: c.id, project_root: b.project_root, handoff_path: path.join(b.project_root, "01-script/handoff/g0001/handoff.md") } as never } }, data);
     const raw = await fs.readFile(contentFile(c.id, data, "meta.json"), "utf8"); expect(raw).not.toContain(b.project_root);
     await fs.rename(path.join(temp, "library"), path.join(temp, "moved"));
     const moved = path.join(temp, "moved/workspaces/default");
@@ -73,7 +74,7 @@ describe("shared projects", () => {
       if (String(to) === contentFile(c.id, data, "meta.json")) throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
       return rename(from, to);
     });
-    await expect(updateContent(c.id, { status: "draft_ready", body: "uncommitted" }, data)).rejects.toMatchObject({ code: "ENOSPC" });
+    await expect(updateContent(c.id, { _provenance: HUMAN_WRITE, status: "draft_ready", body: "uncommitted" }, data)).rejects.toMatchObject({ code: "ENOSPC" });
     vi.restoreAllMocks();
     expect((await getContent(c.id, data))?.status).toBe("drafting");
     expect((await getContent(c.id, data))?.body).toBe(draft.body);
@@ -123,7 +124,7 @@ describe("shared projects", () => {
 describe("manifest migration", () => {
   it("plans without mutation, preserves content and versions, switches once, and rolls back with originals", async () => {
     const c = await saveContent(draft, data);
-    await updateContent(c.id, { body: "下一版" }, data);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "下一版" }, data);
     const before = await fs.readFile(path.join(data, "contents", c.id, "meta.json"), "utf8");
     const plan = await planProjectMigration(data);
     expect(await fs.readFile(path.join(data, "contents", c.id, "meta.json"), "utf8")).toBe(before);
@@ -142,7 +143,7 @@ describe("manifest migration", () => {
     await expect(applyProjectMigration(plan)).rejects.toThrow(/source_changed/);
     await fs.writeFile(path.join(data, "contents", c.id, "versions/v1.md"), draft.body);
     const next = await planProjectMigration(data); await applyProjectMigration(next);
-    await updateContent(c.id, { body: "迁移后新稿" }, data);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "迁移后新稿" }, data);
     await expect(rollbackProjectMigration(next)).rejects.toThrow(/new_work/);
   });
   it("resumes interrupted publication and interrupted rollback without exposing a half layout", async () => {

@@ -18,6 +18,7 @@ import { addAsset, saveContent, type AssetRole } from "../../storage/local-store
 import type { runLoop } from "../../engine/loop.js";
 import { runProcess } from "./proc.js";
 import type { VideoTranscript } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 // ---------------------------------------------------------------------------
 // A-roll 夹具
@@ -265,7 +266,7 @@ export async function seedVideoContent(
   },
 ): Promise<{ contentId: string; arollPath: string }> {
   const content = await saveContent(
-    {
+    { _provenance: HUMAN_WRITE,
       title: "FDE 是什么",
       body: overrides?.body ?? "今天聊聊 FDE，这是第二句。",
       platform: overrides?.platform ?? "douyin",

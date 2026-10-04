@@ -5,6 +5,7 @@ import path from "node:path";
 import { parseCsv, parseMetricNumber, importPerformanceCsv, PLATFORM_MAPPINGS } from "./csv-import.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import { listOutcomes } from "./outcome-store.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 describe("parseCsv", () => {
   it("parses headers and rows", () => {
@@ -91,10 +92,10 @@ AutoCrew 之前的老视频,2025-12-01 09:00,5000,28%,100,10,5,30,3
 describe("importPerformanceCsv", () => {
   it("imports rows, matches drafts, marks historical, rejects empty", async () => {
     const c = await saveContent(
-      { title: "5个护肤技巧", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "5个护肤技巧", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:30:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:30:00.000Z" }, testDir);
 
     const report = await importPerformanceCsv("douyin", DOUYIN_CSV, "2026-06-08", testDir);
 
@@ -131,10 +132,10 @@ describe("importPerformanceCsv", () => {
     const CSV = `作品名称,发布时间,播放量,完播率\n护肤新稿,2026-06-01 10:00,1000,30%`;
     await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 未匹配 → historical
     const c = await saveContent(
-      { title: "护肤新稿", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "护肤新稿", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
     const second = await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 匹配 → contentId 键
     expect(second.matched).toBe(1);
     const outcomes = await listOutcomes(testDir);
@@ -164,10 +165,10 @@ describe("importPerformanceCsv", () => {
     const WEEK2 = `作品名称,发布时间,播放量,完播率\n护肤周报,2026-06-01 10:00,2000,35%`;
     await importPerformanceCsv("douyin", WEEK1, "2026-06-08", testDir); // 未匹配 → historical
     const c = await saveContent(
-      { title: "护肤周报", body: "正文", platform: "douyin", status: "published", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "护肤周报", body: "正文", platform: "douyin", status: "published", tags: [] },
       testDir,
     );
-    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
     const second = await importPerformanceCsv("douyin", WEEK2, "2026-06-15", testDir); // 匹配，不同数据日期
     expect(second.matched).toBe(1);
     const outcomes = await listOutcomes(testDir);
@@ -290,7 +291,7 @@ describe("wechat_mp 公众号导出导入(datacube 48001 无权限时的兜底�
 
   it("公众号内容分析导出列名 → 指标落库,标题精确匹配稿件", async () => {
     const c = await saveContent(
-      { title: "AI 写码的账", body: "b", platform: "wechat_mp", status: "published" as never, tags: [], hashtags: [] },
+      { _provenance: HUMAN_WRITE, title: "AI 写码的账", body: "b", platform: "wechat_mp", status: "published" as never, tags: [], hashtags: [] },
       mpDir,
     );
     const csv =

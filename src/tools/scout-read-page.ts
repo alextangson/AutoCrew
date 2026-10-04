@@ -20,6 +20,8 @@ import {
 } from "../modules/research/host-research-store.js";
 import { createResearchBroker, type BrokerPageResponse, type ResearchBroker, type ResearchBrokerDeps } from "../modules/research/research-broker.js";
 import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
+import { checkPerspectiveAccess } from "./scout-parallel.js";
+import type { PerspectiveName } from "../modules/research/research-job-store.js";
 
 export const MAX_PAGE_READS_IN_FLIGHT = 4;
 /** 抓取墙钟 15 秒；两分钟还没入账的在途记录只能是崩掉的进程留下的，不许它永远占着名额 */
@@ -35,6 +37,10 @@ export interface PageReadContext {
   topicId: string;
   dir: string;
   host: string;
+  /** 凭视角令牌读页的子代理：任务持有者是谁不影响并入（令牌本身就是授权） */
+  viaToken?: boolean;
+  /** 发起读页时用的视角令牌：并入前在锁内再核一次，令牌已被收回/重领就不并入 */
+  perspectiveToken?: string;
   brokerDeps?: Omit<ResearchBrokerDeps, "snapshot" | "dataDir" | "beforeNetwork">;
   view: (task: HostResearchTask) => Record<string, unknown>;
   assertTopic: (task: HostResearchTask) => Promise<void>;
@@ -100,7 +106,14 @@ export async function finishPageRead(read: DeferredPageRead, ctx: PageReadContex
       throw new HostResearchError("stale_task", "读页期间研究任务已换代，抓回的页面没有并入新任务；预扣的额度随旧任务作废");
     current.pageReads = (current.pageReads ?? []).filter((r) => r.id !== read.entry.id);
     const broker = createResearchBroker({ ...ctx.brokerDeps, dataDir: ctx.dir, snapshot: current.broker });
-    if (!page || current.host !== ctx.host) {
+    // 并入前在锁内重核视角归属：带令牌的核令牌还有效；不带令牌的核这一路没被别人认领走（读页途中可能刚被领走）
+    if (page) {
+      try { checkPerspectiveAccess(current, read.entry.perspective as PerspectiveName, ctx.perspectiveToken ?? ""); } catch (err) {
+        await save(current);
+        throw err;
+      }
+    }
+    if (!page || (current.host !== ctx.host && !ctx.viaToken)) {
       await save(current);
       if (page) throw new HostResearchError("lease_lost", `读页期间任务已由 ${current.host} 接管，页面未并入`, { holder: current.host });
       const reason = failure instanceof Error ? failure.message : String(failure);

@@ -15,6 +15,7 @@ import fs from "node:fs/promises";
 import { reconcileContent } from "./reconcile.js";
 import { registeredVideo } from "../publish/review-gate/testkit.js";
 import { makeEnv, png, put, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 const enable = () => writeEnabledVersion(env.dir);
 
@@ -76,7 +77,7 @@ describe("P2-7 启用后不再指向旧交接流程", () => {
     const { executeContentSave } = await import("../../tools/content-save.js");
     const { hostPolicy } = await import("../../../mcp/host-policy.js");
     const c = await videoContent(env, "AI 又忘了怎么办");
-    const t = await executeContentSave({ _dataDir: env.dir, action: "transition", id: c.id, target_status: "editing" }) as { error?: string };
+    const t = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "transition", id: c.id, target_status: "editing" }) as { error?: string };
     expect(t.error).toContain("record kind=aroll");
     expect(t.error).not.toContain("剪这条");
     const { executeVideo } = await import("../../tools/video.js");
@@ -95,7 +96,7 @@ describe("P2-7 启用后不再指向旧交接流程", () => {
     await enable();
     const { executeContentSave } = await import("../../tools/content-save.js");
     const r = await registeredVideo(env);
-    const s = await executeContentSave({ _dataDir: env.dir, action: "summary", id: r.id }) as Record<string, unknown>;
+    const s = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "summary", id: r.id }) as Record<string, unknown>;
     expect(s.stage).toBe("待发布");
     expect(String(s.next)).toContain("check_ids");
   });
@@ -112,7 +113,7 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
     await founderApprove(env, c.id);
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "a" });
     const before = (await getContent(c.id, env.dir))!.claim;
-    const res = await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: "改一个字", _host: "claude-code" });
+    const res = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "update", id: c.id, body: "改一个字", _host: "claude-code" });
     expect(res).toMatchObject({ ok: false, code: "script_frozen" });
     expect((await getContent(c.id, env.dir))!.claim).toEqual(before);
   });
@@ -243,7 +244,7 @@ describe("seg10", () => {
     await enable();
     const { saveContent } = await import("../../storage/local-store.js");
     const { executePrePublish } = await import("../../tools/pre-publish.js");
-    const c = await saveContent({ title: "小红书图文", body: "正文".repeat(80), platform: "xhs", status: "approved", tags: [] } as never, env.dir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "小红书图文", body: "正文".repeat(80), platform: "xhs", status: "approved", tags: [] } as never, env.dir);
     const res = await executePrePublish({ _dataDir: env.dir, content_id: c.id, _ontologyGated: true, _readOnly: true }) as { checks?: Array<{ name: string; status: string }> };
     expect(res.checks?.find((x) => x.name === "封面审核")?.status).toBe("fail");
   });
@@ -323,7 +324,7 @@ describe("seg11", () => {
     const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
     await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", publication: { status: "scheduled", scheduled_at: future, submitted_at: new Date(Date.now() + 1000).toISOString() } }] }));
     await reconcileAll(env.dir);
-    await updateContent(r.id, { status: "published", publishedAt: "2026-09-01T00:00:00Z" } as never, env.dir);
+    await updateContent(r.id, { _provenance: HUMAN_WRITE, status: "published", publishedAt: "2026-09-01T00:00:00Z" } as never, env.dir);
     const c = await withRoundPublishTime((await getContent(r.id, env.dir))!, env.dir);
     expect(c.publishedAt).toBe(future);
     expect(backupCandidates([c], new Date())).toEqual([]);
@@ -535,7 +536,7 @@ describe("seg12 归档口径", () => {
     await fs.writeFile(file, "{ not json");
     const { publishedSet } = await import("../../storage/round-publish-time.js");
     const { listContents, getContent, updateContent } = await import("../../storage/local-store.js");
-    await updateContent(bad.id, { status: "published" } as never, env.dir);
+    await updateContent(bad.id, { _provenance: HUMAN_WRITE, status: "published" } as never, env.dir);
     const set = await publishedSet(await listContents(env.dir), env.dir);
     expect(set.published.map((c) => c.id)).toContain(good.id);
     expect((await getContent(bad.id, env.dir))).toBeTruthy();

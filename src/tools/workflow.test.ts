@@ -29,6 +29,8 @@ import {
 import type { ResearchRunner, TriggerResult } from "../modules/research/research-runner.js";
 import { SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
 import { getTopic, saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
+import { TEST_FOUNDER_WORDS, asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -154,8 +156,12 @@ function fakeRunner(trigger: TriggerResult): { runner: ResearchRunner; calls: st
   };
 }
 
-const run = (params: Record<string, unknown>, deps = {}) =>
-  executeWorkflow({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+const run = async (params: Record<string, unknown>, deps = {}) => {
+  // 老测试测的不是原话本身：选卡时补上创始人原话（缺原话被拒有专门测试）
+  if (params.action === "select_angle" && params.founder_words === undefined) params = { ...params, founder_words: TEST_FOUNDER_WORDS };
+  await asFounder(testDir, params);
+  return executeWorkflow({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+};
 
 describe("workflow prepare", () => {
   it("默认宿主模式无需engine或搜索key，保留规划且状态查询只等待宿主", async () => {
@@ -500,15 +506,16 @@ describe("workflow write", () => {
     });
   });
 
-  it("明说直接写（skip_reason）也放行，并且只进留痕字段", async () => {
+  it("skip_reason 跳过选卡的通道已关闭：明确拒绝，不开写", async () => {
     const topic = await seed();
     const start = startStub();
     const res = await run(
       { action: "write", topic_id: topic.id, platform: "douyin", skip_reason: "他说不用选，先出一版看看" },
       { startGenerateScriptImpl: start },
     );
-    expect(res).toMatchObject({ ok: true });
-    expect(start.mock.calls[0][0].angleSkipReason).toBe("他说不用选，先出一版看看");
+    expect(res).toMatchObject({ ok: false });
+    expect(String(res.error)).toContain("已关闭");
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("选过卡之后放行", async () => {
@@ -540,8 +547,8 @@ describe("workflow write", () => {
 
 describe("workflow draft", () => {
   async function makeContent(status: string, over: Record<string, unknown> = {}): Promise<string> {
-    const saved = await saveContent({ title: "［生成中］横评", body: "", platform: "douyin", hashtags: [] }, testDir);
-    await updateContent(saved.id, { status, ...over } as never, testDir);
+    const saved = await saveContent({ _provenance: HUMAN_WRITE, title: "［生成中］横评", body: "", platform: "douyin", hashtags: [] }, testDir);
+    await updateContent(saved.id, { _provenance: HUMAN_WRITE, status, ...over } as never, testDir);
     return saved.id;
   }
 

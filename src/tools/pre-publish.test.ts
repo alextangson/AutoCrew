@@ -13,6 +13,7 @@ import {
 import { executePrePublish, executePrePublishTool } from "./pre-publish.js";
 import { editorialDraftHash } from "./editorial.js";
 import { claimContent } from "../storage/claims.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 vi.mock("./review.js", () => ({
   executeReview: vi.fn().mockResolvedValue({
@@ -37,26 +38,26 @@ describe("executePrePublish platform-specific checks", () => {
   for (const [platform, max] of [["xiaohongshu", 1000], ["wechat_video", 800], ["bilibili", 2000]] as const) {
     it(`${platform} 按发布简介检查长度，长口播不被压缩，超限简介仍被拦下`, async () => {
       const kit = { platform, postTitle: "这期讲什么", caption: "字".repeat(300), storyboard: [], coverText: "AI", coverPrompt: "封面", generatedAt: new Date().toISOString() };
-      const content = await saveContent({ title: "这期讲什么", body: "字".repeat(2500), platform, status: "approved", videoKit: kit }, dataDir);
+      const content = await saveContent({ _provenance: HUMAN_WRITE, title: "这期讲什么", body: "字".repeat(2500), platform, status: "approved", videoKit: kit }, dataDir);
       const params = { action: "check", content_id: content.id, _dataDir: dataDir, _readOnly: true };
       const result = await executePrePublish(params);
       expect("checks" in result && result.checks.find((c) => c.name === "发布简介字数")).toMatchObject({ status: "pass" });
       expect((await getContent(content.id, dataDir))?.body).toHaveLength(2500);
-      await updateContent(content.id, { videoKit: { ...kit, caption: "字".repeat(max + 1) } }, dataDir);
+      await updateContent(content.id, { _provenance: HUMAN_WRITE, videoKit: { ...kit, caption: "字".repeat(max + 1) } }, dataDir);
       const tooLong = await executePrePublish(params);
       expect("checks" in tooLong && tooLong.checks.find((c) => c.name === "发布简介字数")).toMatchObject({ status: "fail" });
     });
   }
 
   it("公众号仍检查全文上限，不接受无关的视频简介来绕过", async () => {
-    const content = await saveContent({ title: "公众号长文", body: "字".repeat(3001), platform: "wechat_mp", status: "approved", videoKit: { platform: "douyin", postTitle: "介绍", caption: "字".repeat(300), storyboard: [], coverText: "封面", coverPrompt: "封面", generatedAt: new Date().toISOString() } }, dataDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号长文", body: "字".repeat(3001), platform: "wechat_mp", status: "approved", videoKit: { platform: "douyin", postTitle: "介绍", caption: "字".repeat(300), storyboard: [], coverText: "封面", coverPrompt: "封面", generatedAt: new Date().toISOString() } }, dataDir);
     const result = await executePrePublish({ action: "check", content_id: content.id, _dataDir: dataDir, _readOnly: true });
     expect("checks" in result && result.checks.find((c) => c.name === "正文字数")).toMatchObject({ status: "fail" });
   });
 
   it("does not require hashtags for WeChat official-account articles", async () => {
     const content = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "一篇可以发布的公众号文章",
         body: "这是公众号正文。".repeat(120),
         platform: "wechat_mp",
@@ -76,7 +77,7 @@ describe("executePrePublish platform-specific checks", () => {
   for (const platform of ["wechat_video", "bilibili"]) {
     it(`requires an approved cover for ${platform}`, async () => {
       const content = await saveContent(
-        {
+        { _provenance: HUMAN_WRITE,
           title: "这一年 AI 如何重写工作与生活",
           body: "这是一段符合平台长度要求的视频正文。".repeat(30),
           platform,
@@ -99,7 +100,7 @@ describe("发布前检查 · 阶段门", () => {
   /** 六项内容检查全过的视频稿：唯一还能拦住它的就是阶段门 */
   const readyVideo = async (status: "approved" | "cover_pending") => {
     const c = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "这一年 AI 如何重写工作与生活",
         body: "这是一段符合平台长度要求的视频正文。".repeat(30),
         platform: "douyin",
@@ -115,7 +116,7 @@ describe("发布前检查 · 阶段门", () => {
     );
     await approveCoverVariant(c.id, "a", dataDir);
     if (status === "cover_pending") {
-      await updateContent(c.id, { videoDone: { renderedRevision: 1, at: "2026-08-25T00:00:00.000Z" } }, dataDir);
+      await updateContent(c.id, { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 1, at: "2026-08-25T00:00:00.000Z" } }, dataDir);
       await transitionStatus(c.id, "editing", { viaHandoff: true }, dataDir);
       await transitionStatus(c.id, "cover_pending", undefined, dataDir);
     }
@@ -188,7 +189,7 @@ describe("video_kit 宿主发布包", () => {
   const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了", title_candidates: CANDIDATES, title_method: "identity-call" };
   // 「剪辑中」只能经交接进入（§13.4-C）：要 editing 的先建在已过审，再按交接的方式推进
   const mkVideo = async (platform = "xiaohongshu", extra: Record<string, unknown> = {}) => {
-    const c = await saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra, ...(extra.status === "editing" ? { status: "approved" } : {}) }, dataDir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra, ...(extra.status === "editing" ? { status: "approved" } : {}) }, dataDir);
     if (extra.status !== "editing") return c;
     const moved = await transitionStatus(c.id, "editing", { viaHandoff: true }, dataDir);
     if (!moved.content) throw new Error(moved.error);
@@ -257,7 +258,7 @@ describe("video_kit 宿主发布包", () => {
     const c = await mkVideo("douyin");
     expect(await saveKit(c.id, "xiaohongshu")).toMatchObject({ ok: false, code: "platform_mismatch", expected_platform: "douyin" });
     expect(await executePrePublishTool({ action: "video_kit", content_id: c.id, kit: KIT, _dataDir: dataDir })).toMatchObject({ ok: false, code: "platform_mismatch" });
-    const mp = await saveContent({ title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, dataDir);
+    const mp = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, dataDir);
     expect(await saveKit(mp.id, "wechat_mp")).toMatchObject({ ok: false, code: "not_video_platform" });
     expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
   });
@@ -273,7 +274,7 @@ describe("video_kit 宿主发布包", () => {
     const c = await mkVideo();
     await saveKit(c.id, "xiaohongshu");
     expect(await check(c.id)).toHaveProperty("checks");
-    await updateContent(c.id, { body: "改过的口播正文。".repeat(300) }, dataDir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "改过的口播正文。".repeat(300) }, dataDir);
     const r = await check(c.id);
     expect(r).toMatchObject({
       ok: false,

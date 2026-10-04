@@ -12,6 +12,7 @@ import { executeReviewDesk } from "./host-review.js";
 import { updateProfile } from "../modules/profile/creator-profile.js";
 import { draftingNote, draftView } from "./workflow-views.js";
 import { claimContent } from "../storage/claims.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 let engineLoad: ReturnType<typeof vi.spyOn>;
@@ -23,7 +24,7 @@ afterEach(async () => { vi.restoreAllMocks(); await fs.rm(dir, { recursive: true
 const body = "清晨我们一起给菜苗浇水。邻居递过水壶，告诉我这一排土还湿着。以前我们只在电梯里点头，现在开始商量谁来照顾菜园。";
 const task = "公众号；写给第一次参加社区菜园的居民。按清晨浇水的经历自然展开，不反问，不强加关注结尾。";
 async function seed() {
-  const content = await saveContent({ title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+  const content = await saveContent({ _provenance: HUMAN_WRITE, title: "菜园的清晨", body: "等待写稿", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
   const pack: ReadyPack = {
     packId: "writing-pack-1", issuedAt: "2026-09-22T00:00:00Z", state: "ready", host: "claude", briefHash: "provided", angleId: "user-direction",
     ledger: createEvidenceLedger().snapshot(), ledgerBudget: { max: 3, used: 0 }, repair: { max: 0, used: 0 }, reviewRounds: 0, attempts: {},
@@ -34,7 +35,7 @@ async function seed() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: "claude" } }, dir);
   return { content, pack, args: { contentId: content.id, packId: pack.packId, attempt: 1, title: "菜园的清晨", body, host: "claude" } };
 }
 const desk = (args: Record<string, unknown>, host = "claude") => executeReviewDesk({ ...args, _host: host, _dataDir: dir });
@@ -149,7 +150,7 @@ describe("host review validation and fencing", () => {
     const { content, pack, submission } = await pending();
     expect(await desk({ ...submission, attempt: 2 })).toMatchObject({ ok: false, status: "stale_review" });
     await writePack(content.id, { ...pack, packId: "new-pack", attempts: {} }, dir);
-    await updateContent(content.id, { pack: { packId: "new-pack", host: "claude", issuedAt: "now" } }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: "new-pack", host: "claude", issuedAt: "now" } }, dir);
     expect(await desk(submission)).toMatchObject({ ok: false, status: "stale_review" });
   });
 
@@ -240,7 +241,7 @@ it("结论写回前编辑器改稿，CAS不把旧审阅结果套到新正文", a
   const storage = await import("../storage/local-store.js");
   const original = storage.updateContentIfDraftMatches;
   vi.spyOn(storage, "updateContentIfDraftMatches").mockImplementationOnce(async (...args) => {
-    await updateContent(content.id, { body: "编辑器在结论落盘前保存了另一份稿件。" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: "编辑器在结论落盘前保存了另一份稿件。" }, dir);
     return original(...args);
   });
   expect(await desk(submission)).toMatchObject({ ok: false, status: "stale_review" });
@@ -255,7 +256,7 @@ it.each([{ issues: [] }, { issues: [issue] }])("结论落盘后推进前发生�
   const storage = await import("../storage/local-store.js");
   const original = storage.transitionStatus;
   vi.spyOn(storage, "transitionStatus").mockImplementationOnce(async (...params) => {
-    await updateContent(content.id, { body: "编辑器在审稿结论落盘之后保存的新稿件。" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, body: "编辑器在审稿结论落盘之后保存的新稿件。" }, dir);
     return original(...params);
   });
   expect(await desk({ ...submission, issues })).toMatchObject({ ok: false, status: "stale_review" });

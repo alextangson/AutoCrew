@@ -19,9 +19,11 @@ import type { GeneratedScript } from "./generate-script.js";
 import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCard, type ResearchBrief } from "../research/brief-store.js";
 import { pendingPerspectives, topicHashOf, upsertJob, type ResearchJob } from "../research/research-job-store.js";
 import { saveSearchConfig } from "../research/search-provider.js";
-import { getContent, saveTopic, updateTopic, type Topic } from "../../storage/local-store.js";
+import { getContent, saveTopic, updateTopic, type Topic, getTopic } from "../../storage/local-store.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
+import { recordFounderAngle } from "../research/angle-gate.js";
 
 let testDir: string;
 const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] as const;
@@ -29,6 +31,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-evidence-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -51,7 +54,7 @@ afterEach(async () => {
 
 const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比主流工具的真实提效";
-const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
+const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const, topicId: "topic-gentest" };
 
 /** 不含任何数字的稿：数字硬门对它没有意见 */
 const CLEAN_PAYLOAD = {
@@ -126,7 +129,7 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 }
 
 async function seedResearched(brief = makeBrief()): Promise<Topic> {
-  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
   await saveBrief(topic.id, brief, testDir);
   const job: ResearchJob = {
     topicId: topic.id,
@@ -144,7 +147,7 @@ async function seedResearched(brief = makeBrief()): Promise<Topic> {
 async function pick(topicId: string, card: AngleCard): Promise<void> {
   await updateTopic(
     topicId,
-    { selectedAngle: { briefRevision: 1, angleId: card.id, card, selectedAt: "2026-08-24T11:00:00.000Z" } },
+    { selectedAngle: { briefRevision: 1, angleId: card.id, card, selectedAt: "2099-01-01T00:00:00.000Z", chosenBy: "founder", founderWords: "就这张" }, founderAngle: undefined },
     testDir,
   );
 }
@@ -240,6 +243,7 @@ describe("定向补证只为选中的 v3 卡跑", () => {
     await configureSearch();
     const topic = await seedResearched();
     await pick(topic.id, V3_CARD);
+    await recordFounderAngle((await getTopic(topic.id, testDir))!, "就写我自己那次翻车", "就写这个", testDir);
 
     const { seen } = await write({ ...TEST_REQ, topicId: topic.id, direction: "就写我自己那次翻车" });
     expect(seen.targeted).toHaveLength(0);
@@ -249,14 +253,9 @@ describe("定向补证只为选中的 v3 卡跑", () => {
     await configureSearch();
     const topic = await seedResearched();
 
-    const { seen, warns } = await write({
-      ...TEST_REQ,
-      topicId: topic.id,
-      angleSkipReason: "这条我心里有数，先写了再说",
-    });
-    expect(seen.targeted).toHaveLength(0);
-    expect(seen.writer[0].logMeta?.angleSkipReason).toBe("这条我心里有数，先写了再说");
-    expect(warns.some((w) => w.includes("跳过角度点选"))).toBe(true);
+    // 跳过选卡的通道已关闭：第一篇带 angleSkipReason 在准入就被拒，补证链和写手都不会跑
+    await expect(write({ ...TEST_REQ, topicId: topic.id, angleSkipReason: "这条我心里有数，先写了再说" }))
+      .rejects.toMatchObject({ refusal: { code: "skip_removed" } });
   });
 
   it("压根没有选题 → 整条补证链不参与，写手也没有 find_evidence", async () => {
@@ -432,7 +431,7 @@ describe("写手回合预算 = 4 + 查证额度 + 修复轮×2", () => {
   });
 
   it("公众号包有 gate（修复轮 2）→ 同一个公式，同一个数", async () => {
-    const { seen } = await write({ topic: TOPIC_TITLE, platform: "wechat_mp" as const }, [
+    const { seen } = await write({ topic: TOPIC_TITLE, platform: "wechat_mp" as const, topicId: "topic-gentest" }, [
       { ...CLEAN_PAYLOAD, body: `${CLEAN_PAYLOAD.body}${"字".repeat(1600)}` },
     ]);
     expect(seen.writer[0].maxTurns).toBe(4 + 3 + 2 * 2);

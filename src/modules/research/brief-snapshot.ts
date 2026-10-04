@@ -22,7 +22,7 @@
  */
 import { createHash } from "node:crypto";
 import { loadBrief, type ResearchBrief } from "./brief-store.js";
-import { getJob } from "./research-job-store.js";
+import { getJob, getJobStrict } from "./research-job-store.js";
 
 export interface BriefSnapshot {
   brief: ResearchBrief;
@@ -80,4 +80,19 @@ export async function resolveEffectiveBrief(
     );
     return null;
   }
+}
+
+/**
+ * 严格版「当前有效简报」（给选题会闸口用）：台账任何一行坏、指针指向的简报读不出或对不上，都抛错，
+ * 不降级成「没有简报」——那会把读故障伪装成「选择过期」，或让旧记录复活。
+ */
+export async function resolveEffectiveBriefStrict(topicId: string, dataDir: string): Promise<BriefSnapshot | null> {
+  const job = await getJobStrict(topicId, dataDir);
+  if (!job || job.briefRevision === undefined) return null;
+  const problems: string[] = [];
+  const brief = await loadBrief(topicId, job.briefRevision, dataDir, (m) => problems.push(m));
+  if (problems.length) throw new Error(problems.join("；"));
+  if (!brief) throw new Error(`台账指向简报 v${job.briefRevision}，但简报文件不在`);
+  if (brief.revision !== job.briefRevision) throw new Error(`简报内容与台账版本不符（指针 v${job.briefRevision}，文件内记 v${brief.revision}）`);
+  return { brief, revision: brief.revision, hash: briefHash(brief) };
 }

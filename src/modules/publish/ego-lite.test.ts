@@ -16,6 +16,7 @@ import {
   prepareEgoLitePublish,
   type EgoLiteVideoPlatform,
 } from "./ego-lite.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -29,7 +30,7 @@ afterEach(async () => {
 
 async function readyContent(platform: EgoLiteVideoPlatform) {
   const content = await saveContent(
-    {
+    { _provenance: HUMAN_WRITE,
       title: "原稿标题",
       body: "原稿正文".repeat(80),
       platform,
@@ -74,7 +75,7 @@ async function readyContent(platform: EgoLiteVideoPlatform) {
   await approveCoverVariant(content.id, "a", dir);
   await updateContent(
     content.id,
-    {
+    { _provenance: HUMAN_WRITE,
       videoDone: { renderedRevision: 2, at: "2026-08-31T00:00:00.000Z" },
       // 发布器只认登记记录的素材身份（本体 §5 删了「最新视频素材」回退）
       video: { final: { asset_filename: "final-v2.mp4", sha256: createHash("sha256").update("video").digest("hex") } } as never,
@@ -128,7 +129,7 @@ describe("prepareEgoLitePublish", () => {
 
   it("视频或批准封面缺失时失败关闭，不生成可执行发布包", async () => {
     const content = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "标题",
         body: "正文".repeat(80),
         platform: "douyin",
@@ -147,13 +148,13 @@ describe("prepareEgoLitePublish", () => {
     await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/不再拿最新的视频素材顶上/);
 
     // 登记了成片、但没有批准的封面
-    await updateContent(content.id, { video: { final: { asset_filename: "only-video.mp4", sha256: createHash("sha256").update("video").digest("hex") } } as never }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, video: { final: { asset_filename: "only-video.mp4", sha256: createHash("sha256").update("video").digest("hex") } } as never }, dir);
     await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/已批准的封面/);
   });
 
   it("拒绝四个平台之外的稿件", async () => {
     const content = await saveContent(
-      { title: "公众号", body: "正文", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] },
+      { _provenance: HUMAN_WRITE, title: "公众号", body: "正文", platform: "wechat_mp", status: "approved", tags: [], hashtags: [] },
       dir,
     );
     await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/只支持/);

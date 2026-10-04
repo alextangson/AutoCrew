@@ -38,6 +38,7 @@ import {
 } from "./local-store.js";
 import { withCallerSession } from "../runtime/run-log.js";
 import { hashClaimToken } from "./claim-token.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let dir: string;
 
@@ -56,7 +57,7 @@ const CUT_DONE = { renderedRevision: 1, at: "2026-09-29T00:00:00.000Z" };
 async function seed(status: ContentStatus = "drafting", platform = "wechat_mp"): Promise<Content> {
   // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
   const saved = await saveContent(
-    { title: "AI 写码的账", body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
+    { _provenance: HUMAN_WRITE, title: "AI 写码的账", body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
     dir,
   );
   if (status !== "editing") return saved;
@@ -70,7 +71,7 @@ async function expireLease(id: string): Promise<void> {
   const content = await getContent(id, dir);
   await updateContent(
     id,
-    { claim: { ...content!.claim!, leaseUntil: new Date(Date.now() - 60_000).toISOString() } },
+    { _provenance: HUMAN_WRITE, claim: { ...content!.claim!, leaseUntil: new Date(Date.now() - 60_000).toISOString() } },
     dir,
   );
 }
@@ -267,7 +268,7 @@ describe("交接台账（五处）", () => {
     await claimContent(c.id, "editor", "codex", dir);
     const updated = await updateContent(
       c.id,
-      { videoDone: { renderedRevision: 2, at: new Date().toISOString() } },
+      { _provenance: HUMAN_WRITE, videoDone: { renderedRevision: 2, at: new Date().toISOString() } },
       dir,
     );
     expect(updated?.handoffs?.at(-1)).toMatchObject({ from: "editor", to: "cover", by: "codex" });
@@ -299,7 +300,7 @@ describe("交接即释放（真机 2026-09-06）", () => {
     const { claimContent } = await import("./claims.js");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-claims-handoff-"));
     try {
-      const c = await saveContent({ title: "t", body: "b", platform: "wechat", status: "drafting" }, dir);
+      const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", platform: "wechat", status: "drafting" }, dir);
       const claimed = await claimContent(c.id, "writer", "claude-code", dir);
       expect(claimed.ok).toBe(true);
       expect((await transitionStatus(c.id, "draft_ready", { host: "claude-code" }, dir)).ok).toBe(true);
@@ -307,7 +308,7 @@ describe("交接即释放（真机 2026-09-06）", () => {
       expect(after?.claim).toBeUndefined();
       expect(after?.handoffs?.at(-1)).toMatchObject({ from: "writer", to: "creator" });
       // 封面师的认领在过审时不该被清：过审的交接是 creator → publisher/editor
-      const c2 = await saveContent({ title: "t2", body: "b", platform: "wechat", status: "reviewing" }, dir);
+      const c2 = await saveContent({ _provenance: HUMAN_WRITE, title: "t2", body: "b", platform: "wechat", status: "reviewing" }, dir);
       expect((await claimContent(c2.id, "cover", "codex", dir)).ok).toBe(true);
       expect((await transitionStatus(c2.id, "approved", {}, dir)).ok).toBe(true);
       expect((await getContent(c2.id, dir))?.claim?.employee).toBe("cover");
@@ -321,7 +322,7 @@ describe("交接即释放（真机 2026-09-06）", () => {
 /** 把持有会话做成闲置满 11 分钟：接管门槛看的是 lastWriteAt */
 async function makeIdle(contentId: string, dir: string, minutes = 11) {
   const c = (await getContent(contentId, dir))!;
-  await updateContent(contentId, { claim: { ...c.claim!, lastWriteAt: new Date(Date.now() - minutes * 60_000).toISOString() } }, dir);
+  await updateContent(contentId, { _provenance: HUMAN_WRITE, claim: { ...c.claim!, lastWriteAt: new Date(Date.now() - minutes * 60_000).toISOString() } }, dir);
 }
 
 describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {

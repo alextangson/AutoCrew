@@ -40,6 +40,7 @@ import { ToolRunner } from "./src/runtime/tool-runner.js";
 import { EventBus } from "./src/runtime/events.js";
 import { HookManager } from "./src/runtime/hooks.js";
 import { reviseDraft } from "./src/modules/writing/draft-revision.js";
+import { aiContentWriteRefusal } from "./src/modules/research/angle-gate.js";
 
 // --- Tool Registry ---
 
@@ -276,6 +277,9 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
           content_id: contentId, draft_hash: inspected.draft_hash, feedback: instruction,
           next_action: { tool: "autocrew_editorial", params: { action: "feedback", content_id: contentId, draft_hash: inspected.draft_hash, feedback: instruction, scope: "draft" }, message: "以本次用户反馈的稳定event_id及user_confirmed:true记录原话，再按反馈回执重领原稿writer包；局部修改传selection，保留未修改部分。" } };
       }
+      // 选题会闸口：后台改写一张占位稿 = 在给它的选题开第一篇；真稿的修订放行
+      const refused = await aiContentWriteRefusal(contentId, params._dataDir as string | undefined);
+      if (refused) return refused;
       const result = await reviseDraft(contentId, instruction, params._dataDir as string | undefined);
       return {
         ok: true,

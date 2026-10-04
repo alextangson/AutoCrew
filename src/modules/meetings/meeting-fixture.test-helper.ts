@@ -8,6 +8,7 @@ import { acquireLibraryLock } from "../../storage/library-lock.js";
 import { getContent, saveContent, saveTopic, type Content, type ContentStatus } from "../../storage/local-store.js";
 import { commitProjectContent } from "../../storage/project-commit.js";
 import type { PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 export interface Fixture { temp: string; data: string; release: () => void }
 
@@ -33,7 +34,7 @@ export async function dropFixture(f: Fixture): Promise<void> {
 }
 
 export async function makeContent(data: string, title: string, patch: Partial<Content> = {}, status: ContentStatus = "published"): Promise<Content> {
-  const c = await saveContent({ title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
   const next = { ...(await getContent(c.id, data))!, status, ...patch };
   await commitProjectContent(next, data);
   return next;

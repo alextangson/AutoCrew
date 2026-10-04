@@ -22,13 +22,14 @@ import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await env.cleanup(); });
 
 const TITLE = "测试用短视频";
-const agent = (p: Record<string, unknown>, host = "claude-code") => executeContentSave({ _dataDir: env.dir, _host: host, ...p }) as Promise<Record<string, unknown>>;
+const agent = (p: Record<string, unknown>, host = "claude-code") => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: host, ...p }) as Promise<Record<string, unknown>>;
 const items = async (contentId?: string) => (await readInbox(env.dir, contentId ? { contentId } : {})).items;
 const itemOf = async (id: string, contentId?: string) => (await items(contentId)).find((i) => i.item_id === id || i.item_id === scopedId(i.content_id ?? "", id));
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;

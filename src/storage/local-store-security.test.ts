@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addAsset, getContent, getTopic, getVersion, removeAsset, saveContent } from "./local-store.js";
+import { HUMAN_WRITE } from "./first-body-guard.js";
 
 let dataDir: string;
 
@@ -23,7 +24,7 @@ describe("local store filesystem boundaries", () => {
 
   it("rejects traversal filenames on asset writes and deletes", async () => {
     const content = await saveContent(
-      { title: "安全测试", body: "正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "安全测试", body: "正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       dataDir,
     );
     await fs.writeFile(path.join(dataDir, "source.txt"), "source", "utf-8");

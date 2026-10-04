@@ -18,6 +18,7 @@ import { ensureArollFixture, fixtureTranscript, seedBgmAsset, seedVideoContent }
 import { promoteStaging, readVersioned, readVideoAssets, videoDir } from "./video-store.js";
 import { readJson } from "../../storage/json-atomic.js";
 import type { RenderManifest, VideoCut } from "./types.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 /** 最小可用发布件：标题卡只读 coverText，其余字段只为满足类型 */
 function videoKit(coverText: string) {
@@ -295,7 +296,7 @@ describe("assembleVideo", () => {
   });
 
   it("有 videoKit.coverText → 标题卡进 manifest（数据源是封面大字，不是发布标题）", async () => {
-    await updateContent(contentId, { videoKit: videoKit("删代码年入百万") }, dir);
+    await updateContent(contentId, { _provenance: HUMAN_WRITE, videoKit: videoKit("删代码年入百万") }, dir);
     const r = await assembleVideo(input());
     expect(r.ok).toBe(true);
     // 成片只有 2000ms，标题卡按总长封顶——它是覆盖层，不许比片子还长

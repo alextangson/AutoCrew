@@ -15,6 +15,7 @@ import { EMPTY_OWN_MATERIAL } from "../modules/research/own-material.js";
 import { createEvidenceLedger, seedLedgerFromUserClaims } from "../modules/research/evidence-ledger.js";
 import { getContent, saveContent, saveTopic, updateContent } from "../storage/local-store.js";
 import { claimContent } from "../storage/claims.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 const RESEARCH = "每周开 3 场例会；每场会后整理纪要要 40 分钟，用了自动纪要后每场只要 10 分钟。";
 let dir: string;
@@ -29,7 +30,7 @@ const scout = (args: Record<string, unknown>) =>
 /** 一篇 provided 模式、已备好包的稿：台账里只有播种的用户材料 */
 async function seedProvidedDraft() {
   const content = await saveContent(
-    { title: "草稿", body: "", topicId, platform: "douyin", status: "drafting", tags: [] },
+    { _provenance: HUMAN_WRITE, title: "草稿", body: "", topicId, platform: "douyin", status: "drafting", tags: [] },
     dir,
   );
   const ledger = createEvidenceLedger();
@@ -44,7 +45,7 @@ async function seedProvidedDraft() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
   return { contentId: content.id, pack, target: { content_id: content.id, pack_id: pack.packId } };
 }
 
@@ -135,7 +136,7 @@ describe("claim_offline 带稿件目标、不带 task_id", () => {
 describe("导入稿补证入口（§13.4-B）：manual_import 的 draft_ready 稿按 content_id 记账", () => {
   const IMPORT = { kind: "manual_import" as const, importedAt: "2026-09-27T00:00:00.000Z", reason: "本地稿导入" };
   const seedImport = (extra: Record<string, unknown> = {}) =>
-    saveContent({ title: "导入稿", body: "已录口播：一场省三十分钟", topicId, platform: "douyin", status: "draft_ready", tags: [], writingSource: IMPORT, ...extra }, dir);
+    saveContent({ _provenance: HUMAN_WRITE, title: "导入稿", body: "已录口播：一场省三十分钟", topicId, platform: "douyin", status: "draft_ready", tags: [], writingSource: IMPORT, ...extra }, dir);
 
   it("不带包号的 claim_offline 记进稿件台账，不造写作包", async () => {
     const content = await seedImport();
@@ -168,7 +169,7 @@ describe("导入稿补证入口（§13.4-B）：manual_import 的 draft_ready �
   });
 
   it("其余拒绝不变：非导入稿不带包号、导入稿已离开 draft_ready、cite 不带任务", async () => {
-    const plain = await saveContent({ title: "普通稿", body: "正文", topicId, platform: "douyin", status: "draft_ready", tags: [] }, dir);
+    const plain = await saveContent({ _provenance: HUMAN_WRITE, title: "普通稿", body: "正文", topicId, platform: "douyin", status: "draft_ready", tags: [] }, dir);
     expect(await scout({ action: "claim_offline", content_id: plain.id, claim: "x", reason: "y" })).toMatchObject({ code: "task_required" });
     const prepared = await scout({ action: "prepare", platform: "douyin", requirements: "核出处" });
     expect(await scout({ action: "claim_offline", task_id: prepared.task_id, content_id: plain.id, claim: "x", reason: "y" })).toMatchObject({ code: "missing_pack" });

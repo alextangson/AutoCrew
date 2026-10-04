@@ -16,6 +16,8 @@ import { saveTopic, updateTopic, saveContent, updateContent, getContent } from "
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
 import { claimContent } from "../storage/claims.js";
 import * as config from "../engine/config.js";
+import { asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 let topicId: string;
@@ -83,6 +85,7 @@ function angles(ref = "ev-1", anchor = false) {
       },
     ].map((c) => ({
       ...c,
+      why_may_perform: "无数据依据",
       primary_persona: "grow",
       evidence_level: "grounded",
       core_evidence_ids: [ref],
@@ -327,7 +330,7 @@ describe("task identity and engine isolation", () => {
 
 async function seedPack() {
   const content = await saveContent(
-    { title: "草稿", body: "等待写稿", topicId, platform: "wechat_mp", status: "drafting", tags: [] },
+    { _provenance: HUMAN_WRITE, title: "草稿", body: "等待写稿", topicId, platform: "wechat_mp", status: "drafting", tags: [] },
     dir,
   );
   const pack: ReadyPack = {
@@ -357,7 +360,7 @@ async function seedPack() {
     },
   };
   await writePack(content.id, pack, dir);
-  await updateContent(content.id, { pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
+  await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: pack.packId, issuedAt: pack.issuedAt, host: pack.host } }, dir);
   return { content, pack, target: { content_id: content.id, pack_id: pack.packId } };
 }
 
@@ -384,7 +387,7 @@ describe("host evidence supplementation", () => {
     expect((await getContent(content.id, dir))?.evidenceLedger?.entries).toHaveLength(12);
     await prepare({ force: true });
     await writePack(content.id, { ...pack, packId: "pack-2" }, dir);
-    await updateContent(content.id, { pack: { packId: "pack-2", issuedAt: "now", host: "claude" } }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, pack: { packId: "pack-2", issuedAt: "now", host: "claude" } }, dir);
     expect(
       await run("claim_offline", { ...claimed, pack_id: "pack-2", claim: "第十三条", reason: "无原页" }),
     ).toMatchObject({ code: "evidence_quota" });
@@ -400,9 +403,9 @@ describe("host evidence supplementation", () => {
     await writePack(content.id, { ...pack, host: "other" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "stale_pack" });
     await writePack(content.id, pack, dir);
-    await updateContent(content.id, { topicId: "topic-123456-other" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, topicId: "topic-123456-other" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "wrong_content" });
-    await updateContent(content.id, { topicId, status: "approved" }, dir);
+    await updateContent(content.id, { _provenance: HUMAN_WRITE, topicId, status: "approved" }, dir);
     expect(await run("cite", args)).toMatchObject({ code: "content_not_writable" });
     expect(await loadHostEvidence(content.id, dir)).toEqual([]);
     expect((await readPack(content.id, dir))?.ledger.entries).toEqual([]);
@@ -455,8 +458,10 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     throw new Error("host pipeline must never call runLoop");
   });
   const engine = vi.spyOn(config, "loadEngineConfig");
-  const writer = (args: Record<string, unknown>) =>
-    executeWriter({ ...args, _host: "claude", _dataDir: dir }, { runLoopImpl: loop, onWarn: () => {} });
+  const writer = async (args: Record<string, unknown>) => {
+    await asFounder(dir, args);
+    return executeWriter({ ...args, _host: "claude", _dataDir: dir }, { runLoopImpl: loop, onWarn: () => {} });
+  };
   await prepare({ direction: "从清晨浇水的经历自然展开" });
   await readPage();
   await perspectives();
@@ -557,4 +562,154 @@ it("超长网页按完整字符分页，复制消毒后的标点、链接与空�
     await run("cite", { source_id: "p1", claim: "不能任意替换标点", quote: copied.replace("：“", ':"') }),
   ).toMatchObject({ code: "quote_not_verified" });
   expect(deps.brokerDeps!.fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+describe("选题会：五路并行调研（分视角令牌）", () => {
+  it("两个会话各领一个视角并行做；同一视角二次认领被拒；凭令牌提交不受任务持有者限制", async () => {
+    await prepare();
+    await readPage();
+    const a = await run("claim", { perspective: "audience" }, "claude");
+    const b = await run("claim", { perspective: "counter" }, "sub-agent-b");
+    expect(a).toMatchObject({ ok: true, perspective: "audience", pack: { stage: "perspective", perspective: "audience" } });
+    expect(b).toMatchObject({ ok: true, perspective: "counter" });
+    expect(await run("claim", { perspective: "audience" }, "sub-agent-c")).toMatchObject({ ok: false, code: "perspective_claimed", holder: "claude" });
+    // 不带令牌提交被别人领走的视角 → 拒
+    expect(await run("perspective", { perspective: "counter", payload: perspective() }, "claude")).toMatchObject({ ok: false, code: "perspective_claimed" });
+    // 另一宿主凭令牌提交：不撞 task_owned
+    const [ra, rb] = await Promise.all([
+      run("perspective", { perspective: "audience", payload: perspective(), perspective_token: a.perspective_token }, "claude"),
+      run("perspective", { perspective: "counter", payload: perspective(), perspective_token: b.perspective_token }, "sub-agent-b"),
+    ]);
+    expect(ra).toMatchObject({ ok: true });
+    expect(rb).toMatchObject({ ok: true });
+    const status = await run("status");
+    expect(status.perspectives).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "audience", status: "submitted" }),
+      expect.objectContaining({ name: "counter", status: "submitted" }),
+      expect.objectContaining({ name: "account", status: "submitted" }),
+    ]));
+    // 令牌只认自己的视角
+    expect(await run("perspective", { perspective: "evidence", payload: perspective(), perspective_token: a.perspective_token }, "sub-agent-c")).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+  });
+
+  it("失败的视角一直摆在回执里，可单独重领重跑；不齐就不许综合", async () => {
+    await prepare();
+    await readPage();
+    const claim = await run("claim", { perspective: "benchmark" }, "sub-agent");
+    expect(await run("fail_perspective", { perspective: "benchmark", reason: "找不到可比的对标账号", perspective_token: claim.perspective_token }, "sub-agent"))
+      .toMatchObject({ ok: true, perspectives: expect.arrayContaining([expect.objectContaining({ name: "benchmark", status: "failed", last_failure: "找不到可比的对标账号" })]) });
+    for (const p of ["audience", "evidence", "counter"]) expect(await run("perspective", { perspective: p, payload: perspective() })).toMatchObject({ ok: true });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: false, code: "perspectives_incomplete", missing: ["benchmark"] });
+    const again = await run("claim", { perspective: "benchmark" }, "sub-agent-2");
+    expect(again).toMatchObject({ ok: true, perspective_token: expect.stringMatching(/^pt-/) });
+    expect(await run("perspective", { perspective: "benchmark", payload: perspective(), perspective_token: again.perspective_token }, "sub-agent-2")).toMatchObject({ ok: true });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: true, status: "needs_angles" });
+  });
+
+  it("账号数据视角失败 → 四路齐也拒综合（4/5）；account_data 重跑成功后放行", async () => {
+    await prepare();
+    await readPage();
+    await withHostResearchLock(topicId, dir, async (task, save) => {
+      task!.accountData = { status: "failed", reason: "账号数据读取失败：测试注入", builtAt: new Date().toISOString() };
+      await save(task!);
+    });
+    await perspectives();
+    expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "account", status: "failed", last_failure: expect.stringContaining("测试注入") })]) });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: false, code: "perspectives_incomplete", missing: ["account"] });
+    expect(await run("account_data")).toMatchObject({ ok: true, account_data: { status: "ok" } });
+    expect(await run("synthesize", { payload: synthesis() })).toMatchObject({ ok: true, status: "needs_angles" });
+  });
+
+  it("立意卡每张都要 why_may_perform（引账号数据或写「无数据依据」）", async () => {
+    await prepare();
+    await readPage();
+    await perspectives();
+    const synth = await run("synthesize", { payload: synthesis() });
+    expect(synth.pack).toMatchObject({ stage: "angles", account_data: expect.stringContaining("账号数据") });
+    const bare = angles();
+    bare.candidates = bare.candidates.map(({ why_may_perform: _drop, ...c }) => c) as typeof bare.candidates;
+    expect(await run("angles", { payload: bare })).toMatchObject({ ok: false, code: "missing_why_may_perform" });
+    expect(await run("angles", { payload: angles() })).toMatchObject({ ok: true, status: "ready" });
+  });
+
+  it("视角令牌闲置超时 → 回执标 timed_out，别人可以重领", async () => {
+    await prepare();
+    const claim = await run("claim", { perspective: "audience" }, "sub-agent");
+    await withHostResearchLock(topicId, dir, async (task, save) => {
+      task!.perspectiveClaims!.audience!.touchedAt = "2026-01-01T00:00:00.000Z";
+      await save(task!);
+    });
+    expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "audience", status: "timed_out" })]) });
+    expect(await run("perspective", { perspective: "audience", payload: perspective(), perspective_token: claim.perspective_token }, "sub-agent")).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+    expect(await run("claim", { perspective: "audience" }, "sub-agent-2")).toMatchObject({ ok: true });
+  });
+});
+
+it("读页途中视角令牌被收回（超时后别人重领）→ 抓回的页不并入", async () => {
+  await prepare();
+  const claim = await run("claim", { perspective: "evidence" }, "sub-agent");
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  deps.brokerDeps!.fetchImpl = vi.fn(async (url: string) => {
+    await gate;
+    return { finalUrl: url, text: `${QUOTE}\n${"其他记录。".repeat(10)}`, title: "种植记录", imageCandidates: [] };
+  });
+  const reading = run("read_page", { perspective: "evidence", url: URL, perspective_token: claim.perspective_token }, "sub-agent");
+  await new Promise((r) => setTimeout(r, 50));
+  await withHostResearchLock(topicId, dir, async (task, save) => {
+    task!.perspectiveClaims!.evidence!.touchedAt = "2026-01-01T00:00:00.000Z";
+    await save(task!);
+  });
+  expect(await run("claim", { perspective: "evidence" }, "sub-agent-2")).toMatchObject({ ok: true });
+  release();
+  expect(await reading).toMatchObject({ ok: false, code: "perspective_token_invalid" });
+  expect((await run("status")).sources).toEqual([]);
+});
+
+it("不带令牌的读页途中这一路被别人认领 → 抓回的页不并入", async () => {
+  await prepare();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  deps.brokerDeps!.fetchImpl = vi.fn(async (url: string) => {
+    await gate;
+    return { finalUrl: url, text: `${QUOTE}\n${"其他记录。".repeat(10)}`, title: "种植记录", imageCandidates: [] };
+  });
+  const reading = run("read_page", { perspective: "evidence", url: URL }, "claude");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(await run("claim", { perspective: "evidence" }, "sub-agent")).toMatchObject({ ok: true });
+  release();
+  expect(await reading).toMatchObject({ ok: false, code: "perspective_claimed" });
+  expect((await run("status")).sources).toEqual([]);
+});
+
+it("凭令牌提交的视角被接受后，同一份提交原样重发 → 幂等重放；换一份内容 → 拒", async () => {
+  await prepare();
+  await readPage();
+  const claim = await run("claim", { perspective: "audience" }, "sub-agent");
+  const args = { perspective: "audience", payload: perspective(), perspective_token: claim.perspective_token };
+  expect(await run("perspective", args, "sub-agent")).toMatchObject({ ok: true });
+  expect(await run("perspective", args, "sub-agent")).toMatchObject({ ok: true, replayed: true });
+  const changed = { ...perspective(), gaps: ["换了一份"] };
+  expect(await run("perspective", { ...args, payload: changed }, "sub-agent")).toMatchObject({ ok: false });
+});
+
+it("账号数据：稿件记录读坏 → 这一路记失败（不冒充数据齐了）", async () => {
+  await fs.mkdir(path.join(dir, "contents", "content-1700000000000-bad"), { recursive: true });
+  await fs.writeFile(path.join(dir, "contents", "content-1700000000000-bad", "meta.json"), "{ 坏");
+  await prepare();
+  expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "account", status: "failed", last_failure: expect.stringContaining("读不出") })]) });
+});
+
+it("任务归 local-user 时，别的宿主凭视角令牌补证入稿：按调用者本人判写权限，不借任务持有者的人手身份", async () => {
+  const owned = await run("prepare", { platform: "wechat_mp", requirements: REQUIREMENTS }, "local-user");
+  taskId = owned.task_id as string;
+  await run("read_page", { perspective: "evidence", url: URL }, "local-user");
+  const { content, pack, target } = await seedPack();
+  await writePack(content.id, { ...pack, host: "local-user" }, dir); // 本机人手的包
+  const claimed = await claimContent(content.id, "writer", "claude", dir); // 另一宿主正认领着这篇
+  if (!claimed.ok) throw new Error(claimed.error);
+  const token = (await run("claim", { perspective: "evidence" }, "agent-x")).perspective_token;
+  const r = await run("cite", { ...target, source_id: "p1", quote: QUOTE, claim: "共同浇水", perspective_token: token }, "agent-x");
+  expect(r, JSON.stringify(r).slice(0, 300)).toMatchObject({ ok: false });
+  expect(await loadHostEvidence(content.id, dir)).toEqual([]);
 });

@@ -10,13 +10,14 @@ import { readInbox } from "./inbox-read.js";
 import { scriptApprovalFor } from "../../storage/production-store.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { founderApprove, makeEnv, png, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await env.cleanup(); });
 
 const TITLE = "认稿前的成片";
-const agent = (p: Record<string, unknown>) => executeContentSave({ _dataDir: env.dir, _host: "claude-code", ...p }) as Promise<Record<string, unknown>>;
+const agent = (p: Record<string, unknown>) => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "claude-code", ...p }) as Promise<Record<string, unknown>>;
 const items = async (id: string) => (await readInbox(env.dir, { contentId: id })).items;
 const types = async (id: string) => (await items(id)).map((i) => i.type).sort();
 const cover = (name: string, w: number, h: number) => put(path.join(env.chatcut, name), png(w, h, name));

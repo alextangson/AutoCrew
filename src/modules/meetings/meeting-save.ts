@@ -11,11 +11,13 @@ import { appendHypotheses, listHypotheses, type Hypothesis, type MetricFocus } f
 import { applyJudgement } from "../retro/hypothesis-judge.js";
 import { shanghaiDate } from "../flywheel/outcome-schema.js";
 import { listArg, readRejected, readReviews, readSlot } from "./meeting-args.js";
-import { assertMeetingDate, readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
+import { assertMeetingDate, latestMeetingDate, readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
 import { buildMeetingBrief } from "./meeting-brief.js";
 
 export interface SaveMeetingArgs {
   date?: unknown; expected_revision?: unknown; slots?: unknown; rejected?: unknown; reviews?: unknown; notes?: unknown;
+  /** 单题会：只追加这几个位到当日会议，已存的位、下注、毙题原样保留（仍走 CAS） */
+  append?: unknown;
 }
 
 /** 选题现状：已在写/被认领 → 只标记、不重复建、不抢认领（边界 6） */
@@ -125,25 +127,48 @@ async function syncTopicSlots(record: MeetingRecord, previous: MeetingRecord | n
   return failed;
 }
 
+/** 单题会只加不改：位不能空、选题不能已在当日片单上；revision 对不上交给 CAS 报 conflict */
+function appendErrors(slots: MeetingSlot[], onDisk: MeetingRecord | null, expected: number): string[] {
+  if (!slots.length) return ["append 至少要有一个新会议位"];
+  if ((onDisk?.revision ?? 0) !== expected) return [];
+  const existing = new Set((onDisk?.slots ?? []).map((s) => s.topicId));
+  return slots.filter((s) => existing.has(s.topicId)).map((s) => `「${s.title}」已在 ${onDisk!.date} 片单上，不用再追加`);
+}
+
+function mergeAppend(onDisk: MeetingRecord | null, slots: MeetingSlot[], rejected: MeetingRecord["rejected"], reviews: MeetingRecord["reviews"], notes: { notes?: string }) {
+  const prevNotes = onDisk?.notes ? [onDisk.notes] : [];
+  const joined = [...prevNotes, ...(notes.notes ? [notes.notes] : [])].join("\n");
+  return {
+    slots: [...(onDisk?.slots ?? []), ...slots], rejected: [...(onDisk?.rejected ?? []), ...rejected],
+    reviews: [...(onDisk?.reviews ?? []), ...reviews], ...(joined ? { notes: joined } : {}),
+  };
+}
+
 export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now = new Date()) {
   // 日期先过校验再碰任何路径或 id
-  const date = args.date === undefined || args.date === "" ? shanghaiDate(now.toISOString()) : assertMeetingDate(args.date);
+  const today = args.date === undefined || args.date === "" ? shanghaiDate(now.toISOString()) : assertMeetingDate(args.date);
   const expected = expectedRevision(args.expected_revision);
+  const append = args.append === true || args.append === "true";
+  // 单题会追加到最近一场会（哪天开都一样），上一场片单因此继续有效；还没开过会才新建当天的记录
+  const date = append ? (await latestMeetingDate(dataDir)) ?? today : today;
   const read = await readSlots(args.slots, date, dataDir);
   const errors = read.errors;
-  const slots = stabilizeSlotIds(read.slots, await readMeeting(date, dataDir), date);
+  const onDisk = await readMeeting(date, dataDir);
+  const slots = stabilizeSlotIds(read.slots, onDisk, date).map((s) => (append ? { ...s, addedOn: today } : s));
   const rejected = readRejected(listArg(args.rejected, "rejected"));
+  if (append) errors.push(...appendErrors(slots, onDisk, expected));
   if (errors.length) return { ok: false as const, error: errors.join("；"), next_action: "按错误逐条问创始人补齐后重新 meeting_save；什么都还没写入" };
   const reviews = await reviewRows(args.reviews, dataDir, now);
   const notes = typeof args.notes === "string" && args.notes.trim() ? { notes: args.notes.trim() } : {};
-  const { record, previous } = await saveMeetingCas({ date, slots, rejected, reviews: reviews.rows, ...notes }, expected, dataDir);
+  const merged = append ? mergeAppend(onDisk, slots, rejected, reviews.rows, notes) : { date, slots, rejected, reviews: reviews.rows, ...notes };
+  const { record, previous } = await saveMeetingCas({ ...merged, date }, expected, dataDir);
   const contents = await listContents(dataDir);
-  const withdrawn = await withdrawnBets(previous, slots, dataDir);
+  const withdrawn = await withdrawnBets(previous, record.slots, dataDir);
   await appendHypotheses([...slots.map((s) => betOf(s, date, contents, now.toISOString())), ...withdrawn, ...reviews.updates], dataDir);
   const failedTopics = await syncTopicSlots(record, previous, dataDir);
   return {
     ok: failedTopics.length === 0, record,
-    topicStatus: Object.fromEntries(slots.map((s) => [s.topicId, topicStatus(s.topicId, contents) ?? "未开工（选中≠开工，开写走 video-session 一条一个会话）"])),
+    topicStatus: Object.fromEntries(slots.map((s) => [s.topicId, topicStatus(s.topicId, contents) ?? "未开工（排期≠开工：开写前先为这条开选题会，立意卡由创始人定）"])),
     ...(failedTopics.length ? { error: `会议记录与下注已保存，但这些选题没标上本周片单：${failedTopics.join("、")}`, next_action: `带 expected_revision:${record.revision} 原样重存一次` } : {}),
   };
 }
@@ -151,5 +176,9 @@ export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now =
 export async function getMeeting(date: string | undefined, dataDir?: string, now = new Date()) {
   const day = date ? assertMeetingDate(date) : shanghaiDate(now.toISOString());
   const record = await readMeeting(day, dataDir);
-  return record ? { ok: true as const, record } : { ok: true as const, record: null, expected_revision: 0, note: `${day} 还没开过会；新会 expected_revision 传 0` };
+  // 单题会追加到最近一场会：给出它的日期和 revision，append 时 expected_revision 用这个
+  const latestDate = await latestMeetingDate(dataDir);
+  const latest = latestDate ? await readMeeting(latestDate, dataDir) : null;
+  const latest_meeting = latest ? { date: latest.date, revision: latest.revision } : null;
+  return record ? { ok: true as const, record, latest_meeting } : { ok: true as const, record: null, expected_revision: 0, latest_meeting, note: `${day} 还没开过会；新会 expected_revision 传 0；单题会（append）用 latest_meeting.revision，还没开过会就传 0` };
 }

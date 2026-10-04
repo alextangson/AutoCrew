@@ -9,6 +9,7 @@ import path from "node:path";
 import { executePublish } from "./publish.js";
 import { saveContent, updateContent, saveCoverReview, approveCoverVariant, getContent, transitionStatus } from "../storage/local-store.js";
 import type { WechatMpDraftOptions, WechatMpDraftResult } from "../modules/publish/wechat-mp.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -37,7 +38,7 @@ function mockPublish() {
 
 async function mkContent(body: string) {
   return saveContent(
-    { title: "测试标题", body, platform: "wechat_mp", status: "approved", tags: [], hashtags: [] },
+    { _provenance: HUMAN_WRITE, title: "测试标题", body, platform: "wechat_mp", status: "approved", tags: [], hashtags: [] },
     dir,
   );
 }
@@ -45,7 +46,7 @@ async function mkContent(body: string) {
 describe("executePublish wechat_mp_draft", () => {
   it("content_id：发布时从 store 新鲜落盘 draft.md（工作台编辑后的旧稿不得被推送），附下一步指引", async () => {
     const c = await mkContent("干净正文，讲讲工具技巧");
-    await updateContent(c.id, { body: "编辑后的最新正文" }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "编辑后的最新正文" }, dir);
 
     const publishImpl = mockPublish();
     const r = (await executePublish(
@@ -262,7 +263,7 @@ describe("executePublish confirm_published — 发布戳", () => {
   // 隐式采纳判定:发布这个动作本身就表达了「这版我认了」,剩下要读的只是改了多少
   it("确认发布 → 自动落一条 derived 采纳判定,回执带上", async () => {
     const c = await mkContent("AI 写的正文,原样发出去没动过。");
-    await updateContent(c.id, { draftReadyAt: new Date().toISOString() }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, draftReadyAt: new Date().toISOString() }, dir);
 
     const r = (await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir })) as {
       ok: boolean;
@@ -281,7 +282,7 @@ describe("executePublish confirm_published — 发布戳", () => {
     await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
     const first = (await getContent(c.id, dir))!.adoption!;
 
-    await updateContent(c.id, { body: "发布之后又整篇换成完全不同的另一段内容了。" }, dir);
+    await updateContent(c.id, { _provenance: HUMAN_WRITE, body: "发布之后又整篇换成完全不同的另一段内容了。" }, dir);
     const again = (await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir })) as {
       data: { adoption?: unknown };
     };

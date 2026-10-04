@@ -472,6 +472,12 @@
       ],
       "type": "string"
      },
+     "founder_words": {
+      "type": "string"
+     },
+     "inspiration": {
+      "type": "string"
+     },
      "kind": {
       "enum": [
        "full",
@@ -494,15 +500,8 @@
      "research_mode": {
       "enum": [
        "auto",
-       "provided",
-       "skip"
+       "provided"
       ],
-      "type": "string"
-     },
-     "research_reason": {
-      "type": "string"
-     },
-     "skip_reason": {
       "type": "string"
      },
      "topic_id": {
@@ -531,7 +530,10 @@
        "claim_offline",
        "perspective",
        "synthesize",
-       "angles"
+       "angles",
+       "claim",
+       "fail_perspective",
+       "account_data"
       ],
       "type": "string"
      },
@@ -573,6 +575,9 @@
        "counter",
        "benchmark"
       ],
+      "type": "string"
+     },
+     "perspective_token": {
       "type": "string"
      },
      "platform": {
@@ -1080,12 +1085,8 @@
      "research_mode": {
       "enum": [
        "auto",
-       "provided",
-       "skip"
+       "provided"
       ],
-      "type": "string"
-     },
-     "research_reason": {
       "type": "string"
      },
      "review": {
@@ -1100,9 +1101,6 @@
       "type": "string"
      },
      "revision_of": {
-      "type": "string"
-     },
-     "skip_reason": {
       "type": "string"
      },
      "technique_ids": {
@@ -2622,15 +2620,8 @@
      "research_mode": {
       "enum": [
        "auto",
-       "provided",
-       "skip"
+       "provided"
       ],
-      "type": "string"
-     },
-     "research_reason": {
-      "type": "string"
-     },
-     "skip_reason": {
       "type": "string"
      },
      "topic": {
@@ -3187,6 +3178,12 @@
       ],
       "type": "string"
      },
+     "founder_words": {
+      "type": "string"
+     },
+     "inspiration": {
+      "type": "string"
+     },
      "kind": {
       "enum": [
        "full",
@@ -3209,15 +3206,8 @@
      "research_mode": {
       "enum": [
        "auto",
-       "provided",
-       "skip"
+       "provided"
       ],
-      "type": "string"
-     },
-     "research_reason": {
-      "type": "string"
-     },
-     "skip_reason": {
       "type": "string"
      },
      "topic_id": {
@@ -3246,7 +3236,10 @@
        "claim_offline",
        "perspective",
        "synthesize",
-       "angles"
+       "angles",
+       "claim",
+       "fail_perspective",
+       "account_data"
       ],
       "type": "string"
      },
@@ -3288,6 +3281,9 @@
        "counter",
        "benchmark"
       ],
+      "type": "string"
+     },
+     "perspective_token": {
       "type": "string"
      },
      "platform": {
@@ -3795,12 +3791,8 @@
      "research_mode": {
       "enum": [
        "auto",
-       "provided",
-       "skip"
+       "provided"
       ],
-      "type": "string"
-     },
-     "research_reason": {
       "type": "string"
      },
      "review": {
@@ -3815,9 +3807,6 @@
       "type": "string"
      },
      "revision_of": {
-      "type": "string"
-     },
-     "skip_reason": {
       "type": "string"
      },
      "technique_ids": {

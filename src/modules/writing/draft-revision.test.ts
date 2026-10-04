@@ -8,6 +8,7 @@ import { listDiffs } from "../learnings/diff-tracker.js";
 import { addApprovedRuleForTest } from "../profile/rule-fixtures.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -26,7 +27,7 @@ afterEach(async () => {
 describe("reviseDraft", () => {
   it("第二轮改稿仍收到上一轮已采纳的新受众，不被初稿旧规划拉回", async () => {
     const original = await saveContent(
-      { title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract: "原规划：写给老板，篇幅 1800 字。" },
+      { _provenance: HUMAN_WRITE, title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract: "原规划：写给老板，篇幅 1800 字。" },
       testDir,
     );
     let round = 0;
@@ -53,7 +54,7 @@ describe("reviseDraft", () => {
   it("保留初稿规划并允许本次明确反馈覆盖它，局部改稿不重新选择方向", async () => {
     const writingContract = "面向实体店主；只谈库存积压；不写工具横评；篇幅 1800 字。";
     const original = await saveContent(
-      { title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract },
+      { _provenance: HUMAN_WRITE, title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract },
       testDir,
     );
     const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
@@ -70,7 +71,7 @@ describe("reviseDraft", () => {
 
   it("旧稿仍有原生成请求时恢复手写方向，不依赖现时选题的角度", async () => {
     const original = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [],
         genRequest: { topic: "库存", platform: "wechat_mp", direction: "先写店主面对的积压，不要写榜单" },
       },
@@ -86,7 +87,7 @@ describe("reviseDraft", () => {
 
   it("updates the same content and records the feedback as a new version", async () => {
     const original = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "旧标题",
         body: "这是偏书面的旧正文。",
         platform: "wechat_mp",
@@ -119,7 +120,7 @@ describe("reviseDraft", () => {
   // 整篇改稿此前完全不记 diff——创作者的修改指令这条最直接的风格信号整个丢了
   it("把修改指令记成 diff（changeType = 创作者原话），供下一次蒸馏消化", async () => {
     const original = await saveContent(
-      { title: "旧标题", body: "偏书面的旧正文。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "旧标题", body: "偏书面的旧正文。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
@@ -142,7 +143,7 @@ describe("reviseDraft", () => {
 
   it("品牌上下文与写初稿同源：本平台规则进、别的平台规则不进", async () => {
     const original = await saveContent(
-      { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     await addApprovedRuleForTest({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
@@ -163,7 +164,7 @@ describe("reviseDraft", () => {
 
   it("改稿失败（模型没交稿）不留 diff：没发生的修改不该变成学习信号", async () => {
     const original = await saveContent(
-      { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (): Promise<LoopResult> => ({
@@ -177,7 +178,7 @@ describe("reviseDraft", () => {
 
   it("改过的稿不许再顶着「已 AI 审稿」的徽章：review.status 落 stale（spec §2.7）", async () => {
     const original = await saveContent(
-      {
+      { _provenance: HUMAN_WRITE,
         title: "旧标题",
         body: "旧正文。",
         platform: "wechat_mp",
@@ -209,7 +210,7 @@ describe("reviseDraft", () => {
 
   it("没审过的稿改完也不凭空长出 review 字段", async () => {
     const original = await saveContent(
-      { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
@@ -224,7 +225,7 @@ describe("reviseDraft", () => {
 
   it("refuses to claim success when the model returns an unchanged draft", async () => {
     const original = await saveContent(
-      { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      { _provenance: HUMAN_WRITE, title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {

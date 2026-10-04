@@ -17,6 +17,7 @@ import { decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -100,7 +101,7 @@ describe("Codex 2a-1 P2", () => {
     const it = (await items(c.id)).find((i) => i.type === "cut_review")!;
     await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "reject_cut", note: "再改" }, env.dir);
     expect((await items(c.id)).find((i) => i.type === "cut_review")).toBeUndefined();
-    const again = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "mark_ready", content_id: c.id, fact_id: cut.fact_id }) as Record<string, unknown>;
+    const again = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "mark_ready", content_id: c.id, fact_id: cut.fact_id }) as Record<string, unknown>;
     expect(again).toMatchObject({ ok: true, marked: true });
     expect(again.note).toBeUndefined();
     expect((await items(c.id)).find((i) => i.type === "cut_review")).toBeDefined();
@@ -109,11 +110,11 @@ describe("Codex 2a-1 P2", () => {
   it("P2-5 中转端点弄坏的内层引号：options / attachments / paths 都修得回来", async () => {
     const c = await editing();
     const mangled = '[{"id":"keep","label":"保留"AI"标题"},{"id":"drop","label":"不要"}]';
-    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q1", kind: "其他", question: "标题？", options: mangled }) as Record<string, unknown>;
+    const q = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q1", kind: "其他", question: "标题？", options: mangled }) as Record<string, unknown>;
     expect(q).toMatchObject({ ok: true });
     expect((await doc(c.id)).asks![0].options[0].label).toBe('保留"AI"标题');
     const f = await put(path.join(projectRoot(env, c.id), '04-edit/a"b".png'), png(10, 10));
-    const q2 = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q2", kind: "样片", question: "看看", options: '[{"id":"a","label":"一"},{"id":"b","label":"二"}]', attachments: `[{"path":"${f}"}]` }) as Record<string, unknown>;
+    const q2 = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q2", kind: "样片", question: "看看", options: '[{"id":"a","label":"一"},{"id":"b","label":"二"}]', attachments: `[{"path":"${f}"}]` }) as Record<string, unknown>;
     expect(q2).toMatchObject({ ok: true });
     const a = await put(path.join(env.chatcut, 'x"1".png'), png(900, 1200, "x")), b = await img("y.png", 1200, 900);
     expect(await record(env, { content_id: c.id, kind: "cover", paths: `["${a}","${b}"]`, request_id: "gp" })).toMatchObject({ ok: true });
