@@ -8,9 +8,11 @@ import path from "node:path";
 import { writeJsonAtomic, writeTextAtomic } from "../../storage/json-atomic.js";
 import {
   canonicalUrl, normalizeHeatmap, num, parseVideoUrl, parseVtt, pickSubtitle, replayPeaks, slugify, transcriptText, trimComments,
-  type Comment, type Cue,
+  parseTranscript, type Comment, type Cue, type HeatPoint,
 } from "./parse.js";
-import { YtdlpError, type YtdlpExec } from "./ytdlp.js";
+import { isRateLimited, YtdlpError, type YtdlpExec } from "./ytdlp.js";
+
+const tail = (text: string): string => text.trim().split("\n").slice(-3).join(" | ").slice(0, 400);
 
 export const CRAFT_ROOT = path.join(os.homedir(), ".cache", "autocrew-yt", "craft");
 export const MAX_COMMENTS = 100;
@@ -30,12 +32,12 @@ export interface FetchOptions {
 }
 
 export interface IndexEntry {
-  id: string; url: string; status: "ok" | "failed" | "not_attempted"; reason?: string; title?: string | null;
+  id: string; url: string; status: "ok" | "partial" | "failed" | "not_attempted"; reason?: string; title?: string | null;
   subtitles?: string; heatmap?: boolean; heatmap_reason?: string; comments?: string; resumed?: boolean;
 }
 
 export interface FetchSummary {
-  ok: boolean; error?: string; outDir?: string; done: number; failed: number; notAttempted: number; stopped: string | null;
+  ok: boolean; error?: string; outDir?: string; done: number; partial: number; failed: number; notAttempted: number; stopped: string | null;
 }
 
 class StopRun extends Error {}
@@ -54,6 +56,7 @@ async function call(ctx: Ctx, args: string[], timeoutMs: number): Promise<{ stdo
   for (;;) {
     try {
       const r = await ctx.opts.exec(args, timeoutMs);
+      if (isRateLimited(r.stderr)) throw new YtdlpError("rate_limited", `yt-dlp 退出成功但报了限流：${tail(r.stderr)}`);
       ctx.consecutive429 = 0;
       return r;
     } catch (e) {
@@ -115,8 +118,9 @@ async function fetchComments(ctx: Ctx, id: string): Promise<CommentResult> {
     const info = JSON.parse(stdout) as Record<string, unknown>;
     const items = trimComments(info.comments, n);
     if (items.length) return { status: "ok", items };
-    if (/comments? (are|is) (turned off|disabled)/i.test(stderr) || !num(info.comment_count)) return { status: "disabled", reason: "评论已关闭或没有评论", items: [] };
-    return { status: "failed", reason: "yt-dlp 没返回评论", items: [] };
+    if (/comments? (are|is) (turned off|disabled)/i.test(stderr)) return { status: "disabled", reason: "评论已关闭", items: [] };
+    if (info.comment_count === 0) return { status: "disabled", reason: "这条视频没有评论", items: [] };
+    return { status: "failed", reason: `yt-dlp 没返回评论${stderr.trim() ? `：${tail(stderr)}` : ""}`, items: [] };
   } catch (e) {
     if (e instanceof StopRun) return { status: "failed", reason: "抓评论时被限流，评论没抓到（字幕已保留）", items: [] };
     if (e instanceof YtdlpError && e.kind === "missing") throw e;
@@ -124,47 +128,84 @@ async function fetchComments(ctx: Ctx, id: string): Promise<CommentResult> {
   }
 }
 
-interface HeatInfo { meta: Record<string, unknown>; reason: string | null }
+interface HeatInfo { meta: Record<string, unknown>; status: "ok" | "none" | "failed"; reason: string | null }
 
 /** mweb 取元数据和热度条；失败就用默认客户端的元数据，热度条记为取不到并写原因 */
 async function fetchMweb(ctx: Ctx, id: string, fallback: Record<string, unknown>): Promise<HeatInfo> {
   try {
     const meta = await fetchInfo(ctx, id, true);
-    return { meta, reason: normalizeHeatmap(meta.heatmap) ? null : "这条视频没有热度条（新视频或播放量小）" };
+    return normalizeHeatmap(meta.heatmap) ? { meta, status: "ok", reason: null } : { meta, status: "none", reason: "这条视频没有热度条（新视频或播放量小）" };
   } catch (e) {
     if (e instanceof StopRun || (e instanceof YtdlpError && e.kind === "missing")) throw e;
-    return { meta: { ...fallback, heatmap: null }, reason: `mweb 客户端取热度条失败：${e instanceof Error ? e.message : String(e)}` };
+    return { meta: { ...fallback, heatmap: null }, status: "failed", reason: `mweb 客户端取热度条失败：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 
-function videoRecord(id: string, info: Record<string, unknown>, subs: SubResult, comments: CommentResult) {
+function videoRecord(id: string, info: Record<string, unknown>, heat: HeatResult, subs: SubResult, comments: CommentResult) {
   return {
     id, url: canonicalUrl(id),
     title: typeof info.title === "string" ? info.title : null,
     channel: typeof info.channel === "string" ? info.channel : null,
     view_count: num(info.view_count), like_count: num(info.like_count), comment_count: num(info.comment_count),
     duration: num(info.duration), upload_date: typeof info.upload_date === "string" ? info.upload_date : null,
-    heatmap: normalizeHeatmap(info.heatmap),
+    heatmap: heat.points, heatmap_status: heat.status, heatmap_reason: heat.reason,
     subtitles: { status: subs.status, source: subs.source ?? null, lang: subs.lang ?? null, reason: subs.reason ?? null },
     comments: { status: comments.status, reason: comments.reason ?? null, items: comments.items },
     fetched_at: new Date().toISOString(),
   };
 }
 
+type VideoRecord = ReturnType<typeof videoRecord>;
+interface HeatResult { points: HeatPoint[] | null; status: HeatInfo["status"]; reason: string | null }
+interface Prev { rec: VideoRecord; cues: Cue[] | null }
+
+const META_KEYS = ["title", "channel", "view_count", "like_count", "comment_count", "duration", "upload_date"] as const;
+
+async function loadPrev(dir: string, id: string): Promise<Prev | null> {
+  const rec = await readJson<VideoRecord>(path.join(dir, `${id}.json`));
+  if (!rec) return null;
+  const txt = await fs.readFile(path.join(dir, `${id}.txt`), "utf8").catch(() => null);
+  return { rec, cues: txt ? parseTranscript(txt) : null };
+}
+
+/** 每个部分单独判完成：失败的才重抓；没字幕 / 没热度条 / 评论关闭是真实结果，算完成 */
+const heatDone = (p: Prev): boolean => p.rec.heatmap_status === "ok" || p.rec.heatmap_status === "none";
+const subsDone = (p: Prev): boolean => p.rec.subtitles?.status === "none" || (p.rec.subtitles?.status === "ok" && Boolean(p.cues?.length));
+const commentsDone = (p: Prev, want: boolean): boolean => !want || p.rec.comments?.status === "ok" || p.rec.comments?.status === "disabled";
+const isComplete = (p: Prev, want: boolean): boolean => heatDone(p) && subsDone(p) && commentsDone(p, want);
+
+async function heatPart(ctx: Ctx, id: string, info: Record<string, unknown>, prev: Prev | null): Promise<{ heat: HeatResult; meta: Record<string, unknown> }> {
+  if (prev && heatDone(prev)) return { heat: { points: prev.rec.heatmap, status: prev.rec.heatmap_status, reason: prev.rec.heatmap_reason }, meta: {} };
+  const h = await fetchMweb(ctx, id, info);
+  return { heat: { points: normalizeHeatmap(h.meta.heatmap), status: h.status, reason: h.reason }, meta: pickMeta(h.meta) };
+}
+
+async function commentPart(ctx: Ctx, id: string, prev: Prev | null): Promise<CommentResult> {
+  const want = ctx.opts.comments > 0;
+  if (prev && commentsDone(prev, want)) return { status: prev.rec.comments.status, reason: prev.rec.comments.reason ?? undefined, items: prev.rec.comments.items };
+  if (ctx.stopped) return { status: "failed", reason: "整批已停下，评论没抓", items: [] };
+  return fetchComments(ctx, id);
+}
+
 async function fetchOne(ctx: Ctx, id: string, dir: string, preInfo?: Record<string, unknown>): Promise<IndexEntry> {
-  const info = preInfo ?? await fetchInfo(ctx, id);
-  const heat = await fetchMweb(ctx, id, info);
-  const subs = await fetchSubtitles(ctx, id, info, dir);
-  const comments = ctx.stopped ? { status: "failed" as const, reason: "整批已停下，评论没抓", items: [] } : await fetchComments(ctx, id);
-  const rec = { ...videoRecord(id, { ...info, ...pickMeta(heat.meta) }, subs, comments), heatmap_reason: heat.reason };
-  if (subs.cues) await writeTextAtomic(path.join(dir, `${id}.txt`), transcriptText(subs.cues));
+  const prev = await loadPrev(dir, id);
+  const reuseSubs = prev !== null && subsDone(prev);
+  const info = preInfo ?? (reuseSubs ? Object.fromEntries(META_KEYS.map((k) => [k, prev.rec[k]])) : await fetchInfo(ctx, id));
+  const { heat, meta } = await heatPart(ctx, id, info, prev);
+  const subs: SubResult = reuseSubs
+    ? { status: prev.rec.subtitles.status as SubResult["status"], source: prev.rec.subtitles.source ?? undefined, lang: prev.rec.subtitles.lang ?? undefined, reason: prev.rec.subtitles.reason ?? undefined, cues: prev.cues }
+    : await fetchSubtitles(ctx, id, info, dir);
+  const comments = await commentPart(ctx, id, prev);
+  const rec = videoRecord(id, { ...info, ...meta }, heat, subs, comments);
+  if (subs.cues && !reuseSubs) await writeTextAtomic(path.join(dir, `${id}.txt`), transcriptText(subs.cues));
   const peaks = rec.heatmap
     ? { metric: "replay_intensity", note: "重看强度：观众在这里反复回看的程度，不是留存率，不推断谁留下谁流失", ...replayPeaks(rec.heatmap, subs.cues) }
     : { metric: "replay_intensity", note: `没有重看强度数据：${heat.reason}`, top: [], bottom: [] };
   await writeJsonAtomic(path.join(dir, `${id}.peaks.json`), peaks);
   await writeJsonAtomic(path.join(dir, `${id}.json`), rec);
+  const done = isComplete({ rec, cues: subs.cues }, ctx.opts.comments > 0);
   return {
-    id, url: rec.url, status: "ok", title: rec.title, heatmap: Boolean(rec.heatmap), comments: comments.status,
+    id, url: rec.url, status: done ? "ok" : "partial", title: rec.title, heatmap: Boolean(rec.heatmap), comments: comments.status,
     subtitles: subs.status === "ok" ? `${subs.source}:${subs.lang}` : subs.status,
     ...(heat.reason ? { heatmap_reason: heat.reason } : {}),
     ...(subs.reason || comments.reason ? { reason: [subs.reason, comments.reason].filter(Boolean).join("；") } : {}),
@@ -173,19 +214,16 @@ async function fetchOne(ctx: Ctx, id: string, dir: string, preInfo?: Record<stri
 
 /** mweb 那次的数字和热度条优先；缺的字段保留默认客户端的值 */
 function pickMeta(m: Record<string, unknown>): Record<string, unknown> {
-  const keys = ["title", "channel", "view_count", "like_count", "comment_count", "duration", "upload_date", "heatmap"];
-  return Object.fromEntries(keys.filter((k) => m[k] !== undefined && m[k] !== null || k === "heatmap").map((k) => [k, m[k]]));
+  return Object.fromEntries(META_KEYS.filter((k) => m[k] !== undefined && m[k] !== null).map((k) => [k, m[k]]));
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
   try { return JSON.parse(await fs.readFile(file, "utf8")) as T; } catch { return null; }
 }
 
-/** 已完成 = 有 <id>.json；要评论而上次评论失败的不算完成 */
 async function completed(dir: string, id: string, wantComments: boolean): Promise<boolean> {
-  const rec = await readJson<{ comments?: { status?: string } }>(path.join(dir, `${id}.json`));
-  if (!rec) return false;
-  return !wantComments || rec.comments?.status === "ok" || rec.comments?.status === "disabled";
+  const prev = await loadPrev(dir, id);
+  return prev !== null && isComplete(prev, wantComments);
 }
 
 async function writeIndex(dir: string, entries: Map<string, IndexEntry>, stopped: string | null): Promise<void> {
@@ -249,14 +287,14 @@ async function loop(ctx: Ctx, o: FetchOptions, ids: string[], dir: string, first
     fetched = true;
     const entry = await step(ctx, id, dir, preInfo);
     entries.set(id, entry);
-    ctx.opts.log(`- ${id} ${entry.status === "ok" ? "完成" : "失败"}${entry.reason ? `（${entry.reason}）` : ""}`);
+    ctx.opts.log(`- ${id} ${entry.status === "ok" ? "完成" : entry.status === "partial" ? "部分完成" : "失败"}${entry.reason ? `（${entry.reason}）` : ""}`);
     await writeIndex(dir, entries, ctx.stopped);
   }
   return entries;
 }
 
 export async function runCraftFetch(o: FetchOptions): Promise<FetchSummary> {
-  const empty = { done: 0, failed: 0, notAttempted: 0, stopped: null };
+  const empty = { done: 0, partial: 0, failed: 0, notAttempted: 0, stopped: null };
   const { ids, bad } = validateUrls(o.urls);
   if (bad.length) return { ok: false, error: `只收 YouTube 单条视频网址（youtube.com/watch?v=… 或 youtu.be/…），这些不收：${bad.join(" ")}`, ...empty };
   if (!ids.length) return { ok: false, error: "没给视频网址", ...empty };
@@ -273,7 +311,7 @@ export async function runCraftFetch(o: FetchOptions): Promise<FetchSummary> {
   await writeIndex(resolved.dir, entries, ctx.stopped);
   const mine = ids.map((id) => entries.get(id)!);
   const count = (s: IndexEntry["status"]) => mine.filter((e) => e.status === s).length;
-  return { ok: !ctx.stopped && count("failed") === 0, outDir: resolved.dir, done: count("ok"), failed: count("failed"), notAttempted: count("not_attempted"), stopped: ctx.stopped };
+  return { ok: !ctx.stopped && count("failed") === 0 && count("partial") === 0, outDir: resolved.dir, done: count("ok"), partial: count("partial"), failed: count("failed"), notAttempted: count("not_attempted"), stopped: ctx.stopped };
 }
 
 /** --clean <博主>：删掉本机缓存里这个博主的整个目录。只删 craftRoot 下一层 */

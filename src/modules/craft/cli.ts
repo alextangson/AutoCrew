@@ -31,7 +31,7 @@ export function parseCraftArgs(argv: string[]): CraftArgs | { error: string } {
 
 export function summaryText(s: FetchSummary): string {
   if (s.error) return `没跑成：${s.error}`;
-  const lines = [`输出目录：${s.outDir}`, `完成 ${s.done} 条，失败 ${s.failed} 条，没抓 ${s.notAttempted} 条（明细见 index.json）`];
+  const lines = [`输出目录：${s.outDir}`, `完成 ${s.done} 条，部分完成 ${s.partial} 条（重跑只补缺的部分），失败 ${s.failed} 条，没抓 ${s.notAttempted} 条（明细见 index.json）`];
   if (s.stopped) lines.push(s.stopped);
   return lines.join("\n");
 }

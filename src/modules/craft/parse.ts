@@ -76,6 +76,11 @@ export function fmtTime(sec: number): string {
   return hh ? `${hh}:${two(mm)}:${two(ss)}` : `${two(mm)}:${two(ss)}`;
 }
 
+/** transcriptText 的逆：断点续抓时从缓存的 .txt 读回字幕 */
+export function parseTranscript(txt: string): Cue[] {
+  return txt.split("\n").map((l) => /^\[(\d+(?::\d+){1,2})\] (.*)$/.exec(l)).filter((m): m is RegExpExecArray => m !== null).map((m) => ({ start: toSeconds(m[1]), text: m[2] }));
+}
+
 export const transcriptText = (cues: Cue[]): string => cues.map((c) => `[${fmtTime(c.start)}] ${c.text}`).join("\n") + (cues.length ? "\n" : "");
 
 export interface HeatPoint { start: number; end: number; value: number }

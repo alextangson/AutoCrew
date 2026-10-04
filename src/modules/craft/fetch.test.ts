@@ -114,9 +114,9 @@ describe("热度条走 mweb、字幕走默认客户端", () => {
   it("mweb 失败：用默认元数据，热度条记取不到并写原因，字幕照常", async () => {
     const exec = fake({ [A]: baseInfo(A) }, (args) => (args.includes("youtube:player_client=mweb") ? new YtdlpError("failed", "mweb broke") : undefined));
     const s = await run({ urls: [url(A)], exec });
-    expect(s).toMatchObject({ ok: true, done: 1 });
+    expect(s).toMatchObject({ ok: false, partial: 1 });
     const rec = await readJson(`${A}.json`);
-    expect(rec).toMatchObject({ heatmap: null, view_count: 1000, subtitles: { status: "ok" } });
+    expect(rec).toMatchObject({ heatmap: null, heatmap_status: "failed", view_count: 1000, subtitles: { status: "ok" } });
     expect(rec.heatmap_reason).toContain("mweb broke");
     expect((await readJson(`${A}.peaks.json`)).note).toContain("mweb broke");
     expect((await readJson("index.json")).videos[0].heatmap_reason).toContain("mweb broke");
@@ -226,5 +226,67 @@ describe("网址校验与清理", () => {
     expect(await fs.readdir(root)).toEqual(["other"]);
     expect(await cleanCreator("nobody", root)).toMatchObject({ removed: false });
     await expect(cleanCreator("../", root)).rejects.toThrow();
+  });
+});
+
+describe("Codex review 1004：按部分断点续抓", () => {
+  const isMweb = (c: string[]) => c.includes("youtube:player_client=mweb");
+
+  it("P2-1 字幕抓失败不算完成：重跑只补字幕，不重抓热度条", async () => {
+    let subsBroken = true;
+    const handler: Handler = (args) => (subsBroken && args.includes("--load-info-json") ? new YtdlpError("failed", "sub download broke") : undefined);
+    const s1 = await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A) }, handler) });
+    expect(s1).toMatchObject({ ok: false, partial: 1 });
+    expect((await readJson("index.json")).videos[0]).toMatchObject({ status: "partial", reason: expect.stringContaining("sub download broke") });
+    subsBroken = false; calls = [];
+    const s2 = await run({ urls: [url(A)], exec: fake({ [A]: baseInfo(A) }, handler) });
+    expect(s2).toMatchObject({ ok: true, done: 1 });
+    expect(calls.some(isMweb)).toBe(false);
+    expect(subCalls()).toHaveLength(1);
+    expect((await readJson(`${A}.json`))).toMatchObject({ subtitles: { status: "ok" }, heatmap_status: "ok" });
+  });
+
+  it("P2-2 评论失败后重跑只补评论：已有字幕、重看强度摘录原样保留", async () => {
+    let commentsBroken = true;
+    const handler: Handler = (args) => {
+      if (args.includes("--load-info-json") && !commentsBroken) return new YtdlpError("failed", "subs would break now");
+      return commentsBroken && args.includes("--write-comments") ? new YtdlpError("failed", "comments broke") : undefined;
+    };
+    await run({ urls: [url(A)], comments: 5, exec: fake({ [A]: baseInfo(A) }, handler) });
+    const peaksBefore = await readJson(`${A}.peaks.json`);
+    commentsBroken = false; calls = [];
+    const s = await run({ urls: [url(A)], comments: 5, exec: fake({ [A]: baseInfo(A) }, handler) });
+    expect(s).toMatchObject({ ok: true, done: 1 });
+    expect(calls.map((c) => c.includes("--write-comments"))).toEqual([true]);
+    const rec = await readJson(`${A}.json`);
+    expect(rec).toMatchObject({ subtitles: { status: "ok", source: "manual" }, comments: { status: "ok" }, view_count: 1000 });
+    expect(rec.heatmap).toHaveLength(20);
+    expect(await readJson(`${A}.peaks.json`)).toEqual(peaksBefore);
+    expect(peaksBefore.top[0].excerpt).toBe("the big promise next line");
+  });
+
+  it("P2-3 退出码 0 但 stderr 报 429：算限流，连续两次整批停", async () => {
+    const exec = fake({ [A]: baseInfo(A) }, (args) => (args.includes("-J") && !isMweb(args) ? { stdout: JSON.stringify(baseInfo(A)), stderr: "WARNING: HTTP Error 429: Too Many Requests" } : undefined));
+    const s = await run({ urls: [url(A)], exec });
+    expect(s.stopped).toContain("429");
+    expect((await readJson("index.json")).videos[0].reason).toContain("429");
+  });
+
+  it("P2-4 comment_count 缺失又没评论、没有关闭提示：算失败可重试，不当成关闭", async () => {
+    const info = baseInfo(A, { comment_count: null });
+    const exec = fake({ [A]: info }, (args) => (args.includes("--write-comments") ? { stdout: JSON.stringify({ ...info, comments: [] }), stderr: "WARNING: some extractor hiccup" } : undefined));
+    await run({ urls: [url(A)], comments: 5, exec });
+    const rec = await readJson(`${A}.json`);
+    expect(rec.comments).toMatchObject({ status: "failed", reason: expect.stringContaining("extractor hiccup") });
+    calls = [];
+    await run({ urls: [url(A)], comments: 5, exec });
+    expect(calls.some((c) => c.includes("--write-comments"))).toBe(true);
+  });
+
+  it("P2-4 comment_count 明确为 0：算没有评论，完成", async () => {
+    const info = baseInfo(A, { comment_count: 0 });
+    const exec = fake({ [A]: info }, (args) => (args.includes("--write-comments") ? { stdout: JSON.stringify({ ...info, comments: [] }) } : undefined));
+    expect(await run({ urls: [url(A)], comments: 5, exec })).toMatchObject({ ok: true, done: 1 });
+    expect((await readJson(`${A}.json`)).comments.status).toBe("disabled");
   });
 });
