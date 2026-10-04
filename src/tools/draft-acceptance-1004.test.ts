@@ -163,4 +163,9 @@ describe("Codex re-review P2", () => {
     const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
     expect(texts(r).map((i) => i.text)).toEqual(["目前两小时就能完成。", "提前两小时到场。", "之前两天都在下雨。"]);
   });
+  it("复合词里的「前」和「X 后」都不当相对时间：超前两小时、两小时后起效照列；我前两天、三年以前不列", async () => {
+    const id = await written(`我们比计划超前两小时完成。这款药两小时后起效。我前两天刷到一条。三年以前没人信。${PAD}`);
+    const r = await run("prepare_final", { content_id: id, base_version: 2, citations: [] });
+    expect(texts(r).map((i) => i.text)).toEqual(["我们比计划超前两小时完成。", "这款药两小时后起效。"]);
+  });
 });

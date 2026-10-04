@@ -64,9 +64,13 @@ export function locateMapping(body: string, mapping: MappingInput[], entries: re
   return { spans, errors };
 }
 
-/** 前两天 / 这两天 / 最近两天；目前、提前、之前、以前、当前、眼前 里的「前」不算 */
-const RELATIVE_BEFORE = /(?:(?:^|[^目提之以当眼面跟从空事])前|这|那|最近)$/;
-const RELATIVE_AFTER = /^(?:前|以前|之前|后|以后|之后)/;
+/**
+ * 前两天 / 这两天 / 最近两天。「前」必须单独出现（句首、标点后，或跟在人称后：我前两天）——
+ * 目前、提前、超前、之前这类复合词里的「前」一律不算，宁可多列也不放过具体时长。
+ */
+const RELATIVE_BEFORE = /(?:(?:^|[^\u4e00-\u9fff]|[我你他她咱们就])前|这|那|最近)$/;
+/** 两天前 / 三年以前：只认「多久以前」；「两小时后起效」是时长事实，照列 */
+const RELATIVE_AFTER = /^(?:前|以前|之前)/;
 /** 「两三个」「一两句」「三四天」：相邻两个数连说 = 约数 */
 const APPROX_PAIR = /^(?:一两|两三|三四|四五|五六|六七|七八|八九)/;
 
