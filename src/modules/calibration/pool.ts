@@ -32,6 +32,21 @@ export interface RetroRecord extends ChainRecord {
   actual: { views: number; likes?: number; comments?: number; shares?: number; source: string; age_days: number | null };
   landed_bucket: string;
   center_deviation: number;
+  /** 数字部分是谁写的：auto = 回流后自动对账（不含解读）；缺省 = 手动 calib_retro（旧记录数字+解读同一行） */
+  numeric_by?: "auto" | "manual";
+  hypothesis_conclusion?: string;
+  at: string;
+}
+
+/** 自动对账之后在对话里补的解读（验证/推翻、结论、新观察）：只追加，不计样本 */
+export interface InterpretationRecord extends ChainRecord {
+  type: "interpretation"; prediction_id: string; hypothesis_conclusion: string; verified_factors: unknown[]; observations: string[]; at: string;
+}
+export interface ReadingRecord extends ChainRecord { type: "reading"; prediction_id: string; day: number; actual: RetroRecord["actual"] & { metric_date?: string }; at: string; by?: string }
+
+/** 已解读 = 主复盘自带结论（手动复盘），或之后追加过解读记录 */
+export function isInterpreted(retro: RetroRecord, interpretations: InterpretationRecord[]): boolean {
+  return typeof retro.hypothesis_conclusion === "string" || interpretations.some((i) => i.prediction_id === retro.prediction_id);
 }
 
 export interface PoolSample { prediction: PredictionRecord; retro: RetroRecord; actual: number; weight: number }
@@ -42,8 +57,10 @@ export async function readPredictions(dataDir?: string) {
   const { records, integrity } = await readLog<ChainRecord>("predictions", dataDir);
   const predictions = records.filter((r): r is PredictionRecord => r.type === "prediction");
   const retros = records.filter((r): r is RetroRecord => r.type === "retro");
+  const interpretations = records.filter((r): r is InterpretationRecord => r.type === "interpretation");
+  const readings = records.filter((r): r is ReadingRecord => r.type === "reading");
   const warned = new Set(records.filter((r) => r.type === "integrity_warning").map((r) => String(r.prediction_id)));
-  return { records, predictions, retros, warned, integrity, selfOk };
+  return { records, predictions, retros, interpretations, readings, warned, integrity, selfOk };
 }
 
 /** 一条预测当前是否仍生效：没被 _redo 取代 */

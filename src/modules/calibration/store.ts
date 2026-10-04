@@ -14,6 +14,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import { getDataDir } from "../../storage/local-store.js";
+import { assertManagedPathAvailable } from "../../storage/storage-roots.js";
 import { STATE_SCHEMA_VERSION } from "./constants.js";
 import { DEFAULT_RUBRIC, rubricLeaks, type Rubric } from "./rubric.js";
 
@@ -182,6 +183,8 @@ export async function appendLog(name: LogName, rec: Record<string, unknown> & { 
   const prev = records.length ? records[records.length - 1].fp : null;
   const body = { ...rec, prev };
   const full = { ...body, fp: fingerprint(body) } as ChainRecord;
+  // 写入权在第一次写之前核：否则丢锁时行先追加进去、链头写才被拒，留下半截记录（Codex 审 P1）
+  assertManagedPathAvailable(calibrationDir(dataDir));
   await fs.mkdir(calibrationDir(dataDir), { recursive: true });
   await fs.appendFile(path.join(calibrationDir(dataDir), `${name}.jsonl`), `${JSON.stringify(full)}\n`, "utf-8");
   await writeHead(name, { fp: full.fp, count: records.length + 1 }, dataDir);
@@ -199,6 +202,7 @@ export async function acknowledgeLogDamage(name: LogName, reason: string, dataDi
     if (problems.length) throw new Error(`${name}.jsonl 链中间就坏了（${problems[0]}）：不能用重记链头掩盖，只能人工处理`);
     const head = (await readHeads(dataDir))[name];
     const entry = { log: name, reason, previous_head: head ?? null, new_count: records.length, at: new Date().toISOString() };
+    assertManagedPathAvailable(calibrationDir(dataDir));
     // 先留痕再改链头：恢复记录写不进去，链头就不动
     await fs.appendFile(file(dataDir, "repairs.jsonl"), `${JSON.stringify(entry)}\n`, "utf-8");
     await writeHead(name, { fp: last, count: records.length }, dataDir);
@@ -238,6 +242,7 @@ export async function snapshotSizes(dataDir?: string): Promise<LogSnapshot> {
 
 /** 回滚：文件截回快照长度，链头还原成快照里保存的值——绝不按（可能已坏的）文件重算 */
 export async function truncateTo(snap: LogSnapshot, dataDir?: string): Promise<void> {
+  assertManagedPathAvailable(calibrationDir(dataDir)); // 丢锁时连截断也不做：否则文件截了、链头写被拒
   for (const [n, size] of Object.entries(snap.sizes)) {
     const p = path.join(calibrationDir(dataDir), `${n}.jsonl`);
     try { await fs.truncate(p, size); } catch { /* 文件原本不存在 */ }
