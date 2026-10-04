@@ -75,3 +75,31 @@ describe("锁顺序：系列锁 → 认领队列 → 单稿写锁（Codex 复审
     expect(await Promise.race([Promise.all([series, renew]).then(() => "done"), timeout])).toBe("done");
   });
 });
+
+describe("排队期间租约到期的心跳续租（Codex 复审 P2）", () => {
+  it("进队时有效、带当前令牌：仍按续租算，令牌与心跳都保留", async () => {
+    const { vi } = await import("vitest");
+    const { seriesTransaction } = await import("./series-transaction.js");
+    const { id, token } = await idleClaimed();
+    const t = await transferClaim(id, { token, host: "claude-code", toEmployee: "editor", toHost: "codex", heartbeat: true }, dir);
+    if (!t.ok) throw new Error("transfer failed");
+    let clock = Date.now();
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const cur = (await getContent(id, dir))!;
+      await updateContent(id, { claim: { ...cur.claim!, leaseUntil: new Date(clock + 1000).toISOString() } }, dir);
+      let release!: () => void;
+      const blocker = seriesTransaction(() => new Promise<void>((r) => { release = r; }));
+      while (!release) await new Promise((r) => setImmediate(r));
+      const renew = ensureClaim(id, { host: "codex", employee: "editor", token: t.claim.token }, dir);
+      clock += 2000;
+      release();
+      await blocker;
+      const r = await renew;
+      expect(r.ok && r.claim.token).toBe(t.claim.token);
+      const final = (await getContent(id, dir))!.claim!;
+      expect(final.heartbeat).toBe(true);
+      expect(tokenMatches(final.token, t.claim.token)).toBe(true);
+    } finally { spy.mockRestore(); }
+  });
+});
