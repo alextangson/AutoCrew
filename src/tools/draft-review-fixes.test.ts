@@ -105,6 +105,16 @@ describe("P1 没有会话头的调用不共享令牌", () => {
   });
 });
 
+describe("P2 失败回执也交还新发的令牌", () => {
+  it("没会话的调用第一次 cite 就失败：回执带 claim_token，带上它接着 angle 能成", async () => {
+    const id = await fresh(as("claude-code", undefined));
+    await call("read", { content_id: id, url: "https://example.com/r" }, as("claude-code", undefined));
+    const bad = await call("cite", { content_id: id, page_id: "p1", quote: "原文里没有这句" }, as("claude-code", undefined));
+    expect(bad).toMatchObject({ ok: false, code: "quote_not_found", claim_token: expect.any(String) });
+    expect(await call("angle", { content_id: id, ...ANGLE, claim_token: bad.claim_token }, as("claude-code", undefined))).toMatchObject({ ok: true });
+  });
+});
+
 describe("P1 local-user 在模型写口上没有越门放行", () => {
   it("没带 _host 的调用不能越过别人的认领", async () => {
     const id = await fresh();

@@ -36,6 +36,7 @@ export function withDraftWrite(a: DraftArgs, fn: (ctx: WriteCtx) => Promise<R>):
     if (!gate.ok) return gate as R;
     const fenced = async () => (await fenceDraftWrite(id, gate.token, a.dataDir) ? null : fail("claim_lost", LOST));
     const r = await fn({ content: checked as Content, fenced });
-    return gate.issued && r.ok !== false ? { ...r, claim_token: gate.issued } : r;
+    // 没会话的调用：令牌只能随回执交还——动作本身失败（如引文没对上）也要交，不然下一次写就被自己的认领挡住
+    return gate.issued ? { ...r, claim_token: gate.issued } : r;
   });
 }
