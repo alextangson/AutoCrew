@@ -1,5 +1,5 @@
 /** 薄路径定稿面板的纯逻辑：「定了」能不能点、不能点时在按钮位置写什么原因 */
-export interface DraftItem { id: string; status: "sourced" | "unsourced"; text: string; evidence_ids: string[]; reason?: string; needs_human?: string[] }
+export interface DraftItem { id: string; status: "sourced" | "unsourced" | "exempt"; kind?: "example" | "judgment"; text: string; evidence_ids: string[]; reason?: string; needs_human?: string[] }
 export interface DraftVerdict { verdict: "pass" | "fail"; reason: string; quotes?: string[] }
 export interface StructuredReview { main_line: DraftVerdict; payoff: DraftVerdict; opening: DraftVerdict; advisories?: Array<{ text: string; quote?: string }> }
 export interface DraftReviewNote { version: number; notes: unknown; at: string }
@@ -16,6 +16,16 @@ export function finalizeBlock(d: DraftPanelData, keep: ReadonlySet<string>, dirt
   if (!d.checklist.current) return "清单出完之后稿子又改过：让 agent 重新出清单再点";
   const open = d.checklist.items.filter((i) => i.status === "unsourced" && !keep.has(i.id)).length;
   return open ? `还有 ${open} 处没出处：逐条点「保留」，或让 agent 补出处 / 删掉` : null;
+}
+
+/** 要创始人过目的出处项 vs agent 标成示意 / 判断、不需要出处的项（折叠另放） */
+export function splitChecklist(items: DraftItem[]): { listed: DraftItem[]; exempt: DraftItem[] } {
+  return { listed: items.filter((i) => i.status !== "exempt"), exempt: items.filter((i) => i.status === "exempt") };
+}
+
+/** 审稿记录的版本标签：总显示最近一次，审的不是当前版就说明 */
+export function reviewVersionLabel(reviewed: number, current: number): string {
+  return reviewed === current ? `审的是当前版（第 ${reviewed} 版）` : `审的是第 ${reviewed} 版，之后又改过`;
 }
 
 export const VERDICT_LABEL: Record<string, string> = { main_line: "主线", payoff: "收获", opening: "开头" };

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
-import { finalizeBlock, structuredReview, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote } from "./draft-final-lib";
+import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote } from "./draft-final-lib";
 
 /** agent 附的 Codex 审稿意见：认得出三项结论就分项摆，否则原文照摆（调不通时就是原因） */
 export function ReviewNotes(p: { notes: DraftReviewNote[]; version: number }) {
@@ -14,7 +14,7 @@ export function ReviewNotes(p: { notes: DraftReviewNote[]; version: number }) {
   if (!last) return null;
   const r = structuredReview(last.notes);
   return <div className="draft-final-review">
-    <strong>Codex 审稿（只是参考）</strong> <span className="muted">{last.version === p.version ? `审的是当前版（第 ${last.version} 版）` : `审的是第 ${last.version} 版，之后稿子又改过`}</span>
+    <strong>Codex 审稿（只是参考）</strong> <span className="muted">{reviewVersionLabel(last.version, p.version)}</span>
     {r ? <ul>
       {(["main_line", "payoff", "opening"] as const).map((k) => <li key={k}>
         {VERDICT_LABEL[k]}：{r[k].verdict === "pass" ? "过" : "不过"} · {r[k].reason}
@@ -67,12 +67,17 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
     await p.reload();
   };
   const block = finalizeBlock(d, keep, p.dirty);
+  const groups = d.checklist ? splitChecklist(d.checklist.items) : null;
   const toggle = (id: string) => setKeep((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return <section className="draft-final card" aria-label="定稿">
     <ReviewNotes notes={d.review_notes} version={d.version} />
     {d.status === "draft_ready" && d.checklist && <div className="draft-final-checklist">
       <strong>出处清单</strong>
-      <ul>{d.checklist.items.map((i) => <ChecklistRow key={i.id} item={i} kept={keep.has(i.id)} toggle={() => toggle(i.id)} />)}</ul>
+      <ul>{groups!.listed.map((i) => <ChecklistRow key={i.id} item={i} kept={keep.has(i.id)} toggle={() => toggle(i.id)} />)}</ul>
+      {groups!.exempt.length > 0 && <details>
+        <summary>示意/判断，不需要出处（{groups!.exempt.length}）</summary>
+        <ul>{groups!.exempt.map((i) => <li key={i.id}>{i.kind === "judgment" ? "判断" : "示意"} · {i.text}</li>)}</ul>
+      </details>}
     </div>}
     {d.status === "draft_ready" && (block ? <p className="muted">{block}</p> : <Button variant="primary" disabled={busy} onClick={() => void finalize()}>{busy ? "定稿中…" : "定了，去录 A-roll"}</Button>)}
   </section>;

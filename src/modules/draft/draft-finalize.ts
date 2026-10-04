@@ -7,7 +7,8 @@
 import { draftHash } from "../../storage/draft-hash.js";
 import { contentTransaction, getContent, getDataDir, LOCAL_HOST, transitionStatus, type Content } from "../../storage/local-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
-import { saveCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
+import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, saveCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
+import { factualSentences } from "../video/handoff/factual-sentences.js";
 import { currentVersion } from "./draft-types.js";
 import { loadChecklist, type ChecklistItem, type FinalChecklist } from "./draft-final.js";
 
@@ -27,19 +28,33 @@ function withKeptEntries(c: Content, items: ChecklistItem[]): { entries: LedgerE
   return { entries: [...ledger.entries()], keptIds };
 }
 
+function ledgerCitations(body: string, at: { start: number; end: number }, ids: string[], byId: Map<string, LedgerEntry>): Citation[] {
+  return ids.map((id) => {
+    const e = byId.get(id)!;
+    return {
+      start: at.start, end: at.end, excerpt: body.slice(at.start, at.end), evidence_id: id, sourceType: e.source,
+      ...(e.sourceUrl ? { sourceUrl: e.sourceUrl } : {}), quote: e.quote,
+      verification: e.source === "verified_quote" ? "引文逐字出自抓回的原网页（autocrew_draft cite 已核）" : `未核验：${KEPT_REASON}`,
+    };
+  });
+}
+
+/** 不需要出处的句子（示意 / 判断，或只有相对时间、约数）：交接出处门仍要每个事实句有定位，记成创作者自己的话，标明为什么不需要出处 */
+const creatorCitation = (body: string, at: { start: number; end: number }, why: string): Citation => ({
+  start: at.start, end: at.end, excerpt: body.slice(at.start, at.end), evidence_id: CREATOR_EVIDENCE_ID, sourceType: CREATOR_OPINION, quote: "", verification: `不需要出处：${why}`,
+});
+const EXEMPT_WHY = { example: "类比 / 示意例子（agent 标注）", judgment: "我们自己的判断（agent 标注）" } as const;
+
 function citationsFor(body: string, items: ChecklistItem[], entries: readonly LedgerEntry[], keptIds: Map<string, string>): Citation[] {
   const byId = new Map(entries.map((e) => [e.id, e]));
-  return items.flatMap((item) => {
-    const ids = item.status === "sourced" ? item.evidence_ids : [keptIds.get(item.id)!];
-    return ids.map((id) => {
-      const e = byId.get(id)!;
-      return {
-        start: item.start, end: item.end, excerpt: body.slice(item.start, item.end), evidence_id: id, sourceType: e.source,
-        ...(e.sourceUrl ? { sourceUrl: e.sourceUrl } : {}), quote: e.quote,
-        verification: e.source === "verified_quote" ? "引文逐字出自抓回的原网页（autocrew_draft cite 已核）" : `未核验：${KEPT_REASON}`,
-      };
-    });
+  const out = items.flatMap((item) => {
+    if (item.status === "exempt") return item.evidence_ids.length ? ledgerCitations(body, item, item.evidence_ids, byId) : [creatorCitation(body, item, EXEMPT_WHY[item.kind ?? "example"])];
+    return ledgerCitations(body, item, item.status === "sourced" ? item.evidence_ids : [keptIds.get(item.id)!], byId);
   });
+  for (const s of factualSentences(body)) {
+    if (!out.some((c) => c.start <= s.start && c.end >= s.end)) out.push(creatorCitation(body, s, "只有相对时间或约数，没有具体数字"));
+  }
+  return out;
 }
 
 async function checkReady(c: Content, checklist: FinalChecklist | null, hash: string, keep: string[]): Promise<R | null> {

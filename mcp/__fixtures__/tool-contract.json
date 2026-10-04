@@ -641,6 +641,9 @@
       },
       "type": "array"
      },
+     "chosen_option": {
+      "type": "string"
+     },
      "citations": {
       "items": {
        "properties": {
@@ -649,6 +652,14 @@
           "type": "string"
          },
          "type": "array"
+        },
+        "kind": {
+         "enum": [
+          "claim",
+          "example",
+          "judgment"
+         ],
+         "type": "string"
         },
         "text": {
          "type": "string"
@@ -3444,6 +3455,9 @@
       },
       "type": "array"
      },
+     "chosen_option": {
+      "type": "string"
+     },
      "citations": {
       "items": {
        "properties": {
@@ -3452,6 +3466,14 @@
           "type": "string"
          },
          "type": "array"
+        },
+        "kind": {
+         "enum": [
+          "claim",
+          "example",
+          "judgment"
+         ],
+         "type": "string"
         },
         "text": {
          "type": "string"

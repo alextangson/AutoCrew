@@ -37,7 +37,7 @@ export async function draftAngle(a: DraftArgs): Promise<R> {
     const topic = await topicFor(c, tx, a.dataDir);
     if (!await recordFounderAngle(topic, a.mainLine!, a.founderWords!, a.dataDir)) return fail("angle_failed", "立意没记上：选题记录写不进去");
     const version = (c.draftPath?.angle?.version ?? 0) + 1;
-    const angle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain, founder_words: a.founderWords!, at: new Date().toISOString() };
+    const angle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain, founder_words: a.founderWords!, ...(a.chosenOption ? { chosen_option: a.chosenOption } : {}), at: new Date().toISOString() };
     await tx.write({ draftPath: { ...c.draftPath!, angle } });
     return { ok: true, angle_version: version, version: currentVersion(c), workbench_url: workbenchUrl(c.id), next_action: { note: "按选定的立意和论证链写全文，再 save" } };
   });

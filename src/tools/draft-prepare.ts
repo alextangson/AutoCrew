@@ -13,14 +13,23 @@ import type { DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
 
+/**
+ * 最近一次 Codex 审稿（验收 10-04）：以前只认「审的就是当前版」，审完 v4 又改成 v5 就报没审过。
+ * 现在总报最近一次，并标明审的是第几版、之后改没改过。
+ */
+export function reviewSummary(c: Content, version: number): Record<string, unknown> {
+  const last = c.draftPath?.reviewNotes?.at(-1);
+  if (!last) return { version, has_notes: false };
+  return { version, has_notes: true, reviewed_version: last.version, current: last.version === version, ...(last.version === version ? {} : { note: `审的是第 ${last.version} 版，之后又改过` }) };
+}
+
 async function prepare(a: DraftArgs, c: Content, tx: ContentTx, mapping: MappingInput[]): Promise<R> {
   if (!await isRealDraft(c, a.dataDir)) return fail("empty_body", "还没有正文：先 save 一版再定稿");
   const entries = c.evidenceLedger?.entries ?? [];
   const located = locateMapping(c.body, mapping, entries);
   if (located.errors.length) return fail("bad_citations", "出处映射有错，改好再交", { errors: located.errors });
   const version = currentVersion(c);
-  const reviewed = (c.draftPath?.reviewNotes ?? []).some((n) => n.version === version);
-  const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items: buildChecklist(c.body, located.spans, entries), review: { version, has_notes: reviewed } };
+  const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items: buildChecklist(c.body, located.spans, entries), review: reviewSummary(c, version) };
   await saveChecklist(c.id, checklist, a.dataDir);
   await tx.write({ draftPath: { ...c.draftPath!, checklistAt: checklist.prepared_at } });
   return { ok: true, checklist, expected: { title: c.title, body: c.body, platform: c.platform }, status: c.status };
@@ -40,7 +49,7 @@ export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
   return {
     ok: true,
     status: "draft_ready",
-    items: checklist.items.map((i) => ({ id: i.id, status: i.status, text: i.text, evidence_ids: i.evidence_ids, ...(i.reason ? { reason: i.reason } : {}), ...(i.needs_human.length ? { needs_human: i.needs_human } : {}) })),
+    items: checklist.items.map((i) => ({ id: i.id, status: i.status, ...(i.kind ? { kind: i.kind } : {}), text: i.text, evidence_ids: i.evidence_ids, ...(i.reason ? { reason: i.reason } : {}), ...(i.needs_human.length ? { needs_human: i.needs_human } : {}) })),
     unsourced: unsourced.length,
     review: checklist.review,
     workbench_url: workbenchUrl(a.contentId!),

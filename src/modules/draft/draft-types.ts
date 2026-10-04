@@ -12,6 +12,8 @@ export interface DraftAngle {
   why_viral: string;
   chain: string[];
   founder_words: string;
+  /** 创始人选中的选项当时展示的全文（他只回「B」也看得懂） */
+  chosen_option?: string;
   at: string;
 }
 

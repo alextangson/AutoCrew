@@ -21,6 +21,7 @@ export interface DraftArgs {
   whyViral?: string;
   chain: unknown;
   founderWords?: string;
+  chosenOption?: string;
   title?: string;
   body?: string;
   note?: string;
@@ -99,6 +100,7 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     whyViral: str(p.why_viral),
     chain: p.chain,
     founderWords: str(p.founder_words),
+    chosenOption: str(p.chosen_option),
     title: str(p.title),
     body: typeof p.body === "string" ? p.body : undefined,
     note: str(p.note),
