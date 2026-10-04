@@ -938,7 +938,7 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
     // 采纳即学习闸门：正文确有变化才把 before→after 喂给蒸馏管线（延迟学习，不确认不学）
     if (!before || before === body) return { ok: true, content: updated };
     try {
-      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform);
+      await recordDiff(contentId, "ai", "body", before, body, dataDir, feedback || undefined, updated.platform);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { ok: true, content: updated, warning: `diff 记录失败：${msg}，稿件已正常保存` };
@@ -972,7 +972,7 @@ async function styleRecordEditHandler(payload: Record<string, unknown>): Promise
     // 纠正路由需要平台归属（PRD-v4 §4.3）——按 content_id 反查，查不到不阻断记录
     const content = await getContent(contentId, dataDir).catch(() => null);
     // field 固定为 "body"（v1 工作台只改正文；title 编辑信号需求出现再扩 payload）
-    await recordDiff(contentId, "body", before, after, dataDir, undefined, content?.platform);
+    await recordDiff(contentId, "founder", "body", before, after, dataDir, undefined, content?.platform);
     return { ok: true, data: {} };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

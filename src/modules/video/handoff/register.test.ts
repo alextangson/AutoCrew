@@ -157,7 +157,7 @@ describe.skipIf(!HAS_FFMPEG)("登记成功（register-to-ego-lite）", () => {
     expect(spoken).toBe("今天聊聊我怎么用 AI 工具省下每天两小时。据麦肯锡报告，能省 30%。\n\n第一步，把重复的事交出去。\n");
     const diffs = (await listDiffs({ contentId }, fx.dir)).filter((d) => d.changeType === "实拍口播与定稿的差异");
     expect(diffs).toHaveLength(1);
-    expect(diffs[0]).toMatchObject({ field: "body", before: BODY, after: spoken, platform: "douyin" });
+    expect(diffs[0]).toMatchObject({ author: "founder", field: "body", before: BODY, after: spoken, platform: "douyin" });
     expect(await register()).toMatchObject({ ok: true, replayed: true });
     expect((await listDiffs({ contentId }, fx.dir)).filter((d) => d.changeType === "实拍口播与定稿的差异")).toHaveLength(1);
   });

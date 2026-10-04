@@ -123,7 +123,7 @@ export async function reviseDraft(
   // best-effort：记录失败不阻断改稿（稿已落盘）。这里不触发蒸馏——对话轮要快，
   // 攒下的 diff 由下一次保存/收稿时的蒸馏一并消化。
   try {
-    await recordDiff(contentId, "body", current.body, revision.body, dataDir, feedback, current.platform);
+    await recordDiff(contentId, "ai", "body", current.body, revision.body, dataDir, feedback, current.platform);
   } catch {
     /* 学习信号丢一条，不影响这次修改 */
   }

@@ -40,6 +40,14 @@ describe("buildSeriesSnapshot scope (spec §3 B)", () => {
     expect(snap.items[1].label).toBe("待发（写过，观众还没看到）");
   });
 
+  it("skips body-less imported history so it can't crowd out real drafts; keeps imported history with a body", () => {
+    const empties = Array.from({ length: 12 }, (_, i) => content({ status: "published", source: "imported_history", body: "", seriesEnteredAt: day(1 + i) }));
+    const withBody = content({ status: "published", source: "imported_history", seriesEnteredAt: day(2) });
+    const real = content({ seriesEnteredAt: day(20) });
+    const ids = buildSeriesSnapshot([...empties, withBody, real], "douyin", {}, NOW).items.map((i) => i.content_id);
+    expect(ids).toEqual([withBody.id, real.id]);
+  });
+
   it("keeps only the newest version per topic and at most 10 items", () => {
     const v1 = content({ topicId: "t", seriesEnteredAt: day(5) });
     const v2 = content({ topicId: "t", seriesEnteredAt: day(3) });

@@ -11,7 +11,7 @@
  *
  * This module generates human-readable messages, not raw data.
  */
-import { listDiffs, detectPatterns, type EditDiff } from "../learnings/diff-tracker.js";
+import { listFounderDiffs, detectPatterns, type EditDiff } from "../learnings/diff-tracker.js";
 import { loadProfile, isRuleActive, type WritingRule } from "../profile/creator-profile.js";
 import { listContents } from "../../storage/local-store.js";
 
@@ -92,7 +92,7 @@ export interface LearningReport {
 export async function generateLearningReport(dataDir?: string): Promise<LearningReport> {
   const [contents, diffs, profile] = await Promise.all([
     listContents(dataDir),
-    listDiffs(undefined, dataDir),
+    listFounderDiffs(dataDir),
     loadProfile(dataDir),
   ]);
 

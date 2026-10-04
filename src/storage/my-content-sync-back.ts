@@ -47,7 +47,7 @@ async function syncOne(id: string, text: string, viewHash: string, dataDir: stri
   try { updated = await updateContent(id, { body: text, _versionNote: FOUNDER_EDIT_NOTE, _editor: "founder" }, dataDir); }
   catch (e) { if (e instanceof ScriptFrozenError) return e.message; throw e; }
   if (!updated) return "稿件已经不在了";
-  await recordDiff(id, "body", c.body, text, dataDir, FOUNDER_EDIT_NOTE, c.platform);
+  await recordDiff(id, "founder", "body", c.body, text, dataDir, FOUNDER_EDIT_NOTE, c.platform);
   return null;
 }
 

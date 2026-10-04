@@ -42,7 +42,7 @@ export async function landSpoken(content: Content, record: VideoHandoffRecord, s
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeTextAtomic(file, spoken);
     const finalScript = (await readOrNull(safeProjectPath(record.project_root, finalScriptRel(record.generation)))) ?? content.body;
-    await recordDiff(content.id, "body", finalScript, spoken, dataDir, SPOKEN_DIFF_NOTE, content.platform);
+    await recordDiff(content.id, "founder", "body", finalScript, spoken, dataDir, SPOKEN_DIFF_NOTE, content.platform);
     return undefined;
   } catch (e) {
     return `成片已登记，但实拍版口播没存上：${e instanceof Error ? e.message : String(e)}`;

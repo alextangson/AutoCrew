@@ -137,8 +137,8 @@ describe("distillStyleRules", () => {
   // 1. Happy path
   it("happy path: 2 new diffs + 2 rules → profile updated, state written, summary correct", async () => {
     // Record 2 diffs
-    await recordDiff("c1", "body", "鉴于某某原因，因此可以考虑", "说白了，直接做就行", testDir);
-    await recordDiff("c1", "body", "首先其次最后罗列", "三点建议：一 二 三", testDir);
+    await recordDiff("c1", "founder", "body", "鉴于某某原因，因此可以考虑", "说白了，直接做就行", testDir);
+    await recordDiff("c1", "founder", "body", "首先其次最后罗列", "三点建议：一 二 三", testDir);
 
     const runLoopImpl = makeRunLoop([GOOD_RULES]);
     const result = await distillStyleRules(testDir, { runLoopImpl });
@@ -164,7 +164,7 @@ describe("distillStyleRules", () => {
 
   // 2. Self-correction: confidence out of range → error, then valid → success
   it("self-correction: confidence 1.5 → execute returns error, valid retry succeeds", async () => {
-    await recordDiff("c1", "body", "before text", "after text", testDir);
+    await recordDiff("c1", "founder", "body", "before text", "after text", testDir);
 
     const execResults: string[] = [];
     const badRules = [{ rule: "测试规则", evidence: "证据", confidence: 1.5 }];
@@ -196,7 +196,7 @@ describe("distillStyleRules", () => {
 
   // 3. Exact-duplicate guard: rule matches existing → skippedDuplicates=1
   it("exact duplicate: 1 rule same as existing → skippedDuplicates=1, not re-added", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
     // Pre-seed profile with the same rule text
     const existingRule = GOOD_RULES[0].rule;
     await addWritingRule({ rule: existingRule, source: "user_explicit", confidence: 1 }, testDir);
@@ -214,7 +214,7 @@ describe("distillStyleRules", () => {
 
   // 3b. Evidence attribution: duplicate dropped mid-array must not shift evidences (I1)
   it("evidence attribution: [dup, 新A, 新B] → summary pairs each new rule with its own evidence", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
     const dupRule = "已有规则：保持简短";
     await addWritingRule({ rule: dupRule, source: "user_explicit", confidence: 1 }, testDir);
 
@@ -235,7 +235,7 @@ describe("distillStyleRules", () => {
 
   // 2b. NaN confidence must be rejected at the trust boundary (I2)
   it("confidence NaN → execute returns 自纠 error", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
 
     const execResults: string[] = [];
     const nanRules = [{ rule: "测试规则", evidence: "证据", confidence: NaN }];
@@ -249,7 +249,7 @@ describe("distillStyleRules", () => {
   // 4. No new diffs → model not called, state unchanged
   it("no new diffs → model not called (callCount=0), state unchanged", async () => {
     // Record a diff, then set lastDistilledAt in the future so it counts as already distilled
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
     await writeDistillState(new Date(Date.now() + 60000).toISOString());
 
     const { impl: runLoopImpl, getCallCount } = makeRunLoopWithCount([]);
@@ -265,7 +265,7 @@ describe("distillStyleRules", () => {
 
   // 5. Truncation: 5 rules submitted → only 3 stored
   it("truncation: fake submits 5 rules → only 3 stored", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
 
     const fiveRules = Array.from({ length: 5 }, (_, i) => ({
       rule: `规则${i + 1}：具体要求${i + 1}`,
@@ -282,7 +282,7 @@ describe("distillStyleRules", () => {
 
   // 6. Never submits → throws, state not updated
   it("never submits → throws, state not updated", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
 
     const runLoopImpl: (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> = async () => {
       return {
@@ -305,12 +305,27 @@ describe("distillStyleRules", () => {
 
   // 7. shouldDistillStyle: 2 new diffs → false; 3 new diffs → true
   it("shouldDistillStyle: 2 diffs → false; 3 diffs → true", async () => {
-    await recordDiff("c1", "body", "before", "after", testDir);
-    await recordDiff("c2", "body", "before", "after", testDir);
+    await recordDiff("c1", "founder", "body", "before", "after", testDir);
+    await recordDiff("c2", "founder", "body", "before", "after", testDir);
     expect(await shouldDistillStyle(testDir)).toBe(false);
 
-    await recordDiff("c3", "body", "before", "after", testDir);
+    await recordDiff("c3", "founder", "body", "before", "after", testDir);
     expect(await shouldDistillStyle(testDir)).toBe(true);
+  });
+
+  it("AI-authored and legacy author-less diffs neither count toward nor feed distillation", async () => {
+    await recordDiff("c1", "ai", "body", "before", "after", testDir);
+    await recordDiff("c2", "ai", "body", "before", "after", testDir);
+    const legacy = await recordDiff("c3", "ai", "body", "before", "after", testDir);
+    const file = path.join(testDir, "learnings", "edits", `${legacy.id}.json`);
+    const { author: _drop, ...noAuthor } = JSON.parse(await fs.readFile(file, "utf-8"));
+    await fs.writeFile(file, JSON.stringify(noAuthor), "utf-8");
+    expect(await shouldDistillStyle(testDir)).toBe(false);
+
+    const runLoopImpl = makeRunLoop([GOOD_RULES]);
+    expect((await distillStyleRules(testDir, { runLoopImpl })).diffsAnalyzed).toBe(0);
+    await recordDiff("c4", "founder", "body", "鉴于某某原因", "说白了", testDir);
+    expect((await distillStyleRules(testDir, { runLoopImpl })).diffsAnalyzed).toBe(1);
   });
 });
 
@@ -422,7 +437,7 @@ describe("创作者原话进 prompt（changeType = 意图的第一依据）", ()
   }
 
   it("带 note 的 diff：原话整句进 userMessage，且排在 before 之前", async () => {
-    await recordDiff("c1", "body", "旧正文", "新正文", testDir, "别用书面语，说人话", "wechat_mp");
+    await recordDiff("c1", "founder", "body", "旧正文", "新正文", testDir, "别用书面语，说人话", "wechat_mp");
 
     const captured: { userMessage?: string; systemPrompt?: string } = {};
     await distillStyleRules(testDir, { runLoopImpl: makeCapturingRunLoop(captured) });
@@ -435,7 +450,7 @@ describe("创作者原话进 prompt（changeType = 意图的第一依据）", ()
   });
 
   it("没有 note 的 diff：不出现原话那一行（不编造意图）", async () => {
-    await recordDiff("c1", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
+    await recordDiff("c1", "founder", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
 
     const captured: { userMessage?: string } = {};
     await distillStyleRules(testDir, { runLoopImpl: makeCapturingRunLoop(captured) });
@@ -447,7 +462,7 @@ describe("创作者原话进 prompt（changeType = 意图的第一依据）", ()
 
 describe("scope routing through distillStyleRules", () => {
   it("persists the scope submitted by the model (纠正记入发生平台)", async () => {
-    await recordDiff("c1", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
+    await recordDiff("c1", "founder", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
 
     const scoped = [
       { rule: "公众号正文空行分段", evidence: "diff1", confidence: 0.8, scope: "platform:wechat_mp" },
@@ -460,7 +475,7 @@ describe("scope routing through distillStyleRules", () => {
   });
 
   it("rejects malformed scope via submit_rules self-correction", async () => {
-    await recordDiff("c1", "body", "旧", "新", testDir);
+    await recordDiff("c1", "founder", "body", "旧", "新", testDir);
 
     const bad = [{ rule: "规则", evidence: "e", confidence: 0.5, scope: "wechat_mp" }];
     const execResults: string[] = [];

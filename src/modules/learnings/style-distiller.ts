@@ -11,7 +11,7 @@ import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { loadEngineConfig } from "../../engine/config.js";
 import { getDataDir } from "../../storage/local-store.js";
-import { listDiffs } from "./diff-tracker.js";
+import { listFounderDiffs } from "./diff-tracker.js";
 import type { EditDiff } from "./diff-tracker.js";
 import { updateProfile, loadProfile, addWritingRule, addVoiceSamples } from "../profile/creator-profile.js";
 import type { WritingRule, RuleScope } from "../profile/creator-profile.js";
@@ -303,7 +303,7 @@ export async function distillStyleRules(
   deps?: { runLoopImpl?: typeof runLoop },
 ): Promise<StyleDistillResult> {
   const state = await readState(dataDir);
-  const allDiffs = await listDiffs(undefined, dataDir);
+  const allDiffs = await listFounderDiffs(dataDir);
   const newDiffs = state.lastDistilledAt
     ? allDiffs.filter((d) => d.createdAt > state.lastDistilledAt!)
     : allDiffs;
@@ -411,7 +411,7 @@ export async function analyzeStyleSamples(
 
 export async function shouldDistillStyle(dataDir?: string): Promise<boolean> {
   const state = await readState(dataDir);
-  const allDiffs = await listDiffs(undefined, dataDir);
+  const allDiffs = await listFounderDiffs(dataDir);
   const newDiffs = state.lastDistilledAt
     ? allDiffs.filter((d) => d.createdAt > state.lastDistilledAt!)
     : allDiffs;

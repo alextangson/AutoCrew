@@ -136,6 +136,7 @@ describe("reviseDraft", () => {
     expect(diffs[0].before).toBe("偏书面的旧正文。");
     expect(diffs[0].after).toBe("更口语的新正文。");
     expect(diffs[0].changeType).toBe("口语一点，开头直接说结论");
+    expect(diffs[0].author).toBe("ai");
     expect(diffs[0].platform).toBe("wechat_mp");
   });
 

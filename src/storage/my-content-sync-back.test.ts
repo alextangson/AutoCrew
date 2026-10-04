@@ -80,7 +80,7 @@ describe("我的内容 · 改稿回流", () => {
     expect(after.versions?.at(-1)?.note).toBe("创始人在「我的内容」里改稿");
     const diffs = await founderDiffs(c);
     expect(diffs).toHaveLength(1);
-    expect(diffs[0]).toMatchObject({ field: "body", before: "回流 的正文", after: "创始人改过的口播\n", platform: "douyin" });
+    expect(diffs[0]).toMatchObject({ author: "founder", field: "body", before: "回流 的正文", after: "创始人改过的口播\n", platform: "douyin" });
     expect(await fs.readFile(file, "utf8")).toBe("创始人改过的口播\n");
     expect((await fs.stat(file)).mode & 0o777).toBe(0o644);
     expect((await fs.readdir(folder(col, "回流"))).filter((n) => n.includes("我改过的"))).toEqual([]);

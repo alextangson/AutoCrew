@@ -15,6 +15,8 @@ import { getDataDir } from "../../storage/local-store.js";
 export interface EditDiff {
   id: string;
   contentId: string;
+  /** 谁写的 after:创始人亲手改 = founder;模型改写/自审 = ai。旧数据缺省 = 不明,不当口味 */
+  author?: DiffAuthor;
   field: "body" | "title" | "hashtags" | "other";
   /** 纠正发生的平台（纠正路由二分类的输入，PRD-v4 §4.3）。缺省 = 平台未知 */
   platform?: string;
@@ -26,6 +28,8 @@ export interface EditDiff {
   patterns: string[];
   createdAt: string;
 }
+
+export type DiffAuthor = "founder" | "ai";
 
 export interface DiffAnalysis {
   /** Detected edit patterns */
@@ -47,6 +51,7 @@ async function editsDir(dataDir?: string): Promise<string> {
  */
 export async function recordDiff(
   contentId: string,
+  author: DiffAuthor,
   field: EditDiff["field"],
   before: string,
   after: string,
@@ -61,6 +66,7 @@ export async function recordDiff(
   const diff: EditDiff = {
     id,
     contentId,
+    author,
     field,
     ...(platform ? { platform } : {}),
     before: before.slice(0, 2000),
@@ -114,6 +120,11 @@ export async function listDiffs(
   return diffs;
 }
 
+/** 只取创始人亲手改的 diff——AI 改写和旧的无作者记录都不能当创作者口味 */
+export async function listFounderDiffs(dataDir?: string): Promise<EditDiff[]> {
+  return (await listDiffs(undefined, dataDir)).filter((d) => d.author === "founder");
+}
+
 // ─── 对比对(V5.7 活人感):创始人亲手改过的 before/after 注入写稿 prompt ────────
 
 export interface ContrastPair {
@@ -156,7 +167,7 @@ export function changedWindow(
  * 过滤标点级微调;整篇重写窗口自动截断到 PAIR_SIDE_MAX。
  */
 export async function recentContrastPairs(limit = 3, dataDir?: string): Promise<ContrastPair[]> {
-  const diffs = await listDiffs(undefined, dataDir);
+  const diffs = await listFounderDiffs(dataDir);
   const pairs: ContrastPair[] = [];
   for (const d of diffs) {
     if (d.field !== "body" || d.before === d.after) continue;
@@ -245,7 +256,7 @@ export function detectPatterns(before: string, after: string): string[] {
 export async function getPatternFrequency(
   dataDir?: string,
 ): Promise<Array<{ pattern: string; count: number }>> {
-  const diffs = await listDiffs(undefined, dataDir);
+  const diffs = await listFounderDiffs(dataDir);
   const freq = new Map<string, number>();
 
   for (const diff of diffs) {

@@ -67,7 +67,7 @@ describe("detectPatterns", () => {
 
 describe("recordDiff", () => {
   it("saves a diff file and returns the diff object", async () => {
-    const diff = await recordDiff("content-001", "body", "原始文本", "修改后文本", testDir);
+    const diff = await recordDiff("content-001", "founder", "body", "原始文本", "修改后文本", testDir);
     expect(diff.id).toMatch(/^diff-/);
     expect(diff.contentId).toBe("content-001");
     expect(diff.before).toBe("原始文本");
@@ -77,18 +77,18 @@ describe("recordDiff", () => {
 
   it("truncates very long before/after to 2000 chars", async () => {
     const longText = "x".repeat(5000);
-    const diff = await recordDiff("content-002", "body", longText, "short", testDir);
+    const diff = await recordDiff("content-002", "founder", "body", longText, "short", testDir);
     expect(diff.before.length).toBeLessThanOrEqual(2000);
   });
 
   it("persists to disk", async () => {
-    await recordDiff("content-003", "title", "旧标题", "新标题", testDir);
+    await recordDiff("content-003", "founder", "title", "旧标题", "新标题", testDir);
     const diffs = await listDiffs(undefined, testDir);
     expect(diffs.length).toBeGreaterThanOrEqual(1);
   });
 
   it("stores note into changeType when provided", async () => {
-    const diff = await recordDiff("content-004", "body", "原文", "改后", testDir, "去掉套话");
+    const diff = await recordDiff("content-004", "founder", "body", "原文", "改后", testDir, "去掉套话");
     expect(diff.changeType).toBe("去掉套话");
     const diffs = await listDiffs({ contentId: "content-004" }, testDir);
     expect(diffs[0].changeType).toBe("去掉套话");
@@ -102,15 +102,15 @@ describe("listDiffs", () => {
   });
 
   it("returns all recorded diffs", async () => {
-    await recordDiff("c1", "body", "a", "b", testDir);
-    await recordDiff("c2", "body", "c", "d", testDir);
+    await recordDiff("c1", "founder", "body", "a", "b", testDir);
+    await recordDiff("c2", "founder", "body", "c", "d", testDir);
     const diffs = await listDiffs(undefined, testDir);
     expect(diffs.length).toBe(2);
   });
 
   it("filters by contentId", async () => {
-    await recordDiff("c1", "body", "a", "b", testDir);
-    await recordDiff("c2", "body", "c", "d", testDir);
+    await recordDiff("c1", "founder", "body", "a", "b", testDir);
+    await recordDiff("c2", "founder", "body", "c", "d", testDir);
     const diffs = await listDiffs({ contentId: "c1" }, testDir);
     expect(diffs.length).toBe(1);
     expect(diffs[0].contentId).toBe("c1");
@@ -129,7 +129,7 @@ describe("listDiffs", () => {
     };
     await fs.writeFile(path.join(editsDir, "c1-12345.json"), JSON.stringify(adHoc, null, 2), "utf-8");
 
-    await recordDiff("c1", "body", "原文", "改后", testDir);
+    await recordDiff("c1", "founder", "body", "原文", "改后", testDir);
 
     const diffs = await listDiffs(undefined, testDir);
     expect(diffs).toHaveLength(1);
@@ -149,6 +149,7 @@ describe("getPatternFrequency", () => {
     for (let i = 0; i < 3; i++) {
       await recordDiff(
         `c${i}`,
+        "founder",
         "body",
         "首先看，其次分析，最后总结。",
         "看，分析，总结。",
@@ -164,9 +165,9 @@ describe("getPatternFrequency", () => {
   it("sorts by frequency descending", async () => {
     // 3x pattern A, 1x pattern B
     for (let i = 0; i < 3; i++) {
-      await recordDiff(`ca${i}`, "body", "首先看，其次分析，最后总结。", "看，分析，总结。", testDir);
+      await recordDiff(`ca${i}`, "founder", "body", "首先看，其次分析，最后总结。", "看，分析，总结。", testDir);
     }
-    await recordDiff("cb1", "body", "我们来看", "来看", testDir);
+    await recordDiff("cb1", "founder", "body", "我们来看", "来看", testDir);
 
     const freq = await getPatternFrequency(testDir);
     expect(freq[0].count).toBeGreaterThanOrEqual(freq[1]?.count ?? 0);
@@ -197,11 +198,11 @@ describe("changedWindow (V5.7 对比对)", () => {
 describe("recentContrastPairs (V5.7 对比对)", () => {
   it("returns body edits with note, skips typo-level and non-body diffs", async () => {
     // 有效:整句改写(核心 > 6 字),带"为什么改"
-    await recordDiff("c1", "body", "这个方法非常好用而且很棒很棒", "说白了这招就是快", testDir, "太营销腔了");
+    await recordDiff("c1", "founder", "body", "这个方法非常好用而且很棒很棒", "说白了这招就是快", testDir, "太营销腔了");
     // 无效:标点级微调(核心 < 6 字)
-    await recordDiff("c2", "body", "今天天气很好我们出门", "今天天气很好我们出行", testDir);
+    await recordDiff("c2", "founder", "body", "今天天气很好我们出门", "今天天气很好我们出行", testDir);
     // 无效:标题编辑不进对比对
-    await recordDiff("c3", "title", "旧标题旧标题旧标题", "新标题完全不同的写法", testDir);
+    await recordDiff("c3", "founder", "title", "旧标题旧标题旧标题", "新标题完全不同的写法", testDir);
 
     const pairs = await recentContrastPairs(3, testDir);
     expect(pairs).toHaveLength(1);
@@ -212,10 +213,23 @@ describe("recentContrastPairs (V5.7 对比对)", () => {
 
   it("honors the limit", async () => {
     for (let i = 0; i < 5; i++) {
-      await recordDiff(`c${i}`, "body", `第${i}版本的旧写法又长又空洞`, `第${i}版改成了有劲的短句`, testDir);
+      await recordDiff(`c${i}`, "founder", "body", `第${i}版本的旧写法又长又空洞`, `第${i}版改成了有劲的短句`, testDir);
     }
     const pairs = await recentContrastPairs(3, testDir);
     expect(pairs).toHaveLength(3);
+  });
+
+  it("excludes AI-authored and legacy author-less diffs", async () => {
+    await recordDiff("c1", "ai", "body", "模型自己写的旧版本很长很长", "模型自审后改的新版本", testDir);
+    const legacy = await recordDiff("c2", "founder", "body", "旧数据没有作者字段的写法", "旧数据改后的完全不同写法", testDir);
+    const file = path.join(testDir, "learnings", "edits", `${legacy.id}.json`);
+    const { author: _drop, ...noAuthor } = JSON.parse(await fs.readFile(file, "utf-8"));
+    await fs.writeFile(file, JSON.stringify(noAuthor), "utf-8");
+    await recordDiff("c3", "founder", "body", "创始人删掉的套话写法很空", "创始人改成的短句", testDir);
+
+    const pairs = await recentContrastPairs(3, testDir);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].after).toContain("创始人改成");
   });
 
   it("returns empty array when no diffs exist", async () => {

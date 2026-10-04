@@ -55,7 +55,7 @@ describe("draft:adopt_revision", () => {
     const saved = await getContent(c.id, testDir);
     expect(saved?.body).toBe("新正文更口语");
     expect(saved?.versions).toHaveLength(2);
-    expect((await listDiffs(undefined, testDir)).length).toBe(1);
+    expect((await listDiffs(undefined, testDir)).map((d) => d.author)).toEqual(["ai"]);
     expect(saved?.writingFeedback).toEqual([expect.objectContaining({ instruction: "口语一点", scope: "whole" })]);
   });
 

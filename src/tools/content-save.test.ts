@@ -43,6 +43,7 @@ describe("executeContentSave", () => {
       const diffs = await listDiffs({ contentId }, testDir);
       expect(diffs).toHaveLength(1);
       expect(diffs[0].field).toBe("body");
+      expect(diffs[0].author).toBe("ai");
       expect(diffs[0].before).toBe("Original body");
       expect(diffs[0].after).toBe("Updated body");
     });
@@ -270,7 +271,8 @@ describe("executeContentSave", () => {
         expect(claimToken).toMatch(/^clm-/);
       }
       expect(await listDiffs({ contentId }, testDir)).toHaveLength(3);
-      expect(await shouldDistillStyle(testDir)).toBe(true);
+      // 宿主模型的改稿记作 ai：不计入提炼门槛
+      expect(await shouldDistillStyle(testDir)).toBe(false);
       expect((await getContent(contentId, testDir))?.body).toBe("Host edit 2");
       expect(distillImpl).not.toHaveBeenCalled();
     });

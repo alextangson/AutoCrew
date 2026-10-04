@@ -11,6 +11,7 @@ import { listContents, type Content } from "../../storage/local-store.js";
 import { draftHash } from "../../storage/draft-hash.js";
 import { SERIES_STATES } from "../../storage/series-transaction.js";
 import { canonicalJson } from "../research/brief-snapshot.js";
+import { isImportedHistory } from "../../storage/imported-history.js";
 
 const sentence = Type.String({ minLength: 1, maxLength: 600 });
 const POINT_KINDS = ["case", "cause", "demo", "boundary", "firsthand"] as const;
@@ -154,6 +155,8 @@ export function buildSeriesSnapshot(contents: Content[], platform: string, exclu
   const timed = contents
     .filter((c) => c.id !== exclude.contentId && !(exclude.topicId && c.topicId === exclude.topicId))
     .filter((c) => Boolean(platform) && c.platform === platform && SERIES_STATES.has(c.status))
+    // 导入的历史记录多半只有标题没正文：空开头会占满 10 个名额、挤掉真稿
+    .filter((c) => !(isImportedHistory(c) && !c.body?.trim()))
     .map((c) => ({ c, at: enteredAt(c, now) }))
     .filter((x): x is { c: Content; at: string } => x.at !== undefined && Date.parse(x.at) >= since)
     .sort((a, b) => b.at.localeCompare(a.at) || a.c.id.localeCompare(b.c.id));

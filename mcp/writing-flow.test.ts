@@ -145,10 +145,11 @@ describe("Claude MCP writing journey without external model calls", () => {
       claimToken = updated.claim_token;
     }
     expect(await listDiffs({ contentId: content.id }, dataDir)).toHaveLength(3);
-    expect(await styleDistiller.shouldDistillStyle(dataDir)).toBe(true);
+    // 宿主模型通过 MCP 改的稿记作 ai，不算创作者口味：不触发提炼、也不当 edits 交给宿主
+    expect(await styleDistiller.shouldDistillStyle(dataDir)).toBe(false);
     const learning = await call("autocrew_style", { action: "distill" });
     expect(learning).toMatchObject({ ok: true, status: "host_style_task", model_api_calls: 0, executed_by: { kind: "host", host: access.host } });
-    expect(learning.edits).toHaveLength(3);
+    expect(learning.edits).toHaveLength(0);
     const samples = ["先把具体经历说清楚，再表达自己的判断。"];
     expect(await call("autocrew_style", { action: "absorb_samples", samples })).toMatchObject({
       ok: true, status: "host_style_task", samples, model_api_calls: 0,
