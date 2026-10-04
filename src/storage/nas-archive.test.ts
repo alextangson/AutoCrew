@@ -114,6 +114,14 @@ describe("NAS 归档", () => {
     expect(r.pending).toBe(0);
   });
 
+  it("a newer imported history record does not take one of the 5 kept slots", async () => {
+    for (let i = 0; i < 5; i++) await published(`老${i}`, 20 + i);
+    await published("历史作品", 1, { source: "imported_history" });
+    const r = await archive();
+    expect(r.archived).toEqual([]);
+    expect(r.pending).toBe(0);
+  });
+
   it("does nothing when the NAS is not mounted and reports pending", async () => {
     await fiveRecent();
     const old = await published("旧稿", 8);
