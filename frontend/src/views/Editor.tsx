@@ -54,6 +54,7 @@ import {
   reconcileEditorState, restoreEditorState, type EditorBuffer, type EditorDraft, type EditorState,
 } from "./editor-sync";
 import "./editor-workspace.css";
+import { HistoryRecordView } from "./HistoryRecordView";
 import "./platform-mock.css";
 
 const IMAGES_KEY = "ed-images-open";
@@ -486,6 +487,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   // 工作台随状态（spec §2）：文案之外的三张台子是整页，不带写作画布与抽屉
   // 视频剪辑看板（剪辑中 / 视频封面）：顶栏只剩一行「← 看板 · 标题 · 平台」；
   // 写作阶段的主题行、推进下拉都不放——剪辑阶段只能经 Codex 登记离开
+  // 历史作品记录：只读页（标题 / 日期 / 存档原稿），不给任何编辑、推进、发布入口
+  if (c.source === "imported_history") return <HistoryRecordView content={c} back={props.back} />;
+
   if (workspace === "editing" || (workspace === "cover" && isVideo)) {
     return (
       <div className="editor editor-workspace">
