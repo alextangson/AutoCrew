@@ -123,6 +123,10 @@ export async function nasEntries(nasRoot: string): Promise<string[] | null> {
   try { return await fs.readdir(nasRoot); } catch { return null; }
 }
 
+async function assertNasMounted(nasRoot: string, state: string): Promise<void> {
+  if (!(await nasEntries(nasRoot))) throw new Error(`NAS 旧资料库读不出（${nasRoot}）——已停下，${state}；挂上 MacMiniData 后重跑`);
+}
+
 /** 只读：算出要写什么。不写任何文件 */
 export async function planOldWorks(dataDir: string, nasRoot = DEFAULT_NAS): Promise<Plan> {
   const problems: string[] = [];
@@ -165,6 +169,8 @@ export async function backupFiles(dataDir: string, root = path.join(os.homedir()
 /** 照计划写。计划有 problems 就一行都不写 */
 export async function applyOldWorks(plan: Plan, dataDir: string, backupRoot?: string): Promise<{ backup: string; log: string[] }> {
   if (plan.problems.length) throw new Error(`计划有 ${plan.problems.length} 个问题，没有写入：\n${plan.problems.join("\n")}`);
+  // 计划和写入之间 NAS 可能掉线：备份、写入前再查一次，掉了就整体停下
+  await assertNasMounted(plan.nasRoot, "没有备份、没有写入");
   const backup = await backupFiles(dataDir, backupRoot);
   const fail = (what: string, err: string) => new Error(`${what}失败（已写入的部分可从 ${backup} 恢复；修好后重跑会接着做完）：${err}`);
   const log: string[] = [];
@@ -182,8 +188,13 @@ export async function applyOldWorks(plan: Plan, dataDir: string, backupRoot?: st
       log.push(`认领 ${cl.spec.platform} ${cl.spec.date}「${cl.rowTitle.slice(0, 30)}」→ ${id} ${res.status}，补 ${res.copied} 行`);
     }
     const a = r.archive;
-    if (a && a.status === "attach" && a.dir && a.read) {
-      const res = await attachArchiveDraft(id!, { dir: a.dir, oldId: a.oldId, inferred: a.inferred }, a.read, dataDir);
+    if (a && a.status === "attach" && a.dir) {
+      // 不用计划时缓存的正文：挂之前重新只读一遍源文件；NAS 掉线或文件没了是致命错误，不当成单条缺稿跳过
+      await assertNasMounted(plan.nasRoot, `已写入的部分可从 ${backup} 恢复`);
+      const src = { dir: a.dir, oldId: a.oldId, inferred: a.inferred };
+      const read = await readArchiveSource(src);
+      if (!read.ok) throw fail(`重读旧稿 ${a.oldId}（计划时读得到、现在读不到——NAS 可能掉线）`, read.error);
+      const res = await attachArchiveDraft(id!, src, read, dataDir);
       if (!res.ok) throw fail(`挂存档原稿 ${a.oldId}`, res.error);
       log.push(`存档原稿 ${id} ← 旧稿 ${a.oldId}${a.inferred ? "（推断）" : ""} ${res.status}`);
     }

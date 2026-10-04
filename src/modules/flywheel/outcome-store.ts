@@ -363,26 +363,27 @@ export async function resolveItemBinding(req: BindingRequest): Promise<BindingRe
       ? await matchDraft(req.platform, req.platformTitle, req.publishedAt, req.dataDir)
       : null;
   const contentId = req.contentId !== undefined ? req.contentId : matched?.id ?? null;
-  if (!itemId) {
-    // 无编号行：人工认领过这组（标题@北京发布日）就按认领归属，认领是人确认的事实，优先于标题猜测
-    const claim = await lookupClaim(req.platform, req.platformTitle, req.publishedAt, req.dataDir);
-    return { contentId: claim?.contentId ?? contentId, reviewReasons: [], pending: null };
-  }
+  // 人工认领（标题@北京发布日）是人确认的事实：无编号行按它归属；带 id 的新快照也先看它，
+  // 否则认领过的作品一旦带着 id 进来、标题又对不上，就会落成未归属并被旧的认领快照藏掉
+  const looked = await lookupClaim(req.platform, req.platformTitle, req.publishedAt, req.dataDir);
+  const claimError = "error" in looked ? [`${ATTRIBUTION_REVIEW_PREFIX}人工认领表读不出，本行没按认领归属：${looked.error}`] : [];
+  const claim = "claim" in looked ? looked.claim : null;
+  if (!itemId) return { contentId: claim?.contentId ?? contentId, reviewReasons: claimError, pending: null };
 
   const bound = await lookupPlatformItem(req.platform, itemId, req.dataDir);
   if (bound) {
-    const conflict = contentId && contentId !== bound.contentId;
-    return {
-      contentId: bound.contentId,
-      reviewReasons: conflict
-        ? [
-            `平台作品 ${normalizePlatform(req.platform)}:${itemId} 已绑定稿件 ${bound.contentId}，` +
-              `本行按标题匹配到 ${contentId}——已按绑定归属，确认是不是标题被改过或绑错了`,
-          ]
-        : [],
-      pending: null,
-    };
+    const reasons = [...claimError];
+    if (claim && claim.contentId !== bound.contentId) {
+      reasons.push(`${ATTRIBUTION_REVIEW_PREFIX}平台作品 ${normalizePlatform(req.platform)}:${itemId} 已绑定稿件 ${bound.contentId}，但这组（标题@日期）人工认领给了 ${claim.contentId}——已按绑定归属，确认哪边对`);
+    } else if (!claim && contentId && contentId !== bound.contentId) {
+      reasons.push(`平台作品 ${normalizePlatform(req.platform)}:${itemId} 已绑定稿件 ${bound.contentId}，` +
+        `本行按标题匹配到 ${contentId}——已按绑定归属，确认是不是标题被改过或绑错了`);
+    }
+    return { contentId: bound.contentId, reviewReasons: reasons, pending: null };
   }
+  // 认领过、id 还没绑：按认领归属，并把这个 id 作为人工事实登记到认领的稿上
+  if (claim) return { contentId: claim.contentId, reviewReasons: claimError, pending: { platform: req.platform, itemId, contentId: claim.contentId, via: "manual" } };
+  if (claimError.length) return { contentId, reviewReasons: claimError, pending: null };
 
   // 按标题认到的稿，在这个平台已经有按 id 精确绑定（url/manual）的另一条作品：同标题的这条是别的作品
   // （如同日私密原片 + 公开重发），不许靠标题挂上去——留未绑定，交人确认（指标照常进统计）

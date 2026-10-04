@@ -149,3 +149,24 @@ describe("回填脚本验收", () => {
     expect((await fs.readFile(path.join(dir, "outcomes.jsonl"), "utf8")).split("\n").length).toBe(lines);
   });
 });
+
+describe("P2 计划之后 NAS 断开", () => {
+  it("apply 前重查 NAS：断开就停，不备份不写", async () => {
+    await seed();
+    const plan = await planOldWorks(dir, nas);
+    const before = await snapshot(dir);
+    await fs.rename(nas, nas + "-gone");
+    await expect(applyOldWorks(plan, dir, backups)).rejects.toThrow(/NAS/);
+    await fs.rename(nas + "-gone", nas);
+    expect(await snapshot(dir)).toEqual(before);
+    await expect(fs.access(backups)).rejects.toThrow();
+  });
+
+  it("挂原稿时重新读源文件：读不到是致命错误，不当成单条缺稿跳过、也不用计划里缓存的正文", async () => {
+    await seed();
+    const plan = await planOldWorks(dir, nas);
+    await fs.rm(path.join(nas, "content-1787000000000-n36s7w", "draft.md"));
+    await expect(applyOldWorks(plan, dir, backups)).rejects.toThrow(/n36s7w/);
+    expect((await listContents(dir)).some((c) => c.archiveDraft?.oldContentId === "n36s7w")).toBe(false);
+  });
+});

@@ -14,6 +14,7 @@ import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { normalizePlatform, normalizeTitle, shanghaiDate, isTruncatedItemId, outcomeKey, ATTRIBUTION_REVIEW_PREFIX, type PerformanceOutcome } from "./outcome-schema.js";
 import { appendOutcomes, latestByKey, serializeOutcomeWrite } from "./outcome-store.js";
+import { serializeHistory } from "./history-queue.js";
 
 const CLAIMS_FILE = "work-claims.json";
 const SCHEMA_VERSION = 1;
@@ -45,14 +46,16 @@ export async function readClaimsStrict(dataDir?: string): Promise<Record<string,
   return parsed!.claims;
 }
 
-/** 入账时查认领（宽松：表坏了只 warn，退回原来的标题匹配，不挡入账） */
-export async function lookupClaim(platform: string, title: string, publishedAt: string | null, dataDir?: string): Promise<WorkClaim | null> {
-  if (!publishedAt || !normalizeTitle(title)) return null;
+/**
+ * 入账时查认领。表读不出 / 坏 → 返回 error，由调用方变成可见的归属复核理由（不能悄悄当成没认领，
+ * 否则人确认过的归属会丢、新快照被旧归属行藏掉）。
+ */
+export async function lookupClaim(platform: string, title: string, publishedAt: string | null, dataDir?: string): Promise<{ claim: WorkClaim | null } | { error: string }> {
+  if (!publishedAt || !normalizeTitle(title)) return { claim: null };
   try {
-    return (await readClaimsStrict(dataDir))[claimKey(platform, title, shanghaiDate(publishedAt))] ?? null;
+    return { claim: (await readClaimsStrict(dataDir))[claimKey(platform, title, shanghaiDate(publishedAt))] ?? null };
   } catch (err) {
-    console.warn(`[flywheel] ${(err as Error).message}——本次入账不按认领归属`);
-    return null;
+    return { error: (err as Error).message };
   }
 }
 
@@ -111,12 +114,15 @@ function cleaned(r: PerformanceOutcome): Pick<PerformanceOutcome, "needsReview" 
  * 稿件 id + 平台 + 标题 + 发布日期 → 认领这组无编号行。先查后写：任何冲突都一行不写。
  */
 export async function claimWorkByTitle(contentId: string, platformRaw: unknown, titleRaw: unknown, dateRaw: unknown, dataDir?: string): Promise<ClaimResult> {
-  const content = contentId ? await getContent(contentId, dataDir) : null;
-  if (!content || content.deletedAt) return { ok: false, error: `稿子 id「${contentId}」不存在` };
-  const parsed = parseClaim(content.id, platformRaw, titleRaw, dateRaw);
+  const parsed = parseClaim(contentId, platformRaw, titleRaw, dateRaw);
   if (!parsed.ok) return parsed;
-  try { assertDataDirWritable(dataDir); } catch (err) { return { ok: false, error: (err as Error).message }; }
-  return serializeOutcomeWrite(dataDir, () => serializeClaimWrite(dataDir, () => claimLocked(parsed.input, dataDir)));
+  // 与建 / 删历史记录同一条队：稿件是否还在必须在队里重查，删除做完之前认领不能插进来
+  return serializeHistory(dataDir, async () => {
+    const content = contentId ? await getContent(contentId, dataDir) : null;
+    if (!content || content.deletedAt) return { ok: false, error: `稿子 id「${contentId}」不存在（或已删）` };
+    try { assertDataDirWritable(dataDir); } catch (err) { return { ok: false, error: (err as Error).message }; }
+    return serializeOutcomeWrite(dataDir, () => serializeClaimWrite(dataDir, () => claimLocked({ ...parsed.input, contentId: content.id }, dataDir)));
+  });
 }
 
 async function claimLocked(input: ClaimInput, dataDir?: string): Promise<ClaimResult> {
@@ -148,7 +154,6 @@ async function claimLocked(input: ClaimInput, dataDir?: string): Promise<ClaimRe
     if (dest && groupOf(dest) !== groupOf(newest)) {
       return { ok: false, error: `稿子 ${contentId} 在 ${platform} ${date} 已有另一条作品「${dest.platformTitle.split("\n")[0]}」的数据，不覆盖——先确认这两条哪条属于这篇稿` };
     }
-    if (dest) continue; // 同组已有本稿快照：上次认领过
     out.push(copy);
   }
   if (!held) {

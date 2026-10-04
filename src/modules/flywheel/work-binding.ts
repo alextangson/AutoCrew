@@ -13,6 +13,7 @@ import { isTruncatedItemId, normalizePlatform, normalizeTitle } from "./outcome-
 import { reattributeItem, retractContentOutcomes } from "./outcome-store.js";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { removeClaimsForContent } from "./work-claims.js";
+import { serializeHistory } from "./history-queue.js";
 
 /** 回流认得的平台（别名 xhs 先归一） */
 export const BINDABLE_PLATFORMS: readonly string[] = ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"];
@@ -103,17 +104,6 @@ async function findHistory(title: string, date: string, dataDir?: string): Promi
   return (await listContents(dataDir)).find((c) => isImportedHistory(c) && normalizeTitle(c.title) === norm && historyDate(c) === date) ?? null;
 }
 
-/** 建 / 删历史记录在同一进程内串行：查重、建记录、挂绑定是一个整体，并发的同名请求不能都判「不存在」 */
-const historyChains = new Map<string, Promise<unknown>>();
-function serializeHistory<T>(dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
-  const key = getDataDir(dataDir);
-  const next = (historyChains.get(key) ?? Promise.resolve()).then(fn, fn);
-  const tail = next.then(() => undefined, () => undefined);
-  historyChains.set(key, tail);
-  void tail.then(() => { if (historyChains.get(key) === tail) historyChains.delete(key); });
-  return next;
-}
-
 type HistoryCreated = WorkResult<{ status: "created" | "exists"; contentId: string; bindings: Array<{ platform: string; itemId: string; status: string; reattributed: number }> }>;
 
 function parseHistoryInput(raw: { title?: unknown; published_date?: unknown; items?: unknown }): { ok: true; title: string; date: string; items: ItemRef[] } | { ok: false; error: string } {
@@ -174,10 +164,11 @@ async function createLocked(input: { title: string; date: string; items: ItemRef
 
 /** 删历史记录：删绑定 → 撤它名下的行（先补未归属副本）→ 记录进回收站。只删 imported_history */
 export async function deleteHistoryRecord(contentId: string, dataDir?: string): Promise<WorkResult<{ removedBindings: string[]; retracted: number }>> {
-  const content = contentId ? await getContent(contentId, dataDir) : null;
-  if (!content || content.deletedAt) return { ok: false, error: `稿子 id「${contentId}」不存在` };
-  if (!isImportedHistory(content)) return { ok: false, error: "这不是历史作品记录（imported_history），history_delete 只删历史记录" };
+  // 查稿也在队里：和认领共用一条队，谁先到谁先做完
   return serializeHistory(dataDir, async () => {
+    const content = contentId ? await getContent(contentId, dataDir) : null;
+    if (!content || content.deletedAt) return { ok: false, error: `稿子 id「${contentId}」不存在` };
+    if (!isImportedHistory(content)) return { ok: false, error: "这不是历史作品记录（imported_history），history_delete 只删历史记录" };
     const refused = writeRefusal(dataDir);
     if (refused) return refused;
     let removedBindings: string[];

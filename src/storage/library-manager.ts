@@ -22,7 +22,7 @@ const DATA_DIRS = new Set(["assets", "brand-intros", "campaigns", "competitors",
   "reports", "research", "sensitive-words", "topics", "video", "workflows", "projects", "imports", ".obsidian", "meetings"]);
 const DATA_FILES = new Set(["STYLE.md", "cover-style.json", "creator-profile.json", "digest-state.json", "editorial-experiments.json",
   "events.jsonl", "hypotheses.jsonl", "outcomes.jsonl", "radar-rejects.json", "radar-sources.json", "recent-actions.json",
-  "recent-turns.json", "topic-radar.json", "platform-items.json", "hooks.json"]);
+  "recent-turns.json", "topic-radar.json", "platform-items.json", "work-claims.json", "hooks.json"]);
 
 /**
  * 剪辑工程（剪映等）是其他软件的私有格式，部分 draft_info.json 还是加密的：按 storage-layout
