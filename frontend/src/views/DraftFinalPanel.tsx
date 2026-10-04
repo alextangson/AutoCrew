@@ -42,13 +42,21 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
   const [d, setD] = useState<DraftPanelData | null>(null);
   const [keep, setKeep] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async () => {
     const r = await invoke("draft:final_get", { id: p.contentId });
-    const data = r.ok ? r.data as DraftPanelData | null | undefined : null;
+    // 读失败要看得见、能重试；别把失败当成「这篇不走 autocrew_draft」把面板藏掉
+    if (!r.ok) { setLoadError(r.error ?? "定稿清单读取失败"); return; }
+    setLoadError(null);
+    const data = r.data as DraftPanelData | null | undefined;
     // 只认这条通道的形状：别的稿（不走 autocrew_draft）回 data:null，面板不出现
     setD(data && typeof data.draft_hash === "string" && Array.isArray(data.review_notes) ? data : null);
   }, [p.contentId]);
   useEffect(() => { void load(); }, [load, p.refreshKey]);
+  if (loadError) return <section className="draft-final card" aria-label="定稿">
+    <p className="muted">定稿清单没读出来：{loadError}</p>
+    <Button onClick={() => void load()}>重试</Button>
+  </section>;
   if (!d) return null;
   const finalize = async () => {
     setBusy(true);
