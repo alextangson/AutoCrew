@@ -25,6 +25,14 @@ description: |
 6. **落库**：先 `autocrew_insights {action:"meeting_get"}` 拿 `revision`（新会为 0），再
    `autocrew_insights {action:"meeting_save", meeting:{expected_revision, slots, rejected, reviews}}`；slot 字段见工具说明 `autocrew://tool-guide/autocrew_insights`。一个都没选也要存（空片单 + 毙题理由）。报 `conflict` 说明别的会话刚存过：重读、给创作者看差异，再存。
 
+## 单题会（临时蹭热点）
+
+没有绕过开关：片单外的题开不了新稿（写稿入口回 `not_on_slate`），想临时写一条就开只放这一条的会。
+
+- 照常问清这一条的画像、观众收获、形式、为什么现在、数据依据、赌什么、事前验尸，由创作者给概率；不读简报对账，也不补标签。
+- `meeting_get` 拿当日 `revision`，再 `meeting_save{meeting:{expected_revision, append:true, slots:[这一条]}}`。`append` 只追加新位，当日已存的位、下注和毙题原样保留，和当日会议算同一场。报 `conflict` 就重读再存。
+- 当天还没开过会时，这场单题会就是「最近一场会」：上一场片单里还没开写的题会因此被拦。存之前先告诉创作者这一点，问清还想写的旧题要不要一并放进这场会。
+
 ## 用数字的规矩
 
 - 引用分组或基线必须带 n；`status:"insufficient"`（n<5）只列数，不下结论。
@@ -35,6 +43,7 @@ description: |
 ## 边界
 
 - 选中≠开工：片单只在看板「选题」列置顶并打「本周片单」标签。写稿仍是一条一个会话（`video-session`），这里不开写稿窗口。
+- 片单是开新稿的硬条件：只有最近一场会（含当日追加的单题会）片单上的题能开新稿；上一场选中、这一场没再选中的题会被拦。改已有稿、平台改写、导入成稿不受影响。
 - 选中的题已经在写或被认领：`meeting_save` 回执的 `topicStatus` 会写明，照实告诉创作者，不新建、不抢认领。
 - 选中的题已有立意卡或选中角度：保存会被拒，先问创作者「重跑立意」还是「接受偏离」，填进该位 `angle_decision`。
 - 会议位让选题免于 3 天自动过期，只到下次开会；下次没再选中就恢复正常过期。

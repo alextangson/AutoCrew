@@ -82,6 +82,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -530,6 +531,9 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
     return { ok: false, error: "Invalid payload: expected object" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
+  // 片单闸口：后台写稿每次都开新稿，选题必须在当前选题会片单上
+  const offSlate = await newDraftSlateRefusal(typeof payload.topic_id === "string" ? payload.topic_id : undefined, dataDir);
+  if (offSlate) return offSlate;
   try {
     const started = await startGenerateScript(
       {

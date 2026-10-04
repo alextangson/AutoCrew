@@ -16,6 +16,7 @@ import { saveTopic, updateTopic, saveContent, updateContent, getContent } from "
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
 import { claimContent } from "../storage/claims.js";
 import * as config from "../engine/config.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let dir: string;
 let topicId: string;
@@ -103,6 +104,7 @@ function angles(ref = "ev-1", anchor = false) {
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-scout-"));
   topicId = (await saveTopic({ title: "菜园的清晨", description: "记录社区共同照顾菜苗的经历", tags: [] }, dir)).id;
+  await putOnSlate(dir, topicId);
   taskId = "";
   deps = {
     collectOwnMaterialImpl: vi.fn(async () => structuredClone(EMPTY_OWN_MATERIAL)),

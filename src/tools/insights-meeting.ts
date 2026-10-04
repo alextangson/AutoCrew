@@ -9,7 +9,7 @@ export const MEETING_ACTIONS = ["meeting_brief", "meeting_get", "meeting_save", 
 
 export const MEETING_DESCRIPTION = [
   "选题会（技能 topic-meeting）：meeting_brief 出确定性简报（回流健康度、作品 D+3/D+7、按形式/画像分组、同平台同龄基线 n<5 标 insufficient、上次下注对账），不调模型；读失败直接报原始错误，停会。",
-  "meeting_get{date?} 读会议记录与 revision；meeting_save{date?,meeting:{expected_revision,slots,rejected,reviews,notes?}} 落会议记录（CAS）+ 每个选中位一条假设 + 选题标进本周片单（选中≠开工）；meeting_tag{tag:{work_key,format?,persona_key?}} 给已发作品补形式/画像。",
+  "meeting_get{date?} 读会议记录与 revision；meeting_save{date?,meeting:{expected_revision,slots,rejected,reviews,notes?}} 落会议记录（CAS）+ 每个选中位一条假设 + 选题标进本周片单（选中≠开工）；单题会（临时蹭热点）meeting 里带 append:true 只追加新位到当日会议，照样要 bet/probability，不要求对账；meeting_tag{tag:{work_key,format?,persona_key?}} 给已发作品补形式/画像。",
 ].join("\n");
 
 type Obj = Record<string, unknown>;

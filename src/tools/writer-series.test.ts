@@ -14,6 +14,7 @@ import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCardV3, type ResearchBrief }
 import { pendingPerspectives, topicHashOf, upsertJob } from "../modules/research/research-job-store.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 import { getContent, saveContent, saveTopic, transitionStatus, updateContent, updateTopic } from "../storage/local-store.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let dir: string;
 const TITLE = "AI 编程助手横评";
@@ -35,6 +36,7 @@ const CARD: AngleCardV3 = {
 
 async function freshTopic(): Promise<string> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, dir);
+  await putOnSlate(dir, topic.id);
   const brief: ResearchBrief = {
     schemaVersion: BRIEF_SCHEMA_VERSION, summary: "厂商口径与独立评测差了四倍。", perspectives: [], tensions: ["差距"], angleSuggestions: [],
     angleCards: [CARD], evidence: [{ claim: "提效幅度低", quote: "平均完成时间缩短约 12%。", sourceUrl: "https://example.com/r" }],

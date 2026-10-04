@@ -18,6 +18,7 @@ import { isVideoPlatform } from "../storage/stage-guard.js";
 import { anySubmitted, readPublishRecord } from "../storage/publish-record.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../storage/production-store.js";
 import { founderDecision } from "../modules/production/decisions.js";
+import { newDraftSlateRefusal, type SlateRefusal } from "../modules/meetings/slate-gate.js";
 
 export const PROGRAM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -25,7 +26,8 @@ export interface OpenDeps { spawnImpl?: typeof spawn; platform?: NodeJS.Platform
 
 export type StartResult =
   | { ok: true; created: boolean; content_id: string; prompt?: string; link?: string; opened?: boolean; open_error?: string }
-  | { ok: false; code: "bad_request" | "topic_gone"; error: string };
+  | { ok: false; code: "bad_request" | "topic_gone"; error: string }
+  | SlateRefusal;
 
 /** 预填给 Claude 的指令：video-session 技能的触发说法 + 标题 + id，保持简短（App 对 q 有长度上限） */
 export function startPrompt(title: string, topicId: string, contentId: string, platform: string): string {
@@ -60,6 +62,8 @@ async function startOnce(topicId: string, platform: string, dataDir: string, dep
   if (existing) return { ok: true, created: false, content_id: existing.id };
   const topic = await getTopic(topicId, dataDir);
   if (!topic || topic.deletedAt) return { ok: false, code: "topic_gone", error: "这条选题已经不在了（可能被删或过期清理）" };
+  const offSlate = await newDraftSlateRefusal(topicId, dataDir);
+  if (offSlate) return offSlate;
   const content = await saveContent({ title: topic.title, body: "", platform, topicId, status: "drafting", tags: [] }, dataDir);
   const prompt = startPrompt(topic.title, topicId, content.id, platform);
   const link = claudeLink(prompt, deps.programDir ?? PROGRAM_DIR);

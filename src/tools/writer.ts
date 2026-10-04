@@ -1,5 +1,6 @@
 import { updateContent } from "../storage/local-store.js";
 import { historyGuard } from "./history-guard.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 import { Value } from "@sinclair/typebox/value";
 import { outlineSchema, techniqueRefsSchema, gapSchema, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
 import { findCard, techniqueCatalog } from "../modules/writing/technique-store.js";
@@ -276,6 +277,11 @@ export async function executeWriter(
         }
         const topicId = str(params.topic_id);
         if (!topicId) return fail("topic_id 必填");
+        // 片单闸口：没带 content_id 且这条选题还没有稿 = 开新稿
+        if (!str(params.content_id)) {
+          const offSlate = await newDraftSlateRefusal(topicId, dataDir);
+          if (offSlate) return offSlate;
+        }
         const platform = str(params.platform);
         if (!platform) return fail(`platform 必填。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}`);
         const issued = await startPack(

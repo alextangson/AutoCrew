@@ -29,6 +29,7 @@ import {
 import type { ResearchRunner, TriggerResult } from "../modules/research/research-runner.js";
 import { SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
 import { getTopic, saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let testDir: string;
 
@@ -119,6 +120,7 @@ async function adopt(topicId: string, briefRevision?: number, status: ResearchJo
 
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
+  await putOnSlate(testDir, topic.id);
   if (brief) {
     await saveBrief(topic.id, brief, testDir);
     await adopt(topic.id, brief.revision);

@@ -6,6 +6,7 @@ import { inheritCreativeTask } from "../modules/writing/creative-task.js";
  * 引擎未配置的中文可执行提示必须原文透传，让用户知道如何修复。
  */
 import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure } from "./writing-readiness.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 import { getDataDir } from "../storage/local-store.js";
 import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
@@ -186,9 +187,16 @@ export async function executeGenerate(
       ...preparationHandoff(req),
       requested_execution: "engine",
     };
+    const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
+    if (offSlate) return offSlate;
     const preparation = await inspectWritingReadiness(req.topicId, req, getDataDir(dataDir));
     if (!preparation.ready) return writingReadinessFailure(preparation);
     req = inheritCreativeTask(req, preparation.creativeTask);
+  }
+  // 片单闸口：generate 每次都开新稿（不改已有稿），选题必须在当前片单上（宿主路径已在上面判过）
+  if (typeof params._host !== "string") {
+    const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
+    if (offSlate) return offSlate;
   }
   const generateFn = deps.generateScriptImpl ?? generateScript;
 

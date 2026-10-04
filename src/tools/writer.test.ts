@@ -46,6 +46,7 @@ import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let testDir: string;
 
@@ -125,6 +126,7 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 /** 落一份「当前生效简报」（台账指针 CAS 过） */
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
+  await putOnSlate(testDir, topic.id);
   if (brief) {
     await saveBrief(topic.id, brief, testDir);
     const job: ResearchJob = {
@@ -438,8 +440,11 @@ describe("writer pack", () => {
 describe("writer pack — 手工建的选题（没有简报）", () => {
   const MANUAL_DESC = "自己扒的转录：三家客户上线后返工工时平均多了 18%，出处见对方的复盘会纪要。";
 
-  const manualTopic = (): Promise<Topic> =>
-    saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
+  const manualTopic = async (): Promise<Topic> => {
+    const topic = await saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
+    await putOnSlate(testDir, topic.id);
+    return topic;
+  };
 
   it("选题描述与宿主给的 research 都登记成 user_claim——没简报不等于没账本", async () => {
     const topic = await manualTopic();
@@ -528,6 +533,7 @@ describe("writer provided 模式：证据台账带编号，推算数走写手侧
 
   async function providedPack(): Promise<Record<string, any>> {
     const topic = await saveTopic({ title: "例会纪要", description: "", tags: [] }, testDir);
+    await putOnSlate(testDir, topic.id);
     const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: FACTS, direction: "讲自动纪要省下的时间" });
     expect(started).toMatchObject({ ok: true, status: "ready" });
     return started;

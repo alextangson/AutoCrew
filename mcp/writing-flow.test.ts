@@ -12,6 +12,7 @@ import { getJob, PERSPECTIVE_NAMES } from "../src/modules/research/research-job-
 import { reviewInFlight } from "../src/tools/writer-review.js";
 import * as styleDistiller from "../src/modules/learnings/style-distiller.js";
 import { listDiffs } from "../src/modules/learnings/diff-tracker.js";
+import { putOnSlate } from "../src/modules/meetings/slate.test-helper.js";
 
 let dataDir: string;
 /** MCP 往返计数（P6 §5 预算：首稿 ≤25） */
@@ -181,6 +182,7 @@ describe("Claude MCP writing journey without external model calls", () => {
       finalUrl: GARDEN_URL, title: "社区菜园记录", text: GARDEN_QUOTE, imageCandidates: [],
     });
     const topic = await saveTopic({ title: "社区菜园的浇水安排", description: "依据社区记录说明共同浇水与轮班方式", tags: [] }, dataDir);
+    await putOnSlate(dataDir, topic.id);
     const request = { action: "prepare", topic_id: topic.id, platform: "douyin", requirements: GARDEN_REQUIREMENTS };
     const prepared = await call("autocrew_workflow", request);
     expect(prepared).toMatchObject({
@@ -300,6 +302,15 @@ describe("Claude MCP writing journey without external model calls", () => {
 
   it("cannot jump from a new topic straight to a pack, engine generation, or generic save", async () => {
     const topic = await saveTopic({ title: "门店返工", description: "观察团队的交接问题", tags: [] }, dataDir);
+    // 片单闸口：真实 MCP 面上，不在片单的新题 prepare / pack / 后台代写都被同一判定拦下
+    for (const [tool, args] of [
+      ["autocrew_workflow", { action: "prepare", topic_id: topic.id, platform: "douyin" }],
+      ["autocrew_writer", { action: "pack", topic_id: topic.id, platform: "douyin", direction: "写交接问题" }],
+      ["autocrew_generate", { action: "script", topic: topic.title, topic_id: topic.id, platform: "douyin", execution: "engine" }],
+    ] as const) {
+      expect(await call(tool, args), tool).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting", tool: "autocrew_insights" } });
+    }
+    await putOnSlate(dataDir, topic.id);
     const pack = await call("autocrew_writer", { action: "pack", topic_id: topic.id, platform: "douyin", direction: "写交接问题" });
     expect(pack).toMatchObject({ ok: false, needsResearch: true, preparation: { research: { status: "not_started" } } });
     expect(pack.next_action.params.action).toBe("prepare");
@@ -314,6 +325,7 @@ describe("Claude MCP writing journey without external model calls", () => {
 
   it("uses provided material explicitly, keeps the host as author and preserves natural full prose", async () => {
     const topic = await saveTopic({ title: "门店交接", description: "只写已经提供的亲历材料", tags: [] }, dataDir);
+    await putOnSlate(dataDir, topic.id);
     const request = {
       topic_id: topic.id, platform: "douyin", research_mode: "provided",
       research: "团队先走访门店，再检查交接记录，发现问题在于责任归属。",
@@ -346,6 +358,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("external calls are forbidden in this journey"));
     try {
       const topic = await saveTopic({ title: "走访后的交接", description: "团队走访后核对交接记录", tags: [] }, dataDir);
+      await putOnSlate(dataDir, topic.id);
       const requirements = "保留我们作为叙述者，按真实走访顺序写，不添加关注引导";
       const request = {
         topic_id: topic.id, platform: "douyin", research_mode: "provided",

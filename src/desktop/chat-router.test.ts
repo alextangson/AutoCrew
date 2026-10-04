@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runChatTurn, buildChatTools, chatProgressEvent, dedupeDraftCards, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 import { releaseJob, GENERATE_JOB_KEY } from "./job-claims.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let testDir: string;
 
@@ -18,6 +19,8 @@ beforeEach(async () => {
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "test-key", baseUrl: "https://fake.local" }),
   );
+  // 后台写稿开的都是新稿：测试用的选题先进片单
+  await putOnSlate(testDir, ["topic-1", "topic-slated"]);
 });
 
 afterEach(async () => {
@@ -70,7 +73,7 @@ describe("buildChatTools", () => {
 
     const tool = tools.find((t) => t.name === "generate_script");
     expect(tool).toBeDefined();
-    const out = await tool!.execute({ topic: "Excel 快捷键", platform: "douyin" });
+    const out = await tool!.execute({ topic: "Excel 快捷键", platform: "douyin", topic_id: "topic-slated" });
 
     expect(startGenerate).toHaveBeenCalledWith(
       expect.objectContaining({ topic: "Excel 快捷键", platform: "douyin" }),
@@ -131,13 +134,22 @@ describe("buildChatTools", () => {
     expect(Object.keys(override ?? {}).sort()).toEqual(["platform", "topic", "topicId"]);
   });
 
-  it("没有中断稿 / 换了平台 / 没带 topic_id → 照旧新建", async () => {
+  it("随手写没带 topic_id / 选题不在片单 → 片单闸口拦下，不新建", async () => {
+    for (const args of [{ topic: "t", platform: "douyin" }, { topic: "t", platform: "douyin", topic_id: "topic-off" }]) {
+      const startGenerate = vi.fn();
+      const tools = buildChatTools([], testDir, { content: listWith(), startGenerate });
+      const out = JSON.parse((await tools.find((t) => t.name === "generate_script")!.execute(args)) as string);
+      expect(out).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting" } });
+      expect(startGenerate).not.toHaveBeenCalled();
+    }
+  });
+
+  it("没有中断稿 / 换了平台 → 照旧新建", async () => {
     const cases: Array<[string, Record<string, unknown>, Array<Record<string, unknown>>]> = [
       ["库里没有中断稿", { topic: "t", platform: "douyin", topic_id: "topic-1" }, []],
       ["同选题但别的平台", { topic: "t", platform: "xiaohongshu", topic_id: "topic-1" }, [STALE]],
       ["同选题同平台但没崩过", { topic: "t", platform: "douyin", topic_id: "topic-1" },
         [{ ...STALE, lastError: null }]],
-      ["随手写没带 topic_id", { topic: "t", platform: "douyin" }, [STALE]],
     ];
     for (const [label, args, contents] of cases) {
       const retryGenerate = vi.fn();
@@ -530,7 +542,7 @@ describe("runChatTurn", () => {
               type: "function",
               function: {
                 name: "generate_script",
-                arguments: JSON.stringify({ topic: "Excel", platform: "douyin" }),
+                arguments: JSON.stringify({ topic: "Excel", platform: "douyin", topic_id: "topic-slated" }),
               },
             },
           ]),

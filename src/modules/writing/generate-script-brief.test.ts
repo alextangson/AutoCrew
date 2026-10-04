@@ -32,6 +32,7 @@ import {
 import { getContent, saveTopic, type Topic } from "../../storage/local-store.js";
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { putOnSlate } from "../meetings/slate.test-helper.js";
 
 let testDir: string;
 
@@ -135,7 +136,9 @@ function hugeBrief(): ResearchBrief {
 }
 
 async function seedTopic(): Promise<Topic> {
-  return saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  await putOnSlate(testDir, topic.id);
+  return topic;
 }
 
 async function seedJob(topicId: string, over: Partial<ResearchJob> = {}): Promise<ResearchJob> {
@@ -437,7 +440,7 @@ describe("注入点唯一 — 桌面/聊天/MCP 三路一致", () => {
     expect(msg).toContain("厂商宣称提效 55%");
   });
 
-  it("MCP 工具入口不带 topic_id → 盘上有简报也不注入（行为与改动前一致）", async () => {
+  it("MCP 工具入口不带 topic_id → 片单闸口拦下，不进生成（也就谈不上注入）", async () => {
     await seedResearched();
     const seen: { opts?: LoopOptions } = {};
 
@@ -446,8 +449,8 @@ describe("注入点唯一 — 桌面/聊天/MCP 三路一致", () => {
       { generateScriptImpl: (req, dd) => generateScript(req, dd, { runLoopImpl: capturingLoop(seen) }) },
     );
 
-    expect(res.ok).toBe(true);
-    expect(seen.opts!.userMessage).not.toContain(BRIEF_BLOCK_START);
+    expect(res).toMatchObject({ ok: false, code: "not_on_slate" });
+    expect(seen.opts).toBeUndefined();
   });
 
   it("三条入口的调用层都不自己拼 research 槽——装配只发生在生成执行器里", async () => {

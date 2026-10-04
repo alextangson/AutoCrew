@@ -20,6 +20,7 @@ import {
   type ResearchJob,
 } from "../modules/research/research-job-store.js";
 import { getTopic, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 
 let testDir: string;
 
@@ -87,6 +88,7 @@ async function adopt(topicId: string, briefRevision: number): Promise<void> {
 
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
+  await putOnSlate(testDir, topic.id);
   if (brief) {
     await saveBrief(topic.id, brief, testDir);
     await adopt(topic.id, brief.revision);
@@ -181,13 +183,19 @@ describe("generate_script 的角度闸口", () => {
     );
   });
 
-  it("没有简报 / 简报没有角度卡 / 没带 topic_id → 现状直写（§1.8 不硬出角度）", async () => {
+  it("随手写没带 topic_id → 片单闸口拦下，不开写", async () => {
+    const t = tools();
+    const out = JSON.parse(await run(t, { topic: TITLE, platform: "douyin" }));
+    expect(out).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting" } });
+    expect(t.startGenerate).not.toHaveBeenCalled();
+  });
+
+  it("没有简报 / 简报没有角度卡 → 现状直写（§1.8 不硬出角度）", async () => {
     const bare = await seed(null);
     const noCards = await seed(makeBrief({ angleCards: undefined }));
     const cases: Array<[string, Record<string, unknown>]> = [
       ["没有简报", { topic: TITLE, platform: "douyin", topic_id: bare.id }],
       ["简报没有角度卡", { topic: TITLE, platform: "douyin", topic_id: noCards.id }],
-      ["随手写没带 topic_id", { topic: TITLE, platform: "douyin" }],
     ];
     for (const [label, args] of cases) {
       const t = tools();
@@ -393,6 +401,7 @@ describe("两个入口都只认 job.briefRevision 指针", () => {
 
   it("有简报文件但台账没指针 → 两个入口都当「没有简报」", async () => {
     const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
+    await putOnSlate(testDir, topic.id);
     await saveBrief(topic.id, makeBrief(), testDir);
 
     // 闸口：没有候选就没有闸口，直接放行开写

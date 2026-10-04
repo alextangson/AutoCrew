@@ -4,8 +4,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { executeGenerate } from "./generate.js";
+import { putOnSlate } from "../modules/meetings/slate.test-helper.js";
 import type { GeneratedScript } from "../modules/writing/generate-script.js";
 
 // ─── Mock factory ──────────────────────────────────────────────────────────────
@@ -33,15 +34,27 @@ function makeGenerateImpl(result: GeneratedScript | Error) {
   };
 }
 
+// ─── Slate：generate 每次都开新稿，测试选题先进片单（临时资料库，不碰真实资料） ──
+
+const SLATED = "topic-42";
+let slateDir = "";
+beforeEach(async () => {
+  slateDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-slate-"));
+  await putOnSlate(slateDir, SLATED);
+});
+afterEach(async () => { await fs.rm(slateDir, { recursive: true, force: true }); });
+/** 非宿主直调的参数补上已进片单的选题与临时资料库 */
+const slated = <T extends Record<string, unknown>>(p: T) => ({ topic_id: SLATED, _dataDir: slateDir, ...p });
+
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("executeGenerate", () => {
   it("本次要求与手写角度独立透传，不混入 research", async () => {
     let seen: Record<string, unknown> | undefined;
-    await executeGenerate({
+    await executeGenerate(slated({
       action: "script", topic: "AI技能", platform: "douyin", research: "用户的实测材料",
       requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ",
-    }, { generateScriptImpl: async (req) => { seen = { ...req }; return GOOD_RESULT; } });
+    }), { generateScriptImpl: async (req) => { seen = { ...req }; return GOOD_RESULT; } });
     expect(seen).toMatchObject({
       requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ", research: "用户的实测材料",
     });
@@ -50,7 +63,7 @@ describe("executeGenerate", () => {
   // 1. Success path — data shape correct
   it("success: returns ok:true with correct data shape", async () => {
     const res = await executeGenerate(
-      { action: "script", topic: "AI时代普通人最该练的技能", platform: "douyin" },
+      slated({ action: "script", topic: "AI时代普通人最该练的技能", platform: "douyin" }),
       { generateScriptImpl: makeGenerateImpl(GOOD_RESULT) },
     );
 
@@ -123,7 +136,7 @@ describe("executeGenerate", () => {
       '引擎未配置 model provider：设置环境变量 DEEPSEEK_API_KEY，或在 ~/.autocrew/engine.json 写入 {"apiKey": "..."}',
     );
     const res = await executeGenerate(
-      { action: "script", topic: "AI技能", platform: "douyin" },
+      slated({ action: "script", topic: "AI技能", platform: "douyin" }),
       { generateScriptImpl: makeGenerateImpl(configErr) },
     );
 
@@ -139,7 +152,7 @@ describe("executeGenerate", () => {
       violations: ["翻墙", "某敏感词"],
     };
     const res = await executeGenerate(
-      { action: "script", topic: "AI技能", platform: "douyin" },
+      slated({ action: "script", topic: "AI技能", platform: "douyin" }),
       { generateScriptImpl: makeGenerateImpl(resultWithViolations) },
     );
 
@@ -157,7 +170,7 @@ describe("executeGenerate", () => {
     };
 
     await executeGenerate(
-      { action: "script", topic: "AI技能", platform: "douyin", research: "参考资料..." },
+      slated({ action: "script", topic: "AI技能", platform: "douyin", research: "参考资料..." }),
       { generateScriptImpl: impl as Parameters<typeof executeGenerate>[1]["generateScriptImpl"] },
     );
 
@@ -175,7 +188,7 @@ describe("executeGenerate", () => {
     };
 
     await executeGenerate(
-      { action: "script", topic: "AI技能", platform: "douyin", topic_id: "topic-42" },
+      slated({ action: "script", topic: "AI技能", platform: "douyin", topic_id: "topic-42" }),
       { generateScriptImpl: impl as Parameters<typeof executeGenerate>[1]["generateScriptImpl"] },
     );
 
@@ -183,26 +196,14 @@ describe("executeGenerate", () => {
     expect((capturedReq as Record<string, unknown>).topicId).toBe("topic-42");
   });
 
-  // 10. 不带 topic_id / 空串 → topicId 不设值，行为与改动前一致（口径同桌面 IPC）
-  it("absent or empty topic_id → topicId stays undefined", async () => {
-    const seen: Record<string, unknown>[] = [];
-    const impl = async (req: Record<string, unknown>): Promise<GeneratedScript> => {
-      seen.push(req);
-      return GOOD_RESULT;
-    };
-    const deps = {
-      generateScriptImpl: impl as Parameters<typeof executeGenerate>[1]["generateScriptImpl"],
-    };
-
-    await executeGenerate({ action: "script", topic: "AI技能", platform: "douyin" }, deps);
-    await executeGenerate(
-      { action: "script", topic: "AI技能", platform: "douyin", topic_id: "" },
-      deps,
-    );
-
-    expect(seen).toHaveLength(2);
-    expect(seen[0].topicId).toBeUndefined();
-    expect(seen[1].topicId).toBeUndefined();
+  // 10. 不带 topic_id / 空串 → 没有选题的新稿必然不在片单上：结构化拒绝，不进生成
+  it("absent or empty topic_id → not_on_slate, generateScript never called", async () => {
+    const impl = vi.fn(makeGenerateImpl(GOOD_RESULT));
+    for (const topic_id of [undefined, "", "   "]) {
+      const res = await executeGenerate({ action: "script", topic: "AI技能", platform: "douyin", topic_id, _dataDir: slateDir }, { generateScriptImpl: impl });
+      expect(res).toMatchObject({ ok: false, code: "not_on_slate", next_action: { skill: "topic-meeting", tool: "autocrew_insights" } });
+    }
+    expect(impl).not.toHaveBeenCalled();
   });
 });
 
@@ -259,7 +260,7 @@ describe("MCP 默认写作路径纠正", () => {
 describe("后台代写质量回执", () => {
   async function run(result: GeneratedScript) {
     const response = await executeGenerate(
-      { action: "script", topic: "复盘", platform: "douyin" },
+      slated({ action: "script", topic: "复盘", platform: "douyin" }),
       { generateScriptImpl: makeGenerateImpl(result) },
     );
     if (!response.ok) throw new Error(response.error);
@@ -316,6 +317,7 @@ describe("knowledge dedupe", () => {
     const testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-knowledge-"));
     await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
     await fs.writeFile(path.join(testDir, "knowledge", "agent.md"), "工具调用循环是 Agent 的核心。");
+    await putOnSlate(testDir, SLATED);
 
     let capturedReq: Record<string, unknown> | null = null;
     const generateScriptImpl = async (req: Record<string, unknown>) => {
@@ -324,7 +326,7 @@ describe("knowledge dedupe", () => {
     };
 
     await executeGenerate(
-      { action: "script", topic: "Agent 工具调用", platform: "douyin", research: "用户给的资料", _dataDir: testDir },
+      { action: "script", topic: "Agent 工具调用", platform: "douyin", research: "用户给的资料", _dataDir: testDir, topic_id: SLATED },
       { generateScriptImpl } as never,
     );
 
@@ -342,6 +344,7 @@ describe("engine entry keeps persisted creative intent", () => {
       const { saveBrief } = await import("../modules/research/brief-store.js");
       const { topicHashOf, upsertJob } = await import("../modules/research/research-job-store.js");
       const topic = await saveTopic({ title: "返工复盘", description: "真实经历", tags: [] }, dir);
+      await putOnSlate(dir, topic.id);
       const creativeTask = { version: 1 as const, platform: "douyin", requirements: "  保留完整经历\n不要口号  ", direction: "从失败原因展开" };
       const topicHash = topicHashOf(topic.title, topic.description);
       await saveBrief(topic.id, { schemaVersion: 1, summary: "已有素材", perspectives: [], tensions: [], angleSuggestions: [], angleCards: [], evidence: [], assetPicks: [], missingPerspectives: [], gaps: [], generatedAt: "2026-09-22T00:00:00Z", revision: 1, topicHash, creativeTask }, dir);

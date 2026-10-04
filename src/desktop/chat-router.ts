@@ -13,6 +13,7 @@ import { describeEngineFailure, isEngineFailure, type FailureRole } from "../eng
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeStyle } from "../tools/style.js";
@@ -763,6 +764,9 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             const retried = await retryInterrupted(req);
             if (retried) return retried;
           }
+          // 片单闸口：开新稿的选题必须在当前选题会片单上（与 MCP 各开写入口同一判定）
+          const offSlate = await newDraftSlateRefusal(req.topicId, dataDir);
+          if (offSlate) return JSON.stringify(offSlate);
           // angleId 那条已在上面选定并放行,不必再过一遍闸口
           const gated = angleId ? null : await angleGate(req, "");
           if (gated) return gated;

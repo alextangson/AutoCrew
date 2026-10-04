@@ -24,6 +24,7 @@ import { createResearchRunner, type ResearchRunner } from "../modules/research/r
 import { SEARCH_NOT_CONFIGURED, searchAvailable } from "../modules/research/search-provider.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { startGenerateScript, type ScriptRequest } from "../modules/writing/generate-script.js";
+import { newDraftSlateRefusal } from "../modules/meetings/slate-gate.js";
 import { getContent, getDataDir, getTopic, updateTopic } from "../storage/local-store.js";
 import { angleOptionsView, draftingNote, draftOwnerView, draftView, jobView } from "./workflow-views.js";
 import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest } from "./writing-readiness.js";
@@ -245,6 +246,9 @@ async function doPrepare(
 ): Promise<WorkflowResult> {
   const topicId = str(params.topic_id);
   if (!topicId) return fail("topic_id 必填；先查询或创建选题，再准备创作。");
+  // 片单闸口：这条选题还没有稿 = 要开新稿，必须在当前片单上
+  const offSlate = await newDraftSlateRefusal(topicId, dataDir);
+  if (offSlate) return offSlate;
   const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
   if (params.execution !== "engine" && readiness.research.mode === "auto" && !["ready_to_write", "needs_angle"].includes(readiness.status)) {
     const task = await executeScout(scoutPrepareParams({ ...readiness.continue_params, _host: params._host }, dataDir));
@@ -411,6 +415,8 @@ async function doWrite(
     ...(skipReason ? { angleSkipReason: skipReason } : {}),
   };
 
+  const offSlate = await newDraftSlateRefusal(topicId, dataDir);
+  if (offSlate) return offSlate;
   const gated = await angleGate(topicId, req, dataDir, warn);
   if (gated) return gated;
 
