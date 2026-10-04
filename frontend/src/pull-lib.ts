@@ -83,7 +83,7 @@ export function pullHint(row: PullPlatformStatus): string | null {
 
 /** ego lite 连不上是环境问题：三行合并成一条提示，不逐平台重复报错（spec §4.4） */
 export function browserUnreachable(rows: PullPlatformStatus[]): boolean {
-  return rows.some((r) => r.enabled && r.lastStatus === "browser_unreachable");
+  return rows.some((r) => r.enabled && !r.writeRefusal && r.lastStatus === "browser_unreachable");
 }
 
 export interface PullAttemptView {
@@ -118,6 +118,7 @@ export function attemptMessage(label: string, attempt: PullAttemptView): string 
     case "timeout":
       return `${label}抓取超时，稍后再试`;
     default:
+      if (attempt.errorCode === "library_writer_lost" && (attempt.imported ?? 0) > 0) return `${label}：已入账 ${attempt.imported} 条后失去资料库写入权（另一个 AutoCrew 服务在占用），之后不再写；确认只有一个服务在跑后重启 AutoCrew`;
       if (attempt.errorCode === "library_writer_lost") return `${label}没抓：当前进程没有资料库写入权（另一个 AutoCrew 服务在占用），一行都没写`;
       if (attempt.errorCode === "library_unavailable") return `${label}没抓：资料库暂时连不上，一行都没写`;
       return `${label}抓取失败：${attempt.errorCode ?? "unknown"}`;

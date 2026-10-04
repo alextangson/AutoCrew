@@ -173,6 +173,9 @@ export function pullLine(rows: PullPlatformStatus[] | null, err: string | null):
   const on = rows.filter((r) => r.enabled);
   const covers = on.flatMap((r) => { const m = r.lastCoverError?.match(/^cover_download_failed:(\d+)\/(\d+)/); return m ? [`${r.label}封面 ${m[1]}/${m[2]} 张没下载成`] : []; });
   const state = (on.length ? `自动回流已开（${on.map((r) => r.label).join("、")}）` : "自动回流没开") + (covers.length ? `（${covers.join("；")}）` : "");
+  // 当前的写入权拒绝优先于资料库里旧的浏览器状态
+  const refused = rows.filter((r) => r.writeRefusal);
+  if (refused.length) return { state, problem: refused.map((r) => `${r.label}${pullBadge(r).text}：${pullHint(r)}`).join("；") };
   if (on.length && browserUnreachable(rows)) return { state, problem: "自动回流连不上浏览器（chrome-cdp），数据停在上次" };
   const bad = on.filter((r) => { const t = pullBadge(r).tone; return t === "bad" || t === "warn"; });
   if (!bad.length) return { state, problem: null };

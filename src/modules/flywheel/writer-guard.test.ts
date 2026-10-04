@@ -69,14 +69,16 @@ describe("非持锁进程", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("pullPlatformNow 不调抓取器、不写状态", async () => {
+  it("pullPlatformNow 不调抓取器、不写状态；只发不落盘的刷新事件", async () => {
     const fetcher = vi.fn();
-    const emit = vi.fn();
+    const emit = vi.fn(async () => ({}) as never);
     const attempt = await pullPlatformNow("douyin", { dataDir: data, registry: { douyin: fetcher }, emit });
     expect(attempt).toMatchObject({ status: "error", rowCount: 0, errorCode: "library_writer_lost" });
     expect(fetcher).not.toHaveBeenCalled();
-    expect(emit).not.toHaveBeenCalled();
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ kind: "metrics_pull" }), data, { persist: false });
     expect(await read("metrics-pull.json")).toBeNull();
+    expect(await read("events.jsonl")).toBeNull();
   });
 
   it("拒绝看得见：默认 warn 进 console、内存里记一笔、pull_status 带出来；拿回锁后清掉", async () => {

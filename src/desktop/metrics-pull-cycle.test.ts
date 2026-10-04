@@ -592,6 +592,18 @@ describe("入库到一半失去写入权（行已落盘）", () => {
     expect(attempt).toMatchObject({ status: "error", rowCount: 1, imported: 1, errorCode: "library_writer_lost" });
   });
 
+  it("事件文案说出已入账条数，不说零写入；事件不落盘（资料库不可写）", async () => {
+    const emit = vi.fn(async () => ({ ts: NOW.toISOString(), role: "analyst" as const, kind: "metrics_pull", label: "x" }));
+    await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({ registry: { douyin: async () => okResult() }, importRows: vi.fn(async () => Promise.reject(partial())), emit }),
+    });
+    const [event, , opts] = emit.mock.calls[0] as unknown as [{ label: string }, string, { persist?: boolean }];
+    expect(event.label).toContain("已入账 1 条");
+    expect(event.label).not.toContain("零写入");
+    expect(opts).toEqual({ persist: false });
+  });
+
   it("登录/风控中途：状态保留，importError=library_writer_lost，imported=N", async () => {
     const attempt = await pullPlatformNow("douyin", {
       dataDir: dir,

@@ -92,6 +92,16 @@ describe("回流状态行（§42 / §43）", () => {
   });
 });
 
+describe("当前写入权丢失盖过旧的浏览器未连接", () => {
+  const base = { consoleUrl: "", inFlight: false, lastSuccessAt: null, lastAttemptAt: null, nextEligibleAt: null, failureCount: 0 };
+  it("pullLine 报写入权丢失与恢复办法，不报浏览器", () => {
+    const r = pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "browser_unreachable", writeRefusal: { code: "library_writer_lost", at: "2026-10-04T01:00:00.000Z" } }], null);
+    expect(r.problem).toMatch(/资料库写入权已丢失/);
+    expect(r.problem).toMatch(/重启/);
+    expect(r.problem).not.toMatch(/浏览器/);
+  });
+});
+
 describe("封面（§I.56）", () => {
   it("只收 png / jpg / webp，≤10MB", () => {
     expect(coverFileProblem({ type: "image/png", size: 1 })).toBeNull();
