@@ -38,6 +38,7 @@ export const draftSchema = Type.Object({
   note: Type.Optional(Type.String({ description: "save：这一版改了什么" })),
   rerun: Type.Optional(Type.Boolean({ description: "review：再审当前版" })),
   citations: Type.Optional(Type.Array(Type.Object({ text: Type.String(), evidence_ids: Type.Array(Type.String()) }), { description: "prepare_final：事实句 → 证据编号；对不上的给空数组" })),
+  claim_token: Type.Optional(Type.String({ description: "只在回执给过 claim_token 时带上（没有会话的调用）" })),
   takeover: Type.Optional(Type.Boolean({ description: "被别的会话占着、闲置满 10 分钟且创始人同意时接管" })),
 });
 

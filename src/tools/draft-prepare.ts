@@ -5,10 +5,11 @@
 import { transitionStatus } from "../storage/local-store.js";
 import { draftHash } from "../storage/draft-hash.js";
 import { isRealDraft } from "../storage/first-body-guard.js";
-import { buildChecklist, locateMapping, normalizeMapping, saveChecklist, type FinalChecklist } from "../modules/draft/draft-final.js";
+import { buildChecklist, locateMapping, normalizeMapping, saveChecklist, type FinalChecklist, type MappingInput } from "../modules/draft/draft-final.js";
 import { reviewView } from "../modules/draft/codex-review-queue.js";
 import { workbenchUrl } from "../modules/draft/draft-types.js";
-import { writable } from "./draft-actions.js";
+import { withDraftWrite } from "./draft-write.js";
+import type { Content } from "../storage/local-store.js";
 import type { DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
@@ -16,9 +17,13 @@ type R = Record<string, unknown>;
 export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
   const mapping = normalizeMapping(a.citations);
   if (typeof mapping === "string") return { ok: false, code: "bad_param", error: mapping };
-  const w = await writable(a);
-  if ("refused" in w) return w.refused;
-  const c = w.content;
+  return withDraftWrite(a, async ({ content, fenced }) => {
+    const lost = await fenced();
+    return lost ?? prepare(a, content, mapping);
+  });
+}
+
+async function prepare(a: DraftArgs, c: Content, mapping: MappingInput[]): Promise<R> {
   if (!await isRealDraft(c, a.dataDir)) return { ok: false, code: "empty_body", error: "还没有正文：先 save 一版再定稿" };
   const entries = c.evidenceLedger?.entries ?? [];
   const located = locateMapping(c.body, mapping, entries);

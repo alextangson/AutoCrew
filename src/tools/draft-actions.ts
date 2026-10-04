@@ -1,32 +1,17 @@
 /**
  * autocrew_draft 的写稿动作：read / cite / angle / save / review。prepare_final 在 draft-prepare.ts。
- * 写动作（cite / angle / save）先过写锁（draft-claims），再读稿做阶段判断。
+ * 写动作（cite / angle / save）都在 withDraftWrite 里：认领、阶段判断、写入同一把锁，写前再核令牌。
  */
 import { getContent, getTopic, saveTopic, transitionStatus, updateContent, type Content, type Topic } from "../storage/local-store.js";
 import { FirstBodyRefusedError, isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { ScriptFrozenError } from "../storage/production-store.js";
 import { recordFounderAngle } from "../modules/research/angle-gate.js";
-import { gateDraftWrite } from "../modules/draft/draft-claims.js";
 import { citeForDraft, readPageForDraft } from "../modules/draft/draft-research.js";
 import { enqueueReview, reviewView } from "../modules/draft/codex-review-queue.js";
-import { stageRefusal } from "./draft-start.js";
+import { fail, withDraftWrite } from "./draft-write.js";
 import { normalizeChain, type DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
-const fail = (code: string, error: string, extra: R = {}): R => ({ ok: false, code, error, ...extra });
-
-/** 写动作的共同前置：稿在、走的是这条路、还在写稿段、写锁拿得到 */
-export async function writable(a: DraftArgs): Promise<{ content: Content } | { refused: R }> {
-  if (!a.contentId) return { refused: fail("bad_param", "要带 content_id（start 返回的那个）") };
-  const content = await getContent(a.contentId, a.dataDir);
-  if (!content) return { refused: fail("not_found", `稿件不存在：${a.contentId}`) };
-  if (!content.draftPath) return { refused: fail("not_started", "这篇还没用 autocrew_draft 接手：先调 start{content_id}", { next_action: { tool: "autocrew_draft", params: { action: "start", content_id: content.id } } }) };
-  const stage = stageRefusal(content);
-  if (stage) return { refused: stage };
-  const gate = await gateDraftWrite(content.id, { host: a.host, session: a.session, dataDir: a.dataDir }, a.takeover);
-  if (!gate.ok) return { refused: gate as R };
-  return { content };
-}
 
 export async function draftRead(a: DraftArgs): Promise<R> {
   if (!a.contentId || !a.url) return fail("bad_param", "read 要带 content_id 和 url");
@@ -38,10 +23,12 @@ export async function draftRead(a: DraftArgs): Promise<R> {
 
 export async function draftCite(a: DraftArgs): Promise<R> {
   if (!a.pageId || !a.quote?.trim()) return fail("bad_param", "cite 要带 page_id（read 返回的）和 quote（原网页里逐字复制的一段）");
-  const w = await writable(a);
-  if ("refused" in w) return w.refused;
-  const r = await citeForDraft(w.content.id, a.pageId, a.quote, a.claim, a.dataDir);
-  return r.ok ? { ok: true, evidence_id: r.evidence_id, duplicate: r.duplicate } : fail(r.code, r.error);
+  return withDraftWrite(a, async ({ content, fenced }) => {
+    const lost = await fenced();
+    if (lost) return lost;
+    const r = await citeForDraft(content.id, a.pageId!, a.quote!, a.claim, a.dataDir);
+    return r.ok ? { ok: true, evidence_id: r.evidence_id, duplicate: r.duplicate } : fail(r.code, r.error);
+  });
 }
 
 async function topicFor(c: Content, dataDir?: string): Promise<Topic> {
@@ -57,13 +44,18 @@ export async function draftAngle(a: DraftArgs): Promise<R> {
   const missing = [["main_line", a.mainLine], ["for_whom", a.forWhom], ["opening", a.opening], ["why_viral", a.whyViral], ["founder_words", a.founderWords]].filter(([, v]) => !v).map(([k]) => k);
   if (missing.length) return fail("bad_param", `angle 缺：${missing.join("、")}。founder_words 照抄创始人选立意时的原话（说「你定」就记「你定」）`);
   if (!chain || chain.length < 4 || chain.length > 6) return fail("bad_param", `chain 要 4–6 行论证链，现在是 ${chain?.length ?? 0} 行`);
-  const w = await writable(a);
-  if ("refused" in w) return w.refused;
-  const topic = await topicFor(w.content, a.dataDir);
+  return withDraftWrite(a, async ({ content, fenced }) => {
+    const lost = await fenced();
+    return lost ?? recordAngle(a, content, chain);
+  });
+}
+
+async function recordAngle(a: DraftArgs, c: Content, chain: string[]): Promise<R> {
+  const topic = await topicFor(c, a.dataDir);
   if (!await recordFounderAngle(topic, a.mainLine!, a.founderWords!, a.dataDir)) return fail("angle_failed", "立意没记上：选题记录写不进去");
-  const version = (w.content.draftPath?.angle?.version ?? 0) + 1;
+  const version = (c.draftPath?.angle?.version ?? 0) + 1;
   const angle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain, founder_words: a.founderWords!, at: new Date().toISOString() };
-  await updateContent(w.content.id, { draftPath: { ...w.content.draftPath!, angle } }, a.dataDir);
+  await updateContent(c.id, { draftPath: { ...c.draftPath!, angle } }, a.dataDir);
   return { ok: true, angle_version: version, next_action: { note: "按选定的立意和论证链写全文，再 save" } };
 }
 
@@ -84,9 +76,13 @@ function bodyRefusal(body: string | undefined): R | null {
 export async function draftSave(a: DraftArgs): Promise<R> {
   const bad = bodyRefusal(a.body);
   if (bad) return bad;
-  const w = await writable(a);
-  if ("refused" in w) return w.refused;
-  const c = w.content;
+  return withDraftWrite(a, async ({ content, fenced }) => {
+    const lost = await fenced();
+    return lost ?? saveVersion(a, content);
+  });
+}
+
+async function saveVersion(a: DraftArgs, c: Content): Promise<R> {
   const angle = c.draftPath?.angle;
   const provenance = modelWrite(a.host, angle ? { direction: angle.main_line } : undefined);
   let saved: Content | null;

@@ -13,7 +13,7 @@ import { draftHash } from "../../storage/draft-hash.js";
 import { contentFile } from "../../storage/content-project.js";
 import { acceptanceBlock } from "../video/handoff/acceptance.js";
 import { validateCoverage, type CitationCoverage } from "../video/handoff/project-evidence.js";
-import { readProductionDoc } from "../../storage/production-store.js";
+import { readProductionDoc, scriptApprovalFor } from "../../storage/production-store.js";
 
 let dir: string;
 const PAGE = "研究显示，参与调查的 1200 名职场人里，有 37% 每天用 AI 写周报。";
@@ -102,7 +102,8 @@ describe("工作台「定了」", () => {
     expect(r).toMatchObject({ ok: true, status: "approved" });
     const after = (await getContent(id, dir))!;
     expect(after.draftFinal).toMatchObject({ draftHash: draftHash(before), source: "founder-workbench" });
-    expect(acceptanceBlock(after)).toBeNull();
+    const approval = await readProductionDoc(id, dir);
+    expect(acceptanceBlock(after, undefined, undefined, Boolean(approval && scriptApprovalFor(approval, after.body)))).toBeNull();
     const coverage = JSON.parse(await fs.readFile(contentFile(id, dir, "citations.json"), "utf8")) as CitationCoverage;
     expect(validateCoverage(after, coverage)).toEqual([]);
     const doc = await readProductionDoc(id, dir);
@@ -142,6 +143,6 @@ describe("工作台「定了」", () => {
     await run("prepare_final", { content_id: id, citations: MAPPING });
     await finalize({ id, draft_hash: draftHash((await getContent(id, dir))!) }, "session");
     const c = (await getContent(id, dir))!;
-    expect(acceptanceBlock({ ...c, body: `${c.body}改了` })).toMatchObject({ ok: false, code: "not_accepted" });
+    expect(acceptanceBlock({ ...c, body: `${c.body}改了` }, undefined, undefined, true)).toMatchObject({ ok: false, code: "not_accepted" });
   });
 });

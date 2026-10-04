@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
-import { finalizeBlock, VERDICT_LABEL, type DraftPanelData, type DraftReview } from "./draft-final-lib";
+import { finalizeBlock, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReview } from "./draft-final-lib";
 
 function ReviewBlock(p: { review: DraftReview; rerun: () => void }) {
   const r = p.review;
@@ -24,6 +24,19 @@ function ReviewBlock(p: { review: DraftReview; rerun: () => void }) {
     </ul>}
     {r.status !== "queued" && r.status !== "running" && <Button variant="quiet" size="sm" onClick={p.rerun}>再审</Button>}
   </div>;
+}
+
+/** 清单一行：没出处的给「保留」勾选；有没有出处都把要人看的模糊数字摆出来 */
+export function ChecklistRow(p: { item: DraftItem; kept: boolean; toggle: () => void }) {
+  const i = p.item;
+  return <li>
+    {i.status === "sourced" ? "有出处" : "没出处"} · {i.text}
+    {i.status === "sourced" ? <span className="muted"> （{i.evidence_ids.join("、")}）</span> : <>
+      <span className="muted"> {i.reason}</span>{" "}
+      <label><input type="checkbox" checked={p.kept} onChange={p.toggle} /> 保留（记为未核验）</label>
+    </>}
+    {i.needs_human?.length ? <span className="muted"> · 要你看一眼的数字：{i.needs_human.join("、")}</span> : null}
+  </li>;
 }
 
 export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirty: boolean; reload: () => Promise<void> }) {
@@ -60,13 +73,7 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
     <ReviewBlock review={d.review} rerun={() => void rerun()} />
     {d.status === "draft_ready" && d.checklist && <div className="draft-final-checklist">
       <strong>出处清单</strong>
-      <ul>{d.checklist.items.map((i) => <li key={i.id}>
-        {i.status === "sourced" ? "有出处" : "没出处"} · {i.text}
-        {i.status === "sourced" ? <span className="muted"> （{i.evidence_ids.join("、")}）</span> : <>
-          <span className="muted"> {i.reason}</span>{" "}
-          <label><input type="checkbox" checked={keep.has(i.id)} onChange={() => toggle(i.id)} /> 保留（记为未核验）</label>
-        </>}
-      </li>)}</ul>
+      <ul>{d.checklist.items.map((i) => <ChecklistRow key={i.id} item={i} kept={keep.has(i.id)} toggle={() => toggle(i.id)} />)}</ul>
     </div>}
     {d.status === "draft_ready" && (block ? <p className="muted">{block}</p> : <Button variant="primary" disabled={busy} onClick={() => void finalize()}>{busy ? "定稿中…" : "定了，去录 A-roll"}</Button>)}
   </section>;

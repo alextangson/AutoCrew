@@ -26,6 +26,7 @@ export interface DraftArgs {
   rerun: boolean;
   takeover: boolean;
   citations: unknown;
+  claimToken?: string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -56,6 +57,7 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     rerun: bool(p.rerun),
     takeover: bool(p.takeover),
     citations: p.citations,
+    claimToken: str(p.claim_token),
   };
 }
 

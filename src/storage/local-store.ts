@@ -25,7 +25,7 @@ import type { AngleCard } from "../modules/research/brief-store.js";
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
 import type { DraftFinalRecord, DraftPathRecord } from "../modules/draft/draft-types.js";
 import type { ContentVideoLink } from "../modules/video/handoff/types.js";
-import { applyScriptEdit, modelTransitionRefusal, planScriptEdit, projectInLock, recordScriptTransition, type Editor } from "./production-hooks.js";
+import { applyScriptEdit, FOUNDER_ONLY_STATUSES, modelTransitionRefusal, planScriptEdit, projectInLock, recordScriptTransition, type Editor } from "./production-hooks.js";
 
 /**
  * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
@@ -1900,6 +1900,8 @@ async function transitionStatusLocked(
   // 从范围外进入系列白名单状态才记时间；白名单内部流转（draft_ready→approved…）不算重新进入
   const entersSeries = SERIES_STATES.has(targetStatus) && !SERIES_STATES.has(currentStatus);
   const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus, ...(entersSeries ? { seriesEnteredAt: now } : {}) };
+  // 创始人的「定了」（薄路径 draftFinal）只对认稿状态作数：从认稿及之后拉回写稿段就清掉，交接不再认它
+  if (content.draftFinal && FOUNDER_ONLY_STATUSES.has(currentStatus) && !FOUNDER_ONLY_STATUSES.has(targetStatus)) updates.draftFinal = undefined;
 
   // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
   // 分两次写就会出现「状态已推进但账没记」的中间态。

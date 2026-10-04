@@ -37,10 +37,13 @@ interface Job { contentId: string; dataDir?: string; attempt: number; body: stri
 let runner: CodexRunner = runCodexExec;
 const waiting: Job[] = [];
 let running = 0;
+/** 已占名额、还没落盘入队的（跨稿件原子占位：判断与占位之间没有 await） */
+let reserved = 0;
+const CAPACITY = MAX_RUNNING + MAX_WAITING;
 
 /** 只给测试 */
 export function setCodexRunner(fn: CodexRunner | null): void { runner = fn ?? runCodexExec; }
-export function resetReviewQueue(): void { waiting.length = 0; running = 0; }
+export function resetReviewQueue(): void { waiting.length = 0; running = 0; reserved = 0; }
 /** 只给测试：等排着和跑着的审稿都结束（删临时目录前用） */
 export async function reviewsIdle(): Promise<void> {
   for (let i = 0; i < 600 && (running || waiting.length); i++) await new Promise((r) => setTimeout(r, 5));
@@ -126,12 +129,14 @@ export async function enqueueReview(contentId: string, dataDir?: string): Promis
     const active = state.attempts.find((a) => a.draft_hash === hash && (a.status === "queued" || a.status === "running"));
     if (active) return { attempt: active, coalesced: true };
     const attempt: ReviewAttempt = { attempt: (state.attempts.at(-1)?.attempt ?? 0) + 1, draft_hash: hash, version: content.versions?.length ?? 1, status: "queued", queued_at: now() };
-    if (waiting.length >= MAX_WAITING) {
-      Object.assign(attempt, { status: "failed", ended_at: now(), error: { code: "queue_full", message: `审稿排队已满（${MAX_WAITING} 篇在等），稍后点「再审」` } });
-    }
+    const full = running + waiting.length + reserved >= CAPACITY;
+    if (full) {
+      Object.assign(attempt, { status: "failed", ended_at: now(), error: { code: "queue_full", message: `审稿排队已满（同时 ${MAX_RUNNING} 篇在审、${MAX_WAITING} 篇在等），稍后点「再审」` } });
+    } else reserved++;
     state.attempts.push(attempt);
-    await saveState(contentId, state, dataDir);
-    if (attempt.status === "queued") schedule({ contentId, dataDir, attempt: attempt.attempt, body: content.body, angle: angleText(content.draftPath?.angle) });
+    try { await saveState(contentId, state, dataDir); }
+    finally { if (!full) reserved--; }
+    if (!full) schedule({ contentId, dataDir, attempt: attempt.attempt, body: content.body, angle: angleText(content.draftPath?.angle) });
     return { attempt, coalesced: false };
   });
 }

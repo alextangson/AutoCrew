@@ -96,17 +96,28 @@ export async function loadChecklist(contentId: string, dataDir?: string): Promis
 }
 
 /** 模型可能把映射数组序列化成字符串、还留着没转义的内部引号（中转端点的老毛病）：原样解析 → 修引号重试 → 都不行才报错 */
+/** evidence_ids：数组直接用（元素必须是字符串）；像 JSON 的字符串解析（修引号重试）；普通字符串当一个编号；缺省 = 空；别的类型报错 */
+function evidenceIdsOf(raw: unknown): string[] | string {
+  if (raw === undefined || raw === null) return [];
+  const v = maybeJson(raw);
+  if (v === UNPARSABLE) return "evidence_ids 看着是 JSON 但解析不了";
+  if (typeof v === "string") return v.trim() ? [v.trim()] : [];
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) return "evidence_ids 必须是字符串数组";
+  return v as string[];
+}
+
 export function normalizeMapping(raw: unknown): MappingInput[] | string {
   const value = maybeJson(raw);
   if (value === UNPARSABLE || typeof value === "string") return "citations 解析不了：传一个数组，每项 {text, evidence_ids}";
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) return "citations 必须是数组，每项 {text, evidence_ids}";
   const out: MappingInput[] = [];
-  for (const m of value) {
-    const o = (maybeJson(m) ?? {}) as Record<string, unknown>;
-    const ids = maybeJson(o.evidence_ids);
-    if (ids === UNPARSABLE) return "citations 里有一项的 evidence_ids 解析不了：传字符串数组";
-    out.push({ text: String(o.text ?? ""), evidence_ids: Array.isArray(ids) ? ids.map(String) : typeof ids === "string" && ids ? [ids] : [] });
+  for (const [i, m] of value.entries()) {
+    const o = maybeJson(m);
+    if (!o || typeof o !== "object" || Array.isArray(o)) return `citations 第 ${i + 1} 项不是 {text, evidence_ids} 对象`;
+    const ids = evidenceIdsOf((o as Record<string, unknown>).evidence_ids);
+    if (typeof ids === "string") return `citations 第 ${i + 1} 项的 ${ids}`;
+    out.push({ text: String((o as Record<string, unknown>).text ?? ""), evidence_ids: ids });
   }
   return out;
 }

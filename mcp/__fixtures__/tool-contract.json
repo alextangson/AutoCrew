@@ -664,6 +664,9 @@
      "claim": {
       "type": "string"
      },
+     "claim_token": {
+      "type": "string"
+     },
      "content_id": {
       "type": "string"
      },
@@ -3469,6 +3472,9 @@
       "type": "array"
      },
      "claim": {
+      "type": "string"
+     },
+     "claim_token": {
       "type": "string"
      },
      "content_id": {

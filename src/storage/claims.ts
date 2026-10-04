@@ -259,6 +259,23 @@ async function claimContentLocked(contentId: string, employee: ClaimEmployee, ho
   return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
 }
 
+/**
+ * 薄路径（autocrew_draft）的闲置接管：持有会话最近一次写入距今满 10 分钟，不论是不是同一宿主都可以接手。
+ * 接管换新令牌（旧令牌迟到写入被拒）并记一条交接；剪辑认领（heartbeat）不走这里。
+ */
+export async function takeOverIdleClaim(contentId: string, employee: ClaimEmployee, host: string, dataDir?: string): Promise<ClaimResult> {
+  return serializeClaim(contentId, async () => {
+    const content = await getContent(contentId, dataDir);
+    if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
+    const now = Date.now();
+    const current = activeClaim(content, now);
+    if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
+    if (current.heartbeat || claimIdleMs(current, now) < CLAIM_IDLE_TAKEOVER_MS) return held(current, host, now);
+    const handoff = { from: current.host, to: host, by: host, note: "接管（持有会话闲置满 10 分钟）" };
+    return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
+  });
+}
+
 /** `autocrew_desk release`：令牌对得上才清（对不上就是别人的活，不许替他放手） */
 export async function releaseClaim(
   contentId: string,

@@ -22,6 +22,7 @@ import { draftHash } from "../../../storage/draft-hash.js";
 import { contentDir, getContent, transitionStatus, type Content, type ContentClaim } from "../../../storage/local-store.js";
 import { probeAroll } from "../ingest.js";
 import { acceptanceBlock, HANDOFF_FROM } from "./acceptance.js";
+import { readProductionDoc, scriptApprovalFor } from "../../../storage/production-store.js";
 import { serializeVideoLine } from "./lock.js";
 import { journalBySource, markCommitted, moveArollBack, moveArollIn, readJournal, type MoveJournal } from "./aroll-move.js";
 import { readArollInput } from "./aroll-input.js";
@@ -233,7 +234,9 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
 }
 
 async function handoffChecked(content: Content, input: HandoffInput, ctx: HandoffContext, plan: Plan, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
-  const blocked = acceptanceBlock(content, confirmation, plan.base.aroll_sha256) ?? await evidenceBlock(content, ctx.dataDir);
+  const doc = content.draftFinal ? await readProductionDoc(content.id, ctx.dataDir) : null;
+  const scriptApproved = Boolean(doc && scriptApprovalFor(doc, content.body));
+  const blocked = acceptanceBlock(content, confirmation, plan.base.aroll_sha256, scriptApproved) ?? await evidenceBlock(content, ctx.dataDir);
   if (blocked) return blocked;
   const probed = await probeAroll(plan.arollPath);
   if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);

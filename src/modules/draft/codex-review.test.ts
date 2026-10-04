@@ -151,3 +151,15 @@ describe("审稿任务", () => {
     expect(await settle(queued)).toMatchObject({ status: "done" });
   });
 });
+
+describe("Codex 复审 P2：排队上限跨稿件原子占位", () => {
+  it("12 篇同时排：只收 2 跑 + 6 等，其余记 queue_full", async () => {
+    const releases: Array<() => void> = [];
+    setCodexRunner(() => new Promise((r) => { releases.push(() => r(out(ok()))); }));
+    const ids = await Promise.all(Array.from({ length: 12 }, () => draft()));
+    await Promise.all(ids.map((id) => enqueueReview(id, dir)));
+    const views = await Promise.all(ids.map((id) => reviewView(id, dir)));
+    expect(views.filter((v) => v.status !== "failed")).toHaveLength(MAX_RUNNING + MAX_WAITING);
+    while (releases.length) { releases.shift()!(); await new Promise((r) => setTimeout(r, 5)); }
+  });
+});
