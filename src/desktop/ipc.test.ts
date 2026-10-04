@@ -89,6 +89,7 @@ describe("IPC_CHANNELS", () => {
     "flywheel:pull_now",
     "flywheel:pull_toggle",
     "flywheel:hypotheses_list",
+    "calibration:ledger",
     "dialog:pick_file",
     "knowledge:status",
     "radar:status",
@@ -152,8 +153,8 @@ describe("IPC_CHANNELS", () => {
   // channels.ts / channel-contracts.ts / buildIpcHandlers / renderer 调用四处
   // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
-  it("has exactly 169 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(169);
+  it("has exactly 170 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(170);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -262,6 +263,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "flywheel:pull_now" &&
           ch !== "flywheel:pull_toggle" &&
           ch !== "flywheel:hypotheses_list" &&
+          ch !== "calibration:ledger" &&
           ch !== "chat:turn" &&
           // 对话控制面 §Phase 3:ipc.ts 内的专用 handler(中止链路/断线恢复/模型切换器)
           ch !== "chat:abort" &&

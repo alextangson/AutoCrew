@@ -92,6 +92,8 @@ export const IPC_CHANNELS = [
   "flywheel:pull_toggle",
   // 假设台账只读（spec §5.3）：open + 已裁决两组，裁决是代码算的观察性结论
   "flywheel:hypotheses_list",
+  // 预测账本只读（预测账本规格 §一）：页面上不能新建、修改或删除预测
+  "calibration:ledger",
   "dialog:pick_file",
   "knowledge:status",
   "radar:status",

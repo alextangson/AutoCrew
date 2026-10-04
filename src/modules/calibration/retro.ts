@@ -6,13 +6,14 @@
 import crypto from "node:crypto";
 import { getContent } from "../../storage/local-store.js";
 import { getOutcomesForContent } from "../flywheel/outcome-store.js";
-import { normalizePlatform, type OutcomeMetrics } from "../flywheel/outcome-schema.js";
-import { metricsNearAge } from "../flywheel/metrics-window.js";
+import { normalizePlatform, type OutcomeMetrics, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { ageInDays, metricsNearAge } from "../flywheel/metrics-window.js";
 import { reviewedRow } from "../insights/metric-review.js";
 import { decodeArg } from "../meetings/meeting-args.js";
 import { EARLY_RETRO_WEIGHT, FOLLOWUP_READING_DAY, RETRO_WINDOW_DAYS } from "./constants.js";
 import { bucketOf } from "./derive.js";
-import { activePredictions, readPredictions, type PredictionRecord } from "./pool.js";
+import { activePredictions, isInterpreted, readPredictions, type PredictionRecord } from "./pool.js";
+import { appendInterpretation } from "./retro-interpret.js";
 import { requireText } from "./predict-input.js";
 import { retroStateUpdate } from "./retro-state.js";
 import { normText, readObservations } from "./obs-store.js";
@@ -31,10 +32,15 @@ async function findPrediction(args: Obj, dataDir?: string): Promise<PredictionRe
   return p;
 }
 
-/** 回流里取近龄读数（±1 天）；没有就用手填（标 manual），都没有 → null */
-export async function readActual(p: PredictionRecord, publishedAt: string | null, day: number, manual: unknown, dataDir?: string): Promise<Actual | null> {
+/**
+ * 回流里取近龄读数（±1 天，只看剔除待复核指标后仍有播放的行）；没有就用手填（标 manual），都没有 → null。
+ * minAge：自动对账只认龄期 ≥ N 天的快照（不拿 D+2 的读数冒充 T+3）。
+ */
+export async function readActual(p: PredictionRecord, publishedAt: string | null, day: number, manual: unknown, dataDir?: string, minAge?: number): Promise<Actual | null> {
   const rows = (await getOutcomesForContent(p.content_id, dataDir))
-    .filter((r) => normalizePlatform(r.platform) === normalizePlatform(p.platform)).map(reviewedRow).filter((r) => r !== null);
+    .filter((r) => normalizePlatform(r.platform) === normalizePlatform(p.platform)).map(reviewedRow)
+    .filter((r) => r !== null && typeof r.metrics.views === "number")
+    .filter((r) => minAge === undefined || !publishedAt || (ageInDays(publishedAt, r!.metricDate) ?? -1) >= minAge) as PerformanceOutcome[];
   const at = metricsNearAge(rows, publishedAt, day);
   if (at && typeof at.metrics.views === "number") return pick(at.metrics, "回流", at.ageDays, at.metricDate);
   const m = decodeArg(manual) as Record<string, unknown> | undefined;
@@ -73,19 +79,24 @@ function textList(raw: unknown, field: string): string[] {
 export async function retro(args: Obj, dataDir?: string, now = new Date()): Promise<Obj> {
   const p = await findPrediction(args, dataDir);
   if (args.correction !== undefined) return appendSimple({ type: "correction", prediction_id: p.id, text: requireText(args.correction, "correction"), at: now.toISOString() }, dataDir);
-  const { retros } = await readPredictions(dataDir);
+  const { retros, interpretations } = await readPredictions(dataDir);
   const main = retros.find((r) => r.prediction_id === p.id);
   const content = await getContent(p.content_id, dataDir);
   const publishedAt = content?.publishedAt ?? null;
   if (!publishedAt) return { ok: false, code: "not_published", error: "这篇还没有发布时间，没法按 T+3 复盘" };
   const age = (now.getTime() - Date.parse(publishedAt)) / 86_400_000;
   if (args.reading === "d7") return d7Reading(p, main, publishedAt, args, dataDir, now);
-  if (main) return { ok: false, code: "retro_exists", error: "这条已经复盘过：复盘只追加一次；后续读数用 reading:\"d7\"，笔误用 correction" };
+  if (main && isInterpreted(main, interpretations)) return { ok: false, code: "retro_exists", error: "这条已经复盘并解读过：复盘只追加一次；后续读数用 reading:\"d7\"，笔误用 correction" };
+  // 数字已由自动对账写好、还没解读：这次只追加解读，不再计样本（创始人裁定 2026-10-04）
+  if (main) return appendInterpretation(p, args, dataDir, now);
   const early = age < RETRO_WINDOW_DAYS;
   if (early && args.force_early !== true) return { ok: false, code: "too_early", error: `还差 ${(RETRO_WINDOW_DAYS - age).toFixed(1)} 天到 T+3；创始人坚持现在复盘就带 force_early:true（标 early_retro，升级时降权）` };
   const actual = await readActual(p, publishedAt, RETRO_WINDOW_DAYS, args.manual_metrics, dataDir);
   if (!actual) return noData();
-  return writeRetro(p, actual, early, args, dataDir, now);
+  const { rec, ratio } = numericPart(p, actual, early, now, "manual");
+  const observations = textList(args.observations, "observations");
+  const full = { ...rec, verified_factors: verdicts(args.verified_factors), hypothesis_conclusion: requireText(args.hypothesis_conclusion, "hypothesis_conclusion"), observations };
+  return commitRetro(p, full, ratio, observations, dataDir, now);
 }
 
 function noData(): Obj {
@@ -105,18 +116,24 @@ async function appendSimple(rec: Obj & { type: string }, dataDir?: string): Prom
   return { ok: true, appended: rec.type };
 }
 
-async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, args: Obj, dataDir: string | undefined, now: Date): Promise<Obj> {
+/** 数字部分：实绩、落档、相对中枢偏差。手动复盘与自动对账共用同一算法 */
+export function numericPart(p: PredictionRecord, actual: Actual, early: boolean, now: Date, by: "auto" | "manual") {
   const landed = bucketOf(actual.views, p.input_snapshot.buckets.buckets).name;
   const ratio = p.body.center > 0 ? actual.views / p.body.center : Infinity;
-  const observations = textList(args.observations, "observations");
-  const rec = {
-    type: "retro", prediction_id: p.id, early_retro: early, actual, landed_bucket: landed, center_deviation: Math.round((ratio - 1) * 1000) / 10,
-    verified_factors: verdicts(args.verified_factors), counterfactual_hit: landed,
-    hypothesis_conclusion: requireText(args.hypothesis_conclusion, "hypothesis_conclusion"), observations, at: now.toISOString(),
-  };
+  const rec = { type: "retro", prediction_id: p.id, early_retro: early, numeric_by: by, actual, landed_bucket: landed,
+    center_deviation: Math.round((ratio - 1) * 1000) / 10, counterfactual_hit: landed, at: now.toISOString() };
+  return { rec, ratio };
+}
+
+/** 写入时的额外闸门（自动对账用来核资料库写入锁）：在排队内、第一次写之前调用，抛错 = 一行不写 */
+export type WriteGuard = () => void;
+
+/** 主复盘落盘（排队内）：唯一性复查 → 日志整体校验 → 追加 → 指纹复核 → 观察进 memo → 样本 +1（只这一处计数） */
+export async function commitRetro(p: PredictionRecord, rec: Obj & { type: string; landed_bucket: string; early_retro: boolean }, ratio: number, observations: string[], dataDir: string | undefined, now: Date, guard?: WriteGuard): Promise<Obj> {
   return serializeCalibration(dataDir, async () => {
-    // 唯一性在排队内再查一次：并发两次复盘不能都落盘、都 +1
+    // 唯一性在排队内再查一次：并发两次复盘（或自动对账撞上手动复盘）不能都落盘、都 +1
     if ((await readPredictions(dataDir)).retros.some((r) => r.prediction_id === p.id)) return { ok: false, code: "retro_exists", error: "这条刚被另一次复盘落过盘" };
+    guard?.();
     await assertLogsIntact(["predictions", "rubric-memo"], dataDir); // 全有或全无：第一次写之前把要碰的日志都核一遍
     const { fp: ownFp, ...rest } = p;
     const cached = fingerprint(p.body) === p.body_fp && fingerprint(rest) === ownFp ? p.body_fp : null;
@@ -124,18 +141,26 @@ async function writeRetro(p: PredictionRecord, actual: Actual, early: boolean, a
     const after = (await readPredictions(dataDir)).predictions.find((x) => x.id === p.id);
     const intact = cached !== null && after !== undefined && fingerprint(after.body) === cached && after.body_fp === cached;
     if (!intact) await appendLog("predictions", { type: "integrity_warning", prediction_id: p.id, at: now.toISOString(), detail: "复盘前后预测主体指纹不一致：该样本降为参考，不进校准池" }, dataDir);
-    const { tombstones } = await readObservations(dataDir);
-    const blocked = observations.filter((t) => tombstones.some((x) => normText(x.text) === normText(t)));
-    for (const text of observations.filter((t) => !blocked.includes(t))) {
-      await appendLog("rubric-memo", { type: "observation", id: `obs-${crypto.randomUUID().slice(0, 8)}`, stage: "observation", text, sample_ids: [p.id], source: "retro", at: now.toISOString() }, dataDir);
-    }
-    if (observations.length > blocked.length) await reproject(dataDir);
+    const blocked = await writeObservations(p.id, observations, dataDir, now);
     const { state } = await ensureCalibration(dataDir);
-    const counted = (!early || EARLY_RETRO_WEIGHT > 0) && !p.reconstructed && intact;
+    const counted = (!rec.early_retro || EARLY_RETRO_WEIGHT > 0) && !p.reconstructed && intact;
     const upd = retroStateUpdate(state, p.id, ratio, counted, now);
     await writeState(upd.state, dataDir);
-    return { ok: true, landed_bucket: landed, predicted_bucket: p.body.bucket, center_deviation_pct: rec.center_deviation, actual,
-      counted_as_calibration_sample: counted, integrity_warning: !intact, early_retro: early, prompts: upd.prompts,
+    return { ok: true, landed_bucket: rec.landed_bucket, predicted_bucket: p.body.bucket, center_deviation_pct: rec.center_deviation, actual: rec.actual,
+      counted_as_calibration_sample: counted, integrity_warning: !intact, early_retro: rec.early_retro, prompts: upd.prompts,
       ...(blocked.length ? { tombstoned_observations: blocked } : {}) };
   });
 }
+
+/** 观察只进 memo（被墓碑挡掉的不再提）；调用方需在排队内 */
+export async function writeObservations(predictionId: string, observations: string[], dataDir: string | undefined, now: Date): Promise<string[]> {
+  const { tombstones } = await readObservations(dataDir);
+  const blocked = observations.filter((t) => tombstones.some((x) => normText(x.text) === normText(t)));
+  for (const text of observations.filter((t) => !blocked.includes(t))) {
+    await appendLog("rubric-memo", { type: "observation", id: `obs-${crypto.randomUUID().slice(0, 8)}`, stage: "observation", text, sample_ids: [predictionId], source: "retro", at: now.toISOString() }, dataDir);
+  }
+  if (observations.length > blocked.length) await reproject(dataDir);
+  return blocked;
+}
+
+export { verdicts, textList };

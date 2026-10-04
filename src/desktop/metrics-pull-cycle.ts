@@ -437,6 +437,8 @@ export interface StartMetricsPullCycleOptions extends MetricsPullDeps {
   tickIntervalMs?: number;
   /** 每轮跑完的回调（失败轮给空数组）：让「这一轮到底跑没跑完」可观测，而不是只能猜 */
   onTick?: (attempts: PullAttempt[]) => void;
+  /** 每轮回流跑完之后（成功失败都跑）：自动数字对账挂在这里；它自己不抛错，失败记进对账状态 */
+  afterPull?: (dataDir: string | undefined) => Promise<unknown>;
 }
 
 /** 启动即跑一轮，之后每 30 分钟一轮；返回 stop（server close 时调用） */
@@ -449,7 +451,9 @@ export function startMetricsPullCycle(options: StartMetricsPullCycleOptions): ()
     ticking = true;
     let attempts: PullAttempt[] = [];
     try {
-      attempts = await runMetricsPullTick(await options.resolveDataDir(), options);
+      const dataDir = await options.resolveDataDir();
+      try { attempts = await runMetricsPullTick(dataDir, options); }
+      finally { await options.afterPull?.(dataDir); }
     } catch (error) {
       console.error("[metrics-pull] tick 失败:", error instanceof Error ? error.message : error);
     } finally {

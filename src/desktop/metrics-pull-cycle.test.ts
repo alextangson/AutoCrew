@@ -514,6 +514,16 @@ describe("startMetricsPullCycle — 生命周期", () => {
     expect(onTick).toHaveBeenCalledTimes(2);
   });
 
+  it("每轮回流之后都跑 afterPull（自动数字对账），带同一个数据目录", async () => {
+    fakeInterval();
+    const onTick = vi.fn();
+    const afterPull = vi.fn(async () => undefined);
+    const stop = startMetricsPullCycle({ resolveDataDir: async () => dir, onTick, afterPull, ...deps() });
+    await waitForCalls(onTick, 1);
+    stop();
+    expect(afterPull).toHaveBeenCalledWith(dir);
+  });
+
   it("上一轮没跑完，下一 tick 直接跳过（双闸，不叠罗汉）", async () => {
     fakeInterval();
     let release: () => void = () => {};

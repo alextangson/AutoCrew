@@ -75,6 +75,7 @@ import { initEngineHealth, probeAllProviders } from "../src/desktop/engine-healt
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
+import { reconcileDue } from "../src/modules/calibration/reconcile.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
 
@@ -755,5 +756,7 @@ server.listen(PORT, HOST, () => {
 
   stopMetricsPull = startMetricsPullCycle({
     resolveDataDir: async () => activeWorkspaceDataDir(),
+    // 回流后给到期预测做数字对账（预测账本规格 §二）：服务内执行、核写入锁，失败记进对账状态
+    afterPull: (dataDir) => reconcileDue(dataDir),
   });
 });
