@@ -6,6 +6,7 @@ import { loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../e
 import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../../engine/loop.js";
 import { getContent, updateContent, type Content } from "../../storage/local-store.js";
 import { countImageMarkers } from "./image-markers.js";
+import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 type RunLoopImpl = (config: EngineConfig, options: LoopOptions) => Promise<LoopResult>;
 
@@ -66,7 +67,7 @@ export async function suggestImagePositions(
   // added=0 是合法判断(本文无需新增)——不落库,顺带丢弃模型可能偷改的正文。
   if (added === 0) return { content: current, added: 0 };
 
-  const updated = await updateContent(contentId, { body, _versionNote: `AI 选插图位置：新增 ${added} 处` }, dataDir);
+  const updated = await updateContent(contentId, { body, _versionNote: `AI 选插图位置：新增 ${added} 处`, _provenance: HUMAN_WRITE }, dataDir);
   if (!updated) throw new Error(`保存失败：${contentId}`);
   return { content: updated, added };
 }

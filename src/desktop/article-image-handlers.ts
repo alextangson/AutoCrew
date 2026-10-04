@@ -12,6 +12,7 @@ import { isContentId } from "../storage/entity-id.js";
 import { getContent, updateContent } from "../storage/local-store.js";
 import { suggestImagePositions } from "../modules/writing/suggest-images.js";
 import { addImageMarker, removeImageMarker } from "../modules/writing/image-markers.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
@@ -140,7 +141,7 @@ export async function articleImagesAddSlotHandler(payload: Payload): Promise<Han
     const prompt = typeof payload.prompt === "string" ? payload.prompt : undefined;
     const updated = await updateContent(
       checked.contentId,
-      { body: addImageMarker(current.body, prompt), _versionNote: "手动加一个插图位" },
+      { body: addImageMarker(current.body, prompt), _versionNote: "手动加一个插图位", _provenance: HUMAN_WRITE },
       checked.dataDir,
     );
     if (!updated) return { ok: false, error: "保存失败" };
@@ -183,7 +184,7 @@ export async function articleImagesRemoveSlotHandler(payload: Payload): Promise<
     if (!current) return { ok: false, error: `稿件不存在：${checked.contentId}` };
     const body = removeImageMarker(current.body, index);
     if (body === current.body) return { ok: false, error: "没有找到该插图位" };
-    const updated = await updateContent(checked.contentId, { body, _versionNote: "删除一个插图位" }, checked.dataDir);
+    const updated = await updateContent(checked.contentId, { body, _versionNote: "删除一个插图位", _provenance: HUMAN_WRITE }, checked.dataDir);
     if (!updated) return { ok: false, error: "保存失败" };
     void emitEngineEvent({ role: "writer", kind: "work", label: "删除一个插图位", contentId: checked.contentId }, checked.dataDir).catch(() => {});
     return { ok: true };

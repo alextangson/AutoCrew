@@ -258,6 +258,7 @@ import {
   campaignSetAutonomyHandler,
   campaignTransitionHandler,
 } from "./campaign-handlers.js";
+import { HUMAN_WRITE, modelWrite } from "../storage/first-body-guard.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -912,7 +913,7 @@ async function rewriteSelectionHandler(payload: Record<string, unknown>): Promis
 }
 
 /** 收下一版对话式修改：存新版本 + 采纳即学习闸门（有 before+feedback 才沉淀）。 */
-async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function draftAdoptRevisionHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
   if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
   const body = typeof payload.body === "string" ? payload.body : "";
@@ -936,6 +937,8 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
         body,
         ...(title ? { title } : {}),
         _versionNote: note,
+        // 浏览器会话里人点「收下」= 人手；令牌调用（宿主/模型可达）按模型算
+        _provenance: ctx?.authMethod === "session" ? HUMAN_WRITE : modelWrite(),
         ...(changed && feedback ? { writingFeedback: appendWritingFeedback(before0.writingFeedback, feedback, feedbackScope, {
           ...(feedbackScope === "selection" && typeof payload.selection === "string" ? { selection: payload.selection } : {}),
         }) } : {}),
@@ -1647,7 +1650,7 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>, ctx?: I
     const updated = await updateTopic(
       topicId,
       // 桌面界面上是创始人本人点的卡（人手操作）：记成创始人选定，原话缺省就记这次点选
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords } },
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords }, founderAngle: undefined },
       dataDir,
     );
     // 两个后端都从「最近工作区动作」得知创作者选了哪个角度（bug A3）
@@ -1663,7 +1666,8 @@ async function topicClearAngleHandler(payload: Record<string, unknown>): Promise
   const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
   if (!topicId) return { ok: false, error: "topic_id 必填" };
   try {
-    const topic = await updateTopic(topicId, { selectedAngle: undefined }, (payload._dataDir as string) || undefined);
+    // 撤回 = 清掉创始人的角度决定（选卡与自定角度一起清，旧的那句不能借机复活）
+    const topic = await updateTopic(topicId, { selectedAngle: undefined, founderAngle: undefined }, (payload._dataDir as string) || undefined);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
     await appendAction((payload._dataDir as string) || undefined, { kind: "angle_cleared", title: topic.title });
     return { ok: true, topic };

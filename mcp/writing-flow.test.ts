@@ -14,6 +14,7 @@ import { reviewInFlight } from "../src/tools/writer-review.js";
 import * as styleDistiller from "../src/modules/learnings/style-distiller.js";
 import { listDiffs } from "../src/modules/learnings/diff-tracker.js";
 import { asFounder, founderAuthored } from "../src/modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../src/storage/first-body-guard.js";
 
 let dataDir: string;
 /** MCP 往返计数（P6 §5 预算：首稿 ≤25） */
@@ -139,7 +140,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const distill = vi.spyOn(styleDistiller, "distillStyleRules").mockRejectedValue(new Error("implicit distillation is forbidden"));
     const absorb = vi.spyOn(styleDistiller, "analyzeStyleSamples").mockRejectedValue(new Error("implicit sample model is forbidden"));
     const topic = await saveTopic({ title: "已有稿的表达", description: "保留原稿与用户修改记录", tags: [] }, dataDir);
-    const content = await saveContent({ title: "用户已有稿", body: "这是用户已经写好的正文。", topicId: topic.id, platform: "douyin", status: "draft_ready" }, dataDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "用户已有稿", body: "这是用户已经写好的正文。", topicId: topic.id, platform: "douyin", status: "draft_ready" }, dataDir);
     const profileBefore = await call("autocrew_editorial", { action: "profile" });
     let claimToken: string | undefined;
     for (const body of ["先把事情发生的经过说清楚。", "接着解释交接记录里缺了什么。", "最后保留需要向当事人核对的地方。"]) {

@@ -3,6 +3,7 @@ import { getContent, updateContent } from "../storage/local-store.js";
 import { humanizeZh } from "../modules/humanizer/zh.js";
 import { aiContentWriteRefusal } from "../modules/research/angle-gate.js";
 import { isModelCall } from "../storage/stage-guard.js";
+import { provenanceOf } from "../storage/first-body-guard.js";
 
 export const humanizeSchema = Type.Object({
   action: Type.Unsafe<"humanize_zh">({
@@ -49,6 +50,7 @@ export async function executeHumanize(params: Record<string, unknown>) {
       {
         title: title || undefined,
         body: result.humanizedText,
+        _provenance: provenanceOf(params),
       },
       dataDir,
     );

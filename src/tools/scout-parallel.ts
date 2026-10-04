@@ -12,6 +12,7 @@
  */
 import crypto from "node:crypto";
 import { buildMeetingBrief } from "../modules/meetings/meeting-brief.js";
+import { listContentsStrict } from "../storage/local-store.js";
 import { formatSummaryOf } from "../modules/meetings/meeting-angle.js";
 import type { GroupRow } from "../modules/meetings/meeting-works.js";
 import { HostResearchError, type AccountDataPerspective, type HostResearchTask } from "../modules/research/host-research-store.js";
@@ -120,6 +121,8 @@ function personaLines(groups: GroupRow[]): string {
 export async function buildAccountData(dataDir: string, now = new Date()): Promise<AccountDataPerspective> {
   const builtAt = now.toISOString();
   try {
+    // 简报的稿件枚举会跳过读坏的记录；先严格枚举一遍，坏一条就把这一路记成失败，不冒充「数据齐了」
+    await listContentsStrict(dataDir);
     const brief = await buildMeetingBrief(dataDir, now);
     const summary = [
       "## 账号数据（按形式，同平台同龄中位数）", formatSummaryOf(brief.groups),

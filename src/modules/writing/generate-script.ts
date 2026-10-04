@@ -90,6 +90,8 @@ import { getContent, getDataDir, getTopic, saveContent, updateContent } from "..
 import type { Content, Topic } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 import { selectEditorialExperiment, renderEditorialExperiment, type EditorialExperiment } from "../retro/editorial-experiments.js";
+import { modelWrite } from "../../storage/first-body-guard.js";
+import { admitWritingJob } from "../research/angle-gate.js";
 
 export type { ScriptRequest };
 
@@ -205,6 +207,8 @@ export const RESEARCHING_TITLE_PREFIX = "［调研中］";
  * 宿主写稿（`autocrew_writer pack`）用**同一个**函数建占位稿：稿件的出生形态不许分叉。
  */
 export async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
+  // 生成任务的唯一准入：同步生成与后台生成都从这里建占位稿
+  await admitWritingJob({ topicId: req.topicId }, dataDir);
   const placeholder = await saveContent(
     {
       title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
@@ -1207,6 +1211,7 @@ export async function retryGenerateScript(
    */
   override?: Partial<ScriptRequest>,
 ): Promise<StartedGeneration> {
+  await admitWritingJob({ contentId }, dataDir);
   const work = beginWork("后台重写");
   if (!work.ok) throw new Error(work.error);
   try {
@@ -1322,6 +1327,7 @@ async function finalizeBlocked(args: FinalizeCommon & { written: WriterRun }): P
     {
       title: written.payload.title,
       body: humanizedText,
+      _provenance: modelWrite("engine"),
       hashtags: written.payload.hashtags.map((t) => t.trim()).filter(Boolean),
       // genRequest **不清**：这稿还要重写，重写的依据就是它
       lastError: null,
@@ -1388,6 +1394,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     {
       title,
       body: humanizedText,
+      _provenance: modelWrite("engine"),
       // 生产计时的「稿成」节点:转正这一刻就是稿成:起点是占位稿的 createdAt(开写)
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,

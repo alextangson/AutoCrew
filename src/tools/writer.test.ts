@@ -46,7 +46,7 @@ import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
-import { asFounder, founderAuthored } from "../modules/research/angle-gate.test-helper.js";
+import { asFounder, founderAuthored, founderStamped } from "../modules/research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -648,6 +648,7 @@ describe("writer pack 异步备料", () => {
     await saveBrief(first.topicId, renewed, testDir);
     await upsertJob({ topicId: first.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: renewed.revision, topicHash: topicHashOf(TITLE, DESC), creativeTask: renewed.creativeTask }, testDir);
     await pickAngle(first.topicId, renewed);
+    await founderStamped(testDir, first.topicId); // 创始人改选了新卡（取代之前的自定角度）
     expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
       .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
     const fresh = await run({ action: "pack", topic_id: first.topicId, platform: "douyin", direction: "", force: true });

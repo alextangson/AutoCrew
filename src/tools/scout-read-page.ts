@@ -106,8 +106,9 @@ export async function finishPageRead(read: DeferredPageRead, ctx: PageReadContex
       throw new HostResearchError("stale_task", "读页期间研究任务已换代，抓回的页面没有并入新任务；预扣的额度随旧任务作废");
     current.pageReads = (current.pageReads ?? []).filter((r) => r.id !== read.entry.id);
     const broker = createResearchBroker({ ...ctx.brokerDeps, dataDir: ctx.dir, snapshot: current.broker });
-    if (page && ctx.perspectiveToken) {
-      try { checkPerspectiveAccess(current, read.entry.perspective as PerspectiveName, ctx.perspectiveToken); } catch (err) {
+    // 并入前在锁内重核视角归属：带令牌的核令牌还有效；不带令牌的核这一路没被别人认领走（读页途中可能刚被领走）
+    if (page) {
+      try { checkPerspectiveAccess(current, read.entry.perspective as PerspectiveName, ctx.perspectiveToken ?? ""); } catch (err) {
         await save(current);
         throw err;
       }

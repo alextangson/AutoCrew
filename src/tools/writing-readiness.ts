@@ -4,7 +4,7 @@ import { activeAngleCard, angleCardHash, angleCardsOf } from "../modules/researc
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { getJob, topicHashOf } from "../modules/research/research-job-store.js";
 import { getTopic } from "../storage/local-store.js";
-import { ANGLE_GATE_COPY, founderChoiceOf, newDraftAngleRefusal, topicHasDraft } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, founderChoiceOf, latestDecision, newDraftAngleRefusal, topicHasDraft } from "../modules/research/angle-gate.js";
 import { angleOptionsView, jobView } from "./workflow-views.js";
 
 export interface WritingReadinessRequest {
@@ -114,11 +114,17 @@ export async function inspectWritingReadiness(
   if (!topic) {
     return { ...result, status: "needs_attention", note: `选题不存在：${topicId}`, next_action: { tool: "autocrew_topic", params: { action: "list" } } };
   }
-  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：明确拒绝，不静默当成 auto
-  if (mode === "skip" || req.angleSkipReason?.trim() || req.researchReason?.trim()) {
+  // 已有真稿的选题（存量、改稿、真稿的平台变体）先判：选题会只管第一篇（规则 8），
+  // 存量稿身上旧的 skip / provided 元数据照旧可用，修订不能因为新规则被卡死
+  let existingDraft: boolean;
+  try { existingDraft = await topicHasDraft(topicId, dataDir); } catch (err) {
+    return { ...result, status: "needs_attention", note: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` };
+  }
+  // 跳过调研 / 跳过选卡的通道已关闭（选题会规则 6）：新稿明确拒绝，不静默当成 auto
+  if (!existingDraft && (mode === "skip" || req.angleSkipReason?.trim() || req.researchReason?.trim())) {
     return { ...result, status: "needs_attention", note: ANGLE_GATE_COPY.skipRemoved, next_action: { tool: "autocrew_workflow", params: { topic_id: topicId, action: "prepare" } } };
   }
-  if (!["auto", "provided"].includes(mode)) {
+  if (!["auto", "provided", ...(existingDraft ? ["skip"] : [])].includes(mode)) {
     return { ...result, status: "needs_attention", note: "research_mode 仅支持 auto / provided。" };
   }
   const [job, snap] = await Promise.all([
@@ -155,6 +161,10 @@ export async function inspectWritingReadiness(
     }
     result.research.status = "provided";
     result.research.reason = "使用宿主或创作者提供的材料；AutoCrew 未执行自动调研，来源仍需核查。";
+  } else if (mode === "skip") {
+    // 只有存量稿会走到这里（新稿在上面就被拒了）：沿用它当初免调研的设置做修订
+    result.research.status = "skipped";
+    result.research.reason = req.researchReason?.trim() || "存量稿沿用当初的免调研设置";
   } else {
     // A retained old brief is not proof that the latest requested research succeeded.
     if (job?.status === "queued" || job?.status === "running") {
@@ -190,21 +200,21 @@ export async function inspectWritingReadiness(
     }
   }
 
-  // 已有真稿的选题（存量、改稿、真稿的平台变体）不用再开选题会（规则 8）：沿用原立意即可
-  let existingDraft: boolean;
-  try { existingDraft = await topicHasDraft(topicId, dataDir); } catch (err) {
-    return { ...result, status: "needs_attention", note: `${ANGLE_GATE_COPY.readFailed}（${err instanceof Error ? err.message : String(err)}）` };
-  }
   // 角度只认创始人亲口定的：带原话选的卡，或带原话记下的自定角度（选题会规则 4、5）
-  const authored = topic.founderAngle && founderChoiceOf({ ...topic, selectedAngle: undefined })?.kind === "authored" ? topic.founderAngle : null;
+  const latest = latestDecision(topic);
+  const authored = latest === "authored" && topic.founderAngle && founderChoiceOf({ ...topic, selectedAngle: undefined })?.kind === "authored" ? topic.founderAngle : null;
   const direction = req.direction?.trim() ?? "";
-  const founderCard = effective && (existingDraft || (topic.selectedAngle?.chosenBy === "founder" && topic.selectedAngle.founderWords?.trim())) ? effective : null;
+  const founderCard = effective && (existingDraft || (latest === "card" && topic.selectedAngle?.chosenBy === "founder" && topic.selectedAngle.founderWords?.trim())) ? effective : null;
   if (direction && (existingDraft || (authored && authored.direction === direction))) result.angle.status = "direction";
   else if (direction) {
     result.status = "needs_angle";
     result.note = ANGLE_GATE_COPY.bareDirection;
     result.next_action = next("select_angle", { direction, founder_words: "<创始人原话>" });
     return result;
+  } else if (existingDraft && !founderCard) {
+    // 存量稿修订：稿子本身就带着立意，不再要求选卡（旧的 skip_reason 也只当留痕）
+    result.angle.status = "skipped";
+    result.angle.reason = req.angleSkipReason?.trim() || "已有真稿的修订沿用原稿立意";
   } else if (founderCard) {
     result.angle.status = "selected";
     result.angle.selectedAngleId = founderCard.id;

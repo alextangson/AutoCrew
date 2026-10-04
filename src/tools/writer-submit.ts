@@ -68,6 +68,7 @@ import {
 } from "./writer-review.js";
 import { hostReviewPack } from "./host-review.js";
 import { directRevisionRefusal, openRevisionCycle, takeRevisionVersion } from "./writer-revision.js";
+import { modelWrite } from "../storage/first-body-guard.js";
 
 export type SubmitFailure = { ok: false; error: string } & Record<string, unknown>;
 export type SubmitResult = ({ status: SubmitPhase } & Record<string, unknown>) | SubmitFailure;
@@ -268,6 +269,7 @@ async function persistDraft(
       gapRecord: undefined,
       title: payload.title,
       body: humanizedText,
+      _provenance: modelWrite(args.host),
       hashtags: payload.hashtags.map((t) => t.trim()).filter(Boolean),
       lastError: null,
       unverifiedNumbers: extra.needsHuman,

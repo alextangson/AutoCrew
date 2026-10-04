@@ -36,6 +36,7 @@ import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { boardTrashRefusal } from "../modules/production/trash-guard.js";
+import { FirstBodyRefusedError, provenanceOf } from "../storage/first-body-guard.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
@@ -233,6 +234,8 @@ export async function executeContentSave(
   // 不带标记的人手编辑照旧
   const modelCall = isModelCall(params);
   const manualImport = params.source === "manual_import" && typeof params.import_reason === "string" && Boolean(params.import_reason.trim());
+  // 写正文的来源交给存储层的选题会卡口（唯一判定点）；这里的提前拒绝只是更好懂的提示
+  const provenance = provenanceOf(params, { manualImport });
   const importReceipt = {
     saved: true, quality_status: "unreviewed", needs_attention: true,
     writing_source: { kind: "manual_import" },
@@ -318,12 +321,13 @@ export async function executeContentSave(
     let updated: Content | null;
     try {
       if (platformLock) {
-        const checked = await updateContentChecked(id, buildContentUpdates(params), platformLock, dataDir);
+        const checked = await updateContentChecked(id, { ...buildContentUpdates(params), _provenance: provenance }, platformLock, dataDir);
         if (checked && !checked.ok) return { ok: false, code: "platform_locked", error: checked.reason, ...grant };
         updated = checked?.content ?? null;
-      } else updated = await updateContent(id, buildContentUpdates(params), dataDir);
+      } else updated = await updateContent(id, { ...buildContentUpdates(params), _provenance: provenance }, dataDir);
     } catch (err) {
       if (err instanceof ScriptFrozenError) return { ok: false, code: err.code, error: err.message, ...grant };
+      if (err instanceof FirstBodyRefusedError) return { ...err.refusal, ...grant };
       throw err;
     }
     if (!updated) return { ok: false, error: `Content ${id} not found` };
@@ -478,12 +482,18 @@ export async function executeContentSave(
       const refused = await newDraftAngleRefusal(topicId, dataDir);
       if (refused) return refused;
     }
-    const result = await createPlatformVariant(
-      topicId,
-      platform,
-      { title: params.title as string, body: params.body as string, ...(hasBody && manualImport ? { writingSource: importSource(params) } : {}) },
-      dataDir,
-    );
+    let result: Awaited<ReturnType<typeof createPlatformVariant>>;
+    try {
+      result = await createPlatformVariant(
+        topicId,
+        platform,
+        { title: params.title as string, body: params.body as string, provenance, ...(hasBody && manualImport ? { writingSource: importSource(params) } : {}) },
+        dataDir,
+      );
+    } catch (err) {
+      if (err instanceof FirstBodyRefusedError) return err.refusal;
+      throw err;
+    }
     return result.ok && hasBody && manualImport ? { ...result, ...importReceipt } : result;
   }
 
@@ -523,7 +533,9 @@ export async function executeContentSave(
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
   if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: (await isOntologyEnabled(params._dataDir as string | undefined)) ? EDITING_VIA_ONTOLOGY : EDITING_VIA_HANDOFF };
-  const content = await saveContent({
+  let content: Content;
+  try { content = await saveContent({
+    _provenance: provenance,
     title,
     body,
     platform: (params.platform as string) || undefined,
@@ -532,7 +544,10 @@ export async function executeContentSave(
     tags: (params.tags as string[]) || [],
     hashtags: (params.hashtags as string[]) || [],
     ...(manualImport ? { writingSource: importSource(params) } : {}),
-  }, dataDir);
+  }, dataDir); } catch (err) {
+    if (err instanceof FirstBodyRefusedError) return err.refusal;
+    throw err;
+  }
 
   return { ok: true, content, ...(manualImport ? importReceipt : {}) };
 }

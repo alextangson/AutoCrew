@@ -29,6 +29,7 @@ import {
   type ContentStatus,
 } from "../storage/local-store.js";
 import { hashClaimToken } from "../storage/claim-token.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -79,7 +80,7 @@ async function seedContent(
 ): Promise<Content> {
   // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
   const c = await saveContent(
-    { title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}), ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
+    { _provenance: HUMAN_WRITE, title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}), ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
     dir,
   );
   if (status !== "editing") return c;
@@ -364,11 +365,11 @@ describe("封面桌按状态机的真实路径（真机 2026-09-06）", () => {
     const { saveContent, transitionStatus, updateContent } = await import("../storage/local-store.js");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-desk-cover-"));
     try {
-      const wx = await saveContent({ title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      const wx = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       for (const st of ["reviewing", "approved"] as const) expect((await transitionStatus(wx.id, st, {}, dir)).ok).toBe(true);
-      const vid = await saveContent({ title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
+      const vid = await saveContent({ _provenance: HUMAN_WRITE, title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
       for (const st of ["reviewing", "approved", "editing"] as const) expect((await transitionStatus(vid.id, st, { viaHandoff: st === "editing" }, dir)).ok).toBe(true);
-      await saveContent({ title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      await saveContent({ _provenance: HUMAN_WRITE, title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       let r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
       expect(r.items.map((i) => i.content_id)).toEqual([wx.id]);
       await updateContent(vid.id, { videoDone: true }, dir);

@@ -6,13 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  createPlatformVariant, getContent, getTopic, listContents, listContentsStrict, listTopics, updateTopic,
+  createPlatformVariant, getContent, getTopic, listContents, listContentsStrict, listTopics, updateTopic, saveContent, updateContent,
 } from "../../storage/local-store.js";
 import { executeWorkflow } from "../../tools/workflow.js";
 import { executeWriter } from "../../tools/writer.js";
 import { executeGenerate } from "../../tools/generate.js";
 import { executeContentSave } from "../../tools/content-save.js";
 import { executeHumanize } from "../../tools/humanize.js";
+import { executeHostRewrite, executeRewrite } from "../../tools/rewrite.js";
+import { FirstBodyRefusedError, HUMAN_WRITE, modelWrite } from "../../storage/first-body-guard.js";
 import { startWriting } from "../../desktop/board-actions.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
 import { buildChatTools } from "../../desktop/chat-router.js";
@@ -305,5 +307,135 @@ describe("豁免照常放行", () => {
     const r = await startWriting(t.id, "douyin", f.data, { platform: "linux" });
     expect(r).toMatchObject({ ok: true, created: true });
     expect(TEST_FOUNDER_WORDS).toBeTruthy();
+  });
+});
+
+describe("存储层唯一卡口（第一份真正文）", () => {
+  it("绕过所有入口直接写存储：模型来源没定角度 → 拒；来源不明 → 拒；人手 / 导入 → 放行", async () => {
+    const t = await makeTopic(f.data, "直写题");
+    await expect(saveContent({ title: "模型直写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite("claude") }, f.data))
+      .rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
+    await expect(saveContent({ title: "没标来源", body: "正文", topicId: t.id, status: "drafting", tags: [] }, f.data))
+      .rejects.toMatchObject({ refusal: { code: "unknown_write_provenance" } });
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    await expect(updateContent(ph.id, { body: "模型填实", _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    await expect(updateContent(ph.id, { body: "没标来源填实" }, f.data)).rejects.toMatchObject({ refusal: { code: "unknown_write_provenance" } });
+    expect((await getContent(ph.id, f.data))?.body).toBe(ph.body);
+    expect(await updateContent(ph.id, { body: "创始人自己写的", _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ body: "创始人自己写的" });
+    // 已经是真稿 → 先于一切来源判定放行（来源不明的改稿、回滚照常）
+    expect(await updateContent(ph.id, { body: "再改一版" }, f.data)).toMatchObject({ body: "再改一版" });
+    // 没挂选题：模型写拒，人手放行
+    await expect(saveContent({ title: "模型裸写", body: "正文", status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).rejects.toBeInstanceOf(FirstBodyRefusedError);
+    expect(await saveContent({ title: "人手裸写", body: "正文", status: "drafting", tags: [], _provenance: HUMAN_WRITE }, f.data)).toMatchObject({ title: "人手裸写" });
+  });
+
+  it("模型来源 + 创始人定过且仍作数的角度 → 放行", async () => {
+    const t = await makeTopic(f.data, "定过题");
+    await founderAuthored(f.data, t.id);
+    expect(await saveContent({ title: "模型写", body: "正文", topicId: t.id, status: "drafting", tags: [], _provenance: modelWrite() }, f.data)).toMatchObject({ topicId: t.id });
+  });
+
+  it("平台改写（autocrew_rewrite / batch_adapt）从占位稿起步 → 准入就拒，不调模型", async () => {
+    const t = await makeTopic(f.data, "改写题");
+    const ph = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
+    for (const action of ["adapt_platform", "batch_adapt"]) {
+      const r = await executeRewrite({ action, content_id: ph.id, target_platform: "xiaohongshu", target_platforms: ["xiaohongshu"], _dataDir: f.data, _modelCall: true });
+      expect(r, action).toMatchObject(NEEDS);
+    }
+    expect(await executeHostRewrite({ action: "adapt_platform", content_id: ph.id, target_platform: "xiaohongshu", execution: "engine", _dataDir: f.data, _host: "claude" })).toMatchObject(NEEDS);
+    expect(await executeRewrite({ action: "adapt_platform", title: "裸标题", body: "裸正文", target_platform: "xiaohongshu", save_as_draft: true, _dataDir: f.data, _modelCall: true })).toMatchObject(NEEDS);
+  });
+});
+
+describe("只认创始人最近一次角度决定", () => {
+  it("自定角度之后改选卡 → 自定角度作废；撤回 → 两样都清", async () => {
+    const t = await makeTopic(f.data, "改主意题");
+    await withCards(t.id);
+    await executeWorkflow({ action: "select_angle", topic_id: t.id, direction: "我先想的角度", founder_words: "先这么写", _dataDir: f.data });
+    await executeWorkflow({ action: "select_angle", topic_id: t.id, angle_id: "angle-2", brief_revision: 1, founder_words: "还是第二张", _dataDir: f.data });
+    const after = (await getTopic(t.id, f.data))!;
+    expect(after.founderAngle).toBeUndefined();
+    expect(after.selectedAngle).toMatchObject({ angleId: "angle-2", chosenBy: "founder" });
+    // 卡后来过期了，不能退回去拿之前那句自定角度当放行理由
+    await updateTopic(t.id, { title: "改主意题（改名）" }, f.data);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
+    const t2 = await makeTopic(f.data, "撤回题");
+    await founderAuthored(f.data, t2.id);
+    expect(await buildIpcHandlers()["topic:clear_angle"]({ topic_id: t2.id, _dataDir: f.data })).toMatchObject({ ok: true });
+    expect(await newDraftAngleRefusal(t2.id, f.data)).toMatchObject({ code: "needs_founder_angle" });
+  });
+
+  it("旧数据两样都在：按时间取最新的那次（旧的自定角度不能盖过新选的、已过期的卡）", async () => {
+    const t = await makeTopic(f.data, "旧数据题");
+    await withCards(t.id);
+    await founderAuthored(f.data, t.id);
+    await updateTopic(t.id, { selectedAngle: { briefRevision: 9, angleId: "angle-1", card: CARD, selectedAt: "2099-01-01T00:00:00.000Z", chosenBy: "founder", founderWords: "后来选的" } }, f.data);
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "needs_founder_angle", error: ANGLE_GATE_COPY.staleChoice });
+  });
+});
+
+describe("严格读取", () => {
+  it("旧版存储里稿件 meta 读坏：aiContentWriteRefusal 报读失败，不退回平铺旧副本、不当成「没有这篇」", async () => {
+    const legacy = await fs.mkdtemp(path.join(f.temp, "legacy-meta-"));
+    const id = "content-1700000000000-broken";
+    await fs.mkdir(path.join(legacy, "contents", id), { recursive: true });
+    await fs.writeFile(path.join(legacy, "contents", id, "meta.json"), "{ 坏");
+    await fs.writeFile(path.join(legacy, "contents", `${id}.json`), JSON.stringify({ id, title: "旧副本", body: "旧副本有正文", status: "draft_ready", tags: [], versions: [], createdAt: "2026-01-01" }));
+    expect(await aiContentWriteRefusal(id, legacy)).toMatchObject({ code: "angle_gate_read_failed" });
+  });
+
+  it("简报 / 台账读坏：创始人选的卡判不了新旧 → 报读失败，不冒充「选择过期」", async () => {
+    const t = await makeTopic(f.data, "简报坏题");
+    await withCards(t.id);
+    await updateTopic(t.id, { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords: "就这张" } }, f.data);
+    const briefFile = (await fs.readdir(path.join(f.data, "research"), { recursive: true }) as string[]).find((p) => /brief.*v?1.*\.json$|\/1\.json$/.test(p) && p.includes(t.id));
+    expect(briefFile).toBeTruthy();
+    await fs.writeFile(path.join(f.data, "research", briefFile!), "{ 坏");
+    expect(await newDraftAngleRefusal(t.id, f.data)).toMatchObject({ code: "angle_gate_read_failed" });
+  });
+});
+
+describe("存量稿修订不受新规则影响（创始人 backlog）", () => {
+  it("0927 导入稿式记录：provided、真正文、没有选卡也没有原话 → pack{content_id, force} → submit 照常", async () => {
+    const t = await makeTopic(f.data, "导入修订题");
+    const c = await makeContent(f.data, "导入修订题", { topicId: t.id, genRequest: { topic: "导入修订题", platform: "douyin", researchMode: "provided", research: "原稿材料" } as never }, "draft_ready");
+    const packed = await executeWriter({ action: "pack", content_id: c.id, platform: "douyin", force: true, research_mode: "provided", research: "原稿材料", requirements: "按反馈改短", _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(packed).toMatchObject({ ok: true, status: "ready" });
+    const submitted = await executeWriter({ action: "submit", content_id: c.id, pack_id: packed.pack_id, claim_token: packed.claim_token, attempt: 1,
+      title: "导入修订题", body: "改短后的第一段。\n\n改短后的第二段。", hashtags: [], review: "none", _dataDir: f.data, _host: "claude",
+      outline: { thesis: "改短", points: [{ text: "第一段", kind: "case", seconds: 20 }], structure: { opening: "开头", progression: "推进", ending: "结尾" }, said: [{ id: "a", kind: "concept", text: "第一段" }] } }, { onWarn: () => {} });
+    expect(submitted).toMatchObject({ saved: true });
+    expect((await getContent(c.id, f.data))?.body).toContain("改短后的第一段");
+  });
+
+  it("旧 skip 路径建的真稿：带着 skip 元数据重领包修订照常（不被「跳过已关闭」卡死）", async () => {
+    const t = await makeTopic(f.data, "旧skip题");
+    const c = await makeContent(f.data, "旧skip题", { topicId: t.id }, "draft_ready");
+    const packed = await executeWriter({ action: "pack", content_id: c.id, platform: "douyin", force: true, research_mode: "skip", research_reason: "本人日记", skip_reason: "当时说直接写", _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(packed).toMatchObject({ ok: true, status: "ready" });
+  });
+
+  it("创始人原话出现之前选卡的 auto 稿：修订照常", async () => {
+    const t = await makeTopic(f.data, "旧选卡题");
+    await withCards(t.id);
+    await updateTopic(t.id, { selectedAngle: { briefRevision: 1, angleId: "angle-1", card: CARD, selectedAt: "2026-09-20T00:00:00.000Z" } }, f.data);
+    const c = await makeContent(f.data, "旧选卡题", { topicId: t.id }, "draft_ready");
+    const packed = await executeWriter({ action: "pack", content_id: c.id, platform: "douyin", force: true, _dataDir: f.data, _host: "claude" }, { onWarn: () => {} });
+    expect(packed).toMatchObject({ ok: true, status: "ready" });
+  });
+});
+
+describe("聊天：存量稿先判豁免", () => {
+  it("已有真稿的选题：带 direction / skip_reason、不带原话也能重写；中断稿照常原地重写", async () => {
+    const t = await makeTopic(f.data, "存量题");
+    const real = await makeContent(f.data, "存量题", { topicId: t.id }, "draft_ready");
+    const startGenerate = vi.fn(async () => ({ contentId: "c-new", runId: "r", completion: Promise.resolve() }));
+    const chat = buildChatTools([], f.data, { startGenerate, content: vi.fn(async () => ({ ok: true, contents: [] })) });
+    const exec = (args: Record<string, unknown>) => chat.find((x) => x.name === "generate_script")!.execute(args) as Promise<string>;
+    expect(JSON.parse(await exec({ topic: t.title, platform: "douyin", topic_id: t.id, direction: "换个讲法", skip_reason: "旧习惯" }))).toMatchObject({ ok: true, pending: true });
+    const retryGenerate = vi.fn(async () => ({ contentId: real.id, runId: "r2", completion: Promise.resolve() }));
+    const retryChat = buildChatTools([], f.data, { retryGenerate, content: vi.fn(async () => ({ ok: true, contents: [{ id: real.id, topicId: t.id, platform: "douyin", lastError: "断流" }] })) });
+    expect(JSON.parse(await retryChat.find((x) => x.name === "generate_script")!.execute({ topic: t.title, platform: "douyin", topic_id: t.id, direction: "换个讲法" }) as string))
+      .toMatchObject({ ok: true, pending: true, contentId: real.id });
   });
 });

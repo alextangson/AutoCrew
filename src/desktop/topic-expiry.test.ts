@@ -13,6 +13,7 @@ import {
   upsertJob,
   type ResearchJob,
 } from "../modules/research/research-job-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let tmpHome: string;
 let savedEnv: string | undefined;
@@ -94,7 +95,7 @@ describe("expireStaleTopics", () => {
   it("有稿件血缘(content.topicId 指向)的到期灵感被保护,永不自动清理", async () => {
     const used = await saveTopic({ title: "被选上的灵感", description: "d", tags: [] });
     await ageTopic(used.id, 10);
-    await saveContent({
+    await saveContent({ _provenance: HUMAN_WRITE,
       title: "由它写成的稿", body: "b", platform: "wechat_mp",
       status: "draft_ready", tags: [], hashtags: [], topicId: used.id,
     });

@@ -13,7 +13,7 @@ import { describeEngineFailure, isEngineFailure, type FailureRole } from "../eng
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle } from "../modules/research/angle-gate.js";
+import { ANGLE_GATE_COPY, aiContentWriteRefusal, newDraftAngleRefusal, recordFounderAngle, topicHasDraft } from "../modules/research/angle-gate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeStyle } from "../tools/style.js";
@@ -550,7 +550,10 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     }
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords } },
+      // 有原话才盖创始人章（存量稿的重写可以不带原话选卡，但那不算选题会的决定）
+      founderWords
+        ? { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords }, founderAngle: undefined }
+        : { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
       dataDir,
     );
     return updated ? null : fail(`选题不存在：${topicId}`);
@@ -754,6 +757,27 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           // 用户这轮点了卡：先落选题再走任何路——即便下一步命中中断稿重写,
           // 重写读的也是 topic.selectedAngle,不先落盘他刚选的角度就会被静默丢掉
           const founderWords = typeof a.founder_words === "string" ? a.founder_words.trim() : "";
+          // 已有真稿的选题（存量稿的重写 / 中断重试）先判、先放行：选题会只管第一篇
+          let exempt = false;
+          if (req.topicId) {
+            try { exempt = await topicHasDraft(req.topicId, dataDir); } catch {
+              return JSON.stringify(await newDraftAngleRefusal(req.topicId, dataDir));
+            }
+          }
+          if (exempt) {
+            delete req.angleSkipReason;
+            if (angleId) {
+              const selected = await angleGate(req, angleId, founderWords);
+              if (selected) return selected;
+            }
+            const retried = await retryInterrupted(req);
+            if (retried) return retried;
+            const gatedExempt = angleId || req.direction ? null : await angleGate(req, "");
+            if (gatedExempt) return gatedExempt;
+            const startedExempt = await d.startGenerate(req, dataDir);
+            effects?.contentIds.add(startedExempt.contentId);
+            return JSON.stringify({ ok: true, pending: true, contentId: startedExempt.contentId, note: "写作已在后台开始（约 1-3 分钟）。占位卡已在看板「在写」列,写完自动转正并出现在任务带——告诉用户去看板看,不要编造成稿内容。" });
+          }
           // 选题会规则 4–6：没有跳过通道；选卡和自定角度都要创始人原话
           if (req.angleSkipReason) return JSON.stringify({ ok: false, code: "skip_removed", error: ANGLE_GATE_COPY.skipRemoved });
           if ((angleId || req.direction) && !founderWords) {
@@ -826,7 +850,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         if (!found?.ok || !found.content) return fail("adapt_platform 需要一篇已有稿件的 content_id");
         const refused = await aiContentWriteRefusal(source, dataDir);
         if (refused) return JSON.stringify(refused);
-        const res = await d.rewrite({ ...rest, ...dirParams, action: "adapt_platform", save_as_draft: true });
+        // 聊天里的改写是模型发起的：标上模型来源，存储层卡口据此判
+        const res = await d.rewrite({ ...rest, ...dirParams, _modelCall: true, action: "adapt_platform", save_as_draft: true });
         if (!res.ok) return fail(res.error ?? (res as Record<string, unknown>).notes);
         // rewrite 返回扁平结构（无 data 包络），新稿 id 在 content.id —— 归一成 generate 同形的 draft 卡
         const flat = res as Record<string, unknown>;

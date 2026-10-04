@@ -25,6 +25,7 @@ import {
 import { getContent, saveTopic, updateTopic, type Topic } from "../../storage/local-store.js";
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -33,6 +34,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-angle-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -61,7 +63,7 @@ const GOOD_PAYLOAD = {
 
 const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比 5 个主流工具的真实提效";
-const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
+const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const, topicId: "topic-gentest" };
 
 const CARD: AngleCard = {
   id: "angle-1",
@@ -121,7 +123,7 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 
 /** 选题 + 简报 + 指向它的 job（写稿时简报块与角度卡都该生效） */
 async function seedResearched(brief = makeBrief()): Promise<Topic> {
-  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
   await saveBrief(topic.id, brief, testDir);
   const job: ResearchJob = {
     topicId: topic.id,
@@ -258,12 +260,8 @@ describe("选择过期", () => {
     const topic = await seedResearched();
     await pick(topic.id, CARD);
     await updateTopic(topic.id, { title: "改了标题的同一条选题" }, testDir);
-    const warns: string[] = [];
-
-    const { seen } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(warns.some((w) => w.includes("选中的角度已过期"))).toBe(true);
+    // 选题会规则：选题改过，创始人之前的角度决定一并作废——生成准入直接拒，不再带着过期角度开写
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 
   it("选题被删（简报还在）→ 不注入角度，不炸", async () => {
@@ -271,10 +269,8 @@ describe("选择过期", () => {
     await pick(topic.id, CARD);
     await fs.rm(path.join(testDir, "topics", `${topic.id}.json`), { force: true });
 
-    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id });
-
-    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
-    expect(note).toBe("AI 完成初稿（未经角度点选）");
+    // 选题都不在了就谈不上开过选题会：生成准入拒
+    await expect(write({ ...TEST_REQ, topicId: topic.id })).rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
   });
 });
 
@@ -345,7 +341,7 @@ describe("注入与选卡认同一版简报", () => {
   });
 
   it("台账没有指针（简报文件孤零零躺着）→ 材料与角度卡都不生效，也不算绕闸口", async () => {
-    const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+    const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
     await saveBrief(topic.id, makeBrief(), testDir);
     await pick(topic.id, CARD, 1);
 

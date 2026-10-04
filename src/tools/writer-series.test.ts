@@ -15,6 +15,7 @@ import { pendingPerspectives, topicHashOf, upsertJob } from "../modules/research
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 import { getContent, saveContent, saveTopic, transitionStatus, updateContent, updateTopic } from "../storage/local-store.js";
 import { asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 const TITLE = "AI 编程助手横评";
@@ -80,9 +81,9 @@ const submit = (p: Record<string, any>, attempt: number, over: Record<string, un
 describe("writing pack freezes series memory and the technique catalog", () => {
   it("renders the same-platform snapshot (other topics only) and the approved catalog; re-pack keeps the same frozen snapshot", async () => {
     const otherTopic = await saveTopic({ title: "别的选题", description: "x", tags: [] }, dir);
-    const neighbour = await saveContent({ title: "上周那条", body: "开头。\n\n结尾。", platform: "douyin", topicId: otherTopic.id, status: "drafting", tags: [] }, dir);
+    const neighbour = await saveContent({ _provenance: HUMAN_WRITE, title: "上周那条", body: "开头。\n\n结尾。", platform: "douyin", topicId: otherTopic.id, status: "drafting", tags: [] }, dir);
     await transitionStatus(neighbour.id, "draft_ready", { force: true }, dir);
-    const wechat = await saveContent({ title: "公众号那条", body: "别的平台。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+    const wechat = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号那条", body: "别的平台。", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
     await transitionStatus(wechat.id, "draft_ready", { force: true }, dir);
 
     const topicId = await freshTopic();
@@ -99,7 +100,7 @@ describe("writing pack freezes series memory and the technique catalog", () => {
     expect(p.pack_md).toContain("先规划再动笔");
 
     // 冻结之后进入范围的稿不会悄悄进同一个包
-    const later = await saveContent({ title: "后来的", body: "后来。", platform: "douyin", topicId: (await saveTopic({ title: "t3", description: "", tags: [] }, dir)).id, status: "drafting", tags: [] }, dir);
+    const later = await saveContent({ _provenance: HUMAN_WRITE, title: "后来的", body: "后来。", platform: "douyin", topicId: (await saveTopic({ title: "t3", description: "", tags: [] }, dir)).id, status: "drafting", tags: [] }, dir);
     await transitionStatus(later.id, "draft_ready", { force: true }, dir);
     const again = await pack(topicId);
     expect(again.pack_id).toBe(p.pack_id);

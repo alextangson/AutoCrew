@@ -753,9 +753,15 @@ async function contentProjectDir(id: string, title: string, dataDir?: string, in
 }
 
 export async function saveContent(
-  content: Omit<Content, "id" | "createdAt" | "updatedAt" | "assets" | "versions" | "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData"> & Partial<Pick<Content, "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData">>,
+  input: Omit<Content, "id" | "createdAt" | "updatedAt" | "assets" | "versions" | "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData"> & Partial<Pick<Content, "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData">> & {
+    /** 谁在写这份正文（选题会卡口要看）；带真正文建稿却不标来源会被拒 */
+    _provenance?: WriteProvenance;
+  },
   dataDir?: string,
 ): Promise<Content> {
+  const { _provenance: provenance, ...content } = input;
+  // 选题会唯一卡口：带真正文新建 = 这篇稿的第一份正文
+  await guardFirstBody(null, { body: content.body, topicId: content.topicId }, provenance, dataDir);
   // 初始态也过阶段门（spec §1.2 收口）：from=to 时只有「这个阶段属不属于这种平台」会响，
   // 挡住的正是「把公众号稿直接建在剪辑阶段」这类跳阶段建稿。
   const initial = normalizeLegacyStatus(content.status);
@@ -861,13 +867,8 @@ async function listContentsRaw(dataDir?: string): Promise<Content[]> {
   return contents.map(withNormalizedStatus).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** create_variant 不带正文时写的占位正文前缀 */
-export const TOPIC_PLACEHOLDER_BODY_PREFIX = "<!-- Generated from topic:";
-
-/** 正文是不是占位：空白，或 create_variant 拿选题描述垫的那段 */
-export function isPlaceholderBody(body: unknown): boolean {
-  return typeof body !== "string" || !body.trim() || body.startsWith(TOPIC_PLACEHOLDER_BODY_PREFIX);
-}
+export { TOPIC_PLACEHOLDER_BODY_PREFIX, isPlaceholderBody } from "./first-body-guard.js";
+import { TOPIC_PLACEHOLDER_BODY_PREFIX, guardFirstBody, type WriteProvenance } from "./first-body-guard.js";
 
 /**
  * 严格全量读（含已删）：任何一条读不出、解析不了就抛，不跳过。
@@ -962,6 +963,33 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
 }
 
 /**
+ * 严格读稿件：不存在 → null；读不出 / 解析不了 → 抛。不像 getContent 那样把坏记录当成「没有」，
+ * 也不在目录稿读坏时退回平铺旧副本（那份可能是过期的）。
+ */
+export async function getContentStrict(id: string, dataDir?: string): Promise<Content | null> {
+  if (!isContentId(id)) return null;
+  const parse = (raw: string, where: string): Content => {
+    try { return withNormalizedStatus(JSON.parse(raw)); } catch (err) {
+      throw new Error(`稿件记录 ${where} 读不出：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  if (readProjectRegistry(dataDir)) {
+    try { return await getContent(id, dataDir); } catch (err) {
+      if (isFileMissing(err)) return null;
+      throw err;
+    }
+  }
+  const projDir = contentDir(id, dataDir);
+  try { return parse(await fs.readFile(projectFile(projDir, "meta.json"), "utf-8"), `${id}/meta.json`); } catch (err) {
+    if (!isFileMissing(err)) throw err;
+  }
+  try { return parse(await fs.readFile(path.join(getDataDir(dataDir), "contents", `${id}.json`), "utf-8"), `${id}.json`); } catch (err) {
+    if (isFileMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
  * 状态在类型上就不许从这里写（阶段制 spec §1.2 收口）：`status` 的唯一写入通道是
  * `transitionStatus`——只有它在写锁内跑过阶段门。放开这里等于让任何一处 update 跳阶段。
  */
@@ -974,6 +1002,8 @@ export type ContentUpdates = Partial<Omit<Content, "status">> & {
    * 缺省按 agent 算 → 认稿随正文哈希失效。不进 meta。
    */
   _editor?: Editor;
+  /** 谁写的正文（选题会卡口）：第一份真正文不标来源会被拒；不进 meta */
+  _provenance?: WriteProvenance;
 };
 
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
@@ -1085,6 +1115,8 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     throw err;
   }
   const existing: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
+  // 选题会唯一卡口：所有改正文的写口（含流转补丁、带期望正文的写）都汇到这里
+  await guardFirstBody(existing, { body: updates.body, topicId: "topicId" in updates ? updates.topicId : undefined }, updates._provenance, dataDir);
   const now = new Date().toISOString();
   // 本体钩子（§2.5 冻结、§13-C 认稿去留）：所有写正文的口都从这里过
   const scriptPlan = updates.body !== undefined
@@ -1139,7 +1171,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (!readProjectRegistry(dataDir)) await writeTextAtomic(projectFile(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
   }
 
-  const { _versionMeta: _dropVersionMeta, _editor: _dropEditor, ...fields } = updates;
+  const { _versionMeta: _dropVersionMeta, _editor: _dropEditor, _provenance: _dropProvenance, ...fields } = updates;
   const updated: Content = {
     ...existing,
     ...fields,
@@ -1932,7 +1964,7 @@ export async function describeAllowedTransitions(
 export async function createPlatformVariant(
   topicId: string,
   platform: string,
-  opts?: { title?: string; body?: string; writingSource?: Content["writingSource"] },
+  opts?: { title?: string; body?: string; writingSource?: Content["writingSource"]; provenance?: WriteProvenance },
   dataDir?: string,
 ): Promise<{ ok: boolean; content?: Content; error?: string }> {
   const topic = await getTopic(topicId, dataDir);
@@ -1960,6 +1992,7 @@ export async function createPlatformVariant(
       status: "topic_saved",
       tags: [...topic.tags],
       ...(opts?.writingSource ? { writingSource: opts.writingSource } : {}),
+      ...(opts?.provenance ? { _provenance: opts.provenance } : {}),
     },
     dataDir,
   );

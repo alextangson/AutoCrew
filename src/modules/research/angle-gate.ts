@@ -10,10 +10,11 @@
  * 读稿件或选题失败 → 明确拒绝（angle_gate_read_failed），既不放行，也不当成「没定角度」。
  */
 import {
-  getContent, getDataDir, getTopicStrict, isPlaceholderBody, listContentsStrict, updateTopic,
+  getContentStrict, getDataDir, getTopicStrict, isPlaceholderBody, listContentsStrict, updateTopic,
   type Content, type Topic,
 } from "../../storage/local-store.js";
 import { activeAngleCard } from "./angle-cards.js";
+import { FirstBodyRefusedError } from "../../storage/first-body-guard.js";
 import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import { topicHashOf } from "./research-job-store.js";
 
@@ -68,9 +69,20 @@ export function founderChoiceOf(topic: Topic): { kind: "card" | "authored"; word
   return null;
 }
 
+/** 创始人最近一次角度决定是哪一种 */
+export function latestDecision(topic: Topic): "card" | "authored" | null {
+  const card = topic.selectedAngle ? Date.parse(topic.selectedAngle.selectedAt) || 0 : -1;
+  const own = topic.founderAngle ? Date.parse(topic.founderAngle.chosenAt) || 0 : -1;
+  if (card < 0 && own < 0) return null;
+  return own > card ? "authored" : "card";
+}
+
 /** 创始人选的卡在当前生效简报里还作数（同 writing-readiness 的 activeAngleCard 口径） */
 async function selectedCardFresh(topic: Topic, dataDir?: string): Promise<boolean> {
-  const snap = await resolveEffectiveBrief(topic.id, getDataDir(dataDir));
+  // 严格读：简报或台账读坏不能被当成「选择过期」，抛出去由调用方报 angle_gate_read_failed
+  const problems: string[] = [];
+  const snap = await resolveEffectiveBrief(topic.id, getDataDir(dataDir), (m) => problems.push(m));
+  if (problems.length) throw new Error(problems.join("；"));
   return Boolean(snap && activeAngleCard(topic.selectedAngle, snap.brief, topicHashOf(topic.title, topic.description ?? "")));
 }
 
@@ -97,9 +109,10 @@ export async function newDraftAngleRefusal(topicId: string | undefined, dataDir?
     if (await topicHasDraft(id, dataDir)) return null;
     const topic = await getTopicStrict(id, dataDir);
     if (!topic || topic.deletedAt) return refusal("needs_founder_angle", ANGLE_GATE_COPY.noTopic, { topic_id: id });
-    // 自定角度（指纹没变）或还作数的选卡，任一成立即放行；选卡要核生效简报（选题文本或简报变了那张卡就过期）
-    if (founderChoiceOf({ ...topic, selectedAngle: undefined })) return null;
-    const founderCard = founderChoiceOf({ ...topic, founderAngle: undefined });
+    // 只认创始人最近一次决定（旧数据两样都在时按时间取新的）；选卡要核生效简报（选题文本或简报变了那张卡就过期）
+    const latest = latestDecision(topic);
+    if (latest === "authored" && founderChoiceOf({ ...topic, selectedAngle: undefined })) return null;
+    const founderCard = latest === "card" ? founderChoiceOf({ ...topic, founderAngle: undefined }) : null;
     if (founderCard && await selectedCardFresh(topic, dataDir)) return null;
     if (founderCard) return refusal("needs_founder_angle", ANGLE_GATE_COPY.staleChoice, { topic_id: id });
     const legacy = Boolean(topic.selectedAngle);
@@ -115,7 +128,7 @@ export async function newDraftAngleRefusal(topicId: string | undefined, dataDir?
  */
 export async function aiContentWriteRefusal(contentId: string, dataDir?: string): Promise<AngleRefusal | null> {
   let content: Content | null;
-  try { content = await getContent(contentId, dataDir); } catch (err) { return readFailure(err); }
+  try { content = await getContentStrict(contentId, dataDir); } catch (err) { return readFailure(err); }
   if (!content) return null; // 找不到稿件由各入口自己报
   if (isRealDraft(content)) return null;
   return newDraftAngleRefusal(content.topicId, dataDir);
@@ -123,7 +136,18 @@ export async function aiContentWriteRefusal(contentId: string, dataDir?: string)
 
 /** 记一条创始人自定角度（select_angle 不带 angle_id、带 direction + founder_words） */
 export async function recordFounderAngle(topic: Topic, direction: string, founderWords: string, dataDir?: string): Promise<Topic | null> {
+  // 只认最新一次决定：自定角度取代之前选的卡
   return updateTopic(topic.id, {
+    selectedAngle: undefined,
     founderAngle: { direction: direction.trim(), founderWords: founderWords.trim(), chosenAt: new Date().toISOString(), topicHash: topicHashOf(topic.title, topic.description ?? "") },
   }, dataDir);
+}
+
+/**
+ * 后台写作任务的准入（生成 / 重写 / 改稿 / 平台改写开跑之前）：和存储层卡口同一判定，
+ * 只是提前到调模型之前，免得白跑一轮模型再在落盘时被拒。拒绝就抛 FirstBodyRefusedError。
+ */
+export async function admitWritingJob(target: { topicId?: string; contentId?: string }, dataDir?: string): Promise<void> {
+  const refused = target.contentId ? await aiContentWriteRefusal(target.contentId, dataDir) : await newDraftAngleRefusal(target.topicId, dataDir);
+  if (refused) throw new FirstBodyRefusedError(refused);
 }

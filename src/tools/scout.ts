@@ -485,6 +485,9 @@ export async function executeScout(
         return { ...view(task), perspective: name, perspective_token: token, pack: await promptPack(task, broker, name, dir),
           note: "把 perspective_token 交给做这个视角的子代理：它的 search / read_page / cite / perspective 提交都带上令牌。做不下去就 fail_perspective 写明原因。" };
       }
+      // 已被接受的同一份视角提交原样重发（回执丢了的重试）：令牌虽已收回，也按幂等重放回同一结果，不再写任何东西
+      if (action === "perspective" && scoped && args.payload && task.submissionHashes[`perspective:${scoped}`] === digest(args.payload))
+        return { ...view(task), replayed: true };
       viaToken = checkPerspectiveAccess(task, scoped, str(args.perspective_token));
       if (!viaToken) await holdTask(task, host, dir);
       await guardEngine(topicId, dir);

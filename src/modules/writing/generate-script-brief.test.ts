@@ -33,6 +33,7 @@ import { getContent, saveTopic, type Topic } from "../../storage/local-store.js"
 import type { LoopResult, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { founderAuthored } from "../research/angle-gate.test-helper.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 
@@ -41,6 +42,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-brief-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -69,7 +71,7 @@ const GOOD_PAYLOAD = {
 
 const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比 5 个主流工具的真实提效";
-const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
+const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const, topicId: "topic-gentest" };
 
 /**
  * 写稿收束后还有一轮 AI 审稿（script-review）走同一个注入口，工具带是 submit_review——
@@ -136,7 +138,7 @@ function hugeBrief(): ResearchBrief {
 }
 
 async function seedTopic(): Promise<Topic> {
-  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
   await founderAuthored(testDir, topic.id);
   return topic;
 }
@@ -353,19 +355,13 @@ describe("无简报路径 — 保留选题规划，不注入无效简报", () =>
     expect(warns.some((w) => w.includes("简报读取失败"))).toBe(true);
   });
 
-  it("选题已被删（简报还在）→ 按「基于旧版选题」标注注入并告警", async () => {
+  it("选题已被删（简报还在）→ 生成准入拒（选题不在就没开过选题会），不调模型", async () => {
     const { topic } = await seedResearched();
     await fs.rm(path.join(testDir, "topics", `${topic.id}.json`), { force: true });
-
-    const warns: string[] = [];
     const seen: { opts?: LoopOptions } = {};
-    await generateScript({ ...TEST_REQ, topicId: topic.id }, testDir, {
-      runLoopImpl: capturingLoop(seen),
-      onWarn: (m) => warns.push(m),
-    });
-
-    expect(seen.opts!.userMessage).toContain("本简报基于旧版选题，采信时注意");
-    expect(warns.some((w) => w.includes("已不在库中"))).toBe(true);
+    await expect(generateScript({ ...TEST_REQ, topicId: topic.id }, testDir, { runLoopImpl: capturingLoop(seen) }))
+      .rejects.toMatchObject({ refusal: { code: "needs_founder_angle" } });
+    expect(seen.opts).toBeUndefined();
   });
 });
 

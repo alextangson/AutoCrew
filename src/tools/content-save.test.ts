@@ -7,6 +7,7 @@ import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle } from "../modules/learnings/style-distiller.js";
 import { getContent, listContents, saveContent, saveTopic } from "../storage/local-store.js";
 import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let testDir: string;
 
@@ -390,7 +391,7 @@ describe("executeContentSave adoption", () => {
 
   async function mkContent(): Promise<string> {
     const { saveContent } = await import("../storage/local-store.js");
-    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    const c = await saveContent({ _provenance: HUMAN_WRITE, title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
     return c.id;
   }
 
@@ -455,7 +456,7 @@ describe("executeContentSave transition → published", () => {
   it("流转到 published 时自动落 derived 判定，并随流转结果返回", async () => {
     const { saveContent, getContent } = await import("../storage/local-store.js");
     const c = await saveContent(
-      { title: "t", body: "AI 写的正文,原样发出去。", status: "publishing", tags: [], hashtags: [] },
+      { _provenance: HUMAN_WRITE, title: "t", body: "AI 写的正文,原样发出去。", status: "publishing", tags: [], hashtags: [] },
       testDir,
     );
 
@@ -471,7 +472,7 @@ describe("executeContentSave transition → published", () => {
   it("非 published 的流转不判定", async () => {
     const { saveContent, getContent } = await import("../storage/local-store.js");
     const c = await saveContent(
-      { title: "t", body: "正文", status: "draft_ready", tags: [], hashtags: [] },
+      { _provenance: HUMAN_WRITE, title: "t", body: "正文", status: "draft_ready", tags: [], hashtags: [] },
       testDir,
     );
 
@@ -507,7 +508,7 @@ describe("MCP content storage cannot bypass writer submission", () => {
 
   it("带正文的平台变体须明确人工导入，拒绝前不创建稿件或修改兄弟关系", async () => {
     const topic = await saveTopic({ title: "返工记录", description: "按真实经历写", tags: [] }, testDir);
-    const sibling = await saveContent({ title: "已有稿件", body: "原文", topicId: topic.id, platform: "douyin" }, testDir);
+    const sibling = await saveContent({ _provenance: HUMAN_WRITE, title: "已有稿件", body: "原文", topicId: topic.id, platform: "douyin" }, testDir);
     for (const extra of [{}, { source: "manual_import", import_reason: " " }]) {
       const result = await run({ action: "create_variant", topicId: topic.id, platform: "wechat_mp", body: "宿主刚生成的新稿", ...extra });
       expect(result).toMatchObject({ ok: false, code: "writer_submission_required" });
@@ -557,8 +558,8 @@ describe("MCP content storage cannot bypass writer submission", () => {
   });
 
   it("空白稿和未交稿的写作包均不能用 update 填正文，manual_import 不解除该约束", async () => {
-    const blank = await saveContent({ title: "空白稿", body: "  ", status: "drafting" }, testDir);
-    const pending = await saveContent({
+    const blank = await saveContent({ _provenance: HUMAN_WRITE, title: "空白稿", body: "  ", status: "drafting" }, testDir);
+    const pending = await saveContent({ _provenance: HUMAN_WRITE,
       title: "写作占位", body: "准备中的占位文字", status: "drafting",
       pack: { packId: "wp-pending", issuedAt: "2026-09-22T00:00:00Z", host: "claude_desktop" },
     }, testDir);
@@ -571,8 +572,8 @@ describe("MCP content storage cannot bypass writer submission", () => {
   });
 
   it("正常旧稿及已提交稿仍可人工修订，旧正文和来源不被误认成占位", async () => {
-    const legacy = await saveContent({ title: "旧稿", body: "旧正文", status: "revision" }, testDir);
-    const submitted = await saveContent({
+    const legacy = await saveContent({ _provenance: HUMAN_WRITE, title: "旧稿", body: "旧正文", status: "revision" }, testDir);
+    const submitted = await saveContent({ _provenance: HUMAN_WRITE,
       title: "交过的稿", body: "已交正文", status: "revision",
       pack: { packId: "wp-submitted", issuedAt: "2026-09-22T00:00:00Z", submittedAt: "2026-09-22T01:00:00Z", host: "claude_desktop" },
       writtenBy: { kind: "host", host: "claude_desktop" },
@@ -585,7 +586,7 @@ describe("MCP content storage cannot bypass writer submission", () => {
   });
 
   it("占位稿的纯元数据更新仍可用，非 MCP 内部写入兼容", async () => {
-    const blank = await saveContent({ title: "旧标题", body: "", status: "drafting" }, testDir);
+    const blank = await saveContent({ _provenance: HUMAN_WRITE, title: "旧标题", body: "", status: "drafting" }, testDir);
     expect((await run({ action: "update", id: blank.id, title: "纠正标题" })).ok).toBe(true);
     expect((await getContent(blank.id, testDir))?.body).toBe("");
     const internal = await run({ action: "update", id: blank.id, body: "内部已完成的正文", _host: undefined });
@@ -599,7 +600,7 @@ describe("MCP content storage cannot bypass writer submission", () => {
 });
 
 describe("「剪辑中」只能经交接进入（§13.4-C）", () => {
-  const seedApproved = () => saveContent({ title: "口播稿", body: "正文", platform: "douyin", status: "approved", tags: [] }, testDir);
+  const seedApproved = () => saveContent({ _provenance: HUMAN_WRITE, title: "口播稿", body: "正文", platform: "douyin", status: "approved", tags: [] }, testDir);
 
   it.each([{}, { _host: "claude" }])("transition / update{status} / save{status} 都拒绝并说明怎么交接（%o）", async (via) => {
     const c = await seedApproved();

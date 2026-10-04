@@ -8,6 +8,7 @@ import { humanizeZh } from "../modules/humanizer/zh.js";
 import { getContent, updateContent } from "../storage/local-store.js";
 import { aiContentWriteRefusal } from "../modules/research/angle-gate.js";
 import { isModelCall } from "../storage/stage-guard.js";
+import { provenanceOf } from "../storage/first-body-guard.js";
 
 const REVIEW_SCOPE = {
   quality_status: "mechanical_checks_only",
@@ -130,7 +131,7 @@ export async function executeReview(params: Record<string, unknown>) {
     if (contentId && fixedText !== text) {
       const refused = isModelCall(params) ? await aiContentWriteRefusal(contentId, dataDir) : null;
       if (refused) return refused;
-      await updateContent(contentId, { body: fixedText }, dataDir);
+      await updateContent(contentId, { body: fixedText, _provenance: provenanceOf(params) }, dataDir);
     }
     return {
       ok: true,

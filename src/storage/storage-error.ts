@@ -6,6 +6,8 @@
  * 附原始错误，让宿主停下报告创作者——绝不能把稿子另存成库外文件继续推进。
  */
 
+import { FirstBodyRefusedError } from "./first-body-guard.js";
+
 const STORAGE_CODES = new Set([
   "ENOTSUP", "EOPNOTSUPP", "EACCES", "EPERM", "ENOSPC", "EDQUOT", "EROFS",
   "EWRITELOCKED", "EIO", "ENOTCONN", "ESTALE", "EHOSTDOWN",
@@ -27,13 +29,15 @@ function isStorageError(err: unknown, depth = 0): boolean {
 
 export type StorageFailure = {
   ok: false;
-  code: "storage_unavailable";
+  code: string;
   error: string;
-  next_action: string;
-};
+  next_action?: unknown;
+} & Record<string, unknown>;
 
 /** 是存储类故障就给出统一失败回执，否则 null（交回调用方原有的错误口径） */
 export function storageFailure(err: unknown): StorageFailure | null {
+  // 存储层的选题会卡口拒绝：原样交回它的结构化回执（同一个出口，任何工具都不会把它当成普通异常吞掉）
+  if (err instanceof FirstBodyRefusedError) return err.refusal;
   if (!isStorageError(err)) return null;
   return {
     ok: false,

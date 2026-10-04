@@ -22,6 +22,7 @@ import { saveSearchConfig } from "../research/search-provider.js";
 import { getContent, saveTopic, updateTopic, type Topic } from "../../storage/local-store.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
+import { saveFounderTopic, seedFounderTopic } from "../research/angle-gate.test-helper.js";
 
 let testDir: string;
 const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] as const;
@@ -29,6 +30,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-genscript-evidence-"));
+  await seedFounderTopic(testDir, "topic-gentest");
   await fs.writeFile(
     path.join(testDir, "engine.json"),
     JSON.stringify({ apiKey: "sk-test", strongModel: "m-strong", fastModel: "m-fast" }),
@@ -51,7 +53,7 @@ afterEach(async () => {
 
 const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比主流工具的真实提效";
-const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
+const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const, topicId: "topic-gentest" };
 
 /** 不含任何数字的稿：数字硬门对它没有意见 */
 const CLEAN_PAYLOAD = {
@@ -126,7 +128,7 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
 }
 
 async function seedResearched(brief = makeBrief()): Promise<Topic> {
-  const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+  const topic = await saveFounderTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
   await saveBrief(topic.id, brief, testDir);
   const job: ResearchJob = {
     topicId: topic.id,
@@ -432,7 +434,7 @@ describe("写手回合预算 = 4 + 查证额度 + 修复轮×2", () => {
   });
 
   it("公众号包有 gate（修复轮 2）→ 同一个公式，同一个数", async () => {
-    const { seen } = await write({ topic: TOPIC_TITLE, platform: "wechat_mp" as const }, [
+    const { seen } = await write({ topic: TOPIC_TITLE, platform: "wechat_mp" as const, topicId: "topic-gentest" }, [
       { ...CLEAN_PAYLOAD, body: `${CLEAN_PAYLOAD.body}${"字".repeat(1600)}` },
     ]);
     expect(seen.writer[0].maxTurns).toBe(4 + 3 + 2 * 2);

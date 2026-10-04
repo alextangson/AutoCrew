@@ -5,6 +5,8 @@ import { adaptPlatformLLM } from "../modules/writing/platform-adapt-llm.js";
 import { generateHashtags } from "../modules/writing/title-hashtag.js";
 import { titleMethodGuide } from "../modules/writing/title-methods.js";
 import { activeTitleMethods } from "../modules/calibration/title-library.js";
+import { provenanceOf, type WriteProvenance } from "../storage/first-body-guard.js";
+import { aiContentWriteRefusal, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 
 export const rewriteSchema = Type.Object({
   action: Type.Unsafe<"adapt_platform" | "batch_adapt">({
@@ -58,8 +60,15 @@ async function resolveSource(params: Record<string, unknown>) {
   }
 
   if (!title || !body) return { ok: false as const, error: "content_id or title + body is required" };
-
-  return { ok: true as const, title, body, tags, contentId, topicId, dataDir };
+  // 模型发起的改写/多平台适配在调模型之前就过选题会判定（admission）：源稿是真稿放行，
+  // 占位稿 = 在给选题开第一篇；裸文本要存成稿必然没有选题。落盘时存储层的卡口还会再判一次。
+  const provenance = provenanceOf(params);
+  if (provenance.kind === "model") {
+    const refused = contentId ? await aiContentWriteRefusal(contentId, dataDir)
+      : params.save_as_draft ? await newDraftAngleRefusal(undefined, dataDir) : null;
+    if (refused) return refused;
+  }
+  return { ok: true as const, title, body, tags, contentId, topicId, dataDir, provenance };
 }
 
 /**
@@ -70,7 +79,7 @@ async function adaptOne(
   body: string,
   tags: string[],
   platform: SupportedPlatform,
-  opts: { saveAsDraft?: boolean; topicId?: string; siblingIds?: string[]; dataDir?: string },
+  opts: { saveAsDraft?: boolean; topicId?: string; siblingIds?: string[]; dataDir?: string; provenance: WriteProvenance },
 ) {
   // LLM 按平台腔调重写(X 偏观点、小红书体验流…);引擎不可用自动落回机械兜底。
   const adapted = await adaptPlatformLLM(title, body, tags, platform, opts.dataDir);
@@ -95,6 +104,7 @@ async function adaptOne(
         hashtags,
         topicId: opts.topicId,
         siblings: opts.siblingIds || [],
+        _provenance: opts.provenance,
       } as any,
       opts.dataDir,
     );
@@ -119,6 +129,7 @@ export async function executeRewrite(params: Record<string, unknown>) {
       saveAsDraft: Boolean(params.save_as_draft),
       topicId: src.topicId,
       dataDir: src.dataDir,
+      provenance: src.provenance,
     });
   }
 
@@ -140,6 +151,7 @@ export async function executeRewrite(params: Record<string, unknown>) {
         saveAsDraft: Boolean(params.save_as_draft),
         topicId: src.topicId,
         dataDir: src.dataDir,
+        provenance: src.provenance,
       });
       results.push(result);
       const savedContent = result.content as { id: string } | undefined;

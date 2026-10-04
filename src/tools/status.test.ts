@@ -19,6 +19,7 @@ import {
   updateTopic,
   type ContentStatus,
 } from "../storage/local-store.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 
@@ -48,7 +49,7 @@ async function seedTopic(title: string, withAngle = true): Promise<string> {
 async function seedContent(status: ContentStatus, platform: string, topicId?: string): Promise<string> {
   // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
   const c = await saveContent(
-    { title: `稿-${status}-${platform}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}) },
+    { _provenance: HUMAN_WRITE, title: `稿-${status}-${platform}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}) },
     dir,
   );
   if (status === "editing") await transitionStatus(c.id, "editing", { viaHandoff: true }, dir);

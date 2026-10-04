@@ -374,7 +374,7 @@ async function doSelectAngle(
   if (typeof card === "string") return fail(card);
   const updated = await updateTopic(
     topicId,
-    { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords } },
+    { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString(), chosenBy: "founder", founderWords }, founderAngle: undefined },
     dataDir,
   );
   if (!updated) return fail(`选题不存在：${topicId}`);

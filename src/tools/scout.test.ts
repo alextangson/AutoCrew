@@ -17,6 +17,7 @@ import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
 import { claimContent } from "../storage/claims.js";
 import * as config from "../engine/config.js";
 import { asFounder } from "../modules/research/angle-gate.test-helper.js";
+import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let dir: string;
 let topicId: string;
@@ -329,7 +330,7 @@ describe("task identity and engine isolation", () => {
 
 async function seedPack() {
   const content = await saveContent(
-    { title: "草稿", body: "等待写稿", topicId, platform: "wechat_mp", status: "drafting", tags: [] },
+    { _provenance: HUMAN_WRITE, title: "草稿", body: "等待写稿", topicId, platform: "wechat_mp", status: "drafting", tags: [] },
     dir,
   );
   const pack: ReadyPack = {
@@ -663,4 +664,38 @@ it("读页途中视角令牌被收回（超时后别人重领）→ 抓回的页
   release();
   expect(await reading).toMatchObject({ ok: false, code: "perspective_token_invalid" });
   expect((await run("status")).sources).toEqual([]);
+});
+
+it("不带令牌的读页途中这一路被别人认领 → 抓回的页不并入", async () => {
+  await prepare();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  deps.brokerDeps!.fetchImpl = vi.fn(async (url: string) => {
+    await gate;
+    return { finalUrl: url, text: `${QUOTE}\n${"其他记录。".repeat(10)}`, title: "种植记录", imageCandidates: [] };
+  });
+  const reading = run("read_page", { perspective: "evidence", url: URL }, "claude");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(await run("claim", { perspective: "evidence" }, "sub-agent")).toMatchObject({ ok: true });
+  release();
+  expect(await reading).toMatchObject({ ok: false, code: "perspective_claimed" });
+  expect((await run("status")).sources).toEqual([]);
+});
+
+it("凭令牌提交的视角被接受后，同一份提交原样重发 → 幂等重放；换一份内容 → 拒", async () => {
+  await prepare();
+  await readPage();
+  const claim = await run("claim", { perspective: "audience" }, "sub-agent");
+  const args = { perspective: "audience", payload: perspective(), perspective_token: claim.perspective_token };
+  expect(await run("perspective", args, "sub-agent")).toMatchObject({ ok: true });
+  expect(await run("perspective", args, "sub-agent")).toMatchObject({ ok: true, replayed: true });
+  const changed = { ...perspective(), gaps: ["换了一份"] };
+  expect(await run("perspective", { ...args, payload: changed }, "sub-agent")).toMatchObject({ ok: false });
+});
+
+it("账号数据：稿件记录读坏 → 这一路记失败（不冒充数据齐了）", async () => {
+  await fs.mkdir(path.join(dir, "contents", "content-1700000000000-bad"), { recursive: true });
+  await fs.writeFile(path.join(dir, "contents", "content-1700000000000-bad", "meta.json"), "{ 坏");
+  await prepare();
+  expect(await run("status")).toMatchObject({ perspectives: expect.arrayContaining([expect.objectContaining({ name: "account", status: "failed", last_failure: expect.stringContaining("读不出") })]) });
 });
