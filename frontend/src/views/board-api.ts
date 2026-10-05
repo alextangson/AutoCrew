@@ -24,7 +24,7 @@ const post = <T>(url: string, payload: Json) => call<T>(url, { method: "POST", h
 
 export const loadBoard = () => call<BoardData>("/api/board");
 
-export interface StartReply { created: boolean; content_id: string; prompt?: string; opened?: boolean; open_error?: string; code?: string }
+export interface StartReply { created: boolean; content_id: string; prompt?: string; opened?: boolean; open_error?: string; needs_angle?: boolean; code?: string }
 export const startWriting = (topicId: string, platform?: string) => post<StartReply>("/api/board/start-writing", { topic_id: topicId, ...(platform ? { platform } : {}) });
 
 export const markPublished = (contentId: string, platform: string, url?: string) =>

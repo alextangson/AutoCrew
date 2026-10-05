@@ -231,6 +231,7 @@ async function runStart(topicId: string, openEditor: (id: string) => void): Prom
     toast("这条已经开写了，打开那篇");
     return openEditor(r.data.content_id);
   }
+  if (r.data.opened && r.data.needs_angle) return toast("已建稿，Claude 新会话已填好指令。这条还没定立意，按发送后先在 Claude 里调研、选立意卡，再开写");
   if (r.data.opened) return toast("已建稿，Claude 新会话已填好指令，按发送开始写");
   let copied = false;
   try { if (r.data.prompt) { await navigator.clipboard.writeText(r.data.prompt); copied = true; } } catch { /* 下面明说 */ }

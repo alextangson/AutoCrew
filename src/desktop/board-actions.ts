@@ -25,7 +25,7 @@ export const PROGRAM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.u
 export interface OpenDeps { spawnImpl?: typeof spawn; platform?: NodeJS.Platform; programDir?: string }
 
 export type StartResult =
-  | { ok: true; created: boolean; content_id: string; prompt?: string; link?: string; opened?: boolean; open_error?: string }
+  | { ok: true; created: boolean; content_id: string; prompt?: string; link?: string; opened?: boolean; open_error?: string; needs_angle?: true }
   | { ok: false; code: "bad_request" | "topic_gone"; error: string }
   | AngleRefusal;
 
@@ -62,13 +62,14 @@ async function startOnce(topicId: string, platform: string, dataDir: string, dep
   if (existing) return { ok: true, created: false, content_id: existing.id };
   const topic = await getTopic(topicId, dataDir);
   if (!topic || topic.deletedAt) return { ok: false, code: "topic_gone", error: "这条选题已经不在了（可能被删或过期清理）" };
+  // 没定立意不拦：照建占位、照开 Claude，由 video-session 在会话里先调研选卡；写稿/存稿闸仍挡没立意的正文
   const refused = await newDraftAngleRefusal(topicId, dataDir);
-  if (refused) return refused;
+  if (refused && refused.code !== "needs_founder_angle") return refused;
   const content = await saveContent({ title: topic.title, body: "", platform, topicId, status: "drafting", tags: [] }, dataDir);
   const prompt = startPrompt(topic.title, topicId, content.id, platform);
   const link = claudeLink(prompt, deps.programDir ?? PROGRAM_DIR);
   const opened = await openLink(link, deps);
-  return { ok: true, created: true, content_id: content.id, prompt, link, opened: opened.opened, ...(opened.error ? { open_error: opened.error } : {}) };
+  return { ok: true, created: true, content_id: content.id, prompt, link, opened: opened.opened, ...(opened.error ? { open_error: opened.error } : {}), ...(refused ? { needs_angle: true as const } : {}) };
 }
 
 const inflight = new Map<string, Promise<StartResult>>();

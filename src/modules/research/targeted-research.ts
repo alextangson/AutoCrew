@@ -37,7 +37,8 @@ import type { EvidenceLedger, LedgerEntry, LookupRecord } from "./evidence-ledge
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
 const MAX_TURNS = 8;
-const MAX_TOTAL_TOKENS = 15_000;
+/** 跨轮累计的 input+output token 预算（每轮都重发整段上下文，不是输出上限）；按 8 轮留够，同 angle-stage */
+const MAX_TOTAL_TOKENS = 60_000;
 const MAX_ITEMS = 4;
 const MAX_REPAIRS = 2;
 

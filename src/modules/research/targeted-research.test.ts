@@ -132,7 +132,7 @@ describe("createTargetedResearcher.find", () => {
     expect(seen[0]!.opts.logMeta).toEqual({ agent: "targeted" });
     expect(seen[0]!.opts.systemPrompt).toContain(EXTERNAL_BLOCK_START);
     expect(seen[0]!.opts.maxTurns).toBe(8);
-    expect(seen[0]!.opts.maxTotalTokens).toBe(15000);
+    expect(seen[0]!.opts.maxTotalTokens).toBe(60000);
     expect(seen[0]!.opts.signal).toBeInstanceOf(AbortSignal);
   });
 

@@ -8,7 +8,19 @@ import { initializeProjectLayout, resolveContentProject } from "../storage/conte
 import { getContent, listContents, saveContent, saveTopic, softDeleteTopic, type Topic } from "../storage/local-store.js";
 import { claudeLink, markPublished, startPrompt, startWriting, unmarkPublished } from "./board-actions.js";
 import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
+import type * as AngleGate from "../modules/research/angle-gate.js";
 import { HUMAN_WRITE } from "../storage/first-body-guard.js";
+
+const gate = vi.hoisted(() => ({ readFail: false }));
+vi.mock("../modules/research/angle-gate.js", async (orig) => {
+  const real = await orig<typeof AngleGate>();
+  return {
+    ...real,
+    newDraftAngleRefusal: (topicId: string | undefined, dataDir?: string) => gate.readFail
+      ? Promise.resolve({ ok: false as const, code: "angle_gate_read_failed" as const, error: "读不出", next_action: {} })
+      : real.newDraftAngleRefusal(topicId, dataDir),
+  };
+});
 
 let dir: string, topic: Topic, exitCode: number;
 const spawnImpl = vi.fn(() => { const c = new EventEmitter(); setImmediate(() => c.emit("exit", exitCode)); return c; }) as unknown as typeof spawn;
@@ -108,4 +120,25 @@ it("我发了：非视频稿认过（approved，看板在待发布）可以记�
   expect(await markPublished(mp.id, "wechat_mp", undefined, dir)).toMatchObject({ ok: true, content: { status: "published", manualPublications: [{ platform: "wechat_mp" }] } });
   const video = await saveContent({ _provenance: HUMAN_WRITE, title: "口播", body: "正文", status: "approved", platform: "douyin", tags: [] }, dir);
   expect(await markPublished(video.id, "douyin", undefined, dir)).toMatchObject({ ok: false, code: "wrong_stage" });
+});
+
+it("开始写：还没定立意也建占位稿、照开 Claude，回 needs_angle", async () => {
+  const bare = await saveTopic({ title: "没定立意的题", tags: [] }, dir);
+  const r = await startWriting(bare.id, "douyin", dir, mac);
+  expect(r).toMatchObject({ ok: true, created: true, opened: true, needs_angle: true });
+  if (!r.ok) throw new Error();
+  expect(await getContent(r.content_id, dir)).toMatchObject({ topicId: bare.id, status: "drafting", body: "" });
+  const [, args] = vi.mocked(spawnImpl).mock.calls[0] as unknown as [string, string[]];
+  expect(new URL(args[0]).protocol).toBe("claude:");
+  const ok = await startWriting(topic.id, "douyin", dir, mac);
+  expect(ok).not.toHaveProperty("needs_angle");
+});
+
+it("开始写：立意闸读失败 → 原样拒，不建稿、不开 Claude", async () => {
+  const bare = await saveTopic({ title: "读坏时的题", tags: [] }, dir);
+  gate.readFail = true;
+  const r = await startWriting(bare.id, "douyin", dir, mac).finally(() => { gate.readFail = false; });
+  expect(r).toMatchObject({ ok: false, code: "angle_gate_read_failed" });
+  expect((await listContents(dir)).filter((c) => c.topicId === bare.id)).toHaveLength(0);
+  expect(spawnImpl).not.toHaveBeenCalled();
 });

@@ -196,7 +196,7 @@ describe("四视角任务书", () => {
     expect(cap.cfg!.baseUrl).toBe("https://scout.test");
     expect(cap.opts!.model).toBe("m-scout");
     expect(cap.opts!.maxTurns).toBe(8);
-    expect(cap.opts!.maxTotalTokens).toBe(15_000);
+    expect(cap.opts!.maxTotalTokens).toBe(60_000);
   });
 });
 

@@ -53,8 +53,8 @@ import {
 
 /** 首搜 + 若干读页 + 首提 + 2 次修复 + 收尾，8 轮够用又不放任 */
 const MAX_TURNS = 8;
-/** 每视角输出 token 上限（§3）；也是 deadline 丢弃结果后的最终兜底 */
-const MAX_TOTAL_TOKENS = 15_000;
+/** 跨轮累计的 input+output token 预算（每轮都重发整段上下文，不是输出上限）；按 8 轮留够，同 angle-stage */
+const MAX_TOTAL_TOKENS = 60_000;
 /** 每视角墙钟上限 8 分钟——spec §3 原定 4 分钟，真实网络+中转首跑三路全超时（2026-07-26 冒烟），加倍 */
 export const DEFAULT_PERSPECTIVE_DEADLINE_MS = 480_000;
 
