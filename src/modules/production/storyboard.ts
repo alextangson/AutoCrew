@@ -16,7 +16,7 @@ import { contentRoot } from "../../storage/content-project.js";
 import { getContent } from "../../storage/local-store.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { sha256File } from "../video/handoff/manifest.js";
-import { cachedSha, commitSha, SETTLE_MS, STILL_SETTLING, writtenWithin } from "./hash-cache.js";
+import { cachedSha, commitSha, metaKey, SETTLE_MS, STILL_SETTLING, writtenWithin } from "./hash-cache.js";
 import { STABLE_MS, STILL_WRITING } from "./files.js";
 
 export const STORYBOARD_HINT = "分镜要用 build_material_review.py 生成 03-broll/review-vNNN/review.html 再报；MD 或手写页不收";
@@ -93,12 +93,24 @@ export type StoryboardMode = "scan" | "record" | "commit";
 const UNSETTLED = "unsettled" as const;
 const windowOf = (mode: StoryboardMode) => (mode === "record" ? STABLE_MS : SETTLE_MS);
 
+/** 测试缝：每次读完 / 算完一个文件之后、复核身份之前调用（模拟读到一半文件被改） */
+let afterRead: ((file: string) => Promise<void>) | null = null;
+export function setStoryboardReadHook(fn: ((file: string) => Promise<void>) | null): void { afterRead = fn; }
+
+/** 读前读后文件身份（dev/ino/大小/修改时间）一致才算数，否则当「还在写」 */
+async function stableRead<T>(file: string, read: () => Promise<T>): Promise<T | typeof UNSETTLED> {
+  const before = await metaKey(file);
+  const value = await read();
+  await afterRead?.(file);
+  return (await metaKey(file)) === before ? value : UNSETTLED;
+}
+
 async function mediaSha(real: string, mode: StoryboardMode): Promise<string | null | typeof UNSETTLED> {
   const st = await fs.stat(real).catch(() => null);
   if (!st?.isFile()) return null;
   if (writtenWithin(st.mtimeMs, windowOf(mode))) return UNSETTLED;
   if (mode === "scan") return (await cachedSha(real).catch(() => null))?.sha256 ?? null;
-  if (mode === "record") return sha256File(real).catch(() => null);
+  if (mode === "record") return stableRead(real, () => sha256File(real)).catch(() => null);
   const r = await commitSha(real).catch(() => null);
   return !r ? null : r.ok ? r.sha256 : UNSETTLED;
 }
@@ -133,11 +145,13 @@ export async function validateStoryboard(projectRoot: string, input: string, mod
   if (!(await plainPath(realRoot, receiptRel, true))) return deny("storyboard_no_receipt", "审阅页旁边没有脚本写的回执（同名 .receipt.json）");
   const stillWriting = deny("storyboard_unsettled", mode === "record" ? STILL_WRITING : STILL_SETTLING);
   if ((await Promise.all([rel, receiptRel].map((x) => fs.stat(path.join(realRoot, x))))).some((x) => writtenWithin(x.mtimeMs, windowOf(mode)))) return stillWriting;
-  const receiptRaw = await fs.readFile(path.join(realRoot, receiptRel));
+  const receiptRaw = await stableRead(path.join(realRoot, receiptRel), () => fs.readFile(path.join(realRoot, receiptRel)));
+  if (receiptRaw === UNSETTLED) return stillWriting;
   const receipt = parseReceipt(receiptRaw.toString("utf8"));
   if (!receipt) return deny("storyboard_bad_receipt", "审阅页的回执读不出来或缺字段");
-  const html = await fs.readFile(path.join(realRoot, rel));
-  const st = await fs.stat(path.join(realRoot, rel));
+  const read = await stableRead(path.join(realRoot, rel), async () => ({ html: await fs.readFile(path.join(realRoot, rel)), st: await fs.stat(path.join(realRoot, rel)) }));
+  if (read === UNSETTLED) return stillWriting;
+  const { html, st } = read;
   if (sha256(html) !== receipt.html_sha256) return deny("storyboard_edited", "审阅页被手改过，请用脚本重新生成");
   let ok: boolean | typeof UNSETTLED = false;
   const refs = pageRefs(html.toString("utf8"), path.dirname(path.join(realRoot, rel)));
