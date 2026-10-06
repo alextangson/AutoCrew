@@ -66,8 +66,8 @@ const NEXT = [
 export async function sweepDecided(dataDir: string, previewDir: string): Promise<string[]> {
   try {
     const all = (await readInbox(dataDir)).items;
-    await sweepPreview(previewDir, (c, i) => all.some((x) => x.content_id === c && x.item_id === i));
-    return [];
+    const r = await sweepPreview(previewDir, (c, i) => all.some((x) => x.content_id === c && x.item_id === i));
+    return r.errors.map((e) => `会话文件夹里的旧预览没清干净：${e}`);
   } catch (e) {
     return [`会话文件夹里的旧预览没清掉（${(e as Error).message}）`];
   }

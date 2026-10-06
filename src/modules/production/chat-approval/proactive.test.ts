@@ -277,3 +277,28 @@ describe("Codex 审 d2f3c63c", () => {
     expect(r2).toMatchObject({ ok: false, code: "stale_selector", item: { item_id: ct.item_id } });
   });
 });
+
+describe("Codex 复审 7d0b8b6d", () => {
+  it("标题文件夹读不了 → 清理的原因进 warnings，不当成空的", async () => {
+    const c = await editing();
+    await cut(c.id);
+    const locked = path.join(pane, "review-preview", "锁住的");
+    await put(path.join(locked, "x.png"), "x");
+    await fs.chmod(locked, 0o000);
+    try {
+      const r = await executeReviewInbox({ _dataDir: env.dir, action: "list", preview_dir: pane });
+      expect((r.warnings as string[]).some((w) => w.includes("锁住的"))).toBe(true);
+    } finally {
+      await fs.chmod(locked, 0o755);
+    }
+  });
+
+  it("放文件独占创建：撞上 EEXIST → 报问题，不覆盖", async () => {
+    const c = await editing();
+    await coverGroup(c.id, "a");
+    setPreviewDeps({ open: async (file, app) => { opened.push({ file, app }); }, copy: async () => { throw Object.assign(new Error("exists"), { code: "EEXIST" }); } });
+    const it0 = await byType("cover_pick", { preview_dir: pane });
+    expect(it0.preview!.files).toEqual([]);
+    expect(it0.preview!.opened[0].reason).toContain("没覆盖");
+  });
+});

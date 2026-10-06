@@ -2,9 +2,14 @@
  * 把要看的文件放进会话的文件夹（spec 2026-10-06 proactive-chat-review §2）：桌面端文件栏只开会话文件夹里的文件。
  * 放在 `<preview_dir>/review-preview/<短标题>/`：图片复制，视频硬链接（不占空间）；放不进去就用预览 / QuickTime 打开并说原因。
  * 清理只碰 review-preview/ 这一棵：定掉的事的文件、放了超过 7 天的文件。
+ *
+ * 接受的残余风险：这里的链接检查都是「先查后做」，挡不住有进程在查和做之间把会话文件夹里的目录换成链接。
+ * 能这么做的进程本来就能直接删这些文件，不在威胁模型里（Node 也没有 openat 式的锚定操作）。
+ * 叶子一层便宜地堵上：放文件只用独占创建（复制带 COPYFILE_EXCL、硬链接本来就不覆盖），撞上 EEXIST 报问题、绝不覆盖。
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as FS } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -27,7 +32,7 @@ const realOpen = (file: string, app: string) => new Promise<void>((resolve, reje
   if (process.env.VITEST) return reject(new Error("测试里要注入 open"));
   execFile("open", ["-a", app, file], (e) => (e ? reject(e) : resolve()));
 });
-const DEFAULTS: PreviewDeps = { open: realOpen, link: (s, d) => fs.link(s, d), copy: (s, d) => fs.copyFile(s, d), now: () => Date.now() };
+const DEFAULTS: PreviewDeps = { open: realOpen, link: (s, d) => fs.link(s, d), copy: (s, d) => fs.copyFile(s, d, FS.COPYFILE_EXCL), now: () => Date.now() };
 let deps: PreviewDeps = DEFAULTS;
 export function setPreviewDeps(d: Partial<PreviewDeps> | null): void { deps = d ? { ...DEFAULTS, ...d } : DEFAULTS; }
 
@@ -113,7 +118,7 @@ async function placeOne(root: string, dir: string, f: PreviewFile, out: PreviewR
     return path.relative(path.dirname(root), dest);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    const why = code === "ELINK" ? (e as Error).message : f.video && code === "EXDEV" ? "原文件和会话文件夹不在同一块盘上，放进来就得复制一整份" : `没能放进会话文件夹（${code ?? (e as Error).message}）`;
+    const why = code === "EEXIST" ? "放的时候那个位置又冒出了一个文件，没覆盖它" : code === "ELINK" ? (e as Error).message : f.video && code === "EXDEV" ? "原文件和会话文件夹不在同一块盘上，放进来就得复制一整份" : `没能放进会话文件夹（${code ?? (e as Error).message}）`;
     await openInstead(f, why, out);
     return null;
   }
@@ -143,48 +148,58 @@ export async function placePreview(previewDir: string, title: string, key: { con
   return out;
 }
 
-async function walk(dir: string): Promise<string[]> {
-  const ents = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+async function walk(dir: string, errors: string[]): Promise<string[]> {
+  let ents;
+  try { ents = await fs.readdir(dir, { withFileTypes: true }); } catch (e) {
+    errors.push(`读不了 ${path.basename(dir)}（${(e as NodeJS.ErrnoException).code ?? (e as Error).message}）`);
+    return [];
+  }
   const out: string[] = [];
   for (const e of ents) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) out.push(...(await walk(p)));
+    if (e.isDirectory()) out.push(...(await walk(p, errors)));
     else if (e.isFile()) out.push(p); // 符号链接等不是我们放的，不碰
   }
   return out;
 }
 
+export interface SweepResult { removed: string[]; errors: string[] }
+
 /**
  * 清理：still(content_id, item_id) 说这件事还在等；不在等的（已定）文件删掉；放了 7 天以上的删掉。
- * 只删 review-preview/ 里的普通文件，然后删空文件夹。
+ * 只删 review-preview/ 里的普通文件，然后删空文件夹。读不了 / 删不掉的原因收进 errors，不吞。
  */
-export async function sweepPreview(previewDir: string, still: (contentId: string, itemId: string) => boolean): Promise<string[]> {
+export async function sweepPreview(previewDir: string, still: (contentId: string, itemId: string) => boolean): Promise<SweepResult> {
+  const out: SweepResult = { removed: [], errors: [] };
   const r = await previewRoot(previewDir);
-  if (!r.ok) return [];
-  if (!(await fs.lstat(r.root).catch(() => null))) return [];
+  if (!r.ok || !(await fs.lstat(r.root).catch(() => null))) return out;
   const idx = await readIndex(r.root);
-  const removed: string[] = [];
-  for (const file of await walk(r.root)) {
+  for (const file of await walk(r.root, out.errors)) {
     if (!inside(r.root, file) || path.basename(file) === INDEX) continue;
     const rel = path.relative(r.root, file);
     const e = idx.files[rel];
     const placed = e?.placed_at ?? (await fs.lstat(file)).mtimeMs;
     if ((e && !still(e.content_id, e.item_id)) || deps.now() - placed > WEEK_MS) {
-      await fs.rm(file, { force: true });
+      try { await fs.rm(file, { force: true }); } catch (err) { out.errors.push(`删不掉 ${rel}（${(err as Error).message}）`); continue; }
       delete idx.files[rel];
-      removed.push(rel);
+      out.removed.push(rel);
     }
   }
   for (const rel of Object.keys(idx.files)) if (!(await fs.lstat(path.join(r.root, rel)).catch(() => null))) delete idx.files[rel];
   await writeIndex(r.root, idx);
-  await removeEmptyDirs(r.root);
-  return removed;
+  await removeEmptyDirs(r.root, out.errors);
+  return out;
 }
 
-async function removeEmptyDirs(root: string): Promise<void> {
-  for (const e of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
+async function removeEmptyDirs(root: string, errors: string[]): Promise<void> {
+  for (const e of await fs.readdir(root, { withFileTypes: true }).catch((err: Error) => { errors.push(`读不了 review-preview（${err.message}）`); return []; })) {
     if (!e.isDirectory()) continue;
     const d = path.join(root, e.name);
-    if (!(await fs.readdir(d).catch(() => ["x"])).length) await fs.rmdir(d).catch(() => undefined);
+    try {
+      if (!(await fs.readdir(d)).length) await fs.rmdir(d);
+    } catch (err) {
+      const msg = `空文件夹 ${e.name} 没删掉（${(err as NodeJS.ErrnoException).code ?? (err as Error).message}）`;
+      if (!errors.some((x) => x.includes(e.name))) errors.push(msg);
+    }
   }
 }
