@@ -113,6 +113,8 @@ export const LONG_RUNNING_TOOL_ACTIONS: Readonly<Record<string, "*" | ReadonlySe
   autocrew_flywheel: new Set(["report"]),
   // 视频：转写、粗剪、渲染、交接搬文件、原片比对
   autocrew_video: new Set(["start", "cut_preview", "rough_cut_rerun", "transcribe_rerun", "editor_rerun", "reassemble", "retry", "handoff", "match"]),
+  // 对话拍板：confirm 要等创始人点弹窗（最长 20 分钟），重启会把开着的窗收掉
+  autocrew_review_inbox: new Set(["confirm"]),
   // 老的一步生成 / 改写线：整段都是模型调用
   autocrew_generate: "*",
   autocrew_rewrite: "*",

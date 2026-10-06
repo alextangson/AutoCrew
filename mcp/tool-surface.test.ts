@@ -42,7 +42,11 @@ async function toolsFor(host: string) {
  * 2026-10-04 灵感 → A-roll 薄路径：新增 autocrew_draft（7 个动作、20 个参数，说明已压到一句）；实测 30,728，上限随之从 29,600 提到 30,800。
  * 2026-10-04 首次验收：angle 加 chosen_option、citations 项加 kind 枚举；实测 30,850，上限随之从 30,800 提到 31,000。
  */
-export const BUDGET = { total: 31_000, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-06 对话拍板：新增 autocrew_review_inbox（list / send_back / confirm，10 个参数，说明压到一句）；
+ * 单个 805 字，实测 31,656，上限随之从 31,000 提到 31,800。
+ */
+export const BUDGET = { total: 31_800, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

@@ -30,6 +30,7 @@ import { scoutSchema, executeScout, SCOUT_DESCRIPTION } from "./src/tools/scout.
 import { reviewDeskSchema, executeReviewDesk, REVIEW_DESK_DESCRIPTION } from "./src/tools/host-review.js";
 import { writerSchema, executeWriter, WRITER_DESCRIPTION } from "./src/tools/writer.js";
 import { deskSchema, executeDesk, DESK_DESCRIPTION } from "./src/tools/desk.js";
+import { reviewInboxSchema, executeReviewInbox, REVIEW_INBOX_DESCRIPTION } from "./src/tools/review-inbox.js";
 import { videoSchema, executeVideo, VIDEO_DESCRIPTION } from "./src/tools/video.js";
 import { draftSchema, executeDraft, DRAFT_DESCRIPTION } from "./src/tools/draft.js";
 import { executeInit } from "./src/tools/init.js";
@@ -106,6 +107,9 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     parameters: deskSchema,
     execute: (params) => executeDesk(params),
   });
+
+  // 对话里拍板（spec 2026-10-06 chat-approval）：批准由服务端弹系统窗、创始人点了才算
+  runner.register({ name: "autocrew_review_inbox", label: "AutoCrew Review Inbox", description: REVIEW_INBOX_DESCRIPTION, parameters: reviewInboxSchema, execute: executeReviewInbox });
 
   runner.register({
     name: "autocrew_video",

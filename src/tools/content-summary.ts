@@ -130,9 +130,11 @@ async function rejectionsOf(c: Content, dataDir: string): Promise<Record<string,
   if (!doc) return {};
   const last = (type: "cut_reject" | "cover_reject") => doc.decisions.filter((d) => d.round === doc.round && d.type === type).at(-1);
   const cut = last("cut_reject"), cover = last("cover_reject");
+  // 对话里转述的「还要改」标出来源：那句原话是 agent 转述的，不是创始人在看板上写的
+  const via = (d: { source: string }) => (d.source === "chat-reported" ? { source: d.source } : {});
   const rows = [
-    ...(cut ? [{ kind: "cut", note: cut.note ?? "", at: cut.at, ...(cut.fact_id ? { fact_id: cut.fact_id } : {}) }] : []),
-    ...(cover ? [{ kind: "cover", note: cover.note ?? "", at: cover.at, ...(cover.group_ids ? { group_ids: cover.group_ids } : {}) }] : []),
+    ...(cut ? [{ kind: "cut", note: cut.note ?? "", at: cut.at, ...(cut.fact_id ? { fact_id: cut.fact_id } : {}), ...via(cut) }] : []),
+    ...(cover ? [{ kind: "cover", note: cover.note ?? "", at: cover.at, ...(cover.group_ids ? { group_ids: cover.group_ids } : {}), ...via(cover) }] : []),
   ];
   return rows.length ? { rejections: rows } : {};
 }

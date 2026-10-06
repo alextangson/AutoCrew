@@ -18,6 +18,7 @@ import { bodyHash, isOntologyActive, newId, readProductionDocOrEmpty } from "../
 import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
+import { provenanceFields } from "./decision-provenance.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
 import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
@@ -70,7 +71,8 @@ function sameDecision(doc: ProductionDoc, type: DecisionType, fp: (d: Decision) 
 
 async function push(ctx: Ctx, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string, fact?: (doc: ProductionDoc) => void): Promise<Decision> {
   return (await mutateProduction(ctx.content.id, ctx.dataDir, (doc) => {
-    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), source: "founder", ...d };
+    // 来源与原话同一次写进去（chat-approval §Codex 10）：对话确认流程在调用链上挂来源，网页照旧 founder
+    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), ...provenanceFields(), ...d };
     doc.decisions.push(full);
     fact?.(doc);
     return { value: full, events: [{ type: event, detail: { decision_id: full.id, ...d } }] };

@@ -1288,6 +1288,61 @@
    }
   },
   {
+   "name": "autocrew_review_inbox",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "list",
+       "send_back",
+       "confirm"
+      ],
+      "type": "string"
+     },
+     "cover_text": {
+      "type": "string"
+     },
+     "decision": {
+      "enum": [
+       "pick_cover",
+       "retire_cover_group",
+       "approve_cut",
+       "confirm_candidate",
+       "reject_candidate",
+       "reject_cover",
+       "reject_cut"
+      ],
+      "type": "string"
+     },
+     "fact_id": {
+      "type": "string"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "gen": {
+      "type": "string"
+     },
+     "group_id": {
+      "type": "string"
+     },
+     "item_id": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "request_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
    "name": "autocrew_video",
    "shape": {
     "properties": {
@@ -4093,6 +4148,61 @@
      },
      "takeover": {
       "type": "boolean"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_review_inbox",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "list",
+       "send_back",
+       "confirm"
+      ],
+      "type": "string"
+     },
+     "cover_text": {
+      "type": "string"
+     },
+     "decision": {
+      "enum": [
+       "pick_cover",
+       "retire_cover_group",
+       "approve_cut",
+       "confirm_candidate",
+       "reject_candidate",
+       "reject_cover",
+       "reject_cut"
+      ],
+      "type": "string"
+     },
+     "fact_id": {
+      "type": "string"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "gen": {
+      "type": "string"
+     },
+     "group_id": {
+      "type": "string"
+     },
+     "item_id": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "request_id": {
+      "type": "string"
      }
     },
     "required": [
