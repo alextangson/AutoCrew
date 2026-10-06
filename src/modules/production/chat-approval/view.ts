@@ -81,8 +81,9 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
 export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string }): Selection {
   if (item.type === "cover_pick") {
-    if (decision === "reject_cover") return { ok: true, params: {}, factIds: [], label: "还没定的那几组" };
-    const g = pickOne(groupsOf(item), (x) => x.group_id, sel.group_id ?? "", "组");
+    // 「还要改」只在还没定的组里点名（已批的那组不跟着打回）
+    const pool = decision === "reject_cover" ? groupsOf(item).filter((x) => !x.approved) : groupsOf(item);
+    const g = pickOne(pool, (x) => x.group_id, sel.group_id ?? "", "组");
     if (typeof g === "string") return bad(sel.group_id ? "stale" : "selector_required", g);
     return { ok: true, params: { group_id: g.group_id }, factIds: [g["3:4"]?.fact_id, g["4:3"]?.fact_id].filter((x): x is string => Boolean(x)), label: g.label };
   }
@@ -90,7 +91,7 @@ export function selectionOf(item: InboxItem, decision: string, sel: { group_id?:
     const v = pickOne(versionsOf(item), (x) => x.fact_id, sel.fact_id ?? "", "版");
     if (typeof v === "string") return bad(sel.fact_id ? "stale" : "selector_required", v);
     if (decision === "approve_cut" && v.blocked_reason) return bad("blocked", `这一版还不能通过：${v.blocked_reason}`);
-    return { ok: true, params: { fact_id: v.fact_id }, factIds: decision === "approve_cut" ? [v.fact_id] : [], label: v.label };
+    return { ok: true, params: { fact_id: v.fact_id }, factIds: [v.fact_id], label: v.label };
   }
   const id = String(item.detail.fact_id ?? "");
   if (sel.fact_id && sel.fact_id !== id) return bad("stale", "这件事说的不是这个文件，刷新再看");

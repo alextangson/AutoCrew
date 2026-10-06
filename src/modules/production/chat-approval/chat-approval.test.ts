@@ -6,6 +6,7 @@ import path from "node:path";
 import { getContent } from "../../../storage/local-store.js";
 import { readProductionDoc } from "../../../storage/production-store.js";
 import { mutateProduction } from "../service.js";
+import { readRequest, writeRequest } from "./requests.js";
 import type { Decision } from "../../../storage/production-types.js";
 import { setPullDeps } from "../../video/handoff/pull-deps.js";
 import { executeReviewInbox } from "../../../tools/review-inbox.js";
@@ -210,5 +211,72 @@ describe("撤回与其它路径（E16）", () => {
     expect(exp.missing).toContain("（对话里转述）你说还要改：砍开头");
     const summary = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, action: "summary", id: c.id }) as { rejections?: Array<{ source?: string }> };
     expect(summary.rejections?.[0]?.source).toBe("chat");
+  });
+});
+
+describe("Codex 审 b44fff09 P2", () => {
+  it("P2-1 「还要改」点名一组只打回那一组；多组没点名 → selector_required；网页的「还要改」照旧打回所有没定的", async () => {
+    const c = await editing();
+    const a = await coverGroup(c.id, "a");
+    const b = await coverGroup(c.id, "b");
+    const it0 = await itemOf("cover_pick");
+    const base = { action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "reject_cover", founder_words: "A 组字太小", note: "字放大" };
+    expect(await tool({ ...base, request_id: nextId() })).toMatchObject({ ok: false, code: "selector_required" });
+    const ra = await tool({ ...base, group_id: a.group_id, request_id: nextId() });
+    expect(ra, JSON.stringify(ra)).toMatchObject({ ok: true });
+    expect((await decisions(c.id, "cover_reject"))[0].group_ids).toEqual([a.group_id]);
+    const c2 = await videoContent(env, "网页打回稿");
+    await founderApprove(env, c2.id);
+    await record(env, { content_id: c2.id, kind: "aroll", path: await put(path.join(env.inbox, "网页打回稿-原片.mov"), "raw2"), request_id: "a2" });
+    const x = await record(env, { content_id: c2.id, kind: "cover", paths: [await img("x-34.png", 900, 1200), await img("x-43.png", 1200, 900)], cover_text: "字", request_id: "gx" });
+    const y = await record(env, { content_id: c2.id, kind: "cover", paths: [await img("y-34.png", 900, 1200), await img("y-43.png", 1200, 900)], cover_text: "字", request_id: "gy" });
+    const it2 = (await readInbox(env.dir)).items.find((i) => i.type === "cover_pick" && i.content_id === c2.id)!;
+    // 网页面板会顺手带上当前看的那组的 group_id：范围照旧是所有没定的组
+    expect(await decide(c2.id, "reject_cover", { note: "都不行", group_id: x.group_id, item_id: it2.item_id, gen: it2.gen }, env.dir)).toMatchObject({ ok: true });
+    expect([...((await decisions(c2.id, "cover_reject"))[0].group_ids ?? [])].sort()).toEqual([String(x.group_id), String(y.group_id)].sort());
+    expect(b.group_id).toBeDefined();
+  });
+
+  it("P2-2 提交后、记结果前死掉：重试按请求号找回已提交的决定，不看当前列表", async () => {
+    const c = await editing();
+    await coverGroup(c.id, "a");
+    const it0 = await itemOf("cover_pick");
+    const p = { action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "pick_cover", founder_words: "行", request_id: "crash-1" };
+    const first = await tool(p);
+    const rec = (await readRequest(env.dir, "crash-1"))!;
+    await writeRequest(env.dir, { ...rec, state: "pending", result: undefined });
+    const again = await tool(p);
+    expect(again).toMatchObject({ ok: true, replayed: true, decision: { id: (first.decision as { id: string }).id } });
+    expect(await decisions(c.id, "cover_approval")).toHaveLength(1);
+  });
+
+  it("P2-2 失败的请求也留绑定：同号换内容 → request_conflict", async () => {
+    const c = await editing();
+    await coverGroup(c.id, "a");
+    const it0 = await itemOf("cover_pick");
+    expect(await tool({ action: "decide", item_id: it0.item_id, gen: "old-gen", decision: "pick_cover", founder_words: "行", request_id: "fail-1" })).toMatchObject({ ok: false, code: "stale" });
+    expect(await tool({ action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "pick_cover", founder_words: "行", request_id: "fail-1" })).toMatchObject({ ok: false, code: "request_conflict" });
+  });
+
+  it("P2-3 「还要改」也核选中文件：成片被覆盖 → file_changed", async () => {
+    const c = await editing();
+    await cut(c.id);
+    const it0 = await itemOf("cut_review");
+    const list = await tool({ action: "list" });
+    const v = ((list.items as Array<Record<string, unknown>>).find((i) => i.type === "cut_review")!.facts as { versions: Array<{ path: string }> }).versions[0];
+    await put(v.path, "overwritten-cut");
+    expect(await tool({ action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "reject_cut", founder_words: "慢", note: "砍开头", request_id: nextId() })).toMatchObject({ ok: false, code: "file_changed" });
+    expect(await decisions(c.id, "cut_reject")).toHaveLength(0);
+  });
+
+  it("P2-5 两项都在对话里批完（D3）：「对话里定的」标签还在", async () => {
+    const c = await editing();
+    await cut(c.id);
+    await coverGroup(c.id, "a");
+    const ci = await itemOf("cut_review");
+    await tool({ action: "decide", item_id: ci.item_id, gen: ci.gen, decision: "approve_cut", founder_words: "这版可以", request_id: nextId() });
+    await decideCover();
+    const exp = await explainContent((await getContent(c.id, env.dir))!, env.dir);
+    expect(exp.badges).toEqual(expect.arrayContaining(["成片是对话里定的", "封面是对话里定的"]));
   });
 });

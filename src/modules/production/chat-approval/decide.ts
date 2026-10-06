@@ -8,12 +8,12 @@
 import { getDataDir } from "../../../storage/local-store.js";
 import { withProvenance } from "../decision-provenance.js";
 import { founderDecision } from "../decisions.js";
-import { decideItem } from "../inbox-decide.js";
+import { decideItem, fingerprint } from "../inbox-decide.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
 import { verifyFacts } from "./files.js";
-import { claimRequest, isRequestId, payloadHash, priorRequest, releaseRequest, writeRequest } from "./requests.js";
+import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, releaseRequest, writeRequest, type Binding, type RequestRecord } from "./requests.js";
 import { boardLink, CHAT_ACTIONS, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
 
 type Result = Record<string, unknown>;
@@ -69,15 +69,24 @@ const hashOf = (input: ChatDecideInput, requester: string) => payloadHash({ item
   group_id: str(input.group_id), fact_id: str(input.fact_id), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
   note: str(input.note), founder_words: str(input.founder_words), requester });
 
-/** 同一个请求号只走一个调用；同号同内容回放，同号换内容拒 */
-async function once(requestId: string, hash: string, dataDir: string, run: () => Promise<Result>, meta: { item_id: string; decision: string }): Promise<Result> {
+type Bind = (b: Binding) => Promise<void>;
+
+/**
+ * 同一个请求号只走一个调用；同号换内容拒；有结果的回放；落了账没结果的按绑定找回，找不到再跑。
+ * 一进来先落账（pending + 内容哈希），失败的也留着这份绑定。
+ */
+async function once(requestId: string, hash: string, dataDir: string, run: (bind: Bind) => Promise<Result>): Promise<Result> {
   if (!claimRequest(requestId)) return fail("in_progress", "同一个 request_id 正在处理，等它出结果");
   try {
-    const prior = await priorRequest(dataDir, requestId, hash);
-    if (prior.kind === "replay") return prior.result;
-    if (prior.kind === "conflict") return fail("request_conflict", "这个 request_id 已经用在另一件事 / 另一个决定上了：换一个新的");
-    const r = await run();
-    if (r.ok === true) await writeRequest(dataDir, { request_id: requestId, payload_hash: hash, state: "committed", at: new Date().toISOString(), ...meta, result: r });
+    const prior = await readRequest(dataDir, requestId);
+    if (prior && prior.payload_hash !== hash) return fail("request_conflict", "这个 request_id 已经用在另一件事 / 另一个决定上了：换一个新的");
+    if (prior?.state === "committed") return { ...prior.result, replayed: true };
+    const recovered = prior ? await recoverRequest(dataDir, prior) : null;
+    if (recovered) return recovered;
+    let rec: RequestRecord = { request_id: requestId, payload_hash: hash, state: "pending", at: new Date().toISOString() };
+    await writeRequest(dataDir, rec);
+    const r = await run(async (binding) => { rec = { ...rec, binding }; await writeRequest(dataDir, rec); });
+    await writeRequest(dataDir, { ...rec, state: r.ok === true ? "committed" : "failed", result: r });
     return r;
   } finally {
     releaseRequest(requestId);
@@ -89,22 +98,34 @@ export async function chatDecide(input: ChatDecideInput, dataDir = getDataDir())
   const bad = validInput(input);
   if (bad) return bad;
   const requester = requesterOf(input.host, input.session);
-  return once(str(input.request_id), hashOf(input, requester), dataDir, () => commit(input, requester, dataDir), { item_id: input.item_id, decision: input.decision });
+  return once(str(input.request_id), hashOf(input, requester), dataDir, (bind) => commit(input, requester, dataDir, bind));
 }
 
-async function commit(input: ChatDecideInput, requester: string, dataDir: string): Promise<Result> {
+/** 锁后 decideItem 的失败换成对话的口径：代次变了 → stale + 新样子；没了 / 定过别的 → already_handled */
+async function normalize(r: Result, itemId: string, dataDir: string): Promise<Result> {
+  if (r.code === "gone" || r.code === "already_decided") return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
+  if (r.code !== "stale") return r;
+  const fresh = (await readInbox(dataDir)).items.find((x) => x.item_id === itemId);
+  if (!fresh) return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
+  return fail("stale", "这件事刚变过，先把新的样子给创始人看一遍再定", { item: await chatItem(fresh, dataDir) });
+}
+
+async function commit(input: ChatDecideInput, requester: string, dataDir: string, bind: Bind): Promise<Result> {
   const found = await locate(input, dataDir);
   if (!found.ok) return found.result;
   const { item, selection } = found;
+  // 「还要改」点名的那一组：经内部参数交给 decideItem，不改网页「还要改」的范围；group_id 进请求 = 进决定指纹
+  const scope = input.decision === "reject_cover" ? { coverGroups: [selection.params.group_id] } : {};
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
     ...coverTextOf(item, input, selection), ...(NOTE_ACTIONS.has(input.decision) ? { note: str(input.note) } : {}) };
+  await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
   const r = await withFileOwnership(async () => {
     const bytes = await verifyFacts(item.content_id!, selection.factIds, dataDir);
     if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item) });
-    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester }, () => decideItem(req, dataDir));
+    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester }, () => decideItem(req, dataDir, scope));
   });
-  if (r.ok !== true) return r;
+  if (r.ok !== true) return normalize(r, item.item_id, dataDir);
   const id = (r.decision as { id?: string } | undefined)?.id;
   return { ...r, recorded_as: "chat", next_action: `告诉创始人已经按他的原话记下了${id ? `；他要撤回就 revoke{content_id:"${item.content_id}", decision_id:"${id}"}（只有批准能撤）` : ""}。` };
 }
@@ -119,5 +140,5 @@ export async function chatRevoke(input: ChatDecideInput, dataDir = getDataDir())
   const hash = payloadHash({ revoke: decisionId, content_id: contentId, founder_words: str(input.founder_words), requester });
   const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester },
     () => founderDecision(contentId, "revoke_approval", { decision_id: decisionId }, dataDir));
-  return once(str(input.request_id), hash, dataDir, run, { item_id: `revoke:${decisionId}`, decision: "revoke_approval" });
+  return once(str(input.request_id), hash, dataDir, run);
 }

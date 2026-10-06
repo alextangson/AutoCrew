@@ -1,22 +1,26 @@
 /**
  * 对话拍板的请求账（chat-approval §Codex 7，E8）：按 request_id 持久化、绑请求内容的哈希。
  * 同号同内容 → 回放上次结果；同号换内容 → request_conflict。同一个请求号同一时间只有一个调用在走（同步占位）。
- * 只记有结果的请求：提交后、记账前进程死掉，重试会再交 decideItem，它按「这件事这一代 + 同一决定指纹」回放已消费的结果，不会记两次。
+ * 改任何东西之前先落账（pending，带要提交的条目 / 代次 / 决定指纹）：提交后、记结果前进程死掉，
+ * 重试按这份绑定去稿件的消费记录里找回结果，不看当前的「等你拍板」列表（Codex 审 b44fff09 P2-2）。
  */
 import crypto from "node:crypto";
 import path from "node:path";
+import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
 import { readRecord, REQUEST_ID_RE, writeRecord } from "../../video/handoff/pull-store.js";
 
 type Result = Record<string, unknown>;
 
+/** 要提交的那一件：哪条稿、哪件事、哪一代、什么决定、决定指纹（与 decideItem 的消费记录同一算法） */
+export interface Binding { content_id: string; item_id: string; gen: string; decision: string; fp: string }
+
 export interface RequestRecord {
   request_id: string;
   payload_hash: string;
-  state: "committed" | "refused";
+  state: "pending" | "committed" | "failed";
   at: string;
-  item_id: string;
-  decision: string;
-  result: Result;
+  binding?: Binding;
+  result?: Result;
 }
 
 export const isRequestId = (id: string) => REQUEST_ID_RE.test(id);
@@ -47,11 +51,17 @@ export function releaseRequest(id: string): void {
   claimed.delete(id);
 }
 
-export type Prior = { kind: "new" } | { kind: "replay"; result: Result } | { kind: "conflict" };
+const ELSEWHERE: Result = { ok: false, code: "already_handled", error: "这件事已在别处处理（记的不是这次的决定），不用再定：重新 list 看现在的样子" };
 
-export async function priorRequest(dataDir: string, id: string, hash: string): Promise<Prior> {
-  const rec = await readRequest(dataDir, id);
-  if (!rec) return { kind: "new" };
-  if (rec.payload_hash !== hash) return { kind: "conflict" };
-  return { kind: "replay", result: { ...rec.result, replayed: true } };
+/** 落了账但没有结果（中途死掉 / 失败过）：按绑定去消费记录里找。找到同一决定 = 提交了；同一代别的决定 = 已在别处处理；都没有 = null（可以再跑） */
+export async function recoverRequest(dataDir: string, rec: RequestRecord): Promise<Result | null> {
+  const b = rec.binding;
+  if (!b) return null;
+  const log = (await readProductionDocOrEmpty(b.content_id, dataDir)).inbox_log ?? [];
+  const mine = log.filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
+  const done = mine.find((e) => e.action === b.decision && e.fp === b.fp);
+  if (!done && !mine.length) return null;
+  const result = done ? { ...done.result, ok: true, recorded_as: "chat", item_id: b.item_id, gen: b.gen } : ELSEWHERE;
+  await writeRequest(dataDir, { ...rec, state: done ? "committed" : "failed", result });
+  return { ...result, replayed: true };
 }

@@ -233,9 +233,6 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   if (complete.length && !cover) missing.push(coverAsk ? `${relayed(coverReject(doc, complete.at(-1)?.at))}你说封面还要改：${coverAsk}` : MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
   if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
-  // 对话里定的批准：看板上标出来（原话在决定记录里）
-  if (isChatSource(cut?.source)) badges.push("成片是对话里定的");
-  if (isChatSource(cover?.source)) badges.push("封面是对话里定的");
   return { missing, badges };
 }
 
@@ -270,6 +267,11 @@ function editingReason(missing: string[]): string {
   return missing.length ? `剪辑中，还差：${missing.join("、")}` : "剪辑中";
 }
 
+/** 对话里定的批准（D1–D4 都标）：看板上标出来，原话在决定记录里 */
+function chatBadges(cut: Decision | null, cover: Decision | null): string[] {
+  return [...(isChatSource(cut?.source) ? ["成片是对话里定的"] : []), ...(isChatSource(cover?.source) ? ["封面是对话里定的"] : [])];
+}
+
 /** 调用方保证：视频平台 + 有效认稿（`scriptApprovalFor`） */
 export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEvidence): Derived {
   // 还没按 §6.2 迁移的 doc：内存里按同一条规则迁移（对账写盘后是同一个结果）
@@ -278,6 +280,7 @@ export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEv
   const candidates = candidatesOf(doc);
   const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[], alerts: [] as string[] };
   const receipts = publishReceipts(doc);
+  const chat = chatBadges(validCutApproval(doc, body), validCoverApproval(doc, body));
   if (publish.verified || receipts.live.length) {
     // 各平台状态已经收进原因句（「抖音、B站 已定时投出」），不再逐条重复成徽章
     const badges = receipts.live.length ? [] : publish.badge ? [publish.badge] : [];
@@ -285,11 +288,11 @@ export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEv
     // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
     // 其他平台已投出时，被驳回平台的原因照样上卡（E35）
     const alerts = [...(inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH]), ...receiptNotes(receipts).alerts, ...gateAlerts(receipts.live)];
-    badges.push(...overrideBadges(receipts.live));
+    badges.push(...overrideBadges(receipts.live), ...chat);
     return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);
-  base.badges = notes.badges;
+  base.badges = [...notes.badges, ...chat];
   base.alerts = [...notes.alerts, ...overwrittenAlerts(doc)];
   const cut = validCutApproval(doc, body), cover = validCoverApproval(doc, body);
   const reg = matchingRegistration(doc, body, cut, cover);
