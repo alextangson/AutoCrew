@@ -11,7 +11,7 @@ import { executeStatus } from "../../../tools/status.js";
 import { readInbox } from "../inbox-read.js";
 import { transcriptCacheDir, writeTranscript } from "../match/cache.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "../testkit.js";
-import { previewFolder, setPreviewDeps } from "./preview.js";
+import { previewFolder, setPreviewDeps, sweepPreview } from "./preview.js";
 import { NO_CHANGE_NOTE, NO_COVER_TEXT } from "./brief.js";
 
 let env: Env;
@@ -300,5 +300,38 @@ describe("Codex 复审 7d0b8b6d", () => {
     const it0 = await byType("cover_pick", { preview_dir: pane });
     expect(it0.preview!.files).toEqual([]);
     expect(it0.preview!.opened[0].reason).toContain("没覆盖");
+  });
+});
+
+describe("Codex 复审 3958bb1a", () => {
+  it("文件读不了（EACCES）时留着预览记录，权限恢复后还能按记录清", async () => {
+    const c = await editing();
+    await cut(c.id);
+    await executeReviewInbox({ _dataDir: env.dir, action: "list", preview_dir: pane });
+    const root = path.join(pane, "review-preview");
+    const before = JSON.parse(await fs.readFile(path.join(root, ".index.json"), "utf8")) as { files: Record<string, unknown> };
+    const rels = Object.keys(before.files);
+    expect(rels.length).toBeGreaterThan(0);
+    const dir = path.join(root, rels[0].split("/")[0]);
+    await fs.chmod(dir, 0o000);
+    try {
+      await sweepPreview(pane, () => true);
+    } finally {
+      await fs.chmod(dir, 0o755);
+    }
+    const after = JSON.parse(await fs.readFile(path.join(root, ".index.json"), "utf8")) as { files: Record<string, unknown> };
+    expect(Object.keys(after.files)).toEqual(expect.arrayContaining(rels));
+  });
+
+  it("review-preview 读不了（不是 ENOENT）→ 报进 errors，不当成没东西", async () => {
+    await fs.mkdir(path.join(pane, "review-preview"), { recursive: true });
+    await fs.chmod(pane, 0o600);
+    try {
+      const r = await sweepPreview(pane, () => true);
+      expect(r.errors.some((e) => e.includes("review-preview"))).toBe(true);
+    } finally {
+      await fs.chmod(pane, 0o755);
+    }
+    expect((await sweepPreview(path.join(pane, "nope"), () => true)).errors.length).toBeGreaterThan(0);
   });
 });

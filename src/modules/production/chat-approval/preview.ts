@@ -172,7 +172,10 @@ export interface SweepResult { removed: string[]; errors: string[] }
 export async function sweepPreview(previewDir: string, still: (contentId: string, itemId: string) => boolean): Promise<SweepResult> {
   const out: SweepResult = { removed: [], errors: [] };
   const r = await previewRoot(previewDir);
-  if (!r.ok || !(await fs.lstat(r.root).catch(() => null))) return out;
+  if (!r.ok) { out.errors.push(r.reason); return out; }
+  // 只有「还没有 review-preview」算没东西可清；别的读不了都报出来（Codex 复审 3958bb1a P2）
+  const rootErr = await fs.lstat(r.root).then(() => null, (e: NodeJS.ErrnoException) => e);
+  if (rootErr) { if (rootErr.code !== "ENOENT") out.errors.push(`读不了 ${PREVIEW_ROOT}（${rootErr.code ?? rootErr.message}）`); return out; }
   const idx = await readIndex(r.root);
   for (const file of await walk(r.root, out.errors)) {
     if (!inside(r.root, file) || path.basename(file) === INDEX) continue;
@@ -185,7 +188,11 @@ export async function sweepPreview(previewDir: string, still: (contentId: string
       out.removed.push(rel);
     }
   }
-  for (const rel of Object.keys(idx.files)) if (!(await fs.lstat(path.join(r.root, rel)).catch(() => null))) delete idx.files[rel];
+  // 只在确认文件不在了（ENOENT）时删记录；读不了（EACCES 等）留着，权限恢复后还能按记录清
+  for (const rel of Object.keys(idx.files)) {
+    const gone = await fs.lstat(path.join(r.root, rel)).then(() => false, (e: NodeJS.ErrnoException) => e.code === "ENOENT");
+    if (gone) delete idx.files[rel];
+  }
   await writeIndex(r.root, idx);
   await removeEmptyDirs(r.root, out.errors);
   return out;
