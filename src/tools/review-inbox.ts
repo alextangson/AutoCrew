@@ -30,7 +30,7 @@ export const REVIEW_INBOX_DESCRIPTION = [
   "在对话里处理「等你拍板」：选封面、审成片、认候选文件。创始人在对话里说的原话就是决定，所以你只记他明确说了的。",
   "1) list：列等创始人定的事。每件带 item_id、gen、事实（哪一组 / 哪一版、封面字、文件名、成片 path、理由）、可做的 decision 和 board_link。chat_decidable:false 的（发布、收件箱文件、请示、闪帧等）只能在看板定：给他 board_link。",
   "2) 先一件一件给创始人看：点名是哪一件、哪一组 / 哪一版。审成片前把成片 path 给他，请他看完再说。",
-  "3) decide{item_id, gen, decision, group_id?/fact_id?, cover_text?, note?, founder_words, request_id}：founder_words 一字不改照抄他的原话。他的话能对上不止一件 / 一组 / 一种决定（比如只说「行」「第一个」）就先问清，别猜。多组 / 多版时必须带 group_id / fact_id。reject_cover / reject_cut 要带 note（改哪里）。",
+  "3) decide{item_id, gen, decision, group_id?/fact_id?, cover_text?, note?, founder_words, request_id}：founder_words 一字不改照抄他的原话。他的话能对上不止一件 / 一组 / 一种决定（比如只说「行」「第一个」）就先问清，别猜。多组 / 多版时必须带 group_id / fact_id（reject_cover 除外：它和看板一样打回所有还没定的组，不点名；他只想改其中一组就先问清，或请他去看板）。reject_cover / reject_cut 要带 note（改哪里）。",
   "4) revoke{content_id, decision_id, founder_words, request_id}：他说「撤回刚才那个」时用，decision_id 取 decide 回执；只能撤成片 / 封面的批准。",
   "返回 stale：这件事变了，把返回的新 item 重新给他看；already_handled：已经在别处定了；selector_required：问他是哪一组 / 哪一版；file_changed：文件变过，重新 list。",
 ].join("\n");

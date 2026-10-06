@@ -114,8 +114,6 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   const found = await locate(input, dataDir);
   if (!found.ok) return found.result;
   const { item, selection } = found;
-  // 「还要改」点名的那一组：经内部参数交给 decideItem，不改网页「还要改」的范围；group_id 进请求 = 进决定指纹
-  const scope = input.decision === "reject_cover" ? { coverGroups: [selection.params.group_id] } : {};
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
     ...coverTextOf(item, input, selection), ...(NOTE_ACTIONS.has(input.decision) ? { note: str(input.note) } : {}) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
@@ -123,7 +121,7 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   const r = await withFileOwnership(async () => {
     const bytes = await verifyFacts(item.content_id!, selection.factIds, dataDir);
     if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item) });
-    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester }, () => decideItem(req, dataDir, scope));
+    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir));
   });
   if (r.ok !== true) return normalize(r, item.item_id, dataDir);
   const id = (r.decision as { id?: string } | undefined)?.id;
@@ -138,7 +136,7 @@ export async function chatRevoke(input: ChatDecideInput, dataDir = getDataDir())
   if (!contentId || !decisionId) return fail("invalid_params", "要带 content_id 和 decision_id（decide 回执里给的）");
   const requester = requesterOf(input.host, input.session);
   const hash = payloadHash({ revoke: decisionId, content_id: contentId, founder_words: str(input.founder_words), requester });
-  const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester },
+  const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) },
     () => founderDecision(contentId, "revoke_approval", { decision_id: decisionId }, dataDir));
   return once(str(input.request_id), hash, dataDir, run);
 }

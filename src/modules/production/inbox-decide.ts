@@ -38,11 +38,7 @@ const WAIT_MS = 10 * 60_000;
 const POLL_MS = 50;
 export const stalePending = (e: InboxConsumption, now = Date.now()) => Boolean(e.pending) && now - Date.parse(e.at) > WAIT_MS;
 
-export interface DecideDeps {
-  jev?: JevCaller; now?: number;
-  /** 服务端内部调用方（对话拍板）点名的封面组：「还要改」只打回这几组。不从请求参数取——网页的「还要改」照旧打回所有没定的组 */
-  coverGroups?: readonly string[];
-}
+export interface DecideDeps { jev?: JevCaller; now?: number }
 
 /** 条目允许的动作（闪帧的「这处是故意的」挂在每一处缝上） */
 function allowed(item: InboxItem): InboxAction[] {
@@ -183,10 +179,7 @@ async function run(ctx: Ctx): Promise<Result> {
     }
     case "reject_cover": {
       // 只打回面板上还没定的那几组：已批的那组不跟着失效
-      const scope = ctx.deps.coverGroups;
-      const groups = (item.detail.groups as Array<{ group_id: string; approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>)
-        .filter((g) => !g.approved && (!scope || scope.includes(g.group_id)));
-      if (!groups.length) return fail("stale", "点名的这组不在还没定的封面里，刷新再看");
+      const groups = (item.detail.groups as Array<{ group_id: string; approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>).filter((g) => !g.approved);
       const shas = groups.flatMap((g) => [g["3:4"]?.sha256, g["4:3"]?.sha256]).filter((x): x is string => Boolean(x));
       // 打回绑组身份（group_ids）：只作废这几组，不按共用的图牵连已批的组
       return founderDecision(c!.id, "reject_cover", { sha256: `inbox:${item.gen}`, cover_shas: shas, group_ids: groups.map((g) => g.group_id), note: noteOf(ctx) }, dataDir);

@@ -57,11 +57,13 @@ const ELSEWHERE: Result = { ok: false, code: "already_handled", error: "这件�
 export async function recoverRequest(dataDir: string, rec: RequestRecord): Promise<Result | null> {
   const b = rec.binding;
   if (!b) return null;
-  const log = (await readProductionDocOrEmpty(b.content_id, dataDir)).inbox_log ?? [];
-  const mine = log.filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
-  const done = mine.find((e) => e.action === b.decision && e.fp === b.fp);
+  const doc = await readProductionDocOrEmpty(b.content_id, dataDir);
+  const mine = (doc.inbox_log ?? []).filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
+  const done = mine.find((e) => e.action === b.decision && e.fp === b.fp)?.result
+    // 决定先写、消费记录后写：崩在两者之间时只有决定在，按请求号认
+    ?? (() => { const d = doc.decisions.find((x) => x.request_id === rec.request_id); return d ? { decision: d } : undefined; })();
   if (!done && !mine.length) return null;
-  const result = done ? { ...done.result, ok: true, recorded_as: "chat", item_id: b.item_id, gen: b.gen } : ELSEWHERE;
+  const result = done ? { ...done, ok: true, recorded_as: "chat", item_id: b.item_id, gen: b.gen } : ELSEWHERE;
   await writeRequest(dataDir, { ...rec, state: done ? "committed" : "failed", result });
   return { ...result, replayed: true };
 }

@@ -12,6 +12,8 @@ export interface DecisionProvenance {
   founder_words: string;
   /** 哪个宿主 / 会话发起的（取自 MCP 传输层，不取参数） */
   requested_by: string;
+  /** 对话拍板的请求号：存进决定，崩在「决定已写、消费记录没写」之间时按它找回（Codex 审 028c3e18 P2-3） */
+  request_id: string;
 }
 
 const store = new AsyncLocalStorage<DecisionProvenance>();
@@ -26,9 +28,9 @@ export function currentProvenance(): DecisionProvenance | undefined {
 }
 
 /** 合进决定记录的字段：没有挂来源 = 网页 / 工作台，照旧 founder */
-export function provenanceFields(): { source: "founder" | DecisionProvenance["source"]; founder_words?: string; requested_by?: string } {
+export function provenanceFields(): { source: "founder" | DecisionProvenance["source"]; founder_words?: string; requested_by?: string; request_id?: string } {
   const p = store.getStore();
-  return p ? { source: p.source, founder_words: p.founder_words, requested_by: p.requested_by } : { source: "founder" };
+  return p ? { source: p.source, founder_words: p.founder_words, requested_by: p.requested_by, request_id: p.request_id } : { source: "founder" };
 }
 
 /** 对话里定的：`chat`，以及修订前的旧值 chat-dialog / chat-reported（旧记录照旧认） */

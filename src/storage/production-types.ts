@@ -148,6 +148,8 @@ export interface Decision {
   founder_words?: string;
   /** chat*：发起的宿主 / 会话 */
   requested_by?: string;
+  /** chat：对话拍板的请求号（崩溃找回用） */
+  request_id?: string;
   body_hash?: string;
   fact_id?: string;
   sha256?: string;

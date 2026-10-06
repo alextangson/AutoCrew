@@ -81,9 +81,12 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
 export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string }): Selection {
   if (item.type === "cover_pick") {
-    // 「还要改」只在还没定的组里点名（已批的那组不跟着打回）
-    const pool = decision === "reject_cover" ? groupsOf(item).filter((x) => !x.approved) : groupsOf(item);
-    const g = pickOne(pool, (x) => x.group_id, sel.group_id ?? "", "组");
+    // 「还要改」与网页同一范围：打回所有还没定的组，不点名；核的是这几组的全部文件
+    if (decision === "reject_cover") {
+      const open = groupsOf(item).filter((x) => !x.approved);
+      return { ok: true, params: {}, factIds: open.flatMap((x) => [x["3:4"]?.fact_id, x["4:3"]?.fact_id]).filter((x): x is string => Boolean(x)), label: "还没定的那几组" };
+    }
+    const g = pickOne(groupsOf(item), (x) => x.group_id, sel.group_id ?? "", "组");
     if (typeof g === "string") return bad(sel.group_id ? "stale" : "selector_required", g);
     return { ok: true, params: { group_id: g.group_id }, factIds: [g["3:4"]?.fact_id, g["4:3"]?.fact_id].filter((x): x is string => Boolean(x)), label: g.label };
   }
