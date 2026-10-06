@@ -44,3 +44,14 @@ The desktop file pane only opens files inside the session's folders. `list` (and
 ## Non-goals
 
 Inline images in the chat transcript (not supported by the client), batch decisions in one call, publish items in chat.
+
+## Addendum 2026-10-06: agent asks (请示) are chat-decidable
+
+First real run showed the most common pending item is an agent ask (e.g. Codex asking to approve a 12-group storyboard), which was web-only. Founder: asks can be answered in chat too.
+
+- `ask` items become chat_decidable for every kind, including 分镜 and 花费 (the founder's own chat words are the answer; for 花费 the brief must state the amount/what is paid for verbatim from the ask).
+- brief: who asks, the question verbatim, the options (numbered, labels verbatim), attachments. The agent relays; the founder answers with an option ("行"/"第 2 个") plus optional extra words (e.g. "第 3 组换成…"), stored as the answer note. A reply that doesn't map clearly to one option → the agent asks back, never guesses.
+- decide: `answer_ask {item_id, gen, option_id, note?, founder_words, request_id}` through the existing answer path (same CAS/consumption, source chat, founder_words stored). Storyboard asks keep their commit-time validation (settle window, identity checks) — refusal is surfaced.
+- attachments: images go to the file pane via preview_dir. HTML review pages reference relative media, so copying the html alone breaks it: open the original html in the default browser (injectable opener) and also return its absolute path; say which happened.
+- attachments changed since the ask → only `ask_resend` ("让 X 重发") is offered in chat.
+- Existing agent_reported answers and their undo window are unchanged; a chat answer is recorded as a founder answer with source chat, not as agent_reported.
