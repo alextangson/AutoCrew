@@ -8,7 +8,8 @@
 import { getDataDir } from "../../../storage/local-store.js";
 import { withProvenance } from "../decision-provenance.js";
 import { founderDecision } from "../decisions.js";
-import { decideItem, fingerprint } from "../inbox-decide.js";
+import { decideItem, fingerprint, type DecideDeps } from "../inbox-decide.js";
+import { verifyCheck } from "../../publish/review-gate/check.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
@@ -103,18 +104,38 @@ async function normalize(r: Result, itemId: string, dataDir: string): Promise<Re
   return fail("stale", "这件事刚变过，先把新的样子给创始人看一遍再定", { item: await chatItem(fresh, dataDir) });
 }
 
+/** 测试注入（破例要重跑检查，会问 Jev）；生产走默认 */
+let decideDeps: DecideDeps = {};
+export function setChatDecideDeps(d: DecideDeps | null): void { decideDeps = d ?? {}; }
+
+/** note：要改哪里的；请示多说的话；破例 = 创始人原话原样（Addendum 2） */
+function noteOf(input: ChatDecideInput): Result {
+  if (input.decision === "publish_check_override") return { note: str(input.founder_words) };
+  if (NOTE_ACTIONS.has(input.decision) || (input.decision === "answer_ask" && str(input.note))) return { note: str(input.note) };
+  return {};
+}
+
+/** 「没问题」= 照这份发：现算发布包里每个文件（换了字节、还在写的都拒），计划变了也拒，拒了给现在的样子 */
+async function publishFresh(item: InboxItem, decision: string, dataDir: string): Promise<Result | null> {
+  if (decision !== "publish_check_confirm") return null;
+  const v = await verifyCheck(item.content_id!, String(item.detail.check_id), dataDir);
+  return v.ok ? null : fail(v.code, `${v.error}：这次什么都没记`, { board_link: boardLink(item), item: await chatItem(item, dataDir) });
+}
+
 async function commit(input: ChatDecideInput, requester: string, dataDir: string, bind: Bind): Promise<Result> {
   const found = await locate(input, dataDir);
   if (!found.ok) return found.result;
   const { item, selection } = found;
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
-    ...coverTextOf(item, input, selection), ...(NOTE_ACTIONS.has(input.decision) || (input.decision === "answer_ask" && str(input.note)) ? { note: str(input.note) } : {}) };
+    ...coverTextOf(item, input, selection), ...noteOf(input) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
   const r = await withFileOwnership(async () => {
     const bytes = await verifyFacts(item.content_id!, selection.factIds, dataDir);
     if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item), item: await chatItem(item, dataDir) });
-    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir));
+    const pub = await publishFresh(item, input.decision, dataDir);
+    if (pub) return pub;
+    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir, decideDeps));
   });
   if (r.ok !== true) return normalize(r, item.item_id, dataDir);
   const id = (r.decision as { id?: string } | undefined)?.id;

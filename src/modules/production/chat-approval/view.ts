@@ -14,20 +14,22 @@ import { factPath } from "./files.js";
 export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   cover_pick: ["pick_cover", "retire_cover_group", "reject_cover"], cut_review: ["approve_cut", "reject_cut"], candidate: ["confirm_candidate", "reject_candidate"],
   ask: ["answer_ask", "ask_resend"],
+  publish_check: ["publish_check_confirm", "publish_check_revise", "publish_check_override"],
 };
 
 /** 这件事此刻在对话里能做的决定：请示只给条目自己现在有的（附件变过 → 只有「让它重发」） */
 export function chatActionsOf(item: InboxItem): readonly string[] {
   const all = CHAT_ACTIONS[item.type] ?? [];
-  return item.type === "ask" ? all.filter((d) => item.actions.some((a) => a.action === d)) : all;
+  return item.type === "ask" || item.type === "publish_check" ? all.filter((d) => item.actions.some((a) => a.action === d)) : all;
 }
 /** 要带一句「改哪里」的 */
-export const NOTE_ACTIONS: ReadonlySet<string> = new Set(["reject_cover", "reject_cut"]);
+export const NOTE_ACTIONS: ReadonlySet<string> = new Set(["reject_cover", "reject_cut", "publish_check_revise"]);
 
 const ACTION_TEXT: Record<string, string> = {
   pick_cover: "用这组封面", retire_cover_group: "这组封面不要了（文件不删）", approve_cut: "成片就用这版",
   confirm_candidate: "对，这个文件就是这条的", reject_candidate: "不是，这个文件不是这条的",
   reject_cover: "封面还要改", reject_cut: "成片还要改",
+  publish_check_confirm: "没问题（照这份计划发）", publish_check_revise: "还要改（note 写他要改的地方）", publish_check_override: "破例（只在被拦时；他的原话原样记下）",
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
 };
 
@@ -66,6 +68,7 @@ function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record
     const d = item.detail;
     return { fact_id: d.fact_id, kind: KIND_NAME[String(d.kind)] ?? d.kind, file: d.name ?? null, reason: d.reason ?? null };
   }
+  if (item.type === "publish_check") return { check_id: item.detail.check_id, platform: item.detail.platform, verdict: item.detail.verdict };
   if (item.type === "ask") {
     const d = item.detail;
     return { ask_id: d.ask_id, kind: d.kind, question: d.question, options: d.options, attachments_changed: d.attachments_changed === true };
@@ -93,6 +96,7 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
 export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string }): Selection {
   if (item.type === "ask") return askSelection(item, decision, sel.option_id);
+  if (item.type === "publish_check") return { ok: true, params: {}, factIds: [], label: String(item.detail.platform ?? "") };
   if (item.type === "cover_pick") {
     // 「还要改」与网页同一范围：打回所有还没定的组，不点名；核的是这几组的全部文件
     if (decision === "reject_cover") {

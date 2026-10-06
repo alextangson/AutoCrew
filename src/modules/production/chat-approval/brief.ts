@@ -10,6 +10,7 @@ import type { InboxItem } from "../inbox.js";
 import { readTranscript } from "../match/cache.js";
 import { KIND_NAME } from "../plain-reason.js";
 import { askBrief } from "./ask-view.js";
+import { publishView } from "./publish-view.js";
 import { groupsOf, versionsOf, type Group, type Version } from "./view.js";
 
 export const NO_COVER_TEXT = "没写封面字";
@@ -124,5 +125,6 @@ export async function briefOf(item: InboxItem, doc: ProductionDoc, dataDir: stri
   if (item.type === "cut_review") return (await cutBrief(item, doc, dataDir, sel.fact_id)).join("\n");
   if (item.type === "candidate") return (await candidateBrief(item, doc, dataDir)).join("\n");
   if (item.type === "ask") return askBrief(item, doc);
+  if (item.type === "publish_check") return (await publishView(item, dataDir)).brief;
   return "";
 }

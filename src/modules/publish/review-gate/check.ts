@@ -7,6 +7,7 @@
  * §11 集成：`verifyCheck` 供 `ego_lite_prepare` 按平台出包前核检查仍有效（ego-lite.prepareCheckedPublish）；
  * 发布回执引用 check_id、「发布前未把关」与「发布前例外」在本体发布槽里做（production/publish-check-link.ts）。
  */
+import path from "node:path";
 import { getContent, getDataDir, type Content } from "../../../storage/local-store.js";
 import { contentRoot } from "../../../storage/content-project.js";
 import { registeredPackage } from "../../production/publish-gate.js";
@@ -17,7 +18,7 @@ import { makeJevCaller, JEV_MODEL, type JevCaller } from "./jev-client.js";
 import { fingerprint, payloadHash, QUESTION_SET_VERSION, textSha } from "./identity.js";
 import { readInstruction, splitInstruction, type StoredInstruction } from "./instructions.js";
 import { readOverrides, readQuotes } from "./inputs.js";
-import { loadPlan, missingAsNull, parsePlan, type ParsedPlan, type PlanEntry } from "./plan.js";
+import { loadPlan, missingAsNull, parsePlan, resolveInProject, type ParsedPlan, type PlanEntry } from "./plan.js";
 import { platformLabel, platformsNamedIn, type GatePlatform } from "./platforms.js";
 import { prefsVersion, readPublishPrefs, type PublishPrefs } from "./preferences.js";
 import { buildA, buildB, type BEntryView, type Instruction } from "./semantic.js";
@@ -258,6 +259,23 @@ export async function checkInputsNow(contentId: string, checkId: string, dataDir
   if (!entry) return { same: !record.payload_hash, fp: "no-entry" };
   const now = await identityFor(ctx, entry, namedPlatforms(ctx));
   return { same: now.payload === record.payload_hash && now.fp === record.fingerprint, fp: `${now.payload ?? ""}:${now.fp}` };
+}
+
+/**
+ * 对话里给创始人看的那份（proactive-chat-review Addendum 2）：检查当时的计划条目原样、检查过的封面、成片绝对路径。
+ * 读路径（走缓存）；真要定「没问题」时由 verifyCheck 现算。读不到 → null（调用方说清楚）。
+ */
+export async function checkView(contentId: string, checkId: string, dataDir?: string): Promise<{ entry: PlanEntry; covers: CheckedPlatform["covers"]; video_path: string | null } | null> {
+  const record = await readCheckRecord(contentId, checkId, dataDir) as Rec | null;
+  if (!record) return null;
+  const ctx = await rebuild(contentId, record, dataDir).catch(() => ({ ok: false as const }));
+  if ("ok" in ctx) return null;
+  const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
+  if (!entry) return null;
+  const video = entry.video_path ?? ctx.plan.final_video_path;
+  const abs = video ? resolveInProject(video, ctx.root) : null;
+  const covers = (record.covers ?? []).map((c) => ({ ...c, path: path.isAbsolute(c.path) ? c.path : path.join(ctx.root, c.path) }));
+  return { entry, covers, video_path: abs && "abs" in abs ? abs.abs : null };
 }
 
 /** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */

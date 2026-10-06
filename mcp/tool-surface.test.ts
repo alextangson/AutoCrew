@@ -46,7 +46,10 @@ async function toolsFor(host: string) {
  * 2026-10-06 对话拍板：新增 autocrew_review_inbox（list / send_back / confirm，10 个参数，说明压到一句）；
  * 单个 805 字，实测 31,656，上限随之从 31,000 提到 31,800。
  */
-export const BUDGET = { total: 31_800, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-06 对话里「发之前再看一眼」：autocrew_review_inbox 的 decision 枚举加 3 个发布检查决定；实测 31,874，上限随之从 31,800 提到 31,900。
+ */
+export const BUDGET = { total: 31_900, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

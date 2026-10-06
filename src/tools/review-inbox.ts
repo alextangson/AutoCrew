@@ -10,7 +10,7 @@ import { chatDecide, chatRevoke, type ChatDecideInput } from "../modules/product
 import { listForChat, sweepDecided } from "../modules/production/chat-approval/present.js";
 
 const ACTIONS = ["list", "decide", "revoke"] as const;
-const DECISIONS = ["answer_ask", "ask_resend", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate"] as const;
+const DECISIONS = ["answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate"] as const;
 
 export const reviewInboxSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke" }),
@@ -30,11 +30,12 @@ export const reviewInboxSchema = Type.Object({
 });
 
 export const REVIEW_INBOX_DESCRIPTION = [
-  "在对话里处理「等你拍板」：选封面、审成片、认候选文件、答 agent 的请示。创始人在对话里说的原话就是决定，所以你只记他明确说了的。",
+  "在对话里处理「等你拍板」：选封面、审成片、认候选文件、答 agent 的请示、发之前再看一眼。创始人在对话里说的原话就是决定，所以你只记他明确说了的。",
   "1) list{preview_dir:你会话的工作目录, content_id?, item_id?}：列等创始人定的事。能在对话里定的每件带 brief（服务端写好的「要你判断」）、shown（这次给他看的那一组 / 一版）、preview（文件放进会话文件夹后的相对路径）。chat_decidable:false 的（发布、收件箱文件、请示、闪帧等）只能在看板定：给他 board_link。",
   "2) brief 原样转述，不要自己加判断标准；preview.files 的 path 写成 markdown 链接 [名字](path)；preview.opened / problems 照说给他；preview.pages 是网页，给绝对路径，list{item_id} 单看时才在浏览器打开。不止一件时按 number 列编号清单。他要看更早的一组 / 一版，list{item_id, group_id / fact_id, preview_dir}。",
   "3) decide{item_id, gen, decision, group_id?/fact_id?, cover_text?, note?, founder_words, request_id, preview_dir?}：founder_words 一字不改照抄他的原话。他的话能对上不止一件 / 一组 / 一种决定（比如只说「行」「第一个」）就先问清，别猜。多组 / 多版时必须带 group_id / fact_id（reject_cover 除外：它和看板一样打回所有还没定的组，不点名；他只想改其中一组就先问清，或请他去看板）。reject_cover / reject_cut 要带 note（改哪里）。",
   "请示：decide{decision:\"answer_ask\", option_id, note?}——他的话对得上唯一一个选项才定，多说的话放 note；只说「行」而选项不止一个、或对不上任何选项，就先问他，别猜。附件变过时只能 ask_resend（让它重发）。分镜请示提交时还会再核分镜，拒了就把原因照说。",
+  "发之前再看一眼（publish_check）：没问题 = publish_check_confirm（被拦时不给）；还要改 = publish_check_revise + note；破例 = publish_check_override（只在被拦时，他的原话放 founder_words 原样记）。他说「都没问题」：对这次 list 里列出来给他看过的每件 publish_check 各 decide 一次（同一句原话，各自的 item_id、gen、request_id）；他点了哪些平台就只定那些；没在这次列表里给他看过的绝不顺带定。",
   "4) revoke{content_id, decision_id, founder_words, request_id}：他说「撤回刚才那个」时用，decision_id 取 decide 回执；只能撤成片 / 封面的批准。",
   "返回 stale：这件事变了，把返回的新 item 重新给他看；already_handled：已经在别处定了；selector_required：问他是哪一组 / 哪一版；file_changed：文件变过、什么都没记，把返回的新 item 重新给他看；stale_selector：你点名的那一组 / 一版已经不在了，把返回的 item 重新给他看；warnings：预览清理没成，照说（决定不受影响）。",
 ].join("\n");

@@ -12,6 +12,7 @@ import { briefOf, pickedGroup, pickedVersion, staleSelector } from "./brief.js";
 import { factPath } from "./files.js";
 import { placePreview, sweepPreview, type PreviewFile } from "./preview.js";
 import { askAttachments } from "./ask-view.js";
+import { publishView } from "./publish-view.js";
 import { CHAT_ACTIONS, chatItem } from "./view.js";
 
 type Result = Record<string, unknown>;
@@ -53,7 +54,7 @@ async function present(item: InboxItem, n: number | null, dataDir: string, input
     : item.type === "cut_review" ? { fact_id: pickedVersion(item, sel.fact_id)?.fact_id } : {};
   const key = { content_id: item.content_id!, item_id: item.item_id };
   const ask = item.type === "ask" ? await askAttachments(item, doc, dataDir, input.item_id === item.item_id) : null;
-  const files = ask ? ask.files : previewFiles(item, doc, dataDir, sel);
+  const files = ask ? ask.files : item.type === "publish_check" ? (await publishView(item, dataDir)).files : previewFiles(item, doc, dataDir, sel);
   const placed = input.preview_dir ? await placePreview(input.preview_dir, item.title, key, files) : null;
   const preview = placed || ask?.pages.length ? { ...(placed ?? { files: [], opened: [], problems: [] }), ...(ask?.pages.length ? { pages: ask.pages } : {}) } : null;
   return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${brief}` : brief, shown, ...(preview ? { preview } : {}) };
@@ -63,6 +64,7 @@ const NEXT = [
   "把每件的 brief 原样转述给创始人（不要自己加判断标准）；preview.files 的 path 写成 markdown 链接让他点开，preview.opened / problems 照说；preview.pages 是网页：给绝对路径；只有 list{item_id} 单看这一件时才会在浏览器打开，说清打开了没有。",
   "不止一件时按 number 列成编号清单，他可以回「1 用，2 还要改：……」。说「用」就按 shown 里的 group_id / fact_id decide。",
   "请示：他的话对得上唯一一个选项才 decide answer_ask（带 option_id，多说的话放 note）；对不上或只说「行」而选项不止一个就先问他，别猜。",
+  "发之前再看一眼：他说「都没问题」时，可以对这次列出来的每件 publish_check 各 decide 一次 publish_check_confirm（同一句原话、各自的 item_id / gen / request_id）；他点了哪几个平台就只定那几个；没在这次列表里给他看过的不许顺带定。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 

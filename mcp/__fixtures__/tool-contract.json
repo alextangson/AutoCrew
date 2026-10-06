@@ -1309,6 +1309,9 @@
       "enum": [
        "answer_ask",
        "ask_resend",
+       "publish_check_confirm",
+       "publish_check_revise",
+       "publish_check_override",
        "pick_cover",
        "retire_cover_group",
        "reject_cover",
@@ -4192,6 +4195,9 @@
       "enum": [
        "answer_ask",
        "ask_resend",
+       "publish_check_confirm",
+       "publish_check_revise",
+       "publish_check_override",
        "pick_cover",
        "retire_cover_group",
        "reject_cover",
