@@ -142,11 +142,11 @@ export interface Decision {
   type: DecisionType;
   round: number;
   at: string;
-  /** legacy = 启用本体时由旧状态迁移出来的等价决定（§4.1）；chat-dialog = 对话里经系统弹窗确认；chat-reported = 对话里 agent 转述的「还要改」 */
-  source: "founder" | "legacy" | "chat-dialog" | "chat-reported";
-  /** chat-*：创始人在对话里的原话（chat-reported 是 agent 转述，未经核验） */
+  /** legacy = 启用本体时由旧状态迁移出来的等价决定（§4.1）；chat = 对话里按创始人原话定的（chat-dialog / chat-reported 是修订前的旧值，照旧可读） */
+  source: "founder" | "legacy" | "chat" | "chat-dialog" | "chat-reported";
+  /** chat*：创始人在对话里的原话（agent 照抄转述，未经核验） */
   founder_words?: string;
-  /** chat-*：发起的宿主 / 会话 */
+  /** chat*：发起的宿主 / 会话 */
   requested_by?: string;
   body_hash?: string;
   fact_id?: string;

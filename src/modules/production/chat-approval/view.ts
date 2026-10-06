@@ -1,7 +1,5 @@
 /**
- * 对话里的「等你拍板」（spec 2026-10-06 chat-approval）：条目给 agent 看的样子、选哪一组 / 哪一版、弹窗文字。
- *
- * 弹窗文字只由服务端按条目当前的事实生成（E1）；agent 给的值只有会进决定的那几个（封面字）和创始人原话，原样显示（E2）。
+ * 对话里的「等你拍板」（spec 2026-10-06 chat-approval，修订：对话原话直接定）：条目给 agent 看的样子、选哪一组 / 哪一版。
  */
 import path from "node:path";
 import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
@@ -10,12 +8,14 @@ import { hostLabel } from "../host-label.js";
 import { KIND_NAME } from "../plain-reason.js";
 import type { InboxItem } from "../inbox.js";
 import { pullDeps } from "../../video/handoff/pull-deps.js";
+import { factPath } from "./files.js";
 
-/** 要弹窗确认的（改事实 / 批准）与只记一句话的（还要改…） */
-export const DIALOG_ACTIONS: Readonly<Record<string, readonly string[]>> = {
-  cover_pick: ["pick_cover", "retire_cover_group"], cut_review: ["approve_cut"], candidate: ["confirm_candidate", "reject_candidate"],
+/** 对话里能定的事与决定；其余类型（发布、收件箱文件、请示、闪帧…）只在看板定 */
+export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  cover_pick: ["pick_cover", "retire_cover_group", "reject_cover"], cut_review: ["approve_cut", "reject_cut"], candidate: ["confirm_candidate", "reject_candidate"],
 };
-export const SEND_BACK_ACTIONS: Readonly<Record<string, readonly string[]>> = { cover_pick: ["reject_cover"], cut_review: ["reject_cut"] };
+/** 要带一句「改哪里」的 */
+export const NOTE_ACTIONS: ReadonlySet<string> = new Set(["reject_cover", "reject_cut"]);
 
 const ACTION_TEXT: Record<string, string> = {
   pick_cover: "用这组封面", retire_cover_group: "这组封面不要了（文件不删）", approve_cut: "成片就用这版",
@@ -39,13 +39,19 @@ const nameOf = (doc: ProductionDoc, factId: string | undefined) => {
   return p ? path.basename(p) : null;
 };
 
-function factsView(item: InboxItem, doc: ProductionDoc): Record<string, unknown> {
+/** 成片的绝对路径：给创始人点开看片（只读，取自事实记录） */
+const pathOf = (doc: ProductionDoc, contentId: string, factId: string, dataDir: string) => {
+  const f = doc.facts.find((x) => x.id === factId);
+  return f?.path ? factPath(contentId, f, dataDir) : null;
+};
+
+function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record<string, unknown> {
   if (item.type === "cover_pick") {
     return { groups: groupsOf(item).map((g) => ({ group_id: g.group_id, label: g.label, cover_text: g.text, approved: g.approved,
       files: [nameOf(doc, g["3:4"]?.fact_id), nameOf(doc, g["4:3"]?.fact_id)].filter(Boolean) })), incomplete_note: item.detail.incomplete_note ?? null };
   }
   if (item.type === "cut_review") {
-    return { versions: versionsOf(item).map((v) => ({ fact_id: v.fact_id, label: v.label, file: nameOf(doc, v.fact_id), approved: v.approved, ...(v.blocked_reason ? { blocked_reason: v.blocked_reason } : {}) })),
+    return { versions: versionsOf(item).map((v) => ({ fact_id: v.fact_id, label: v.label, file: nameOf(doc, v.fact_id), path: pathOf(doc, item.content_id!, v.fact_id, dataDir), approved: v.approved, ...(v.blocked_reason ? { blocked_reason: v.blocked_reason } : {}) })),
       ...(item.blocked_reason ? { blocked_reason: item.blocked_reason } : {}) };
   }
   if (item.type === "candidate") {
@@ -57,12 +63,11 @@ function factsView(item: InboxItem, doc: ProductionDoc): Record<string, unknown>
 
 /** list 里每件事：能不能在对话里定、能做哪些决定、要给创始人看的事实、看板深链 */
 export async function chatItem(item: InboxItem, dataDir: string): Promise<Record<string, unknown>> {
-  const decidable = Boolean(DIALOG_ACTIONS[item.type]);
-  const doc = decidable && item.content_id ? await readProductionDocOrEmpty(item.content_id, dataDir) : null;
-  const decisions = [...(DIALOG_ACTIONS[item.type] ?? []).map((d) => ({ decision: d, label: ACTION_TEXT[d], via: "confirm" })),
-    ...(SEND_BACK_ACTIONS[item.type] ?? []).map((d) => ({ decision: d, label: ACTION_TEXT[d], via: "send_back" }))];
+  const decidable = Boolean(CHAT_ACTIONS[item.type]) && Boolean(item.content_id);
+  const doc = decidable ? await readProductionDocOrEmpty(item.content_id!, dataDir) : null;
+  const decisions = (CHAT_ACTIONS[item.type] ?? []).map((d) => ({ decision: d, label: ACTION_TEXT[d], ...(NOTE_ACTIONS.has(d) ? { note: "required" } : {}) }));
   return { item_id: item.item_id, gen: item.gen, type: item.type, content_id: item.content_id, title: item.title, summary: item.summary,
-    chat_decidable: decidable, ...(decidable ? { decisions, facts: factsView(item, doc!) } : {}), board_link: boardLink(item) };
+    chat_decidable: decidable, ...(decidable ? { decisions, facts: factsView(item, doc!, dataDir) } : {}), board_link: boardLink(item) };
 }
 
 export type Selection = { ok: true; params: Record<string, string>; factIds: string[]; label: string } | { ok: false; code: string; error: string };
@@ -92,25 +97,9 @@ export function selectionOf(item: InboxItem, decision: string, sel: { group_id?:
   return { ok: true, params: {}, factIds: item.detail.preview ? [id] : [], label: String(item.detail.name ?? "") };
 }
 
-export interface DialogFacts { item: InboxItem; decision: string; selection: Extract<Selection, { ok: true }>; coverText: string | null; founderWords: string; requester: string; fileNames: string[] }
-
 /** 发起方：宿主名取自传输层（MCP 注入的 _host / _session），不取 agent 写的参数 */
 export function requesterOf(host: unknown, session: unknown): string {
   const h = typeof host === "string" && host ? hostLabel(host) : "本机";
   const s = typeof session === "string" && session && session !== "unknown" ? `（会话 ${session.slice(0, 8)}）` : "";
   return `${h}${s}`;
-}
-
-function detailLines(f: DialogFacts): string[] {
-  const { item, selection } = f;
-  const files = f.fileNames.length ? [`文件：${f.fileNames.join("、")}`] : [];
-  if (item.type === "cover_pick") return [`哪一组：${selection.label}`, ...files, ...(f.coverText === null ? [] : [`封面字：${f.coverText ? `「${f.coverText}」` : "（不加字）"}`])];
-  if (item.type === "cut_review") return [`哪一版：${selection.label}`, ...files];
-  return [`文件：${String(item.detail.name ?? "（没有文件名）")}`, `是什么：${KIND_NAME[String(item.detail.kind)] ?? String(item.detail.kind)}`, ...(item.detail.reason ? [`为什么找到它：${String(item.detail.reason)}`] : [])];
-}
-
-/** 确认窗正文：全部取自服务端此刻读到的条目 */
-export function dialogText(f: DialogFacts, notice: string | null, needsView: boolean): string {
-  return [...(notice ? [`刚才打不开：${notice}`, ""] : []), `${f.requester}请你确认：`, `稿件：${f.item.title}`, `要做的事：${ACTION_TEXT[f.decision]}`,
-    ...detailLines(f), `你在对话里说的：「${f.founderWords}」`, ...(needsView ? ["", "成片要先点「查看」看过，才能确认。"] : [])].join("\n");
 }

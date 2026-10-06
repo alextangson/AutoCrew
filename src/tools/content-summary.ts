@@ -4,6 +4,7 @@
  * 证据门（needs_evidence 的 blockedReason / unverifiedNumbers）、写作包（pack 发出未回）、最近一次失败（lastError）。
  * 推断不出来就写「没有进行中的流程」（M5）；找不到 / 已删就明说（M3）；认领只写谁、多久前，绝不带令牌（M4）。
  */
+import { isChatSource } from "../modules/production/decision-provenance.js";
 import { activeClaim } from "../storage/claims.js";
 import { CONTENT_STATUS_LABEL, getContent, getDataDir, getTopic, type Content, type ContentStatus } from "../storage/local-store.js";
 import { activeAngleCard } from "../modules/research/angle-cards.js";
@@ -131,7 +132,7 @@ async function rejectionsOf(c: Content, dataDir: string): Promise<Record<string,
   const last = (type: "cut_reject" | "cover_reject") => doc.decisions.filter((d) => d.round === doc.round && d.type === type).at(-1);
   const cut = last("cut_reject"), cover = last("cover_reject");
   // 对话里转述的「还要改」标出来源：那句原话是 agent 转述的，不是创始人在看板上写的
-  const via = (d: { source: string }) => (d.source === "chat-reported" ? { source: d.source } : {});
+  const via = (d: { source: string }) => (isChatSource(d.source) ? { source: "chat" } : {});
   const rows = [
     ...(cut ? [{ kind: "cut", note: cut.note ?? "", at: cut.at, ...(cut.fact_id ? { fact_id: cut.fact_id } : {}), ...via(cut) }] : []),
     ...(cover ? [{ kind: "cover", note: cover.note ?? "", at: cover.at, ...(cover.group_ids ? { group_ids: cover.group_ids } : {}), ...via(cover) }] : []),

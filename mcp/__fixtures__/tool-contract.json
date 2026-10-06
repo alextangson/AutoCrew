@@ -1294,9 +1294,12 @@
      "action": {
       "enum": [
        "list",
-       "send_back",
-       "confirm"
+       "decide",
+       "revoke"
       ],
+      "type": "string"
+     },
+     "content_id": {
       "type": "string"
      },
      "cover_text": {
@@ -1306,12 +1309,15 @@
       "enum": [
        "pick_cover",
        "retire_cover_group",
-       "approve_cut",
-       "confirm_candidate",
-       "reject_candidate",
        "reject_cover",
-       "reject_cut"
+       "approve_cut",
+       "reject_cut",
+       "confirm_candidate",
+       "reject_candidate"
       ],
+      "type": "string"
+     },
+     "decision_id": {
       "type": "string"
      },
      "fact_id": {
@@ -4163,9 +4169,12 @@
      "action": {
       "enum": [
        "list",
-       "send_back",
-       "confirm"
+       "decide",
+       "revoke"
       ],
+      "type": "string"
+     },
+     "content_id": {
       "type": "string"
      },
      "cover_text": {
@@ -4175,12 +4184,15 @@
       "enum": [
        "pick_cover",
        "retire_cover_group",
-       "approve_cut",
-       "confirm_candidate",
-       "reject_candidate",
        "reject_cover",
-       "reject_cut"
+       "approve_cut",
+       "reject_cut",
+       "confirm_candidate",
+       "reject_candidate"
       ],
+      "type": "string"
+     },
+     "decision_id": {
       "type": "string"
      },
      "fact_id": {

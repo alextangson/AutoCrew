@@ -6,6 +6,7 @@
  * 批准有效 = 未撤销 + 正文哈希未变 + 所绑文件记录的 sha 未被替换。文件缺失只影响 availability：
  * 不让批准失效、不让阶段倒退，只让 publishable=false（Codex P1-9）。
  */
+import { isChatSource } from "./decision-provenance.js";
 import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
@@ -232,6 +233,9 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   if (complete.length && !cover) missing.push(coverAsk ? `${relayed(coverReject(doc, complete.at(-1)?.at))}你说封面还要改：${coverAsk}` : MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
   if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
+  // 对话里定的批准：看板上标出来（原话在决定记录里）
+  if (isChatSource(cut?.source)) badges.push("成片是对话里定的");
+  if (isChatSource(cover?.source)) badges.push("封面是对话里定的");
   return { missing, badges };
 }
 
@@ -252,9 +256,9 @@ export function coverRejectNote(doc: ProductionDoc, newestGroupAt: string | unde
   return r ? clipNote(r.note ?? "") : null;
 }
 
-/** 对话里 agent 转述的「还要改」（chat-reported）：不能说成创始人自己在看板上写的 */
+/** 对话里 agent 转述的「还要改」（source chat，含旧值）：不能说成创始人自己在看板上写的 */
 export const RELAYED = "（对话里转述）";
-const relayed = (d: { source: string } | undefined) => (d?.source === "chat-reported" ? RELAYED : "");
+const relayed = (d: { source: string } | undefined) => (isChatSource(d?.source) ? RELAYED : "");
 /** 「你说还要改」那一行（可能带「对话里转述」前缀） */
 export const isFounderAsk = (m: string) => m.startsWith("你说") || m.startsWith(`${RELAYED}你说`);
 
