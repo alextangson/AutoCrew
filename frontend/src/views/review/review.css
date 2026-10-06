@@ -58,3 +58,11 @@
   padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: var(--fs-md); z-index: 60; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 .ri-toast button { background: none; border: none; color: #FFFFFF; text-decoration: underline; padding: 0; }
 .ri-toast .ri-left { color: #B8B8B8; }
+
+/* 行上直接点（封面挑组、候选确认） */
+.ri-row.ri-row-quick { grid-template-columns: 10px auto 1fr auto auto; }
+.ri-cover-pair { display: flex; gap: 6px; align-items: center; }
+.ri-cover-pair img { height: 96px; width: auto; border-radius: 6px; background: #F1F1EF; object-fit: contain; }
+.ri-quick { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 220px; }
+.ri-quick-text { color: var(--ri-gray); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.ri-textline-sm { padding: 4px 8px; }

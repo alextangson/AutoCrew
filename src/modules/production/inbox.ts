@@ -96,6 +96,8 @@ export interface ContentInput {
   log: InboxConsumption[];
   /** 已经归了别条稿的原片候选（同一份字节被挂到了别处）：不再出「对，就是它」 */
   ownedElsewhere?: ReadonlySet<string>;
+  /** 创始人交接时确认过的封面字（只在决定对得上当前定稿时给）：封面组没带字时预填 */
+  handoffCoverText?: string;
 }
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
@@ -184,13 +186,21 @@ function cutItem(doc: ProductionDoc, content: Content): Draft | null {
 
 // ---- 封面 ----
 
-const groupView = (g: GroupView, i: number, approved: boolean) => ({
-  group_id: g.group.id, label: i === 0 ? "最新一组" : i === 1 ? "上一组" : `往前第 ${i} 组`, at: g.at, text: g.text, approved, host_label: hostLabel(g.group.by?.host ?? g.slots["3:4"][0]?.by?.host),
+const groupView = (g: GroupView, i: number, approved: boolean, fallback: string) => ({
+  group_id: g.group.id, label: i === 0 ? "最新一组" : i === 1 ? "上一组" : `往前第 ${i} 组`, at: g.at, text: g.text?.trim() ? g.text : fallback, approved, host_label: hostLabel(g.group.by?.host ?? g.slots["3:4"][0]?.by?.host),
   "3:4": g.slots["3:4"][0] ? { fact_id: g.slots["3:4"][0].id, sha256: g.slots["3:4"][0].sha256 } : null,
   "4:3": g.slots["4:3"][0] ? { fact_id: g.slots["4:3"][0].id, sha256: g.slots["4:3"][0].sha256 } : null,
 });
 
-function coverItem(doc: ProductionDoc, content: Content): Draft | null {
+/** 没做完的组只汇总成一句，不逐组重复 */
+function incompleteNote(groups: GroupView[]): string | null {
+  const rest = groups.filter((g) => !g.complete);
+  if (!rest.length) return null;
+  const ambiguous = rest.filter((g) => g.ambiguous).length;
+  return `另有 ${rest.length} 组没做完${ambiguous ? `（其中 ${ambiguous} 组同一个比例不止一张）` : ""}`;
+}
+
+function coverItem(doc: ProductionDoc, content: Content, handoffText = ""): Draft | null {
   const groups = validCoverGroups(doc);
   const complete = groups.filter((g) => g.complete).reverse();
   if (!complete.length) return null;
@@ -200,17 +210,16 @@ function coverItem(doc: ProductionDoc, content: Content): Draft | null {
   const newer = ok ? complete.filter((g) => !isApproved(g) && g.at > ok.at) : [];
   if (ok && !newer.length) return null;
   const top = ok ? newer[0] : complete[0];
-  const incomplete = groups.filter((g) => !g.complete).map((g) => ({ group_id: g.group.id, has: g.slots["3:4"].length ? "3:4" : "4:3",
-    note: g.ambiguous ? "这组同一个比例不止一张" : `只有 ${g.slots["3:4"].length ? "3:4" : "4:3"}，还差 ${g.slots["3:4"].length ? "4:3" : "3:4"}，${hostLabel(g.group.by?.host)}在做` }));
+  const textOf = (g: GroupView) => (g.text?.trim() ? g.text : handoffText);
   return {
     item_id: `cover:r${doc.round}`, type: "cover_pick", summary: ok ? "新的一组封面做好了，要不要换" : "封面做好了，挑一张", waiting: who(top.group.by?.host), agent_waiting: false, since: top.at, rank: 1,
     actions: [
-      { action: "pick_cover", label: "用这组", role: "primary", params: { group_id: top.group.id, cover_text: top.text } },
+      { action: "pick_cover", label: "用这组", role: "primary", params: { group_id: top.group.id, cover_text: textOf(top) } },
       { action: "reject_cover", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：字再大一点，换张笑的照片" },
       { action: "retire_cover_group", label: "这组不要了", role: "quiet", params: { group_id: top.group.id } },
     ],
-    detail: { groups: complete.map((g, i) => groupView(g, i, isApproved(g))), incomplete },
-    snapshot: [doc.round, bodyHash(content.body), complete.map((g) => [g.group.id, g.slots["3:4"][0].sha256, g.slots["4:3"][0].sha256, g.text]), ok?.id ?? null, revokesOf(doc, "cover_approval")],
+    detail: { groups: complete.map((g, i) => groupView(g, i, isApproved(g), handoffText)), incomplete_note: incompleteNote(groups) },
+    snapshot: [doc.round, bodyHash(content.body), complete.map((g) => [g.group.id, g.slots["3:4"][0].sha256, g.slots["4:3"][0].sha256, textOf(g)]), ok?.id ?? null, revokesOf(doc, "cover_approval")],
   };
 }
 
@@ -399,7 +408,7 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere), ...sliverItems(doc, content));
-    for (const x of [cutItem(doc, content), coverItem(doc, content), registerItem(doc, content, exp)]) if (x) drafts.push(x);
+    for (const x of [cutItem(doc, content), coverItem(doc, content, input.handoffCoverText), registerItem(doc, content, exp)]) if (x) drafts.push(x);
   } else if (doc) {
     // 写稿段也可能有候选（认稿前发现的疑似原片）和请示
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere));

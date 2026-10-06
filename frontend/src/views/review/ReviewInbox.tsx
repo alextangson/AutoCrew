@@ -9,9 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { focusPick } from "./inbox-focus";
-import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
+import { decideItem, INBOX_OPEN_EVENT, inboxFileUrl, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
 import { invoke, SESSION_EXPIRED } from "../../transport";
-import { DONE_TEXT, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
+import { DONE_TEXT, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
 import { GroupPanel } from "./ReviewGroup";
 import { useInboxNotify } from "./review-notify";
@@ -26,9 +26,35 @@ interface Toast { text: string; undo: (() => Promise<void>) | null; left: number
 /** 行首缩略图：封面 / 候选封面是图，成片 / 候选成片是视频帧；只有稿子类是「稿」 */
 export function Thumb(p: { item: InboxItem }) {
   const k = thumbKind(p.item), cid = p.item.content_id, fid = previewFact(p.item);
+  if (p.item.type === "inbox_file") return <span className="ri-thumb"><video muted preload="metadata" src={`${inboxFileUrl(p.item.item_id)}#t=0.5`} /></span>;
   if (k === "cover" && cid && fid) return <span className="ri-thumb"><img alt="" src={mediaUrl(cid, fid)} /></span>;
   if (k === "video" && cid && fid) return <span className="ri-thumb"><video muted preload="metadata" src={`${mediaUrl(cid, fid)}#t=0.5`} /></span>;
   return <span className="ri-thumb">{k === "cover" ? "图" : k === "video" ? "片" : k === "srt" ? "字" : "稿"}</span>;
+}
+
+/** 封面行：两张都放大到能判断（3:4 + 4:3） */
+function CoverPair(p: { item: InboxItem }) {
+  const cid = p.item.content_id;
+  const want = p.item.actions.find((a) => a.action === "pick_cover")?.params?.group_id;
+  const groups = (p.item.detail.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }> | undefined) ?? [];
+  const g = groups.find((x) => x.group_id === want) ?? groups[0];
+  if (!cid || !g) return <Thumb item={p.item} />;
+  return <span className="ri-cover-pair">{g["3:4"] && <img alt="竖版 3:4" src={mediaUrl(cid, g["3:4"].fact_id)} />}{g["4:3"] && <img alt="横版 4:3" src={mediaUrl(cid, g["4:3"].fact_id)} />}</span>;
+}
+
+/** 行上直接点的主按钮：在途时禁用，失败就地写原因；成功后走原来的刷新让这行消失 */
+function QuickButton(p: { row: Row; a: InboxAction; run: (item: InboxItem, a: InboxAction) => Promise<string | null> }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const text = p.a.action === "pick_cover" ? String(p.a.params?.cover_text ?? "") : "";
+  return <span className="ri-quick" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+    {text && <span className="ri-quick-text">封面字：{text}</span>}
+    <Button variant="primary" disabled={busy} onClick={async () => {
+      setBusy(true); setErr(null);
+      try { setErr(await p.run(p.row.items[0], p.a)); } finally { setBusy(false); }
+    }}>{busy ? "在记…" : p.a.label}</Button>
+    {err && <span className="ri-reason" role="alert">{err}</span>}
+  </span>;
 }
 
 /** 标签页在后台时轮询放慢到 30 秒（不停）：后台标签页也要能弹提醒、更新标题件数（整分支审 5 P2） */
@@ -107,6 +133,27 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
     timer.current = setTimeout(() => setToast(null), UNDO_MS);
   };
 
+  /** 行上直接点：不开面板；失败回原因（就地显示），成功照常提示 + 刷新 */
+  const quick = async (item: InboxItem, a: InboxAction): Promise<string | null> => {
+    if (busy.current) return "上一件还在处理，稍等再点";
+    if (stale) return `${staleText ?? "连不上 AutoCrew"}：这次没记上`;
+    busy.current = true;
+    try {
+      const r = await decideItem({ content_id: item.content_id ?? undefined, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}) });
+      const fresh = (await reload()) ?? list;
+      if (!r.ok) return r.error;
+      const u = item.content_id ? undoFor(item, a.action, r.data) : null;
+      const cid = item.content_id!;
+      showToast({ text: DONE_TEXT[a.action] ?? "记下了", left: groupRows(fresh).length,
+        undo: u ? async () => {
+          const x = await undoDecision(cid, u.action, u.params);
+          setToast(null);
+          showToast({ text: x.ok ? "撤回了" : x.error, undo: null, left: groupRows((await reload()) ?? []).length });
+        } : null });
+      return null;
+    } finally { busy.current = false; }
+  };
+
   const act = async (item: InboxItem, a: InboxAction, extra: Record<string, unknown> = {}, quiet = false) => {
     if (busy.current) return false;
     // 列表停住了（连不上 / 登录过期）：不在旧列表上悄悄点，明说为什么没记上
@@ -172,13 +219,17 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
           <span className="ri-toggle">{notify.canAsk && <Button variant="quiet" onClick={notify.ask}>打开提醒</Button>}
             <Button variant="quiet" onClick={() => setCollapsed(expanded)}>{expanded ? "收起" : "展开"}</Button></span></>}
     </div>
-    {expanded && rows.length > 0 && <ul className="ri-list">{rows.map((r) => <li key={r.key} tabIndex={0} className={"ri-row" + (r.key === openKey ? " ri-on" : "")}
-      aria-label={r.title} onClick={() => open(r)}>
-      {r.agent_waiting ? <span className="ri-dot" aria-label="有 agent 在等" /> : <span />}
-      <Thumb item={r.items[0]} />
-      <span className="ri-text"><div className="ri-title">{r.title}</div><div className="ri-sub">{r.sub}</div></span>
-      <span className="ri-time">{relativeLabel(r.since)}</span>
-    </li>)}</ul>}
+    {expanded && rows.length > 0 && <ul className="ri-list">{rows.map((r) => {
+      const qa = quickAction(r);
+      return <li key={r.key} tabIndex={0} className={"ri-row" + (qa ? " ri-row-quick" : "") + (r.key === openKey ? " ri-on" : "")}
+        aria-label={r.title} onClick={() => open(r)}>
+        {r.agent_waiting ? <span className="ri-dot" aria-label="有 agent 在等" /> : <span />}
+        {r.items[0].type === "cover_pick" ? <CoverPair item={r.items[0]} /> : <Thumb item={r.items[0]} />}
+        <span className="ri-text"><div className="ri-title">{r.title}</div><div className="ri-sub">{r.sub}</div></span>
+        {qa && <QuickButton row={r} a={qa} run={quick} />}
+        <span className="ri-time">{relativeLabel(r.since)}</span>
+      </li>;
+    })}</ul>}
     <PrimaryContext.Provider value={setPrimary}>
     {shown && (shown.items.length === 1
       ? <ReviewPanel item={shown.items[0]} gone={!current} onClose={() => open(null)} act={async (a, extra) => { await act(shown.items[0], a, extra); }} />

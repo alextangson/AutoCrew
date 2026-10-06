@@ -13,7 +13,7 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
 import { readInbox } from "../modules/production/inbox-read.js";
-import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, type AttachmentOpen } from "../modules/production/inbox-attachment.js";
+import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, openInboxFileMedia, type AttachmentOpen } from "../modules/production/inbox-attachment.js";
 import { createReadStream } from "node:fs";
 import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
@@ -124,6 +124,15 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       try {
         sendMedia(req, res, await openFactMedia(id, fid, await deps.resolveDataDir()));
       } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    // 收件箱里没对上的视频（只认对账报告列着的、在收件箱顶层的文件）
+    if (p === "/api/inbox/file-media" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const item = url.searchParams.get("item_id") ?? "";
+      if (!/^inbox_file:[0-9a-f]{16}$/.test(item)) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
+      try { sendMedia(req, res, await openInboxFileMedia(item, await deps.resolveDataDir())); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }
     if (p === "/api/data" && req.method === "GET") {

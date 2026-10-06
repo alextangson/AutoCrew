@@ -58,7 +58,7 @@ export function previewFact(item: Pick<InboxItem, "type" | "detail">): string | 
   return null;
 }
 
-// ---- 行：同一条稿同种候选合成一行、稿子合成一行（只是显示；决定仍按每件自己的 item_id + gen） ----
+// ---- 行：同一条稿同种候选合成一行（只是显示；决定仍按每件自己的 item_id + gen） ----
 
 export interface Row { key: string; items: InboxItem[]; title: string; sub: string; since: string; rank: number; agent_waiting: boolean }
 
@@ -68,7 +68,7 @@ const KIND: Record<string, string> = { cover: "封面", srt: "字幕", cut: "成
 export function groupRows(items: InboxItem[]): Row[] {
   const byKey = new Map<string, InboxItem[]>();
   // 挡着成片 / 封面审阅的稿子单独一行，说明不能被「N 篇稿子写好了」吞掉
-  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.type === "draft" && !i.detail.waiting_behind ? "group:draft" : i.item_id);
+  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.item_id);
   for (const i of items) byKey.set(keyOf(i), [...(byKey.get(keyOf(i)) ?? []), i]);
   const rows: Row[] = [];
   for (const [key, group] of byKey) {
@@ -76,8 +76,7 @@ export function groupRows(items: InboxItem[]): Row[] {
     const single = group.length === 1;
     let title = plainWords(first.summary);
     if (!single && first.type === "candidate") { const k = String(first.detail.kind); title = `找到 ${group.length} ${MEASURE[k] ?? "个"}${KIND[k] ?? "文件"}，看看是不是这条的`; }
-    if (!single && first.type === "draft") title = `${group.length} 篇稿子写好了，过一眼`;
-    const sub = single ? secondLine(first) : first.type === "draft" ? group.map((g) => g.title).slice(0, 3).join("、") + (group.length > 3 ? " …" : "") : secondLine(first);
+    const sub = secondLine(first);
     rows.push({ key: single ? first.item_id : key, items: group, title, sub, since: group.map((g) => g.since).sort()[0], rank: Math.min(...group.map((g) => g.rank)), agent_waiting: group.some((g) => g.agent_waiting) });
   }
   return rows.sort((a, b) => a.rank - b.rank || a.since.localeCompare(b.since) || a.key.localeCompare(b.key));
@@ -148,7 +147,7 @@ export const DONE_TEXT: Record<string, string> = {
   confirm_candidate: "记下了，就是它", reject_candidate: "记下了，不是它", answer_ask: "已经回复了", undo_ask_answer: "撤回了转述的回答",
   i_published: "记下了，已经发出去了", confirm_receipt: "记下了，发了", correct_publish: "记下了，没发", approve_script: "稿子定了", revise_script: "已经告诉写稿的了",
   publish_check_confirm: "记下了，没问题", publish_check_revise: "已经告诉发布的了", publish_check_override: "按你的原话重新检查了", waive_sliver: "这处放行了",
-  waive_sliver_check: "这条不查了", ack: "记下了", nudge: "已经催了", assign: "挂上了", keep_attach: "记下了，就是它", reassign_aroll: "改挂好了", undo_auto_attach: "挪回去了",
+  waive_sliver_check: "这条不查了", ignore_inbox_file: "挪进「已用过」了", ack: "记下了", nudge: "已经催了", assign: "挂上了", keep_attach: "记下了，就是它", reassign_aroll: "改挂好了", undo_auto_attach: "挪回去了",
 };
 
 // ---- 网页提醒（§9 第一条）：只提醒「有 agent 在等」和「挡住推进」，同一条稿 10 分钟内合并，同一件不重复 ----
@@ -192,4 +191,13 @@ export function staleLine(error: string, lastOkAt: number | null, expired: boole
   const t = lastOkAt ? new Date(lastOkAt) : null;
   const hm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
   return hm ? `连不上 AutoCrew，列表停在 ${hm}` : `连不上 AutoCrew：${error}`;
+}
+
+/** 行上直接能点的主按钮（不开面板）：只给封面挑组和候选确认——成片要看片，带一句话的动作要写，都不给 */
+export function quickAction(row: Pick<Row, "items">): InboxAction | null {
+  if (row.items.length !== 1) return null;
+  const i = row.items[0];
+  if (i.blocked_reason) return null;
+  const want = i.type === "cover_pick" ? "pick_cover" : i.type === "candidate" ? "confirm_candidate" : null;
+  return i.actions.find((a) => a.action === want && a.role === "primary" && !a.note) ?? null;
 }

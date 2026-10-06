@@ -25,6 +25,8 @@ import { arollPool, EXPORT_POOL_STATUS, exportPool } from "./match/pool.js";
 import { cachedSha, VIDEO_EXT, type Seen } from "./observe.js";
 import type { InboxStatus, WatchStatus } from "./reconcile.js";
 import { movableRoots, now, probe } from "./roots.js";
+import { arollUsedBy, moveToUsed } from "./inbox-used.js";
+import { readTranscript } from "./match/cache.js";
 import { folderProblem, readArollSources, type WatchFolder } from "./sources.js";
 
 export const WATCH_MAX_AGE_MS = 14 * 24 * 3600_000;
@@ -94,6 +96,26 @@ async function rejectedPairs(pool: readonly PoolEntry[], dataDir: string): Promi
   return out;
 }
 
+const guessOf = (top: ReadonlyArray<{ content_id: string; title: string }>) => ({ guess: top.map((r) => r.title), guesses: top.map((r) => ({ content_id: r.content_id, title: r.title })) });
+
+/** 开头一两句：按句号切，最多 80 字 */
+function headOf(text: string): string {
+  const parts = text.replace(/\s+/g, " ").trim().split(/(?<=[。！？!?])/).slice(0, 2).join("");
+  return parts.length > 80 ? `${parts.slice(0, 80)}…` : parts;
+}
+
+/** 字节已经是某条稿的原片：挪进「已用过/」，不再列；挪不走就列出来并写明原因。返回 true = 这个文件处理完了 */
+async function settleUsed(dataDir: string, f: Found, out: Discovery): Promise<boolean> {
+  const owner = await arollUsedBy(dataDir, f.sha256);
+  if (!owner) return false;
+  try { await moveToUsed(f.file); }
+  catch (e) {
+    out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: [], used_by: owner,
+      reason: `已经挂在《${owner.title}》上，但没挪走：${errCode(e)}` });
+  }
+  return true;
+}
+
 function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision }>, waiting: ReadonlySet<string>, rejected: ReadonlySet<string> = new Set()): void {
   const byTarget = new Map<string, number>();
   for (const { d } of decided) if (d.winner) byTarget.set(d.winner, (byTarget.get(d.winner) ?? 0) + 1);
@@ -101,7 +123,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
     // 创始人对那条稿点过「不是」、被挪回收件箱的文件：不再往那条凑，算「没对上」列进列头（verifier 2a P3）
     const no = (id: string) => rejected.has(`${id}|${f.sha256}`);
     if (d.winner && no(d.winner)) {
-      out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.filter((r) => !no(r.content_id)).map((r) => r.title), reason: "你说过不是那条" });
+      out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, ...guessOf(d.top3.filter((r) => !no(r.content_id))), reason: "你说过不是那条" });
       continue;
     }
     if (d.winner) {
@@ -113,7 +135,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
     }
     const likes = d.top3.filter(looksLike).filter((r) => !no(r.content_id));
     for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`, matchOf(d)));
-    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title), reason: d.reason });
+    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, ...guessOf(d.top3), reason: d.reason });
   }
 }
 
@@ -138,12 +160,16 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
   const listed = await listTop(dir, isVideo);
   if (listed.error) { out.warnings.push(`读不了原片收件箱 ${dir}（${listed.error}）`); return; }
   const seen: Array<{ f: Found; v: Verdict }> = [];
+  const durations = new Map<string, number>();
   for (const raw of listed.files) {
     const f = await found(raw).catch(() => null);
     if (!f) { out.inbox.failed.push({ name: raw.name, path: raw.file, reason: "读不了这个文件" }); continue; }
+    // 字节已经归了某条稿（比如 Codex 拷进项目改了名）：不是「没对上」，挪进「已用过」
+    if (await settleUsed(dataDir, f, out)) continue;
     // 完整性与其他挂载入口一致（Codex 审 segB2 P1）：读不出时长 = 坏的或还没拷完，不判、不挪，列进「没核对成」
     const dur = await checkDuration(f.file, probe);
     if (!dur.ok) { out.inbox.failed.push({ name: f.name, path: f.file, reason: dur.error }); continue; }
+    durations.set(f.sha256, dur.value);
     const v: Verdict = await fileVerdict(dataDir, f, pool);
     if (v.kind === "checking") out.inbox.checking += 1;
     else if (v.kind === "failed") out.inbox.failed.push({ name: f.name, path: f.file, reason: v.reason });
@@ -158,6 +184,14 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
   const batch = seen.filter((x) => members.includes(x.f.sha256));
   if (batch.some((x) => x.v.kind === "checking")) { await writeBatch(dataDir, members); return; }
   judgeInbox(out, batch.flatMap((x) => (x.v.kind === "decided" ? [{ f: x.f, d: x.v.d }] : [])), waiting, await rejectedPairs(pool, dataDir));
+  // 没对上的补上时长和已有的开头转写，好让创始人认
+  for (const u of out.inbox.unmatched) {
+    if (u.used_by) continue;
+    const ms = durations.get(u.sha256);
+    if (ms) u.duration_ms = ms;
+    const t = await readTranscript(dataDir, u.sha256).catch(() => null);
+    if (t?.text) u.transcript_head = headOf(t.text);
+  }
   await writeBatch(dataDir, []);
 }
 

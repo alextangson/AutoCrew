@@ -1,17 +1,29 @@
-/** 「等你拍板」分行：稿子合成一行，但挡着成片 / 封面审阅的稿子单独一行（说明不被合并吞掉） */
+/** 「等你拍板」行上直接点的主按钮：只给封面挑组和候选确认 */
 import { describe, expect, it } from "vitest";
-import { groupRows, type InboxItem } from "./review-model";
+import { groupRows, quickAction, type InboxItem } from "./review-model";
 
-const draft = (id: string, detail: Record<string, unknown> = {}, summary = "稿子写好了，过一眼"): InboxItem => ({
-  item_id: `draft:${id}`, gen: "g", type: "draft", content_id: id, title: `稿${id}`, summary, waiting: null, agent_waiting: false, since: "2026-10-03T00:00:00.000Z", rank: 3, actions: [], detail,
+const item = (over: Partial<InboxItem>): InboxItem => ({
+  item_id: "x", gen: "g", type: "candidate", content_id: "c", title: "稿", summary: "s", waiting: null, agent_waiting: false, since: "2026-10-03T00:00:00.000Z", rank: 1, actions: [], detail: {}, ...over,
 });
 
-describe("groupRows 稿子分行", () => {
-  it("普通稿子合成一行；waiting_behind 的单独成行并保留它自己的说明", () => {
-    const behind = { ...draft("c", { waiting_behind: ["cut_review"] }, "稿子写好了，过一眼（成片剪好了，认稿后才能审）"), rank: 1 };
-    const rows = groupRows([draft("a"), draft("b"), behind]);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ key: "draft:c", title: "稿子写好了，过一眼（成片剪好了，认稿后才能审）" });
-    expect(rows[1]).toMatchObject({ key: "group:draft", title: "2 篇稿子写好了，过一眼" });
+describe("quickAction", () => {
+  it("封面挑组 → 用这组（带预填的封面字）；单个候选 → 对，就是它", () => {
+    const cover = item({ type: "cover_pick", actions: [{ action: "pick_cover", label: "用这组", role: "primary", params: { group_id: "g1", cover_text: "字" } }] });
+    expect(quickAction({ items: [cover] })).toMatchObject({ action: "pick_cover", params: { cover_text: "字" } });
+    const cand = item({ actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary" }, { action: "reject_candidate", label: "不是", role: "secondary" }] });
+    expect(quickAction({ items: [cand] })?.action).toBe("confirm_candidate");
+  });
+  it("成片、带一句话的动作、合成行、被拦的都不给", () => {
+    const cut = item({ type: "cut_review", actions: [{ action: "approve_cut", label: "就用这版", role: "primary" }] });
+    expect(quickAction({ items: [cut] })).toBeNull();
+    const noted = item({ actions: [{ action: "confirm_candidate", label: "对", role: "primary", note: "required" }] });
+    expect(quickAction({ items: [noted] })).toBeNull();
+    const cand = item({ actions: [{ action: "confirm_candidate", label: "对", role: "primary" }] });
+    expect(quickAction({ items: [cand, { ...cand, item_id: "y" }] })).toBeNull();
+    expect(quickAction({ items: [{ ...cand, blocked_reason: "等" }] })).toBeNull();
+  });
+  it("稿子不再合成「N 篇稿子写好了」", () => {
+    const d = (id: string) => item({ item_id: `draft:${id}`, type: "draft" });
+    expect(groupRows([d("a"), d("b")])).toHaveLength(2);
   });
 });

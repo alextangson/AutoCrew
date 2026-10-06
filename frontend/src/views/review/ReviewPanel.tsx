@@ -4,12 +4,10 @@
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/Button";
-import { invoke } from "../../transport";
 import { relativeLabel } from "../../time-format";
 import { openStoryboard } from "../board-api";
-import { attachmentUrl, mediaUrl } from "./review-api";
+import { attachmentUrl, inboxFileUrl, mediaUrl } from "./review-api";
 import { platformName } from "../board-columns";
-import { sha256Hex } from "../StageAdvance";
 import { plainWords, type InboxAction, type InboxItem } from "./review-model";
 
 export type Act = (a: InboxAction, extra?: Record<string, unknown>) => Promise<void>;
@@ -121,47 +119,18 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
   const wanted = p.item.actions.find((a) => a.action === "pick_cover")?.params?.group_id;
   const [idx, setIdx] = useState(() => Math.max(0, groups.findIndex((g) => g.group_id === wanted)));
   const g = groups[idx];
+  // 封面字预填（组里的字，或交接时你确认过的字）；空着也能用这组，就是不带封面字
   const [text, setText] = useState(g?.text ?? "");
-  useEffect(() => { setText(g?.text ?? ""); setNoText(false); }, [g?.group_id, g?.text]);
-  // 封面字总是照输入框原样交（空的也交），不让条目默认参数里别的组的字顶上（整分支审 10 P2）
-  const [noText, setNoText] = useState(false);
-  const guarded: Act = async (a, extra) => {
-    if (a.action === "pick_cover" && !String(extra?.cover_text ?? "").trim()) { setNoText(true); return; }
-    setNoText(false);
-    return p.act(a, extra);
-  };
-  const incomplete = (p.item.detail.incomplete as Array<{ group_id: string; note: string }>) ?? [];
+  useEffect(() => { setText(g?.text ?? ""); }, [g?.group_id, g?.text]);
+  const incomplete = typeof p.item.detail.incomplete_note === "string" ? p.item.detail.incomplete_note : null;
   const img = (x: Group["3:4"]) => (x?.fact_id && p.item.content_id ? <img alt="" src={mediaUrl(p.item.content_id, x.fact_id)} /> : null);
   return <>
     <Props rows={[["稿子", p.item.title], ["做好", g ? relativeLabel(g.at) : null], ["谁做的", p.item.waiting?.label ?? ""]]} />
     <VersionPill list={groups} index={idx} onPick={setIdx} />
     {g && <div className="ri-preview ri-covers"><figure>{img(g["3:4"])}<figcaption>竖版 3:4</figcaption></figure><figure>{img(g["4:3"])}<figcaption>横版 4:3</figcaption></figure></div>}
-    <input className="ri-textline" aria-label="封面上的字" value={text} onChange={(e) => setText(e.target.value)} placeholder="封面上的字" />
-    {incomplete.map((x) => <p key={x.group_id} className="ri-note">{x.note}</p>)}
-    {noText && <p className="ri-reason">封面上的字还没写</p>}
-    <Actions item={p.item} act={guarded} extra={() => (g ? { group_id: g.group_id, cover_text: text.trim() } : {})} />
-  </>;
-}
-
-/**
- * 正文和交上去的东西绑在一起（整分支审 5 P1）：代次一变就重读正文；交的时候带「屏幕上这份正文」的哈希，
- * 服务端对不上就拒——看到的和认的永远是同一版。正文没读到之前不给按钮。
- */
-export function DraftBody(p: { item: InboxItem; act: Act }) {
-  const [body, setBody] = useState<{ text: string; hash: string | null } | null>(null);
-  useEffect(() => {
-    let live = true;
-    setBody(null);
-    void invoke("content:get", { id: p.item.content_id }).then(async (r) => {
-      const text = (r as unknown as { content?: { body?: string } }).content?.body;
-      if (live) setBody(typeof text === "string" ? { text, hash: await sha256Hex(text) } : { text: "（读不出正文）", hash: null });
-    }, () => { if (live) setBody({ text: "（读不出正文）", hash: null }); });
-    return () => { live = false; };
-  }, [p.item.content_id, p.item.gen]);
-  return <>
-    <Props rows={[["稿子", p.item.title], ["写好", relativeLabel(p.item.since)], ["字数", String(p.item.detail.words ?? "")]]} />
-    {body?.hash ? <Actions item={p.item} act={p.act} extra={() => ({ expected_body_hash: body.hash })} /> : <p className="ri-reason">{body ? "正文读不出来，先别认" : "正文读取中…"}</p>}
-    <div className="ri-preview ri-body">{body?.text ?? "读取中…"}</div>
+    <input className="ri-textline ri-textline-sm" aria-label="封面上的字" value={text} onChange={(e) => setText(e.target.value)} placeholder="封面上的字（可不填）" />
+    {incomplete && <p className="ri-note">{incomplete}</p>}
+    <Actions item={p.item} act={p.act} extra={() => (g ? { group_id: g.group_id, cover_text: text.trim() } : {})} />
   </>;
 }
 
@@ -253,24 +222,50 @@ function Generic(p: { item: InboxItem; act: Act }) {
   return <>
     <Props rows={rows} />
     <CandidatePreview item={p.item} />
-    {p.item.type === "inbox_file" ? <AssignPicker item={p.item} act={p.act} /> : <Actions item={p.item} act={p.act} />}
+    <Actions item={p.item} act={p.act} />
   </>;
 }
 
-/** 收件箱里没对上的视频：「指定给…」选一条稿 */
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.round((ms % 60000) / 1000)).padStart(2, "0")}`;
+
+/** 收件箱里没对上的视频：先看片（播放器、时长、文件时间、开头说了什么），再认是哪条，或忽略 */
+function InboxFileBody(p: { item: InboxItem; act: Act }) {
+  const d = p.item.detail;
+  const guesses = (d.guesses as Array<{ content_id: string; title: string }> | undefined) ?? [];
+  // 旧对账报告只有标题：只显示，不给按钮
+  const oldGuess = guesses.length ? [] : ((d.guess as string[] | undefined) ?? []);
+  const usedBy = d.used_by as { title: string } | null;
+  const quiet = p.item.actions.filter((a) => a.role === "quiet");
+  return <>
+    <Props rows={[["文件", String(d.name ?? "")], ["时长", typeof d.duration_ms === "number" ? clock(d.duration_ms) : null],
+      ["文件时间", typeof d.mtime_ms === "number" ? new Date(d.mtime_ms).toLocaleString() : null], ["为什么", usedBy && d.reason ? String(d.reason) : null]]} />
+    <div className="ri-preview"><video controls preload="metadata" src={inboxFileUrl(p.item.item_id)} /></div>
+    {typeof d.transcript_head === "string" && d.transcript_head && <p className="ri-question">开头说的：「{d.transcript_head}」</p>}
+    {!usedBy && guesses.length > 0 && <ul className="ri-check">{guesses.map((g) => {
+      const a = p.item.actions.find((x) => x.action === "assign" && x.params?.to === g.content_id);
+      return <li key={g.content_id}>《{g.title}》 {a && <Button variant="secondary" onClick={() => void p.act(a)}>{a.label}</Button>}</li>;
+    })}</ul>}
+    {!usedBy && oldGuess.length > 0 && <p className="ri-note">可能是：{oldGuess.map((t) => `《${t}》`).join("、")}</p>}
+    {!usedBy && <AssignPicker item={p.item} act={p.act} />}
+    {quiet.length > 0 && <div className="ri-actions"><span className="ri-quiet-slot">{quiet.map((a, i) => <Button key={i} variant="quiet" onClick={() => void p.act(a)}>{a.label}</Button>)}</span></div>}
+  </>;
+}
+
+/** 都不是猜的那几条：从所有还没过剪辑的视频稿里选 */
 function AssignPicker(p: { item: InboxItem; act: Act }) {
   const choices = (p.item.detail.choices as Array<{ id: string; title: string }>) ?? [];
   const [to, setTo] = useState(choices[0]?.id ?? "");
-  if (!choices.length) return <p className="ri-reason">没有等原片的稿可以指定</p>;
+  const assign = p.item.actions.find((a) => a.action === "assign" && a.params?.to === undefined);
+  if (!choices.length || !assign) return <p className="ri-reason">没有还能挂原片的视频稿</p>;
   return <div className="ri-actions">
     <select aria-label="指定给哪条" value={to} onChange={(e) => setTo(e.target.value)}>{choices.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select>
-    <Button variant="primary" onClick={() => void p.act(p.item.actions[0], { to })}>指定给这条</Button>
+    <Button variant="secondary" onClick={() => void p.act(assign, { to })}>指定给这条</Button>
   </div>;
 }
 
 export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClose: () => void }) {
   const it = p.item;
-  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "draft" ? DraftBody
+  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "inbox_file" ? InboxFileBody
     : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : it.type === "publish_claim" ? ClaimBody : Generic;
   return <aside className="ri-peek" role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>

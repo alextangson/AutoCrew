@@ -21,6 +21,8 @@ import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js"
 import { scopedId, type InboxAction, type InboxItem } from "./inbox.js";
 import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
+import { moveToUsed } from "./inbox-used.js";
+import { cachedSha } from "./observe.js";
 import { mutateProduction } from "./service.js";
 import { canonPlatform } from "./receipts.js";
 
@@ -113,6 +115,15 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
   return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
 }
 
+/** 「不是原片，忽略」：字节还是创始人看到的那份才挪进「已用过/」；挪不走就说原因 */
+async function ignoreInboxFile(file: string, expectSha: string): Promise<Result> {
+  const now = await cachedSha(file).catch(() => null);
+  if (!now) return fail("gone", "这个文件已经不在收件箱了，刷新再看");
+  if (now.sha256 !== expectSha) return fail("stale", "这个文件刚变过，刷新再看");
+  try { return { ok: true, moved_to: await moveToUsed(file) }; }
+  catch (e) { return fail("move_failed", `没挪走：${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`); }
+}
+
 async function run(ctx: Ctx): Promise<Result> {
   const { item, dataDir, params, spec } = ctx;
   const c = ctx.content;
@@ -150,6 +161,7 @@ async function run(ctx: Ctx): Promise<Result> {
       // 路径只取服务端给这个条目的动作参数，不从页面取（整分支审 P2）
       return founderDecision(to, "attach_aroll", { path: spec.params?.path, expect_sha: spec.params?.expect_sha, confirm_other: true }, dataDir);
     }
+    case "ignore_inbox_file": return ignoreInboxFile(String(spec.params?.path ?? ""), String(spec.params?.expect_sha ?? ""));
     case "reject_cut": {
       const v = chosenVersion();
       if (!v) return fail("stale", "这一版不在这件事的成片清单里，刷新再看");
@@ -195,7 +207,7 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
   if (!itemId || !gen || !action) return fail("bad_request", "要带 item_id、gen 和 action（刷新再点）");
   const fp = fingerprint(action, req);
   const locked = () => withFileOwnership(async () => {
-    const view = await readInbox(dataDir, { ...(contentId ? { contentId } : {}), ...(deps.now ? { now: deps.now } : {}) });
+    const view = await readInbox(dataDir, { withDrafts: true, ...(contentId ? { contentId } : {}), ...(deps.now ? { now: deps.now } : {}) });
     const item = view.items.find((x) => x.item_id === itemId);
     const logId = item ? logContentOf(item, req) : contentId || str(req.to) || null;
     // 占位超过等待上限（服务中途重启、没落定）算作废，不永久卡住这件事
@@ -346,7 +358,7 @@ async function legacyWithoutItem(contentId: string, action: string, params: Reco
 export async function decide(contentId: string, action: string, params: Record<string, unknown>, dataDir = getDataDir(), deps: DecideDeps = {}): Promise<Result> {
   if (isModelCall(params)) return fail("founder_only", FOUNDER_ONLY);
   if (str(params.item_id)) return decideItem({ ...params, action, content_id: contentId }, dataDir, deps);
-  const view = await readInbox(dataDir, { contentId });
+  const view = await readInbox(dataDir, { contentId, withDrafts: true });
   const item = view.items.find((x) => legacyMatch(x, action, params));
   if (!item) return legacyWithoutItem(contentId, action, params, dataDir);
   // 旧页面：按它带来的具体对象选动作参数（哪一版 / 哪一组 / 哪一处）

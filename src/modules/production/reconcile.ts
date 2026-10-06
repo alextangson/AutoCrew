@@ -48,7 +48,14 @@ import { autoAttach } from "./auto-attach.js";
 export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
 export interface ShadowMove { id: string; title: string; from: Column | null; to: Column | null; rule: string | null; evidence: string[] }
 /** 1b §4 / §5：收件箱里没对上 / 没核对成的视频（待录制列头读它）、每个监视文件夹最近一次扫描 */
-export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
+export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string;
+  /** 猜的前三条带稿件 id（旧报告没有，只有 guess 标题） */
+  guesses?: Array<{ content_id: string; title: string }>;
+  duration_ms?: number;
+  /** 对账已有的开头转写（不为此新转写） */
+  transcript_head?: string;
+  /** 字节已是这条稿的原片，但没挪进「已用过」 */
+  used_by?: { content_id: string; title: string } }
 export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number;
   /** 暂停了自动找原片：这一轮收件箱只按文件名对 */
   paused?: boolean }

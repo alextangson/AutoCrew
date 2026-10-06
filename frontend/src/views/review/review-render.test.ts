@@ -19,6 +19,7 @@ vi.mock("./review-api", () => ({
   undoDecision: async (c: string, a: string, p: Record<string, unknown>) => { undone.push([c, a, p]); return { ok: true, data: {} }; },
   attachmentUrl: () => "/att",
   mediaUrl: (c: string, f: string) => `/media/${c}/${f}`,
+  inboxFileUrl: (id: string) => `/inbox-file/${id}`,
   inboxHref: (id: string) => `#/board?inbox=${id}`,
   INBOX_OPEN_EVENT: "autocrew:inbox-open",
   openInboxItem: () => {},
@@ -112,14 +113,12 @@ describe("每类面板（§3.1）", () => {
     expect(primaries.length).toBeLessThanOrEqual(1);
     expect(peek.textContent).not.toMatch(/sha|fact|B-roll|A-roll|LUFS/);
   });
-  it("成片：视频播放器；封面：3:4 + 4:3 并排；稿子：只读正文", async () => {
-    await mountInbox([ITEMS[1], ITEMS[2], ITEMS[9]]);
+  it("成片：视频播放器；封面：3:4 + 4:3 并排", async () => {
+    await mountInbox([ITEMS[1], ITEMS[2]]);
     await openRow("成片剪好了，看一遍");
     expect(el.querySelector(".ri-peek video")).toBeTruthy();
     await openRow("封面做好了，挑一张");
     expect(el.querySelectorAll(".ri-peek .ri-covers img").length).toBe(2);
-    await openRow("稿子写好了，过一眼");
-    expect(el.querySelector(".ri-peek .ri-body")!.textContent).toContain("正文第一段");
   });
 });
 
@@ -295,9 +294,6 @@ describe("网页提醒（§9）", () => {
 const candCover = (n: number): InboxItem => base({ item_id: `cand:c${n}`, gen: `g${n}`, type: "candidate", summary: "找到一张封面，是这条的吗",
   actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: `c${n}`, sha256: `s${n}` } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: `c${n}`, sha256: `s${n}` } }],
   detail: { fact_id: `c${n}`, kind: "cover", name: `${n}.png`, reason: "放在 AutoCrew 不会自动收的文件夹里，要你确认", preview: true } });
-const draftOf = (n: number): InboxItem => base({ item_id: `draft:content-${n}-d`, content_id: `content-${n}-d`, gen: `d${n}`, title: `稿子${n}`, type: "draft", rank: 3, summary: "稿子写好了，过一眼",
-  actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required" }], detail: { words: 100 } });
-
 describe("合成的行（2a 真实数据验收）", () => {
   it("同一条稿的 3 张候选封面 = 一行「找到 3 张封面，看看是不是这条的」；面板里逐张有图、对 / 不是，另有「都不是」", async () => {
     await mountInbox([candCover(1), candCover(2), candCover(3)]);
@@ -311,22 +307,11 @@ describe("合成的行（2a 真实数据验收）", () => {
     await click(btn("都不是"));
     expect(decided.map((d) => d.item_id)).toEqual(["cand:c1", "cand:c3"]);
   });
-  it("9 篇稿子 = 一行「9 篇稿子写好了，过一眼」；面板一篇一篇过，「下一篇」换一篇", async () => {
-    await mountInbox(Array.from({ length: 9 }, (_, i) => draftOf(i + 1)));
-    expect(el.querySelectorAll(".ri-row").length).toBe(1);
-    await openRow("9 篇稿子写好了，过一眼");
-    expect(el.querySelector(".ri-peek")!.textContent).toContain("第 1 篇，共 9 篇：稿子1");
-    await click(btn("下一篇"));
-    expect(el.querySelector(".ri-peek")!.textContent).toContain("第 2 篇，共 9 篇：稿子2");
-    await click(btn("稿子没问题"));
-    expect(decided.at(-1)).toMatchObject({ item_id: "draft:content-2-d", gen: "d2", action: "approve_script" });
-  });
   it("缩略图：候选封面是图、候选成片是视频帧、稿子才是「稿」", async () => {
-    await mountInbox([candCover(1), ITEMS[3], ITEMS[9]]);
+    await mountInbox([candCover(1), ITEMS[3]]);
     const thumb = (label: string) => [...el.querySelectorAll(".ri-row")].find((r) => r.getAttribute("aria-label") === label)!.querySelector(".ri-thumb")!;
     expect(thumb("找到一张封面，是这条的吗").querySelector("img")).toBeTruthy();
     expect(thumb("找到一段成片，是这条的吗").querySelector("video")).toBeTruthy();
-    expect(thumb("稿子写好了，过一眼").textContent).toBe("稿");
     await openRow("找到一段成片，是这条的吗");
     expect(el.querySelector(".ri-peek video")).toBeTruthy();
     expect(el.querySelector(".ri-peek")!.textContent).toContain("文件名和标题对上了");
@@ -382,8 +367,8 @@ describe("卡片：以前的封面文件", () => {
 });
 
 describe("件数 = 看到的行数", () => {
-  it("一段成片候选 + 9 篇稿子 = 2 行：列表头「2 件」，标签页「(2) AutoCrew」", async () => {
-    await mountInbox([ITEMS[3], ...Array.from({ length: 9 }, (_, i) => draftOf(i + 1))]);
+  it("一段成片候选 + 3 张候选封面 = 2 行：列表头「2 件」，标签页「(2) AutoCrew」", async () => {
+    await mountInbox([ITEMS[3], candCover(1), candCover(2), candCover(3)]);
     expect(el.querySelectorAll(".ri-row").length).toBe(2);
     expect(el.querySelector(".ri-count")!.textContent).toBe("2 件");
     expect(document.title).toBe("(2) AutoCrew");
@@ -435,20 +420,6 @@ describe("列表读不成（整分支审 3 P2）", () => {
 
 describe("整分支审 5", () => {
   const sha = async (t: string) => (await import("node:crypto")).createHash("sha256").update(t).digest("hex");
-  it("稿子那一行：轮询换了代次就重读正文；认稿交的是新代次 + 屏幕上这份正文的哈希", async () => {
-    await mountInbox([draftOf(1), draftOf(2)]);
-    await openRow("2 篇稿子写好了，过一眼");
-    await tick();
-    expect(el.querySelector(".ri-body")!.textContent).toBe("正文第一段。");
-    draftBody = "别的会话改过的正文。";
-    inbox = [{ ...draftOf(1), gen: "d1-new" }, draftOf(2)];
-    const { POLL_MS } = await import("./ReviewInbox");
-    await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); });
-    await tick();
-    expect(el.querySelector(".ri-body")!.textContent).toBe("别的会话改过的正文。");
-    await click(btn("稿子没问题"));
-    expect(decided.at(-1)).toMatchObject({ item_id: "draft:content-1-d", gen: "d1-new", action: "approve_script", expected_body_hash: await sha("别的会话改过的正文。") });
-  }, 15_000);
   it("标签页在后台：照样慢慢轮询，新来的事照样弹提醒、标题件数更新", async () => {
     const created: string[] = [];
     const N = Object.assign(function (this: { onclick: null; close: () => void }, title: string) { created.push(title); this.onclick = null; this.close = () => {}; }, { permission: "granted", requestPermission: vi.fn() });
@@ -520,7 +491,7 @@ describe("verifier 2a（前端）", () => {
     await click(btn("没问题"));
     expect(el.querySelector(".ri-toast")!.textContent).toContain("还有 1 件");
   });
-  it("「对，就是它」（原片）可以撤回 = 挪回原处；「稿子没问题」可以撤回 = 撤回认稿", async () => {
+  it("「对，就是它」（原片）可以撤回 = 挪回原处", async () => {
     const aroll: InboxItem = { ...ITEMS[3], detail: { ...ITEMS[3].detail, kind: "aroll" } };
     await mountInbox([aroll]);
     await openRow("找到一段成片，是这条的吗");
@@ -528,14 +499,6 @@ describe("verifier 2a（前端）", () => {
     await click(btn("对，就是它"));
     await click(btn("撤回"));
     expect(undone.at(-1)).toEqual(["content-1-a", "undo_auto_attach", { fact_id: "f9", sha256: "s9" }]);
-    await act(async () => { root.unmount(); }); root = createRoot(el);
-    await mountInbox([ITEMS[9]]);
-    await openRow("稿子写好了，过一眼");
-    await tick();
-    inbox = [];
-    await click(btn("稿子没问题"));
-    await click(btn("撤回"));
-    expect(invoked.at(-1)).toEqual(["content:transition", { id: "content-2-b", target_status: "reviewing", from_status: "approved" }]);
   });
   it("「我现在就要审」之后：列表里刚生出来的那件自动打开", async () => {
     await mountInbox([]);
@@ -567,24 +530,29 @@ describe("整分支审 10：按选中的那一版 / 那一组交", () => {
     expect(decided.at(-1)).toMatchObject({ action: "approve_cut", fact_id: "f1" });
   });
 
-  it("旧组没写字 → 输入框空，点「用这组」就地说「封面上的字还没写」不交；写了字交的就是写的那句", async () => {
+  it("旧组没写字 → 输入框空，「用这组」照样能点，不带封面字；写了字交的就是写的那句", async () => {
     const cover = ITEMS[2];
     const old = { group_id: "cg-1", label: "上一组", at: new Date(Date.now() - 3600_000).toISOString(), text: "", approved: false, "3:4": { fact_id: "fo1", sha256: "o1" }, "4:3": { fact_id: "fo2", sha256: "o2" } };
     await mountInbox([{ ...cover, detail: { ...cover.detail, groups: [...(cover.detail.groups as unknown[]), old] } }]);
     await openRow("封面做好了，挑一张");
     await click([...el.querySelectorAll(".ri-pill span")][1]);
-    const input = el.querySelector(".ri-textline") as HTMLInputElement;
+    const input = el.querySelector(".ri-peek .ri-textline") as HTMLInputElement;
     expect(input.value).toBe("");
-    await click(btn("用这组"));
-    expect(decided).toHaveLength(0);
-    expect(el.textContent).toContain("封面上的字还没写");
+    const pbtn = (t: string) => [...el.querySelectorAll(".ri-peek button")].find((b) => b.textContent === t);
+    await click(pbtn("用这组"));
+    expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-1" });
+    expect(String(decided.at(-1)!.cover_text ?? "")).toBe("");
+    await openRow("封面做好了，挑一张");
+    await click([...el.querySelectorAll(".ri-pill span")][1]);
+    const input2 = el.querySelector(".ri-peek .ri-textline") as HTMLInputElement;
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "新的字");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input2, "新的字");
+      input2.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await click(btn("用这组"));
+    await click(pbtn("用这组"));
     expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-1", cover_text: "新的字" });
   });
+
 });
 
 describe("整分支审 15：发布认领看得见依据；可写可不写的动作能补一句", () => {
@@ -648,5 +616,62 @@ describe("整分支审 16 P1：请示选项不给「补一句…」", () => {
     const labels = [...el.querySelectorAll(".ri-peek button")].map((b) => b.textContent);
     expect(labels).not.toContain("补一句…");
     expect(labels).toEqual(expect.arrayContaining(["花吧", "别花"]));
+  });
+});
+
+describe("行上直接点（不开面板）", () => {
+  it("封面行：两张图都在行上，「用这组」直接交预填的字，不打开面板；成片行没有直接按钮", async () => {
+    await mountInbox([ITEMS[1], ITEMS[2]]);
+    const row = [...el.querySelectorAll(".ri-row")].find((r) => r.getAttribute("aria-label") === "封面做好了，挑一张")!;
+    expect(row.querySelectorAll(".ri-cover-pair img").length).toBe(2);
+    expect(row.textContent).toContain("封面字：字");
+    const cutRow = [...el.querySelectorAll(".ri-row")].find((r) => r.getAttribute("aria-label") === "成片剪好了，看一遍")!;
+    expect(cutRow.querySelector(".ri-quick")).toBeNull();
+    inbox = [ITEMS[1]];
+    await click(row.querySelector(".ri-quick button")!);
+    expect(decided.at(-1)).toMatchObject({ item_id: "cover:r1", action: "pick_cover", group_id: "cg-2", cover_text: "字" });
+    expect(el.querySelector(".ri-peek")).toBeNull();
+    expect(el.querySelectorAll(".ri-row").length).toBe(1);
+  });
+  it("候选行：「对，就是它」直接交；失败就地写原因，行还在", async () => {
+    await mountInbox([ITEMS[3]]);
+    decideReply = { ok: false, error: "这件事刚变过，重新看一下" };
+    const row = el.querySelector(".ri-row")!;
+    await click(row.querySelector(".ri-quick button")!);
+    expect(decided.at(-1)).toMatchObject({ item_id: "cand:f9", action: "confirm_candidate", fact_id: "f9" });
+    expect(row.querySelector(".ri-quick .ri-reason")!.textContent).toBe("这件事刚变过，重新看一下");
+    expect(el.querySelector(".ri-peek")).toBeNull();
+  });
+});
+
+describe("收件箱里没对上的视频", () => {
+  const file = (detail: Record<string, unknown>, guessed = true): InboxItem => base({ item_id: "inbox_file:abc", type: "inbox_file", content_id: null, title: "A.MOV", summary: "收件箱里有个视频没对上：A.MOV",
+    actions: [{ action: "assign", label: "指定给…", role: "primary", params: { path: "/i/A.MOV", expect_sha: "s" } },
+      ...(guessed ? [{ action: "assign", label: "是这条", role: "secondary" as const, params: { path: "/i/A.MOV", expect_sha: "s", to: "content-9-z" } }] : []),
+      { action: "ignore_inbox_file", label: "不是原片，忽略", role: "quiet", params: { path: "/i/A.MOV", expect_sha: "s" } }],
+    detail: { name: "A.MOV", mtime_ms: Date.now(), duration_ms: 65000, transcript_head: "大家好，今天聊 AI。", choices: [{ id: "content-9-z", title: "猜的稿" }, { id: "content-8-y", title: "别的稿" }], ...detail } });
+  it("面板有播放器、时长、开头说的；猜的那条点「是这条」交给它；下拉选别的；忽略", async () => {
+    await mountInbox([file({ guesses: [{ content_id: "content-9-z", title: "猜的稿" }] })]);
+    await openRow("收件箱里有个视频没对上：A.MOV");
+    const peek = el.querySelector(".ri-peek")!;
+    expect(peek.querySelector("video")!.getAttribute("src")).toBe("/inbox-file/inbox_file:abc");
+    expect(peek.textContent).toContain("1:05");
+    expect(peek.textContent).toContain("大家好，今天聊 AI。");
+    await click(btn("是这条"));
+    expect(decided.at(-1)).toMatchObject({ action: "assign", to: "content-9-z" });
+    await openRow("收件箱里有个视频没对上：A.MOV");
+    const sel = el.querySelector(".ri-peek select") as HTMLSelectElement;
+    await act(async () => { sel.value = "content-8-y"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    await click(btn("指定给这条"));
+    expect(decided.at(-1)).toMatchObject({ action: "assign", to: "content-8-y" });
+    await openRow("收件箱里有个视频没对上：A.MOV");
+    await click(btn("不是原片，忽略"));
+    expect(decided.at(-1)).toMatchObject({ action: "ignore_inbox_file", path: "/i/A.MOV", expect_sha: "s" });
+  });
+  it("旧报告只有猜的标题：只显示，不给「是这条」", async () => {
+    await mountInbox([file({ guess: ["老标题"] }, false)]);
+    await openRow("收件箱里有个视频没对上：A.MOV");
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("《老标题》");
+    expect(btn("是这条")).toBeUndefined();
   });
 });

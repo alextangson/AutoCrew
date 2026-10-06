@@ -22,6 +22,8 @@ import { readReconcileReport } from "./reconcile.js";
 import { cachedSha } from "./observe.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
 import { approvedCoverShas } from "./service.js";
+import { draftHash } from "../../storage/draft-hash.js";
+import { FOUNDER_DECISION_SOURCES, readProjectJson, type ProjectDecisions } from "../video/handoff/project-evidence.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
 interface CheckRec { check_id?: string; content_id?: string; platform?: string; checked_at?: string; input_at?: string; verdict?: string; round?: number; items?: unknown[] }
@@ -80,13 +82,26 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
   for (const f of (doc?.facts ?? []).filter((x) => x.round === doc!.round && x.kind === "aroll" && x.state === "candidate" && x.sha256)) {
     if (await arollOwnerElsewhere(dataDir, f.sha256!, c.id).catch(() => null)) ownedElsewhere.add(f.id);
   }
-  return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere };
+  const handoffCoverText = doc ? await confirmedCoverText(c, dataDir) : "";
+  return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere,
+    ...(handoffCoverText ? { handoffCoverText } : {}) };
 }
 
-/** 收件箱里没对上的视频（1b §4）：「指定给…」= 挂到那条稿（卡片挂载决定） */
+/** 创始人交接时确认的封面字：只认创始人来源、且对得上当前定稿的决定 */
+async function confirmedCoverText(c: Content, dataDir: string): Promise<string> {
+  const d = await readProjectJson<ProjectDecisions>(c.id, "decisions.json", dataDir).catch(() => null);
+  if (!d || !FOUNDER_DECISION_SOURCES.has(d.source) || d.draft_hash !== draftHash(c)) return "";
+  return typeof d.cover_text === "string" ? d.cover_text.trim() : "";
+}
+
+/** 还没过剪辑的视频稿（没删、没发、没归档）：收件箱视频能指定给它们 */
+const ASSIGNABLE = new Set(["topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision", "approved", "editing"]);
+
+/** 收件箱里没对上的视频（1b §4）：猜的前三条各一个「是这条」，下拉选别的，或「不是原片，忽略」 */
 async function inboxFileItems(dataDir: string, contents: Content[]): Promise<InboxItem[]> {
   const report = await readReconcileReport(dataDir);
-  const waiting = contents.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && ["draft_ready", "approved"].includes(c.status)).map((c) => ({ id: c.id, title: c.title }));
+  const choices = contents.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && ASSIGNABLE.has(c.status)).map((c) => ({ id: c.id, title: c.title }));
+  const live = new Set(choices.map((c) => c.id));
   // 已经指定出去的（消费记录记在接收的那条稿上）：下一次读就不再列，不等下一轮对账（整分支审 6 P2）
   const consumed = new Set<string>();
   for (const c of contents) for (const e of (await readProductionDoc(c.id, dataDir).catch(() => null))?.inbox_log ?? []) if (e.item_id.startsWith("inbox_file:") && !e.pending) consumed.add(`${e.item_id}\u0000${e.gen}`);
@@ -96,18 +111,28 @@ async function inboxFileItems(dataDir: string, contents: Content[]): Promise<Inb
     const now = await cachedSha(f.path).catch(() => null);
     if (!now) continue;
     const snapshot = [f.path, now.sha256, now.size, now.mtime_ms];
-    const item_id = `inbox_file:${genOf(f.path)}`;
+    const item_id = inboxFileId(f.path);
     const gen = genOf([item_id, snapshot]);
     if (consumed.has(`${item_id}\u0000${gen}`)) continue;
+    const base = { path: f.path, expect_sha: now.sha256 };
+    const guesses = (f.guesses ?? []).filter((g) => live.has(g.content_id)).slice(0, 3);
     out.push({
-      item_id, gen, type: "inbox_file" as const, content_id: null, title: f.name, summary: `收件箱里有个视频没对上：${f.name}`,
+      item_id, gen, type: "inbox_file" as const, content_id: null, title: f.name,
+      summary: f.used_by ? `收件箱里的视频已经用过了，但没挪走：${f.name}` : `收件箱里有个视频没对上：${f.name}`,
       waiting: null, agent_waiting: false, since: new Date(now.mtime_ms).toISOString(), rank: 1 as const,
-      actions: [{ action: "assign", label: "指定给…", role: "primary" as const, params: { path: f.path, expect_sha: now.sha256 } }],
-      detail: { name: f.name, size: now.size, guess: f.guess, choices: waiting },
+      actions: [
+        ...(f.used_by ? [] : [{ action: "assign", label: "指定给…", role: "primary" as const, params: base },
+          ...guesses.map((g) => ({ action: "assign", label: "是这条", role: "secondary" as const, params: { ...base, to: g.content_id } }))]),
+        { action: "ignore_inbox_file", label: "不是原片，忽略", role: "quiet" as const, params: base },
+      ],
+      detail: { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: f.duration_ms ?? null, transcript_head: f.transcript_head ?? null,
+        reason: f.reason ?? null, used_by: f.used_by ?? null, guess: f.guess, guesses, choices: f.used_by ? [] : choices },
     });
   }
   return out;
 }
+
+export const inboxFileId = (file: string) => `inbox_file:${genOf(file)}`;
 
 /** 其他（默认收起）：写作规则提案、发布偏好提案——原界面、原动作，这里只列出来 */
 async function otherItems(dataDir: string): Promise<InboxItem[]> {
@@ -129,7 +154,8 @@ async function otherItems(dataDir: string): Promise<InboxItem[]> {
 export interface InboxView { ok: true; items: InboxItem[]; count: number; agent_waiting: number; generated_at: string }
 
 /** 全库「等你拍板」（contentId 给了就只算那一条稿，给 summary / 单一入口用） */
-export async function readInbox(dataDir: string, opts: { contentId?: string; now?: number } = {}): Promise<InboxView> {
+/** withDrafts：「稿子写好了」不进列表（看板卡片上有「等你认稿」），但认稿决定仍按这件事的代次走 */
+export async function readInbox(dataDir: string, opts: { contentId?: string; now?: number; withDrafts?: boolean } = {}): Promise<InboxView> {
   const ctx = await explainContext(dataDir);
   // 历史作品记录不进「等你拍板」
   const all = (await listContents(dataDir)).filter((c) => !isImportedHistory(c));
@@ -140,6 +166,6 @@ export async function readInbox(dataDir: string, opts: { contentId?: string; now
     items.push(...contentItems(await contentInput(c, dataDir, ctx), opts.now));
   }
   if (!opts.contentId) items.push(...(await inboxFileItems(dataDir, all)), ...(await otherItems(dataDir)));
-  const sorted = sortItems(items);
+  const sorted = sortItems(opts.withDrafts ? items : items.filter((i) => i.type !== "draft"));
   return { ok: true, items: sorted, count: sorted.length, agent_waiting: sorted.filter((i) => i.agent_waiting).length, generated_at: new Date().toISOString() };
 }

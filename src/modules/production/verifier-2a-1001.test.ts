@@ -25,7 +25,7 @@ beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await env.cleanup(); });
 
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;
-const items = async (contentId?: string) => (await readInbox(env.dir, contentId ? { contentId } : {})).items;
+const items = async (contentId?: string) => (await readInbox(env.dir, { ...(contentId ? { contentId } : {}), withDrafts: true })).items;
 const itemStarting = async (contentId: string, prefix: string) => (await items(contentId)).find((i) => i.item_id.startsWith(`${prefix}:${contentId}`));
 
 async function editing(title: string) {

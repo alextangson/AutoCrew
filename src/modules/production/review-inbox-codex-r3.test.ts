@@ -23,7 +23,7 @@ beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { await env.cleanup(); });
 
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;
-const items = async (id: string) => (await readInbox(env.dir, { contentId: id })).items;
+const items = async (id: string) => (await readInbox(env.dir, { contentId: id, withDrafts: true })).items;
 async function editing() {
   const c = await videoContent(env, "三轮回归");
   await founderApprove(env, c.id);
@@ -156,12 +156,12 @@ describe("Codex 2a-1 第五轮", () => {
     await videoContent(env, "另一篇稿");
     const r = await registeredVideo(env);
     await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: planOf(r, [planEntry(r, "douyin", ["3:4"])]) }, { jev: fakeJev().caller });
-    const all = (await readInbox(env.dir)).items;
+    const all = (await readInbox(env.dir, { withDrafts: true })).items;
     const types = new Set(all.map((i) => i.type));
     for (const t of ["cut_review", "sliver", "cover_pick", "candidate", "ask", "draft", "publish_check"]) expect(types.has(t as never)).toBe(true);
     for (const it0 of all) {
       for (const [i] of it0.actions.entries()) {
-        const cur = (await readInbox(env.dir)).items.find((x) => x.item_id === it0.item_id);
+        const cur = (await readInbox(env.dir, { withDrafts: true })).items.find((x) => x.item_id === it0.item_id);
         if (!cur) break;
         const a = cur.actions[i];
         if (!a) continue;

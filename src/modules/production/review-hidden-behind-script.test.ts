@@ -18,7 +18,7 @@ afterEach(async () => { await env.cleanup(); });
 
 const TITLE = "认稿前的成片";
 const agent = (p: Record<string, unknown>) => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "claude-code", ...p }) as Promise<Record<string, unknown>>;
-const items = async (id: string) => (await readInbox(env.dir, { contentId: id })).items;
+const items = async (id: string) => (await readInbox(env.dir, { contentId: id, withDrafts: true })).items;
 const types = async (id: string) => (await items(id)).map((i) => i.type).sort();
 const cover = (name: string, w: number, h: number) => put(path.join(env.chatcut, name), png(w, h, name));
 
