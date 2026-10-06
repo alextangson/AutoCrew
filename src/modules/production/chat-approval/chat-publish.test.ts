@@ -6,10 +6,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readProductionDoc } from "../../../storage/production-store.js";
 import { executeReviewInbox } from "../../../tools/review-inbox.js";
-import { executePublishCheck } from "../../publish/review-gate/check.js";
+import { executePublishCheck, rerunMatchesOriginal } from "../../publish/review-gate/check.js";
 import { fakeJev, planEntry, planOf, registeredVideo, type Reg } from "../../publish/review-gate/testkit.js";
 import { setPullDeps } from "../../video/handoff/pull-deps.js";
-import { decideItem } from "../inbox-decide.js";
+import { decideItem, setRemoveCheckFile } from "../inbox-decide.js";
+import { readCheckRecord } from "../../publish/review-gate/check-store.js";
 import { readInbox } from "../inbox-read.js";
 import { setSettleMs } from "../hash-cache.js";
 import { withFileOwnership } from "../mutex.js";
@@ -30,7 +31,7 @@ beforeEach(async () => {
   pane = path.join(env.dir, "..", "session");
   await fs.mkdir(pane, { recursive: true });
 });
-afterEach(async () => { setSettleMs(null); setPreviewDeps(null); setChatDecideDeps(null); setPullDeps(null); await env.cleanup(); });
+afterEach(async () => { setRemoveCheckFile(null); setSettleMs(null); setPreviewDeps(null); setChatDecideDeps(null); setPullDeps(null); await env.cleanup(); });
 
 type Item = { item_id: string; gen: string; type: string; chat_decidable: boolean; brief: string; decisions: Array<{ decision: string }>; facts: { platform: string }; preview?: { files: Array<{ path: string }> } };
 const tool = (p: Record<string, unknown>) => executeReviewInbox({ _dataDir: env.dir, _host: "claude-code", _session: "s1", ...p });
@@ -253,5 +254,48 @@ describe("Codex 复审 c52403c3", () => {
     expect(String(out.code)).not.toBe("failed");
     expect(out.item).toBeDefined();
     expect((await readRequest(env.dir, "gone-video"))?.state).toBe("failed");
+  });
+});
+
+describe("Codex 复审 93078439", () => {
+  const firstCheck = (out: Record<string, unknown>) => (out.platforms as Array<{ check_id: string }>)[0].check_id;
+
+  it("P1 ABA：重跑看的输入和原检查不一样（只差破例的才算同一份）", async () => {
+    const r = await registeredVideo(env);
+    const orig = firstCheck(await runCheck(r, [planEntry(r, "xiaohongshu", ["4:3"])]));
+    const rec = await readCheckRecord(r.id, orig, env.dir) as { items: Array<{ result: string; rule?: string; overridable?: boolean }> };
+    const rule = rec.items.find((i) => i.result === "block" && i.overridable && i.rule)!.rule!;
+    const rerun = (plan: unknown) => executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan },
+      { jev: fakeJev().caller, founderOverrides: [{ platform: "xiaohongshu", rule, founder_quote: "这次横版就行" }], rerunOf: orig });
+    const same = firstCheck(await rerun(planOf(r, [planEntry(r, "xiaohongshu", ["4:3"])])));
+    expect(await rerunMatchesOriginal(r.id, orig, same, env.dir)).toBe(true);
+    const other = firstCheck(await rerun(planOf(r, [planEntry(r, "xiaohongshu", ["4:3"], { title: "B 计划的标题" })])));
+    expect(await rerunMatchesOriginal(r.id, orig, other, env.dir)).toBe(false);
+  });
+
+  it("P2 重跑出的检查删不掉 → 记作废、不成为当前检查、占位释放、拒绝里说清楚", async () => {
+    const r = await registeredVideo(env);
+    await runCheck(r, [planEntry(r, "xiaohongshu", ["4:3"])]);
+    const [it0] = await checks();
+    let release!: () => void;
+    const gate = new Promise<void>((ok) => { release = ok; });
+    let called!: () => void;
+    const started = new Promise<void>((ok) => { called = ok; });
+    const base = fakeJev().caller;
+    setChatDecideDeps({ jev: async (st, q) => { called(); await gate; return base(st, q); } });
+    setRemoveCheckFile(async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    const pending = decidePub(it0, "publish_check_override", { founder_words: "这次横版就行" });
+    await started;
+    const video = path.join(r.root, r.video);
+    await fs.writeFile(video, "被换掉的成片");
+    const old = new Date(Date.now() - 600_000);
+    await fs.utimes(video, old, old);
+    release();
+    const out = await pending;
+    expect(out).toMatchObject({ ok: false, code: "plan_changed", error: expect.stringContaining("没删掉：EACCES") });
+    const cur = (await readInbox(env.dir)).items.find((i) => i.type === "publish_check");
+    expect(cur?.detail.check_id).toBe((it0.facts as unknown as { check_id: string }).check_id);
+    expect((await readProductionDoc(r.id, env.dir))!.decisions.some((d) => d.type === "publish_check_void")).toBe(true);
+    expect(((await readProductionDoc(r.id, env.dir))!.inbox_log ?? []).some((e) => e.pending)).toBe(false);
   });
 });

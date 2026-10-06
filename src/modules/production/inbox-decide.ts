@@ -15,7 +15,7 @@ import { bodyHash, newId, readProductionDocOrEmpty } from "../../storage/product
 import type { Decision, InboxConsumption } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
 import { executeContentSave } from "../../tools/content-save.js";
-import { checkFilesUnsettled, checkInputsNow, executePublishCheck } from "../publish/review-gate/check.js";
+import { checkFilesUnsettled, checkInputsNow, executePublishCheck, rerunMatchesOriginal } from "../publish/review-gate/check.js";
 import { checksDir } from "../publish/review-gate/check-store.js";
 import { readCheckRecord } from "../publish/review-gate/check-store.js";
 import type { JevCaller } from "../publish/review-gate/jev-client.js";
@@ -109,13 +109,30 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
  * 等 Jev 期间变了 → 拒，并撤掉这次重跑出的检查（它不能变成「当前」，否则破例就落在他没看过的内容上）。
  */
 async function overrideStillValid(ctx: Ctx, result: Result): Promise<Result> {
-  const contentId = ctx.content!.id, checkId = String(ctx.item.detail.check_id);
+  const contentId = ctx.content!.id, checkId = String(ctx.item.detail.check_id), rerunId = String(result.check_id);
   const unsettledNow = await checkFilesUnsettled(contentId, checkId, ctx.dataDir);
-  const same = !unsettledNow && (await checkInputsNow(contentId, checkId, ctx.dataDir, { fresh: true }).catch(() => ({ same: false }))).same;
+  const same = !unsettledNow && (await checkInputsNow(contentId, checkId, ctx.dataDir, { fresh: true }).catch(() => ({ same: false }))).same
+    && await rerunMatchesOriginal(contentId, checkId, rerunId, ctx.dataDir);
   if (same) return result;
-  await fs.rm(path.join(checksDir(contentId, ctx.dataDir), `${String(result.check_id)}.json`), { force: true });
-  return unsettledNow ? fail("file_unsettled", "文件还在写，等一分钟再定：这次破例没记")
-    : fail("plan_changed", "等检查的这段时间计划或文件变了：破例没记，按现在的样子重新检查再看");
+  const cleanup = await dropRerun(contentId, rerunId, ctx.dataDir);
+  return unsettledNow ? fail("file_unsettled", `文件还在写，等一分钟再定：这次破例没记${cleanup}`)
+    : fail("plan_changed", `等检查的这段时间计划或文件变了：破例没记，按现在的样子重新检查再看${cleanup}`);
+}
+
+const rmFile = (p: string) => fs.rm(p, { force: true });
+let removeCheckFile = rmFile;
+/** 测试注入：模拟删不掉（EACCES / EPERM） */
+export function setRemoveCheckFile(fn: ((p: string) => Promise<void>) | null): void { removeCheckFile = fn ?? rmFile; }
+
+/** 撤掉重跑出的检查；删不掉就记一笔作废（读的时候跳过它），原因写进拒绝里 */
+async function dropRerun(contentId: string, rerunId: string, dataDir: string): Promise<string> {
+  try {
+    await removeCheckFile(path.join(checksDir(contentId, dataDir), `${rerunId}.json`));
+    return "";
+  } catch (e) {
+    await pushDecision(contentId, dataDir, { type: "publish_check_void", check_id: rerunId }, "publish_check_voided");
+    return `（重跑出的检查留档没删掉：${(e as NodeJS.ErrnoException).code ?? (e as Error).message}，已记作废，不会当成当前检查）`;
+  }
 }
 
 async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
@@ -277,7 +294,10 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
       const content = await getContent(ctx.content!.id, dataDir);
       const current = content ? (await currentChecks(content, await readProductionDocOrEmpty(content.id, dataDir), dataDir)).find((x) => x.platform === ctx.item.detail.platform) : null;
       if (current?.check_id !== result.check_id) result = fail("plan_changed", "这期间计划变了，按新计划重新看一眼", { superseded_check_id: result.check_id, current_check_id: current?.check_id ?? null });
-      else if (action === "publish_check_override") result = await overrideStillValid(ctx, result);
+      else if (action === "publish_check_override") {
+        // 核验 / 清理出错也要落到下面那步：释放占位，不留 pending
+        try { result = await overrideStillValid(ctx, result); } catch (e) { result = fail("failed", `破例落定前的核验没做成：${e instanceof Error ? e.message : String(e)}`); }
+      }
     }
     await mutateProduction(logId!, dataDir, (d) => {
     const log = (d.inbox_log ?? []).filter((e) => !(e.item_id === itemId && e.gen === gen && e.pending));

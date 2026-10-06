@@ -45,9 +45,11 @@ export async function currentChecks(content: Content, doc: ProductionDoc | null,
   const round = doc?.round ?? 1;
   const since = doc?.round_started_at ? Date.parse(doc.round_started_at) : -Infinity;
   const latest = new Map<string, CheckRec>();
+  // 作废的（破例被拒、留档删不掉）不参与「最新」：同平台取下一份
+  const voided = new Set((doc?.decisions ?? []).filter((d) => d.type === "publish_check_void" && d.check_id).map((d) => d.check_id!));
   for (const n of names) {
     const r = JSON.parse(await fs.readFile(path.join(dir, n), "utf8").catch(() => "null")) as CheckRec | null;
-    if (!r?.check_id || r.content_id !== content.id || !r.platform || !r.checked_at) continue;
+    if (!r?.check_id || voided.has(r.check_id) || r.content_id !== content.id || !r.platform || !r.checked_at) continue;
     const inRound = r.round !== undefined ? r.round === round : round === 1 || Date.parse(r.checked_at) >= since;
     if (!inRound) continue;
     const p = canonPlatform(r.platform);

@@ -293,6 +293,21 @@ export async function checkFilesUnsettled(contentId: string, checkId: string, da
   return false;
 }
 
+/** 重跑和原检查只该差在破例本身：这几项之外（计划 payload、登记、偏好、指令、依据、原话…）必须一样 */
+const OVERRIDE_PARTS = new Set(["overrides_sha", "requests_sha"]);
+
+/**
+ * 破例重跑出的检查，看的还是原检查那份输入吗（防 ABA：先读 A、重跑读到 B、落定前又改回 A）。
+ * 比两份留档：payload 哈希相同，指纹各部分除破例相关的之外都相同。读不到 → false。
+ */
+export async function rerunMatchesOriginal(contentId: string, originalId: string, rerunId: string, dataDir?: string): Promise<boolean> {
+  const [a, b] = await Promise.all([readCheckRecord(contentId, originalId, dataDir), readCheckRecord(contentId, rerunId, dataDir)]) as Array<Rec | null>;
+  const pa = a?.fingerprint_parts as Record<string, unknown> | undefined, pb = b?.fingerprint_parts as Record<string, unknown> | undefined;
+  if (!a || !b || !pa || !pb || a.payload_hash !== b.payload_hash) return false;
+  const keys = new Set([...Object.keys(pa), ...Object.keys(pb)].filter((k) => !OVERRIDE_PARTS.has(k)));
+  return [...keys].every((k) => JSON.stringify(pa[k]) === JSON.stringify(pb[k]));
+}
+
 /** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */
 function blockedDetail(results: PlatformResult[], planBlocked: boolean): string {
   const parts = results.filter((r) => r.verdict === "block").map((r) => {

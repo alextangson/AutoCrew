@@ -134,6 +134,7 @@ export type DecisionType =
   | "cover_group_retire" // 「这组不要了」：该组作废，文件不删
   | "publish_check_confirm" // 「发之前再看一眼」点「没问题」：只记一笔，不是硬门
   | "publish_check_revise" // 「有几处要改…」：一句话给 agent
+  | "publish_check_void" // 破例被拒、重跑出的检查又删不掉：作废它，不让它成为「当前」检查
   | "script_revise" // 「稿子还要改…」：一句话给 agent
   | "inbox_ack"; // 只确认、不改事实的条目（「对，就是它」自动挂上的原片、「让 agent 补」）
 
