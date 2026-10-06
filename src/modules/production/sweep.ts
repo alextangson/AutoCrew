@@ -32,7 +32,9 @@ async function sweepOnce(dataDir: string): Promise<SweepResult> {
   const out = await runUnlessUpdating("我的内容对账", () => runExclusive(async (): Promise<SweepResult> => {
     // 先对账再排文件夹（本体 §4）：未启用本体时对账只算影子差异、不写
     const r = await reconcileAll(dataDir).then((x) => ({ ok: true as const, x }), (e: unknown) => ({ ok: false as const, error: msg(e) }));
-    const view = await syncMyContentView(dataDir).then((v) => v.errors, (e: unknown) => [`我的内容没同步成：${msg(e)}`]);
+    // 「我的内容」是全库一份视图、归默认工作区所有（syncMyContentView 不传 dataDir = 默认工作区）：
+    // 不管从哪个工作区触发都只同步它，别的工作区不能改写这份视图和它的清单
+    const view = await syncMyContentView().then((v) => v.errors, (e: unknown) => [`我的内容没同步成：${msg(e)}`]);
     return r.ok
       ? { errors: r.x.errors.map((e) => ({ title: e.title, error: e.error })), warnings: r.x.warnings, view_errors: view }
       : { error: r.error, errors: [], warnings: [], view_errors: view };
@@ -55,7 +57,12 @@ export async function runSweep(dataDir = getDataDir()): Promise<SweepResult & { 
   return p;
 }
 
+/** 最近一次定时巡检没跑起来的原因（比如资料库断开）；对话里 sync 一并给出，跑成一次就清掉 */
+let scheduledError: { at: string; error: string } | null = null;
+export function sweepHealth(): { at: string; error: string } | null { return scheduledError; }
+
 function logResult(r: SweepResult): void {
+  scheduledError = r.error ? { at: new Date().toISOString(), error: r.error } : null;
   if (r.error) console.error("[production] 对账失败:", r.error);
   if (r.errors.length) console.error(`[production] 对账有 ${r.errors.length} 条失败:${r.errors[0].title} ${r.errors[0].error}`);
   if (r.view_errors.length) console.error(`[my-content] 对账有 ${r.view_errors.length} 处出错:${r.view_errors[0]}`);
@@ -63,7 +70,13 @@ function logResult(r: SweepResult): void {
 
 /** 守护进程用：启动跑一轮，之后每 30 分钟一轮。返回定时器（stop 时清掉） */
 export function startSweepLoop(dataDir: () => string = () => getDataDir(), timers: { setInterval: typeof setInterval } = { setInterval }): NodeJS.Timeout {
-  const tick = () => { void runSweep(dataDir()).then(logResult, (e: unknown) => console.error("[my-content] 对账失败:", msg(e))); };
+  // 工作区在已捕获的异步链里解析：资料库断开时 getDataDir() 抛错只记下来，不把守护进程带走
+  const tick = () => {
+    void Promise.resolve().then(() => runSweep(dataDir())).then(logResult, (e: unknown) => {
+      scheduledError = { at: new Date().toISOString(), error: msg(e) };
+      console.error("[my-content] 对账失败:", msg(e));
+    });
+  };
   tick();
   const t = timers.setInterval(tick, SWEEP_INTERVAL_MS);
   t.unref?.();

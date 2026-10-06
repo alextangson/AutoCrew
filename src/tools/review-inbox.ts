@@ -10,7 +10,7 @@ import { getDataDir } from "../storage/local-store.js";
 import { chatDecide, chatRevoke, type ChatDecideInput } from "../modules/production/chat-approval/decide.js";
 import { listForChat, sweepDecided } from "../modules/production/chat-approval/present.js";
 import { attachInbox, listInbox } from "../modules/production/intake.js";
-import { runSweep } from "../modules/production/sweep.js";
+import { runSweep, sweepHealth } from "../modules/production/sweep.js";
 
 const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync"] as const;
 const DECISIONS = ["answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate"] as const;
@@ -62,7 +62,9 @@ function inputOf(params: Record<string, unknown>): ChatDecideInput {
 
 /** 「同步一下」：跑完才回（单飞：正在跑就等那一轮）；整轮没跑成要看得见 */
 async function syncNow(dataDir: string): Promise<Record<string, unknown>> {
-  const r = await runSweep(dataDir);
+  const r = await runSweep(dataDir).catch((e: unknown) => ({ errors: [], warnings: [], view_errors: [], error: e instanceof Error ? e.message : String(e), skipped: undefined, joined: undefined }));
+  const health = sweepHealth();
+  if (health && r.error === undefined && !r.skipped) return { ok: true, ...(r.joined ? { joined: true } : {}), errors: r.errors, warnings: r.warnings, view_errors: r.view_errors, scheduled_error: health };
   if (r.skipped) return { ok: false, code: "updating", error: "正在更新 AutoCrew，这一轮巡检跳过了：更新完再说「同步一下」" };
   if (r.error) return { ok: false, code: "sweep_failed", error: `巡检没跑成：${r.error}` };
   return { ok: true, ...(r.joined ? { joined: true } : {}), errors: r.errors, warnings: r.warnings, view_errors: r.view_errors };

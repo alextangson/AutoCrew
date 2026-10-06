@@ -133,6 +133,17 @@ describe("inbox_attach", () => {
     expect(await tool({ ...base, request_id: "intake-8", confirm_other: true, founder_words: "对，还是挂甲稿" })).toMatchObject({ ok: true, state: "accepted" });
   });
 
+  it("按 id 点名已发布 / 已归档的稿 → not_attachable 写明原因，什么都不挂", async () => {
+    await put(path.join(env.inbox, "IMG_0010.mov"), "x");
+    const sha = (await list()).files[0].sha256;
+    for (const status of ["published", "archived"] as const) {
+      const c = await videoContent(env, `不能挂的${status}稿`, status);
+      const r = await tool({ action: "inbox_attach", file: "IMG_0010.mov", sha256: sha, content_id: c.id, founder_words: "是这条", request_id: `na-${status}` });
+      expect(r).toMatchObject({ ok: false, code: "not_attachable", error: expect.stringContaining(status) });
+      expect(await arolls(c.id)).toEqual([]);
+    }
+  });
+
   it("缺原话 / 缺 sha256 / 缺 request_id → 拒，不动任何东西", async () => {
     const c = await approved("参数不全的稿");
     await put(path.join(env.inbox, "IMG_0009.mov"), "x");

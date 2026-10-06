@@ -75,9 +75,12 @@ function pickFile(files: InboxFile[], q: string): Pick<InboxFile> {
 
 function pickContent(contents: Content[], q: string): Pick<Content> {
   const live = contents.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && !isImportedHistory(c));
-  const byId = live.find((c) => c.id === q);
-  if (byId) return { ok: true, value: byId };
   const choices = choicesOf(contents);
+  const byId = live.find((c) => c.id === q) ?? contents.find((c) => c.id === q);
+  if (byId) {
+    if (choices.some((c) => c.id === byId.id)) return { ok: true, value: byId };
+    return { ok: false, result: fail("not_attachable", `《${byId.title}》现在不能挂原片（${byId.deletedAt ? "已删除" : `状态：${byId.status}`}）：只有还没过剪辑的视频稿能挂，问创始人是不是别的稿`, { candidates: choices }) };
+  }
   const byTitle = choices.filter((c) => c.title === q);
   if (byTitle.length === 1) return { ok: true, value: live.find((c) => c.id === byTitle[0].id)! };
   const near = choices.filter((c) => q && (c.title.includes(q) || q.includes(c.title)));
