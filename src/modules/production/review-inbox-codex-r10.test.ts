@@ -38,7 +38,7 @@ describe("P2 拦不拦按所选那一版", () => {
 });
 
 describe("P2 封面字不从别的组借", () => {
-  it("最新组有字、旧组没字：选旧组不带字 → cover_text_required；带了字 → 记的就是那句", async () => {
+  it("最新组有字、旧组没字：选旧组不带字 → 批准不带封面字（不借新组的字）；带了字 → 记的就是那句", async () => {
     const c = await editing("封面字按组");
     await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.chatcut, "o1.png"), png(900, 1200, "o1")), await put(path.join(env.chatcut, "o2.png"), png(1200, 900, "o2"))], request_id: "old", version: 1 });
     await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.chatcut, "n1.png"), png(900, 1200, "n1")), await put(path.join(env.chatcut, "n2.png"), png(1200, 900, "n2"))], cover_text: "新组的字", request_id: "new", version: 2 });
@@ -46,10 +46,18 @@ describe("P2 封面字不从别的组借", () => {
     const groups = it0.detail.groups as Array<{ group_id: string; text: string }>;
     const old = groups.find((g) => !g.text)!;
     expect(old).toBeTruthy();
-    expect(await decideItem({ item_id: it0.item_id, gen: it0.gen, action: "pick_cover", group_id: old.group_id, content_id: c.id }, env.dir)).toMatchObject({ ok: false, code: "cover_text_required" });
-    expect(await decideItem({ item_id: it0.item_id, gen: it0.gen, action: "pick_cover", group_id: old.group_id, cover_text: "", content_id: c.id }, env.dir)).toMatchObject({ ok: false, code: "cover_text_required" });
-    const it1 = await item(c.id, "cover_pick");
-    expect(await decideItem({ item_id: it1.item_id, gen: it1.gen, action: "pick_cover", group_id: old.group_id, cover_text: "旧组新写的字", content_id: c.id }, env.dir)).toMatchObject({ ok: true });
-    expect((await doc(c.id)).decisions.find((d) => d.type === "cover_approval")).toMatchObject({ cover_text: "旧组新写的字", group_id: old.group_id });
+    expect(await decideItem({ item_id: it0.item_id, gen: it0.gen, action: "pick_cover", group_id: old.group_id, content_id: c.id }, env.dir)).toMatchObject({ ok: true });
+    const first = (await doc(c.id)).decisions.find((d) => d.type === "cover_approval")!;
+    expect(first).toMatchObject({ group_id: old.group_id });
+    expect(first.cover_text).toBeUndefined();
   });
+  it("组里有字，创始人故意清空交 \"\" → 批准不带封面字，不回退到组里的字", async () => {
+    const c = await editing("清空封面字");
+    await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.chatcut, "k1.png"), png(900, 1200, "k1")), await put(path.join(env.chatcut, "k2.png"), png(1200, 900, "k2"))], cover_text: "组里的字", request_id: "g" });
+    const it0 = await item(c.id, "cover_pick");
+    const pick = it0.actions.find((a) => a.action === "pick_cover")!;
+    expect(await decideItem({ item_id: it0.item_id, gen: it0.gen, action: "pick_cover", ...pick.params, cover_text: "", content_id: c.id }, env.dir)).toMatchObject({ ok: true });
+    expect((await doc(c.id)).decisions.find((d) => d.type === "cover_approval")!.cover_text).toBeUndefined();
+  });
+
 });

@@ -541,7 +541,7 @@ describe("整分支审 10：按选中的那一版 / 那一组交", () => {
     const pbtn = (t: string) => [...el.querySelectorAll(".ri-peek button")].find((b) => b.textContent === t);
     await click(pbtn("用这组"));
     expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-1" });
-    expect(String(decided.at(-1)!.cover_text ?? "")).toBe("");
+    expect(decided.at(-1)).toHaveProperty("cover_text", "");
     await openRow("封面做好了，挑一张");
     await click([...el.querySelectorAll(".ri-pill span")][1]);
     const input2 = el.querySelector(".ri-peek .ri-textline") as HTMLInputElement;
@@ -667,6 +667,12 @@ describe("收件箱里没对上的视频", () => {
     await openRow("收件箱里有个视频没对上：A.MOV");
     await click(btn("不是原片，忽略"));
     expect(decided.at(-1)).toMatchObject({ action: "ignore_inbox_file", path: "/i/A.MOV", expect_sha: "s" });
+  });
+  it("对账后文件变过：写明变过，不显示开头转写", async () => {
+    await mountInbox([file({ changed: true, transcript_head: null, duration_ms: null, guesses: [] }, false)]);
+    await openRow("收件箱里有个视频没对上：A.MOV");
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("上次核对之后变过");
+    expect(el.querySelector(".ri-peek")!.textContent).not.toContain("开头说的");
   });
   it("旧报告只有猜的标题：只显示，不给「是这条」", async () => {
     await mountInbox([file({ guess: ["老标题"] }, false)]);

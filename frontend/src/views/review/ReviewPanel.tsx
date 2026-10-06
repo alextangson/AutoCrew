@@ -240,6 +240,7 @@ function InboxFileBody(p: { item: InboxItem; act: Act }) {
     <Props rows={[["文件", String(d.name ?? "")], ["时长", typeof d.duration_ms === "number" ? clock(d.duration_ms) : null],
       ["文件时间", typeof d.mtime_ms === "number" ? new Date(d.mtime_ms).toLocaleString() : null], ["为什么", usedBy && d.reason ? String(d.reason) : null]]} />
     <div className="ri-preview"><video controls preload="metadata" src={inboxFileUrl(p.item.item_id)} /></div>
+    {Boolean(d.changed) && <p className="ri-note">这个文件在上次核对之后变过：先看片，再从下面选是哪条</p>}
     {typeof d.transcript_head === "string" && d.transcript_head && <p className="ri-question">开头说的：「{d.transcript_head}」</p>}
     {!usedBy && guesses.length > 0 && <ul className="ri-check">{guesses.map((g) => {
       const a = p.item.actions.find((x) => x.action === "assign" && x.params?.to === g.content_id);

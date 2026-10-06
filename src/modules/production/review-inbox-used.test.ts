@@ -49,6 +49,59 @@ describe("收件箱里字节已是某条稿的原片", () => {
   });
 });
 
+/** 在测试的 ChatCut 工程目录里放一个按绝对路径引用 file 的素材；broken = 写一半的 JSON */
+async function chatcutRef(file: string, broken = false) {
+  const dir = path.join(path.dirname(env.dir), "chatcut-projects", "p1", "project.chatcutproject");
+  await put(path.join(dir, "project.json"), JSON.stringify({ name: "第二点 v003" }));
+  await put(path.join(dir, "assets", "video", "a.json"), broken ? "{\"path\": " : JSON.stringify({ path: file }));
+}
+
+describe("收件箱原片被别处按路径用着：不挪", () => {
+  it("ChatCut 工程引用收件箱这份（另有拷贝归了稿）：不挪、不列", async () => {
+    const c = await videoContent(env, "工程在用的稿");
+    await founderApprove(env, c.id);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "工程在用的稿-原片.mov"), "cc-bytes"), request_id: "a" });
+    const copy = await put(path.join(env.inbox, "ED7AF053.MOV"), "cc-bytes");
+    await chatcutRef(copy);
+    await reconcileAll(env.dir);
+    expect(await exists(copy)).toBe(true);
+    expect(await exists(path.join(env.inbox, USED_DIR))).toBe(false);
+    expect(await inboxFiles()).toEqual([]);
+  });
+  it("引用核不了（素材 JSON 写了一半）：不挪，列出来写明原因", async () => {
+    const c = await videoContent(env, "坏工程原片的稿");
+    await founderApprove(env, c.id);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "坏工程原片的稿-原片.mov"), "uv-bytes"), request_id: "a" });
+    const copy = await put(path.join(env.inbox, "UV.MOV"), "uv-bytes");
+    await chatcutRef(copy, true);
+    await reconcileAll(env.dir);
+    expect(await exists(copy)).toBe(true);
+    const [it] = await inboxFiles();
+    expect(String(it.detail.reason)).toContain("没读到 ChatCut 工程信息");
+  });
+  it("原地收的（accepted 原片的路径就是收件箱这份）：不挪、不列", async () => {
+    const c = await videoContent(env, "就地原片的稿");
+    await founderApprove(env, c.id);
+    const file = await put(path.join(env.inbox, "就地原片的稿-原片.mov"), "ip-bytes");
+    await chatcutRef(file);
+    const r = await record(env, { content_id: c.id, kind: "aroll", path: file, request_id: "a" });
+    expect(r).toMatchObject({ ok: true, state: "accepted" });
+    await fs.rm(path.join(path.dirname(env.dir), "chatcut-projects"), { recursive: true });
+    await reconcileAll(env.dir);
+    expect(await exists(file)).toBe(true);
+    expect(await inboxFiles()).toEqual([]);
+  });
+  it("「忽略」：ChatCut 工程在用就不挪，说原因", async () => {
+    await videoContent(env, "等原片的稿");
+    const file = await put(path.join(env.inbox, "IMG_5555.mov"), "ref-bytes");
+    await reconcileAll(env.dir);
+    const [it] = await inboxFiles();
+    await chatcutRef(file);
+    expect(await decideItem({ item_id: it.item_id, gen: it.gen, action: "ignore_inbox_file" }, env.dir)).toMatchObject({ ok: false, code: "in_use" });
+    expect(await exists(file)).toBe(true);
+  });
+});
+
 describe("没对上的视频", () => {
   async function setup() {
     const target = await videoContent(env, "等原片的稿");
@@ -79,6 +132,16 @@ describe("没对上的视频", () => {
     expect(await exists(file)).toBe(false);
     expect(await exists(path.join(env.inbox, USED_DIR, "IMG_9999.mov"))).toBe(true);
     expect(await inboxFiles()).toEqual([]);
+  });
+  it("对账之后文件变了：不给报告里的证据和「是这条」，标出变过，只留下拉", async () => {
+    const { file, it } = await setup();
+    expect(it.detail.changed).toBe(false);
+    expect(it.detail.duration_ms).toBe(12_000);
+    await put(file, "different-bytes");
+    const [now] = await inboxFiles();
+    expect(now.detail).toMatchObject({ changed: true, duration_ms: null, transcript_head: null, guesses: [], guess: [] });
+    expect(now.actions.filter((a) => a.action === "assign").map((a) => a.params?.to)).toEqual([undefined]);
+    expect((now.detail.choices as unknown[]).length).toBeGreaterThan(0);
   });
   it("预览只给报告里列着的文件", async () => {
     const { it } = await setup();

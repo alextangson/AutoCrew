@@ -55,10 +55,12 @@ describe("创始人决定（§2.4）", () => {
     expect((await readProductionDoc(s.c.id, env.dir))!.decisions.filter((d) => d.type === "cut_approval")).toHaveLength(1);
   });
 
-  it("封面：两个比例都要（E10）；封面字当场要有（E9），报上来的默认字可用", async () => {
+  it("封面：两个比例都要（E10）；没封面字也能批（不记字），报上来的默认字可用", async () => {
     const s = await edited();
     expect(await decide(s.c.id, "pick_cover", { cover_3x4_fact_id: s.c34.fact_id, cover_3x4_sha: s.c34.sha })).toMatchObject({ ok: false, code: "both_ratios_required" });
-    expect(await pick(s)).toMatchObject({ ok: false, code: "cover_text_required" });
+    const bare = await pick(s);
+    expect(bare).toMatchObject({ ok: true });
+    expect((bare.decision as { cover_text?: string }).cover_text).toBeUndefined();
     expect(await pick(s, "AI 又忘了？")).toMatchObject({ ok: true });
     const withDefault = await edited({ coverText: "默认字" });
     expect(await pick(withDefault)).toMatchObject({ ok: true, decision: { cover_text: "默认字" } });

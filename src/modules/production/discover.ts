@@ -26,6 +26,7 @@ import { cachedSha, VIDEO_EXT, type Seen } from "./observe.js";
 import type { InboxStatus, WatchStatus } from "./reconcile.js";
 import { movableRoots, now, probe } from "./roots.js";
 import { arollUsedBy, moveToUsed } from "./inbox-used.js";
+import { chatcutHold, unverifiedText } from "./chatcut-refs.js";
 import { readTranscript } from "./match/cache.js";
 import { folderProblem, readArollSources, type WatchFolder } from "./sources.js";
 
@@ -104,15 +105,22 @@ function headOf(text: string): string {
   return parts.length > 80 ? `${parts.slice(0, 80)}…` : parts;
 }
 
-/** 字节已经是某条稿的原片：挪进「已用过/」，不再列；挪不走就列出来并写明原因。返回 true = 这个文件处理完了 */
+/**
+ * 字节已经是某条稿的原片：不再列成「没对上」。只有另有一份拷贝归了那条稿、而且没人按路径引用收件箱这份时才挪进「已用过/」：
+ * 原地收的（accepted 原片的路径就是它）、ChatCut 工程按绝对路径在用的都留在原处。核不了引用 / 挪不走 → 列出来写明原因，不盲挪。
+ * 返回 true = 这个文件处理完了。
+ */
 async function settleUsed(dataDir: string, f: Found, out: Discovery): Promise<boolean> {
-  const owner = await arollUsedBy(dataDir, f.sha256);
+  const owner = await arollUsedBy(dataDir, f.sha256, f.file);
   if (!owner) return false;
+  if (owner.in_place) return true;
+  const keep = (reason: string) => out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: [],
+    used_by: { content_id: owner.content_id, title: owner.title }, reason });
+  const hold = await chatcutHold(f.file).catch((e: unknown) => ({ project: null, unverified: unverifiedText(errCode(e)) }));
+  if (hold.project) return true;
+  if (hold.unverified) { keep(`已经挂在《${owner.title}》上，但没挪走：${hold.unverified}`); return true; }
   try { await moveToUsed(f.file); }
-  catch (e) {
-    out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: [], used_by: owner,
-      reason: `已经挂在《${owner.title}》上，但没挪走：${errCode(e)}` });
-  }
+  catch (e) { keep(`已经挂在《${owner.title}》上，但没挪走：${errCode(e)}`); }
   return true;
 }
 

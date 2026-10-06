@@ -22,6 +22,7 @@ import { scopedId, type InboxAction, type InboxItem } from "./inbox.js";
 import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
 import { moveToUsed } from "./inbox-used.js";
+import { chatcutHold } from "./chatcut-refs.js";
 import { cachedSha } from "./observe.js";
 import { mutateProduction } from "./service.js";
 import { canonPlatform } from "./receipts.js";
@@ -120,6 +121,10 @@ async function ignoreInboxFile(file: string, expectSha: string): Promise<Result>
   const now = await cachedSha(file).catch(() => null);
   if (!now) return fail("gone", "这个文件已经不在收件箱了，刷新再看");
   if (now.sha256 !== expectSha) return fail("stale", "这个文件刚变过，刷新再看");
+  // ChatCut 工程按绝对路径在用它：挪了工程就断，不挪；核不了也不盲挪
+  const hold = await chatcutHold(file).catch((e: unknown) => ({ project: null, unverified: e instanceof Error ? e.message : String(e) }));
+  if (hold.project) return fail("in_use", `ChatCut 工程《${hold.project}》在用这个文件，没挪`);
+  if (hold.unverified) return fail("move_failed", `没挪走：${hold.unverified}`);
   try { return { ok: true, moved_to: await moveToUsed(file) }; }
   catch (e) { return fail("move_failed", `没挪走：${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`); }
 }
@@ -187,8 +192,8 @@ async function run(ctx: Ctx): Promise<Result> {
     case "pick_cover": {
       const g = chosenGroup();
       if (!g) return fail("stale", "这组不在面板上了，刷新再看");
-      // 封面字只取这次交上来的；没给就由所选那一组自己的字兜底，不拿条目默认参数里别的组的字（整分支审 10 P2）
-      return founderDecision(c!.id, "pick_cover", { group_id: g, ...(str(params.cover_text) ? { cover_text: str(params.cover_text) } : {}) }, dataDir);
+      // 封面字只取这次交上来的（空串 = 创始人故意清空，不兜底）；没交才由所选那一组自己的字兜底，不拿条目默认参数里别的组的字（整分支审 10 P2）
+      return founderDecision(c!.id, "pick_cover", { group_id: g, ...(typeof params.cover_text === "string" ? { cover_text: params.cover_text.trim() } : {}) }, dataDir);
     }
     case "i_published": return founderDecision(c!.id, "i_published", { platform: spec.params!.platform, ...(noteOf(ctx) ? { url: noteOf(ctx) } : str(params.url) ? { url: str(params.url) } : {}) }, dataDir);
     default:

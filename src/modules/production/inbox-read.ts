@@ -115,18 +115,23 @@ async function inboxFileItems(dataDir: string, contents: Content[]): Promise<Inb
     const gen = genOf([item_id, snapshot]);
     if (consumed.has(`${item_id}\u0000${gen}`)) continue;
     const base = { path: f.path, expect_sha: now.sha256 };
-    const guesses = (f.guesses ?? []).filter((g) => live.has(g.content_id)).slice(0, 3);
+    // 报告里的证据（猜测、时长、转写、「已经用过」）只在字节还是报告那份时才给；文件变过 = 只给文件本身和下拉
+    const same = f.sha256 === now.sha256;
+    const usedBy = same ? f.used_by ?? null : null;
+    const guesses = same ? (f.guesses ?? []).filter((g) => live.has(g.content_id)).slice(0, 3) : [];
     out.push({
       item_id, gen, type: "inbox_file" as const, content_id: null, title: f.name,
-      summary: f.used_by ? `收件箱里的视频已经用过了，但没挪走：${f.name}` : `收件箱里有个视频没对上：${f.name}`,
+      summary: usedBy ? `收件箱里的视频已经用过了，但没挪走：${f.name}` : `收件箱里有个视频没对上：${f.name}`,
       waiting: null, agent_waiting: false, since: new Date(now.mtime_ms).toISOString(), rank: 1 as const,
       actions: [
-        ...(f.used_by ? [] : [{ action: "assign", label: "指定给…", role: "primary" as const, params: base },
+        ...(usedBy ? [] : [{ action: "assign", label: "指定给…", role: "primary" as const, params: base },
           ...guesses.map((g) => ({ action: "assign", label: "是这条", role: "secondary" as const, params: { ...base, to: g.content_id } }))]),
         { action: "ignore_inbox_file", label: "不是原片，忽略", role: "quiet" as const, params: base },
       ],
-      detail: { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: f.duration_ms ?? null, transcript_head: f.transcript_head ?? null,
-        reason: f.reason ?? null, used_by: f.used_by ?? null, guess: f.guess, guesses, choices: f.used_by ? [] : choices },
+      detail: same
+        ? { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: f.duration_ms ?? null, transcript_head: f.transcript_head ?? null,
+          reason: f.reason ?? null, used_by: usedBy, guess: f.guess, guesses, choices: usedBy ? [] : choices, changed: false }
+        : { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: null, transcript_head: null, reason: null, used_by: null, guess: [], guesses: [], choices, changed: true },
     });
   }
   return out;

@@ -147,7 +147,7 @@ function coverView(ctx: Ctx): ProductionDoc {
 
 /**
  * 用这一组封面（review-inbox §6.1，Codex 10）：服务端校验两张属于同一有效组、没作废、每个比例恰好一张；
- * 封面字没写就用这组报上来的默认字（与面板展示的一致），都没有就要创始人补（E9）。
+ * 封面字：交了就用交的（空串 = 不要封面字）；没交就用这组报上来的默认字；都没有也能批，不记封面字。
  * 带 group_id；旧工作台带两张的 fact id + sha，也必须同属一组。
  */
 async function pickCover(ctx: Ctx): Promise<Result> {
@@ -166,13 +166,13 @@ async function pickCover(ctx: Ctx): Promise<Result> {
   }
   if (!g.complete) return fail("both_ratios_required", g.ambiguous ? `${g.group.label} 里同一个比例不止一张，说不清用哪张：让 agent 重新成对记一组` : `${g.group.label} 还差${g.slots["3:4"].length ? " 4:3" : " 3:4"}`);
   const a = g.slots["3:4"][0], b = g.slots["4:3"][0];
-  const text = str(ctx.params.cover_text) || g.text;
-  if (!text) return fail("cover_text_required", "选封面时要写封面字");
+  // 明确交了封面字（包括故意清空成 ""）就照交的来；没交才用这组自带的字。没有字也能批，下游封面字检查记「没查」
+  const text = typeof ctx.params.cover_text === "string" ? ctx.params.cover_text.trim() : (g.text ?? "").trim();
   const bh = bodyHash(ctx.content.body);
   // 幂等键带组身份（Codex 审 2a-1 r6 P2）：同一对图的另一组 = 新批准，作废保护跟着当前批准走
-  const same = sameDecision(view, "cover_approval", (d) => d.group_id === g!.group.id && d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
+  const same = sameDecision(view, "cover_approval", (d) => d.group_id === g!.group.id && d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && (d.cover_text ?? "") === text && d.body_hash === bh
     && validCoverApproval(view, ctx.content.body)?.id === d.id);
-  return { ok: true, group_id: g.group.id, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh, group_id: g.group.id }, "cover_picked")) };
+  return { ok: true, group_id: g.group.id, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, ...(text ? { cover_text: text } : {}), body_hash: bh, group_id: g.group.id }, "cover_picked")) };
 }
 
 /** 「这组不要了」（§6.3）：已批的那组不能作废，先撤回批准；文件不删 */
