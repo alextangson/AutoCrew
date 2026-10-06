@@ -18,7 +18,6 @@ import { launchedByLauncher, launchVia } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
-import { syncMyContentView } from "../src/storage/my-content-view.js";
 import { archivePublished } from "../src/storage/nas-archive.js";
 import { backupPublished } from "../src/storage/nas-backup.js";
 import { runExclusive } from "../src/storage/storage-mutex.js";
@@ -52,9 +51,8 @@ import { migratePlaintextClaims } from "../src/storage/claims.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { ensureProductionReady } from "../src/modules/production/service.js";
 // 原片核对作业的处理器与「重启后 pending_match 重新入队」钩子（1b §3-5）：在首次 ensureProductionReady 之前注册
-import "../src/modules/production/match/pending.js";
-import "../src/modules/production/attach-check.js";
-import { reconcileAll } from "../src/modules/production/reconcile.js";
+import "../src/modules/production/legacy-discovery.js";
+import { startSweepLoop } from "../src/modules/production/sweep.js";
 import { resumeEnable } from "../src/modules/production/enable.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
 import { listWorkspaces } from "../src/desktop/workspace-store.js";
@@ -698,28 +696,9 @@ server.listen(PORT, HOST, () => {
   radarTimer = setInterval(tickRadar, RADAR_CYCLE_INTERVAL_MS);
   radarTimer.unref(); // 定时器不该成为进程退不掉的理由(stop 路径另见 server "close")
 
-  // 「我的内容」视图(storage-layout.md 2026-09-27):启动对账一次 + 每 60 秒一次。
-  // 单飞:上一轮没跑完就跳过本 tick;出错只记日志,单条错误由对账自己写进 ⚠️ 同步出错.txt。
-  let myContentRunning = false;
-  const tickMyContent = () => {
-    if (myContentRunning) return;
-    myContentRunning = true;
-    // 先对账再排文件夹(本体 §4):未启用本体时对账只算影子差异、不写
-    void runUnlessUpdating("我的内容对账", () => runExclusive(async () => {
-      const r = await reconcileAll(getDataDir()).catch((err) => {
-        console.error("[production] 对账失败:", err instanceof Error ? err.message : err);
-        return null;
-      });
-      if (r?.errors.length) console.error(`[production] 对账有 ${r.errors.length} 条失败:${r.errors[0].title} ${r.errors[0].error}`);
-      return syncMyContentView();
-    }))
-      .then((r) => { if (r?.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
-      .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
-      .finally(() => { myContentRunning = false; });
-  };
-  tickMyContent();
-  myContentTimer = setInterval(tickMyContent, 60_000);
-  myContentTimer.unref();
+  // 「我的内容」视图 + 安全巡检(手动收件 spec 2026-10-06):启动一次 + 每 30 分钟一次;对话里「同步一下」走同一个单飞入口。
+  // 不再扫收件箱 / 下载 / 导出目录:空闲时不做任何发现工作。
+  myContentTimer = startSweepLoop();
 
   // NAS 备份 + 归档(storage-layout.md「NAS 归档」;docs/specs/2026-09-29-nas-backup-on-publish.md):
   // 启动 2 分钟后一轮,之后每 24 小时一轮。每轮先把到点的已发布稿增量备份到 NAS,再做 7 天腾空间。

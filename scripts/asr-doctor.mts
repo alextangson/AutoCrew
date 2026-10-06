@@ -1,5 +1,5 @@
 /**
- * `autocrew doctor` 的转写环境一项（1b §10）：复用比对器的 `funasrNotReady`（uv / .venv / 模型），
+ * `autocrew doctor` 的转写环境一项：复用认稿转写器的 `funasrNotReady`（uv / .venv / 模型），
  * 只输出 JSON 结论与「怎么装」。纯检查：不装、不预热（预热是约 1GB 下载，要创始人自己按下）。
  */
 import { funasrNotReady, notReadyFix } from "../src/modules/production/match/transcribe.js";

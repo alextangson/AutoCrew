@@ -13,7 +13,7 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
 import { readInbox } from "../modules/production/inbox-read.js";
-import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, openInboxFileMedia, type AttachmentOpen } from "../modules/production/inbox-attachment.js";
+import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, type AttachmentOpen } from "../modules/production/inbox-attachment.js";
 import { createReadStream } from "node:fs";
 import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
@@ -126,15 +126,6 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }
-    // 收件箱里没对上的视频（只认对账报告列着的、在收件箱顶层的文件）
-    if (p === "/api/inbox/file-media" && req.method === "GET") {
-      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
-      const item = url.searchParams.get("item_id") ?? "";
-      if (!/^inbox_file:[0-9a-f]{16}$/.test(item)) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
-      try { sendMedia(req, res, await openInboxFileMedia(item, await deps.resolveDataDir())); }
-      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
-      return true;
-    }
     if (p === "/api/data" && req.method === "GET") {
       if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
       try { send(res, 200, { ok: true, data: await dataPage(await deps.resolveDataDir()) }); }
@@ -204,7 +195,7 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       });
       return true;
     }
-    // 「原片从哪里找」（1b §5）：读只要会话；写只收同源浏览器会话（这些是可搬入根，§14-7）
+    // 「原片放哪里」：读只要会话；写（剪映导出目录）只收同源浏览器会话（可搬入根，§14-7）
     if (p === "/api/board/aroll-sources" && req.method === "GET") {
       if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
       try { send(res, 200, await arollSourcesView(await deps.resolveDataDir())); }
@@ -219,18 +210,6 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       await post(req, res, (b, dir) => (typeof b.fact_id === "string" && isContentId(String(b.content_id ?? ""))
         ? revealFactPath(String(b.content_id), b.fact_id, dir, deps.reveal)
         : revealSourcePath(String(b.path ?? ""), dir, deps.reveal)));
-      return true;
-    }
-    if (p === "/api/board/choose-folder" && req.method === "POST") {
-      await post(req, res, async () => {
-        const chooser = pullDeps().dialog.chooseFolder;
-        if (!chooser) return { ok: false, code: "unavailable", error: "这台机器上弹不出选择文件夹的窗口，请把路径贴进来" };
-        const r = await chooser({ prompt: "选一个放原片的文件夹", timeoutSec: 300 });
-        if (r.kind === "ok") return { ok: true, path: r.value };
-        if (r.kind === "cancel") return { ok: false, code: "cancelled", error: "没选文件夹" };
-        if (r.kind === "timeout") return { ok: false, code: "timeout", error: "选择窗等太久关掉了，再点一次" };
-        return { ok: false, code: "unavailable", error: `弹不出选择文件夹的窗口（${r.reason}），请把路径贴进来` };
-      });
       return true;
     }
     if (p === "/api/board/ontology/enable" && req.method === "POST") {

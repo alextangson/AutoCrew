@@ -30,26 +30,14 @@ export interface VideoSettings {
    * 不猜缺省值——没设就拒绝项目外的成片候选，并告诉创始人在哪里设。
    */
   jianyingExportDir?: string;
-  /** 「暂停自动找原片」（1b §2）：只停自己去找的转写，agent record 与卡片挂载照常。写口在设置页（1b 段 B） */
-  arollAutoFindPaused?: boolean;
-  /**
-   * 原片监视文件夹（1b §5）：存 realpath + 目录身份（dev/ino），使用时复核。scan = 给建议；allow_move = 允许 agent record 直接搬入。
-   * 只收同源浏览器会话的写入（`production/sources.ts`），`video:settings_set` 一律拒。
-   */
-  arollWatchFolders?: WatchFolder[];
-}
-
-export interface WatchFolder { path: string; scan: boolean; allow_move: boolean; dev: number; ino: number }
-
-function watchFolders(raw: unknown): WatchFolder[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const ok = raw.filter((f): f is WatchFolder => Boolean(f) && typeof f.path === "string" && path.isAbsolute(f.path)
-    && typeof f.dev === "number" && typeof f.ino === "number").map((f) => ({ path: f.path, scan: f.scan === true, allow_move: f.allow_move === true, dev: f.dev, ino: f.ino }));
-  return ok.length ? ok : undefined;
 }
 
 const VIDEO_FILE = "video.json";
 const VIDEO_FIELDS = ["render_concurrency", "snapshot_copy", "jianying_export_dir"];
+/**
+ * 这里管的键。arollAutoFindPaused / arollWatchFolders 是自动找原片停用前的旧键（手动收件 spec 2026-10-06）：
+ * 读时忽略，下次写盘时随之丢掉，不再原样带着。
+ */
 const KNOWN_KEYS = ["renderConcurrency", "snapshotCopy", "jianyingExportDir", "arollAutoFindPaused", "arollWatchFolders"];
 /** 单机渲染，超过这个数只会互相抢 CPU；上限是防呆不是性能建议 */
 const MAX_RENDER_CONCURRENCY = 16;
@@ -81,8 +69,6 @@ function normalizeVideo(raw: Partial<VideoSettings>): VideoSettings {
     ...(concurrency !== undefined ? { renderConcurrency: concurrency } : {}),
     ...(raw.snapshotCopy === true ? { snapshotCopy: true } : {}),
     ...(typeof raw.jianyingExportDir === "string" && path.isAbsolute(raw.jianyingExportDir) ? { jianyingExportDir: raw.jianyingExportDir } : {}),
-    ...(raw.arollAutoFindPaused === true ? { arollAutoFindPaused: true } : {}),
-    ...(watchFolders(raw.arollWatchFolders) ? { arollWatchFolders: watchFolders(raw.arollWatchFolders) } : {}),
   };
 }
 
@@ -116,7 +102,7 @@ async function exportDirError(v: unknown): Promise<string | null> {
   if (typeof v !== "string" || !path.isAbsolute(v.trim())) return "jianying_export_dir 必须是完整的绝对路径（清空传 null）";
   const st = await fs.stat(v.trim()).catch(() => null);
   if (!st?.isDirectory()) return `剪映导出目录不存在或不是文件夹：${v.trim()}`;
-  // 和监视文件夹同一条规矩（verifier 2a P3）：与资料库重叠（在库内或是库的祖先）就拒——它是可搬入根
+  // 与资料库重叠（verifier 2a P3）（在库内或是库的祖先）就拒——它是可搬入根
   const lib = readLibraryLocation()?.root;
   if (lib) {
     const [real, libReal] = await Promise.all([fs.realpath(v.trim()).catch(() => v.trim()), fs.realpath(lib).catch(() => lib)]);
@@ -154,7 +140,7 @@ async function applyVideoUpdates(next: VideoSettings, payload: Record<string, un
 
 /**
  * video.json 的读改写按文件串行（Codex 审 segB9 P2）：两个请求各读同一份旧文件、各写回整份，后写的会把先写的改动抹掉
- * （例如刚关掉的 allow_move 又被写回 true）。所有写口——浏览器专属路由、暂停开关、invoke 的 setVideoSettings——都排这一队。
+ * 。所有写口——浏览器专属路由、invoke 的 setVideoSettings——都排这一队。
  */
 const fileLocks = new Map<string, Promise<unknown>>();
 
@@ -177,12 +163,12 @@ async function writeVideoJson(filePath: string, data: unknown): Promise<void> {
 }
 
 /** 只能由浏览器会话改的键（1b §5，§14-7）：它们决定「可搬入根」，是服务端凭据，模型 / bearer / invoke 都改不了 */
-export const BROWSER_ONLY_VIDEO_FIELDS = ["jianying_export_dir", "aroll_watch_folders", "aroll_auto_find_paused", "arollWatchFolders", "arollAutoFindPaused", "jianyingExportDir"];
+export const BROWSER_ONLY_VIDEO_FIELDS = ["jianying_export_dir", "jianyingExportDir"];
 
 /** `video:settings_set` 的 IPC 入口（/api/invoke、MCP 都走这里）：浏览器专属的键一律拒，别的照旧 */
 export async function setVideoSettingsViaInvoke(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const hit = payload && typeof payload === "object" ? BROWSER_ONLY_VIDEO_FIELDS.filter((k) => (payload as Record<string, unknown>)[k] !== undefined) : [];
-  if (hit.length) return { ok: false, code: "browser_session_only", error: `${hit.join("、")} 只能在设置页「原片从哪里找」里改（浏览器会话），这里不收` };
+  if (hit.length) return { ok: false, code: "browser_session_only", error: `${hit.join("、")} 只能在设置页「剪映导出目录」里改（浏览器会话），这里不收` };
   return setVideoSettings(payload);
 }
 

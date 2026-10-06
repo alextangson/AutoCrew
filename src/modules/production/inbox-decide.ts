@@ -25,9 +25,6 @@ import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js"
 import { scopedId, type InboxAction, type InboxItem } from "./inbox.js";
 import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
-import { moveToUsed } from "./inbox-used.js";
-import { chatcutHold } from "./chatcut-refs.js";
-import { commitSha } from "./hash-cache.js";
 import { mutateProduction } from "./service.js";
 import { canonPlatform } from "./receipts.js";
 
@@ -36,7 +33,7 @@ const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok:
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
 const KEEP = 200;
 /** 请求里允许改的字段；其余（fact_id / sha / 平台 / 选项…）一律取自条目 */
-const EDITABLE = ["note", "cover_text", "url", "to"];
+const EDITABLE = ["note", "cover_text", "url"];
 /** 同一决定正在锁外跑时，等它的上限与轮询间隔 */
 const WAIT_MS = 10 * 60_000;
 const POLL_MS = 50;
@@ -152,20 +149,6 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
   return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
 }
 
-/** 「不是原片，忽略」：字节还是创始人看到的那份才挪进「已用过/」；挪不走就说原因 */
-async function ignoreInboxFile(file: string, expectSha: string): Promise<Result> {
-  const now = await commitSha(file).catch(() => null);
-  if (!now) return fail("gone", "这个文件已经不在收件箱了，刷新再看");
-  if (!now.ok) return fail("file_unsettled", now.reason);
-  if (now.sha256 !== expectSha) return fail("stale", "这个文件刚变过，刷新再看");
-  // ChatCut 工程按绝对路径在用它：挪了工程就断，不挪；核不了也不盲挪
-  const hold = await chatcutHold(file).catch((e: unknown) => ({ project: null, unverified: e instanceof Error ? e.message : String(e) }));
-  if (hold.project) return fail("in_use", `ChatCut 工程《${hold.project}》在用这个文件，没挪`);
-  if (hold.unverified) return fail("move_failed", `没挪走：${hold.unverified}`);
-  try { return { ok: true, moved_to: await moveToUsed(file) }; }
-  catch (e) { return fail("move_failed", `没挪走：${(e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e))}`); }
-}
-
 async function run(ctx: Ctx): Promise<Result> {
   const { item, dataDir, params, spec } = ctx;
   const c = ctx.content;
@@ -197,13 +180,6 @@ async function run(ctx: Ctx): Promise<Result> {
     case "publish_check_override": return publishOverride(ctx);
     case "approve_script": return scriptDecision(ctx, true);
     case "revise_script": return scriptDecision(ctx, false);
-    case "assign": {
-      const to = str(params.to);
-      if (!to) return fail("bad_request", "选一条稿：指定给哪条");
-      // 路径只取服务端给这个条目的动作参数，不从页面取（整分支审 P2）
-      return founderDecision(to, "attach_aroll", { path: spec.params?.path, expect_sha: spec.params?.expect_sha, confirm_other: true }, dataDir);
-    }
-    case "ignore_inbox_file": return ignoreInboxFile(String(spec.params?.path ?? ""), String(spec.params?.expect_sha ?? ""));
     case "reject_cut": {
       const v = chosenVersion();
       if (!v) return fail("stale", "这一版不在这件事的成片清单里，刷新再看");
@@ -239,8 +215,8 @@ async function run(ctx: Ctx): Promise<Result> {
   }
 }
 
-/** 这件事在哪条稿上记消费（收件箱里的视频记在被指定的那条） */
-const logContentOf = (item: InboxItem, params: Record<string, unknown>) => item.content_id ?? (str(params.to) || null);
+/** 这件事在哪条稿上记消费 */
+const logContentOf = (item: InboxItem) => item.content_id;
 
 /** 带代次的决定（R1 / R2）：锁内推导、比对、消费 */
 export async function decideItem(req: Record<string, unknown>, dataDir = getDataDir(), deps: DecideDeps = {}): Promise<Result> {
@@ -251,7 +227,7 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
   const locked = () => withFileOwnership(async () => {
     const view = await readInbox(dataDir, { withDrafts: true, ...(contentId ? { contentId } : {}), ...(deps.now ? { now: deps.now } : {}) });
     const item = view.items.find((x) => x.item_id === itemId);
-    const logId = item ? logContentOf(item, req) : contentId || str(req.to) || null;
+    const logId = item ? logContentOf(item) : contentId || null;
     // 占位超过等待上限（服务中途重启、没落定）算作废，不永久卡住这件事
     const prior = logId ? (await logOf(logId, dataDir)).find((e) => e.item_id === itemId && e.gen === gen && !stalePending(e)) : undefined;
     if (prior && (prior.fp !== fp || prior.action !== action)) return { phase: "done" as const, result: fail("already_decided", prior.pending ? "这件事正在别处处理（做的是另一个决定），刷新看现在的样子" : "这件事已经在别处处理过了（做的是另一个决定），刷新看现在的样子") };
@@ -324,8 +300,6 @@ function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>
     case "pick_cover": return item.type === "cover_pick" && (d.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }>)
       .some((g) => g.group_id === p.group_id || (g["3:4"]?.fact_id === p.cover_3x4_fact_id && g["4:3"]?.fact_id === p.cover_4x3_fact_id));
     case "confirm_candidate": case "reject_candidate": return item.type === "candidate" && d.fact_id === p.fact_id;
-    case "undo_auto_attach": return item.type === "auto_attached" && d.fact_id === p.fact_id;
-    case "keep_attach": case "reassign_aroll": return item.type === "attach_check" && d.fact_id === p.fact_id;
     case "waive_sliver": case "waive_sliver_check": return item.type === "sliver" && d.cut_sha === p.cut_sha;
     case "i_published": return item.type === "published_ask" && d.platform === p.platform;
     case "confirm_receipt": return item.type === "publish_claim" && item.actions[0].params?.fact_id === p.fact_id;
@@ -339,7 +313,7 @@ function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>
  * 挂原片、重开…）直接交给创始人决定；「我发了」在卡片上对任何平台都能点，没有记录时照旧放行。
  */
 const INBOX_ACTIONS: ReadonlySet<string> = new Set(["approve_cut", "reject_cut", "pick_cover", "reject_cover", "retire_cover_group", "confirm_candidate", "reject_candidate",
-  "undo_auto_attach", "keep_attach", "reassign_aroll", "waive_sliver", "waive_sliver_check", "confirm_receipt", "i_published", "approve_script", "revise_script", "answer_ask", "publish_check_confirm"]);
+  "undo_auto_attach", "waive_sliver", "waive_sliver_check", "confirm_receipt", "i_published", "approve_script", "revise_script", "answer_ask", "publish_check_confirm"]);
 const PASS_WITHOUT_RECORD: ReadonlySet<string> = new Set(["i_published", "undo_auto_attach"]);
 const OBJ_KEYS = ["fact_id", "group_id", "cover_3x4_fact_id", "cover_4x3_fact_id", "platform", "option_id", "cut_sha", "sliver_key", "check_id", "ask_id"];
 
@@ -356,7 +330,6 @@ async function localItemIds(contentId: string, action: string, p: Record<string,
     case "pick_cover": case "reject_cover": case "retire_cover_group": return [`cover:r${r}`];
     case "confirm_candidate": case "reject_candidate": return [`cand:${String(p.fact_id)}`];
     case "undo_auto_attach": return [`auto:${String(p.fact_id)}`];
-    case "keep_attach": case "reassign_aroll": return [`attach:${String(p.fact_id)}`];
     case "waive_sliver": case "waive_sliver_check": return [`sliver:${String(factBySha(p.cut_sha))}`];
     case "confirm_receipt": {
       const f = doc.facts.find((x) => x.id === p.fact_id);

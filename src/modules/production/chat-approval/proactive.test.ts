@@ -9,7 +9,8 @@ import { setPullDeps } from "../../video/handoff/pull-deps.js";
 import { executeReviewInbox } from "../../../tools/review-inbox.js";
 import { executeStatus } from "../../../tools/status.js";
 import { readInbox } from "../inbox-read.js";
-import { transcriptCacheDir, writeTranscript } from "../match/cache.js";
+import { transcriptCacheDir } from "../match/cache.js";
+import { CLIP_SECONDS } from "../match/l2.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "../testkit.js";
 import { previewFolder, setPreviewDeps, sweepPreview } from "./preview.js";
 import { NO_CHANGE_NOTE, NO_COVER_TEXT } from "./brief.js";
@@ -99,7 +100,9 @@ describe("E6 brief 由服务端写", () => {
     expect(cand.brief).not.toContain("开头一句");
     const fact = (await readProductionDoc(c.id, env.dir))!.facts.find((f) => f.path === src || f.source_path === src)!;
     expect(await fs.readdir(transcriptCacheDir(env.dir)).catch(() => [])).toEqual([]);
-    await writeTranscript(env.dir, fact.sha256!, "大家好今天聊封面。后面的话不该出现。");
+    // 停用前留下的旧转写缓存（手动收件之后不再写，只读）
+    await fs.mkdir(transcriptCacheDir(env.dir), { recursive: true });
+    await fs.writeFile(path.join(transcriptCacheDir(env.dir), `${fact.sha256}.json`), JSON.stringify({ sha256: fact.sha256, text: "大家好今天聊封面。后面的话不该出现。", clip_seconds: CLIP_SECONDS, at: new Date().toISOString() }));
     expect((await byType("candidate")).brief).toContain("开头一句：「大家好今天聊封面。」");
   });
 

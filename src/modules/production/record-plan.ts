@@ -12,9 +12,7 @@ import { readLibraryLocation } from "../../storage/storage-roots.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { l1Strong } from "./match/l1.js";
 import { admittedGroupKey, retiredGroupOfLabel, groupsOfFact, groupOfVersion, MAX_COVER_GROUPS, nextCoverVersion, slotTaken, validCoverGroups, versionLabelOf, type GroupKey } from "./cover-groups.js";
-import { matchDeps } from "./match/deps.js";
 import { arollPool } from "./match/pool.js";
-import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
 import { chatcutHold, inUseEvidence } from "./chatcut-refs.js";
 import { checkCover, checkDuration, resolveLocalFile, stableFingerprint, type FileIdentity } from "./files.js";
 import type { Parsed, RecordArgs } from "./record-args.js";
@@ -22,7 +20,7 @@ import { classify, movableRoots, now, probe, type Location } from "./roots.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
 
 
-export type Action = "existing" | "in_place" | "move" | "clone" | "candidate" | "pending";
+export type Action = "existing" | "in_place" | "move" | "clone" | "candidate";
 
 export interface FilePlan {
   action: Action;
@@ -149,12 +147,9 @@ async function arollNameMiss(file: string, content: Content, dataDir: string): P
   return others.length ? `文件名同时对得上《${others.map((p) => p.title).join("》《")}》` : null;
 }
 
-/** 收件箱原片名字没对上：转写就绪 → pending_match 后台核对；没就绪 → 只记候选并说原因（1b §3-2/3，E29） */
-async function arollNotByName(miss: string, dataDir: string, from: string): Promise<{ action: Action; evidence: string }> {
-  const t = matchDeps().transcriber;
-  const notReady = t.notReady ? await t.notReady(dataDir).catch((e: unknown) => `检查转写环境失败：${e instanceof Error ? e.message : String(e)}`) : null;
-  if (notReady) return { action: "candidate", evidence: `${from}：${miss}；转写环境没装好（${notReady}），只比了文件名，等创始人在卡片上确认是不是这条` };
-  return { action: "pending", evidence: `${from}：${miss}，正在核对开头转写` };
+/** 收件箱原片名字没对上：只记候选并说原因，等创始人在对话里说是哪条（手动收件 spec 2026-10-06：不再听开头核对） */
+function arollNotByName(miss: string, from: string): { action: Action; evidence: string } {
+  return { action: "candidate", evidence: `${from}：${miss}，等创始人说是不是这条` };
 }
 
 /**
@@ -165,12 +160,12 @@ async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc,
   // 封面统一准入（review-inbox §6.2）：项目里不在 vNNN/ 或 final/ 的图克隆进新一组，不原地收
   if (location === "project" && a.kind === "cover" && !admittedGroupKey(path.relative(await fs.realpath(contentRoot(content.id, dataDir)), file))) return { ok: true, value: { action: "clone", evidence: "项目里其他目录的封面，克隆进这一组" } };
   if (location === "project") return { ok: true, value: { action: "in_place", evidence: "已在本条项目里" } };
-  const movable = location === "inbox" || (location === "export" && a.kind !== "aroll") || (location === "watch" && a.kind === "aroll");
+  const movable = location === "inbox" || (location === "export" && a.kind !== "aroll");
   if (!movable) return { ok: true, value: { action: "candidate", evidence: `在可搬入目录之外（${path.dirname(file)}），等创始人确认` } };
   if (a.kind === "aroll") {
     const miss = await arollNameMiss(file, content, dataDir);
-    const from = location === "watch" ? "监视文件夹（允许直接搬入）" : "原片收件箱";
-    if (miss) return { ok: true, value: await arollNotByName(miss, dataDir, from) };
+    const from = "原片收件箱";
+    if (miss) return { ok: true, value: arollNotByName(miss, from) };
     if (referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "收件箱原片对上标题；已被 ChatCut 工程引用，留原位不挪" } };
     const hold = await chatcutHold(file);
     if (hold.project) return { ok: true, value: { action: "in_place", evidence: inUseEvidence(hold.project) } };
@@ -219,15 +214,12 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
   if (a.kind === "aroll") {
     const owner = await arollOwnerElsewhere(dataDir, file.value.sha256, content.id);
     if (owner) return deny("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll，一个原片只能属于一条稿；要改挂只能创始人在卡片上确认`);
-    const pending = await pendingElsewhere(dataDir, file.value.sha256, content.id);
-    if (pending) return deny("aroll_pending_elsewhere", `${pendingElsewhereText(pending.title)}：等那边核对完，对不上会转成候选`);
   }
-  const location = classify(file.value.source, projectRoot, await movableRoots(dataDir), a.kind);
+  const location = classify(file.value.source, projectRoot, await movableRoots(dataDir));
   if (existing?.state === "accepted") return { ok: true, value: { ...base, location, action: "existing", evidence: "同一文件已经记过" } };
-  if (existing?.state === "pending_match") return { ok: true, value: { ...base, location, action: "existing", evidence: "这个原片正在核对，返回当前状态" } };
   const decided = await decideAction(a, content, doc, file.value.source, location, existing, dataDir);
   if (!decided.ok) return decided;
-  if (decided.value.action === "move" || decided.value.action === "clone" || decided.value.action === "pending") {
+  if (decided.value.action === "move" || decided.value.action === "clone") {
     const safe = await checkTargetDir(projectRoot, targetDirOf(a.kind, version.value));
     if (!safe.ok) return safe;
   }

@@ -8,38 +8,41 @@ import type { Fact } from "../../storage/production-types.js";
 import { cardPanel } from "./panel.js";
 import { founderDecision } from "./decisions.js";
 import { explainContent } from "./read.js";
-import { setMatchDeps } from "./match/deps.js";
-import { matchWorkerIdle } from "./match/queue.js";
-import type { TranscribeOutcome } from "./match/transcribe.js";
-import { synth } from "./match/synth-fixture.js";
 import { reconcileAll } from "./reconcile.js";
 import { recoverTxns, saveTxn } from "./txn.js";
-import { CHATCUT_USES, IN_EDIT, IN_EDIT_REASSIGN } from "./undo-attach.js";
+import { CHATCUT_USES, IN_EDIT } from "./undo-attach.js";
 import { exists, founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
-afterEach(async () => { await matchWorkerIdle(env.dir); await env.cleanup(); });
+afterEach(async () => { await env.cleanup(); });
 
-const A = synth(31, 500), B = synth(32, 500);
-function asr(answer: (f: string) => TranscribeOutcome, notReady: string | null = null): void {
-  setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => notReady, transcribe: async (f) => answer(f) } });
-}
+const A = "甲稿的正文，讲一件事。".repeat(40), B = "乙稿的正文，讲另一件事。".repeat(40);
 const decide = (id: string, action: string, params: Record<string, unknown>) => founderDecision(id, action, params, env.dir) as Promise<Record<string, unknown>>;
 async function aroll(id: string): Promise<Fact> {
   const d = await readProductionDocOrEmpty(id, env.dir);
   return d.facts.find((f) => f.kind === "aroll" && f.round === d.round)!;
 }
 
-/** 认过稿的甲稿，从收件箱自动挂上一段原片 → 剪辑中、正文冻结 */
+/**
+ * 停用前「从收件箱自动挂上」的旧数据（手动收件 spec 2026-10-06 规则 5）：收件箱原片挂进项目，再补上旧版自动挂上的标记。
+ * → 剪辑中、正文冻结。
+ */
+async function markAutoAttached(id: string): Promise<void> {
+  const { withFileOwnership } = await import("./mutex.js");
+  const { mutateProduction } = await import("./service.js");
+  await withFileOwnership(() => mutateProduction(id, env.dir, (doc) => {
+    Object.assign(doc.facts.find((f) => f.kind === "aroll" && f.round === doc.round && f.state === "accepted")!, { auto_attached: true, source: "reconcile" });
+    return { value: null, events: [] };
+  }));
+}
+
 async function autoAttached(fileName = "IMG_7.mov"): Promise<{ id: string; src: string; fact: Fact }> {
-  asr(() => ({ ok: true, text: A.slice(20, 160) }));
   const a = await videoContent(env, "甲稿撤销测试", "draft_ready", A);
   await founderApprove(env, a.id);
   const src = await put(path.join(env.inbox, fileName), "take");
-  await reconcileAll(env.dir);
-  await matchWorkerIdle(env.dir);
-  await reconcileAll(env.dir);
+  expect(await decide(a.id, "attach_aroll", { path: src, confirm_other: true })).toMatchObject({ ok: true });
+  await markAutoAttached(a.id);
   const fact = await aroll(a.id);
   expect(fact).toMatchObject({ state: "accepted", auto_attached: true });
   expect((await readProductionDocOrEmpty(a.id, env.dir)).frozen).toBeTruthy();
@@ -57,9 +60,10 @@ describe("§4.1 「不是这条」撤销自动挂上", () => {
     expect(doc.facts[0]).toMatchObject({ state: "rejected", path: src });
     expect(doc.decisions.some((d) => d.type === "auto_attach_undo")).toBe(true);
     expect((await getContent(id, env.dir))!.status).toBe("approved");
-    // 点过「不是这条」的字节不再自动挪回来（B10）
+    // 巡检不会把挪回收件箱的原片再挂回来（B10；手动收件后巡检根本不看收件箱）
     await reconcileAll(env.dir);
     expect((await aroll(id)).state).toBe("rejected");
+    expect(await exists(src)).toBe(true);
   });
 
   it("原名被占 → 加 -2 后缀并在回执里说（B9）；原目录没了 → 挪回收件箱（B31）", async () => {
@@ -90,11 +94,10 @@ describe("§4.1 「不是这条」撤销自动挂上", () => {
     await put(path.join(projectRoot(env, other.id), "04-edit/final.mp4"), "cut");
     await record(env, { content_id: other.id, kind: "cut", path: path.join(projectRoot(env, other.id), "04-edit/final.mp4"), request_id: "c1" });
     expect(await decide(other.id, "undo_auto_attach", { fact_id: other.fact.id, sha256: other.fact.sha256 })).toMatchObject({ ok: false, error: IN_EDIT });
-    expect((await cardPanel(other.id, env.dir)).arolls).toEqual([expect.objectContaining({ undo_blocked: IN_EDIT, reassign_blocked: IN_EDIT_REASSIGN })]);
+    expect((await cardPanel(other.id, env.dir)).arolls).toEqual([expect.objectContaining({ undo_blocked: IN_EDIT })]);
   });
 
   it("创始人在卡片上挂的原片也能点「不是」：挪回原处（1b 验收：自己挂的，撤回是自己的事）", async () => {
-    asr(() => ({ ok: true, text: A.slice(0, 100) }));
     const a = await videoContent(env, "甲稿人挂测试", "draft_ready", A);
     await founderApprove(env, a.id);
     const r = await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "x.mov"), "x") });
@@ -129,123 +132,16 @@ describe("§4.1 「不是这条」撤销自动挂上", () => {
 });
 
 async function autoAttachedSecond(): Promise<{ id: string; fact: Fact }> {
-  asr(() => ({ ok: true, text: B.slice(20, 160) }));
   const b = await videoContent(env, "乙稿撤销测试", "draft_ready", B);
   await founderApprove(env, b.id);
-  await put(path.join(env.inbox, "IMG_8.mov"), "take-b");
-  await reconcileAll(env.dir);
-  await matchWorkerIdle(env.dir);
-  await reconcileAll(env.dir);
+  await decide(b.id, "attach_aroll", { path: await put(path.join(env.inbox, "IMG_8.mov"), "take-b"), confirm_other: true });
+  await markAutoAttached(b.id);
   return { id: b.id, fact: await aroll(b.id) };
 }
 
-describe("§7 卡片挂载核对 + 改挂", () => {
-  async function attachToWrong(): Promise<{ a: string; b: string; fact: Fact }> {
-    asr(() => ({ ok: true, text: B.slice(20, 160) }));
-    const a = await videoContent(env, "甲稿挂载核对", "draft_ready", A);
-    const b = await videoContent(env, "乙稿挂载核对", "draft_ready", B);
-    await founderApprove(env, a.id);
-    expect(await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "take.mov"), "tk") })).toMatchObject({ ok: true });
-    await matchWorkerIdle(env.dir);
-    return { a: a.id, b: b.id, fact: await aroll(a.id) };
-  }
-
-  it("听起来更像别条 → 卡片 badge 与两个按钮的数据；「就是这条」记住不再提示", async () => {
-    const { a, fact } = await attachToWrong();
-    expect(fact.attach_check).toMatchObject({ status: "suggest", other_title: "乙稿挂载核对" });
-    expect((await explainContent((await getContent(a, env.dir))!, env.dir)).badges).toContain("这段原片听起来更像《乙稿挂载核对》");
-    expect(await decide(a, "keep_attach", { fact_id: fact.id, sha256: fact.sha256 })).toMatchObject({ ok: true });
-    expect((await aroll(a)).attach_check?.status).toBe("kept");
-    expect((await explainContent((await getContent(a, env.dir))!, env.dir)).badges.join()).not.toContain("更像");
-  });
-
-  it("「改挂到《X》」：这条撤下（不挪回原处），同一事务收进《X》并改名；这条回待录制", async () => {
-    const { a, b, fact } = await attachToWrong();
-    const r = await decide(a, "reassign_aroll", { fact_id: fact.id, sha256: fact.sha256, to: b });
-    expect(r).toMatchObject({ ok: true, reassigned_to: b, path: "02-aroll/乙稿挂载核对-原片.mov" });
-    expect(await aroll(a)).toMatchObject({ state: "rejected", released_to: b });
-    expect(await aroll(b)).toMatchObject({ state: "accepted", sha256: fact.sha256 });
-    expect(await exists(path.join(projectRoot(env, b), "02-aroll/乙稿挂载核对-原片.mov"))).toBe(true);
-    expect(await exists(path.join(env.outside, "take.mov"))).toBe(false);
-    expect((await readProductionDocOrEmpty(a, env.dir)).frozen).toBeNull();
-    expect((await getContent(a, env.dir))!.status).toBe("approved");
-  });
-
-  it("已经在剪（有成片）→ 改挂被拒，说先重开文稿", async () => {
-    const { a, b, fact } = await attachToWrong();
-    await put(path.join(projectRoot(env, a), "04-edit/final.mp4"), "cut");
-    await record(env, { content_id: a, kind: "cut", path: path.join(projectRoot(env, a), "04-edit/final.mp4"), request_id: "c1" });
-    expect(await decide(a, "reassign_aroll", { fact_id: fact.id, sha256: fact.sha256, to: b })).toMatchObject({ ok: false, error: IN_EDIT_REASSIGN });
-  });
-
-  it("文件名对上这条、转写却明显是别条 → 仍提示更像别条（按转写分数判，不被文件名短路；Codex 审 segB P2）", async () => {
-    asr(() => ({ ok: true, text: B.slice(20, 160) }));
-    const a = await videoContent(env, "甲稿文件名陷阱", "draft_ready", A);
-    await videoContent(env, "乙稿文件名陷阱", "draft_ready", B);
-    await founderApprove(env, a.id);
-    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "甲稿文件名陷阱.mov"), "trap") });
-    await matchWorkerIdle(env.dir);
-    expect((await aroll(a.id)).attach_check).toMatchObject({ status: "suggest", other_title: "乙稿文件名陷阱" });
-  });
-
-  it("转写没就绪 → 卡片小字「没做内容核对：转写环境没装好…」", async () => {
-    asr(() => ({ ok: true, text: "" }), "ASR 依赖环境还没装好");
-    const a = await videoContent(env, "甲稿没就绪核对", "draft_ready", A);
-    await founderApprove(env, a.id);
-    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "t.mov"), "t") });
-    await matchWorkerIdle(env.dir);
-    const badges = (await explainContent((await getContent(a.id, env.dir))!, env.dir)).badges.join();
-    expect(badges).toContain("没做内容核对");
-    expect(badges).toContain("转写环境没装好");
-  });
-});
-
-describe("卡片挂载核对：写了 checking、作业没落盘就崩了（Codex 审 segB10 P2）", () => {
-  it("重启就绪时按事实上的 checking 重新入队，跑完落结果，不会永远转圈", async () => {
-    const { withFileOwnership } = await import("./mutex.js");
-    const { mutateProduction, resetProductionReady, ensureProductionReady } = await import("./service.js");
-    const { resetMatchQueue } = await import("./match/queue.js");
-    asr(() => ({ ok: true, text: B.slice(20, 160) }), "暂不转写");
-    const a = await videoContent(env, "甲稿崩溃核对", "draft_ready", A);
-    await videoContent(env, "乙稿崩溃核对", "draft_ready", B);
-    await founderApprove(env, a.id);
-    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "crash.mov"), "c") });
-    await matchWorkerIdle(env.dir);
-    // 模拟崩溃窗口：事实写成 checking（新作业代号），队列里没有这个作业
-    await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
-      const f = doc.facts.find((x) => x.kind === "aroll" && x.state === "accepted")!;
-      f.attach_check = { status: "checking", job: "mjob-lost-1", at: new Date().toISOString() };
-      return { value: null, events: [] };
-    }));
-    resetMatchQueue();
-    resetProductionReady();
-    asr(() => ({ ok: true, text: B.slice(20, 160) }));
-    await ensureProductionReady(env.dir);
-    await new Promise((r) => setTimeout(r, 20));
-    await matchWorkerIdle(env.dir);
-    expect((await aroll(a.id)).attach_check).toMatchObject({ status: "suggest", other_title: "乙稿崩溃核对" });
-  });
-});
-
-describe("挂载核对：转写期间文件变了（Codex 审 segB15 P2）", () => {
-  it("转写回来的文本绑不上原来的字节 → 不下「更像别条」的结论，标「文件在核对时变了」", async () => {
-    const a = await videoContent(env, "甲稿核对中变了", "draft_ready", A);
-    await videoContent(env, "乙稿核对中变了", "draft_ready", B);
-    await founderApprove(env, a.id);
-    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async (f) => {
-      await fs.writeFile(f, "changed-while-listening"); const t = new Date(Date.now() - 60_000); await fs.utimes(f, t, t);
-      return { ok: true, text: B.slice(20, 160) }; } } });
-    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "chg.mov"), "orig") });
-    await matchWorkerIdle(env.dir);
-    const check = (await aroll(a.id)).attach_check;
-    expect(check?.status).not.toBe("suggest");
-    expect(check).toMatchObject({ status: "failed", reason: expect.stringContaining("文件在核对时变了") });
-  });
-});
-
 describe("「不是」也能撤创始人自己确认的原片（1b 验收）", () => {
-  it("从监视文件夹确认进来的原片：同一个 §4.1 事务挪回原处、拒事实、解冻；面板行写明来源", async () => {
-    const watch = path.join(path.dirname(env.dir), "watch-test");
+  it("从项目外确认进来的原片：同一个 §4.1 事务挪回原处、拒事实、解冻；面板行写明来源", async () => {
+    const watch = path.join(env.outside, "downloads");
     await fs.mkdir(watch);
     const a = await videoContent(env, "甲稿确认后撤回", "draft_ready", A);
     await founderApprove(env, a.id);
@@ -253,17 +149,15 @@ describe("「不是」也能撤创始人自己确认的原片（1b 验收）", (
     const { withFileOwnership } = await import("./mutex.js");
     const { mutateProduction } = await import("./service.js");
     const { cachedSha } = await import("./observe.js");
-    const { setProductionDeps } = await import("./roots.js");
-    setProductionDeps({ roots: async () => ({ inbox: env.inbox, chatcut: env.chatcut, jianying: env.jianying, watch: [await fs.realpath(watch)] }) });
     const h = await cachedSha(src);
     await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
-      doc.facts.push({ id: "fact-watch-1", kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "reconcile", at: new Date().toISOString(), path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "监视文件夹 watch-test：文件名对上" });
+      doc.facts.push({ id: "fact-watch-1", kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "reconcile", at: new Date().toISOString(), path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "对账发现" });
       return { value: null, events: [] };
     }));
     expect(await decide(a.id, "confirm_candidate", { fact_id: "fact-watch-1", sha256: h.sha256 })).toMatchObject({ ok: true, state: "accepted" });
     expect(await exists(src)).toBe(false);
     const row = ((await cardPanel(a.id, env.dir)).arolls as Array<Record<string, unknown>>)[0];
-    expect(row).toMatchObject({ name: "IMG_0421.MOV", origin: "你从监视文件夹「watch-test」确认的", undo_blocked: null });
+    expect(row).toMatchObject({ name: "IMG_0421.MOV", origin: "你确认的", undo_blocked: null });
     const r = await decide(a.id, "undo_auto_attach", { fact_id: "fact-watch-1", sha256: h.sha256 });
     expect(r).toMatchObject({ ok: true, moved_to: src, stage: "待录制" });
     expect(await fs.readFile(src, "utf8")).toBe("confirmed");

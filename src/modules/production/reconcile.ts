@@ -1,16 +1,15 @@
 /**
- * 对账（spec §4）：服务内单一入口，和所有写路径同属 ProductionService、同排文件归属事务。
+ * 对账（spec §4；手动收件 spec 2026-10-06）：服务内单一入口，和所有写路径同属 ProductionService、同排文件归属事务。
  *
- * - 触发：60 秒循环（先对账再排「我的内容」）；record 后本条；content get 前本条（只做项目内快扫）。
- *   看板读取不调这里、不写。
- * - 项目内与旧存法 → accepted；外部新文件（收件箱、ChatCut / 剪映导出）按文件名前缀对上标题（unregistered-cut 规则）→ 候选：
- *   认稿前后的稿首次归属；剪辑中以后的稿是新版本，已发布的标 post_publish。
+ * - 触发：启动一次 + 每 30 分钟（安全巡检，先对账再排「我的内容」）；对话里「同步一下」立即跑一次（sweep.ts，单飞）；
+ *   record 后本条；content get 前本条（只做项目内快扫）。看板读取不调这里、不写。
+ * - 只看项目文件夹（换掉 / 删掉的文件、登记）：收件箱、下载、ChatCut / 剪映导出目录一律不扫——原片由创始人在对话里说是哪条，
+ *   成片由 agent record。
  * - 逐条隔离：每条 try/catch，失败汇总进报告（看板顶部 + 晨报 warnings）。
  * - 影子模式（未启用）：只算不写，报告里给「要挪 N 张卡」的差异清单。
  */
 import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
-import path from "node:path";
 import { getContent, listContents, transitionStatus, type Content } from "../../storage/local-store.js";
 import { anySubmitted, firstPublishTime, readPublishRecord } from "../../storage/publish-record.js";
 import { contentRoot } from "../../storage/content-project.js";
@@ -19,11 +18,10 @@ import { importLegacyRegistration } from "./legacy.js";
 import { importObservations, trustedObservations } from "./receipts.js";
 import { isUngated } from "./publish-check-link.js";
 import { commitRegistration } from "./registration.js";
-import type { Fact, ProductionDoc } from "../../storage/production-types.js";
+import type { ProductionDoc } from "../../storage/production-types.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { readArchiveLog } from "../../storage/nas-archive-log.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
-import { exportMatchesTitle } from "../video/unregistered-cut.js";
 import { triggerSliverCheck } from "./sliver/check.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
 import { withFileOwnership } from "./mutex.js";
@@ -35,77 +33,21 @@ function approvedCoverShas(doc: ProductionDoc, content: Content): Set<string> {
   const d = validCoverApproval(doc, content.body ?? "");
   return new Set([d?.cover_3x4_sha, d?.cover_4x3_sha].filter((x): x is string => Boolean(x)));
 }
-import { cachedSha, loadHashCache, saveHashCache, sweepHashCache, unsettled } from "./hash-cache.js";
-import { applyObservations, observeProject, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
+import { loadHashCache, saveHashCache, sweepHashCache } from "./hash-cache.js";
+import { applyObservations, observeProject, type Observations } from "./observe.js";
 import { publishEvidenceOf } from "./read.js";
-import { movableRoots } from "./roots.js";
 import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
-import { kickMatchWorker, matchWorkerError } from "./match/queue.js";
-import { discoverExternal } from "./discover.js";
-import { autoAttach } from "./auto-attach.js";
+import "./legacy-discovery.js";
 
-export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
 export interface ShadowMove { id: string; title: string; from: Column | null; to: Column | null; rule: string | null; evidence: string[] }
-/** 1b §4 / §5：收件箱里没对上 / 没核对成的视频（待录制列头读它）、每个监视文件夹最近一次扫描 */
-export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string;
-  /** 猜的前三条带稿件 id（旧报告没有，只有 guess 标题） */
-  guesses?: Array<{ content_id: string; title: string }>;
-  duration_ms?: number;
-  /** 对账已有的开头转写（不为此新转写） */
-  transcript_head?: string;
-  /** 字节已是这条稿的原片，但没挪进「已用过」 */
-  used_by?: { content_id: string; title: string } }
-export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number;
-  /** 暂停了自动找原片：这一轮收件箱只按文件名对 */
-  paused?: boolean }
-export interface WatchStatus { path: string; at: string; error?: string; files: number; suggested: number }
+/** 旧报告里还可能有 inbox / watch（自动找原片时代）：读方不再看它们，留在盘上不碍事 */
 export interface ReconcileReport {
   at: string; enabled: boolean; errors: Array<{ id: string; title: string; error: string }>; moves: ShadowMove[]; warnings: string[];
-  inbox?: InboxStatus; watch?: WatchStatus[];
 }
 
-const FIRST_ATTRIBUTION = new Set(["draft_ready", "approved"]);
-const BOUND = new Set(["editing", "cover_pending", "publish_ready", "publishing", "published"]);
-
-/** 外部目录顶层的视频文件（还在写的跳过）；读不了的目录进 warnings */
-export async function listExternal(dataDir: string, warnings: string[]): Promise<ExternalFile[]> {
-  const roots = await movableRoots(dataDir);
-  const dirs: Array<[string | null, ExternalFile["from"]]> = [[roots.inbox, "inbox"], [roots.chatcut, "export"], [roots.jianying, "export"]];
-  const out: ExternalFile[] = [];
-  for (const [dir, from] of dirs) {
-    if (!dir) continue;
-    let names: string[];
-    try { names = (await fs.readdir(dir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name); }
-    catch (e) { warnings.push(`读不了 ${dir}（${(e as NodeJS.ErrnoException).code ?? "?"}）`); continue; }
-    for (const name of names.filter((n) => VIDEO_EXT.has(path.extname(n).toLowerCase()))) {
-      const file = path.join(dir, name);
-      // 先看是不是还在写（一分钟内改过）：还在写的这轮不算哈希，下一轮再收
-      const st = await fs.stat(file).catch(() => null);
-      if (!st || unsettled(st.mtimeMs)) continue;
-      const h = await cachedSha(file).catch(() => null);
-      if (h) out.push({ file, name, from, ...h });
-    }
-  }
-  return out;
-}
-
-/** 外部文件 → 这条的候选（只看文件名前缀；不宣称「明显赢家」，候选最多列三个由 explain 截） */
-function externalSeen(content: Content, externals: ExternalFile[]): Seen[] {
-  const first = FIRST_ATTRIBUTION.has(content.status), bound = BOUND.has(content.status);
-  if (!first && !bound) return [];
-  return externals.filter((x) => exportMatchesTitle(x.name, content.title) && (first || x.from === "export")).map((x) => ({
-    kind: (x.from === "inbox" ? "aroll" : "cut") as Fact["kind"], state: "candidate" as const, source: "reconcile" as const,
-    evidence: `文件名前缀对上标题（${x.from === "inbox" ? "原片收件箱" : "剪辑软件导出"}）`, path: x.file,
-    sha256: x.sha256, size: x.size, mtime_ms: x.mtime_ms, ...(content.status === "published" ? { post_publish: true as const } : {}),
-  }));
-}
-
-async function observe(content: Content, doc: ProductionDoc, dataDir: string, externals: ExternalFile[] | null, archived: Set<string>, suggestions: Seen[] = []): Promise<Observations> {
-  const obs = await observeProject(content, doc, await fs.realpath(contentRoot(content.id, dataDir)), dataDir, archived.has(content.id));
-  if (externals) obs.seen.push(...externalSeen(content, externals));
-  obs.seen.push(...suggestions);
-  return obs;
+async function observe(content: Content, doc: ProductionDoc, dataDir: string, archived: Set<string>): Promise<Observations> {
+  return observeProject(content, doc, await fs.realpath(contentRoot(content.id, dataDir)), dataDir, archived.has(content.id));
 }
 
 async function ownedElsewhere(dataDir: string, contentId: string): Promise<(sha: string) => boolean> {
@@ -114,10 +56,10 @@ async function ownedElsewhere(dataDir: string, contentId: string): Promise<(sha:
 }
 
 /** 单条对账：写模式经 ProductionService 落盘；影子模式返回合并后的内存 doc */
-export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string>; suggestions?: Seen[]; warnings?: string[] }): Promise<ProductionDoc> {
+export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; archived: Set<string>; warnings?: string[] }): Promise<ProductionDoc> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   if (isImportedHistory(content)) return doc;
-  const obs = await observe(content, doc, dataDir, opts.externals, opts.archived, opts.suggestions);
+  const obs = await observe(content, doc, dataDir, opts.archived);
   for (const w of obs.warnings ?? []) opts.warnings?.push(`${content.title}（${content.id}）：${w}`);
   const owned = await ownedElsewhere(dataDir, content.id);
   const receipts = opts.write ? await trustedObservations(content, dataDir) : [];
@@ -188,22 +130,9 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
   const enabled = marker?.version === DERIVE_VERSION;
   const excluded = new Set([...(marker?.excluded ?? []), ...(opts.exclude ?? [])]);
   const report: ReconcileReport = { at: new Date().toISOString(), enabled, errors: [], moves: [], warnings: [] };
-  // 原片核对的重新入队 / 工人出错：看板顶部与晨报要看得见（1b §2）
-  for (const e of started.hookErrors ?? []) report.warnings.push(`原片核对没能重新排队：${e}`);
-  // 每轮对账叫醒一次工人：补写没落盘的作业结果、接着跑到期的退避作业
-  kickMatchWorker(dataDir);
-  const workerError = matchWorkerError(dataDir);
-  if (workerError) report.warnings.push(`原片核对工人出错：${workerError}`);
+  for (const e of started.hookErrors ?? []) report.warnings.push(`启动收尾没做完：${e}`);
   await loadHashCache(dataDir);
-  // 启用后：收件箱 / 监视文件夹 / 导出目录在锁外发现、入队转写（1b §2：对账 tick 只发现与入队）；影子模式照旧只按文件名前缀
-  const found = enabled ? await discoverExternal(dataDir).catch((e: unknown) => { report.warnings.push(`外部目录没扫成：${e instanceof Error ? e.message : String(e)}`); return null; }) : null;
-  if (found) Object.assign(report, { inbox: found.inbox, watch: found.watch, warnings: [...report.warnings, ...found.warnings] });
   await withFileOwnership(async () => {
-    const externals = enabled ? null : await listExternal(dataDir, report.warnings);
-    for (const m of found?.autoMoves ?? []) {
-      const w = await autoAttach(dataDir, m).catch((e: unknown) => `收件箱自动挂原片出错（${path.basename(m.file.file)}）：${e instanceof Error ? e.message : String(e)}`);
-      if (w) report.warnings.push(w);
-    }
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
     for (const c of await listContents(dataDir)) {
       // 历史作品记录只挂回流数据，不进制作对账（回流认领规格 2026-10-03）
@@ -212,7 +141,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
       try {
         await syncSubmitted(c, dataDir, enabled && !excluded.has(c.id));
         if (!isVideoPlatform(c.platform)) continue;
-        let doc = await reconcileOne(c, dataDir, { write: active, externals, archived, suggestions: found?.suggestions.get(c.id) ?? [], warnings: report.warnings });
+        let doc = await reconcileOne(c, dataDir, { write: active, archived, warnings: report.warnings });
         if (active && enabled) {
           const commit = await commitRegistration(c.id, dataDir, { backoff: true });
           if (commit.ok && commit.registration) doc = await readProductionDocOrEmpty(c.id, dataDir);
@@ -236,7 +165,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
   return report;
 }
 
-/** content get / record 后的本条快扫：只看项目内，不看外部目录；只在启用后写 */
+/** content get / record 后的本条快扫：只看项目内；只在启用后写 */
 export async function reconcileContent(contentId: string, dataDir: string): Promise<void> {
   if (!(await isOntologyActive(dataDir, contentId))) return;
   await ensureProductionReady(dataDir);
@@ -244,6 +173,6 @@ export async function reconcileContent(contentId: string, dataDir: string): Prom
     const c = await getContent(contentId, dataDir);
     if (!c || c.deletedAt || isImportedHistory(c) || !isVideoPlatform(c.platform)) return;
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
-    await reconcileOne(c, dataDir, { write: true, externals: null, archived });
+    await reconcileOne(c, dataDir, { write: true, archived });
   });
 }

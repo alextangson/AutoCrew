@@ -13,8 +13,6 @@ import { validCoverGroups } from "./cover-groups.js";
 import { founderDecision } from "./decisions.js";
 import { decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
-import { setMatchDeps } from "./match/deps.js";
-import { matchWorkerIdle } from "./match/queue.js";
 import { plainReason } from "./plain-reason.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
@@ -135,7 +133,6 @@ describe("封面：对账先收了 05-cover/vNNN，agent 再 record paths 同两
 
 describe("原片候选：同一段字节已经挂到了别处（1b §3-7 独占）", () => {
   it("[P2] 别条稿上同一文件的候选不再给一个点了必失败的「对，就是它」 — FINDING: 条目留着，确认回 path_missing（还带绝对路径）", async () => {
-    setMatchDeps({ transcriber: { notReady: async () => "测试：转写没就绪", transcribe: async () => ({ ok: true, text: "" }) } });
     const a = await videoContent(env, "独占甲稿");
     await founderApprove(env, a.id);
     const b = await videoContent(env, "独占乙稿");
@@ -158,20 +155,6 @@ describe("候选的「为什么」（plain-reason）", () => {
     const r = plainReason({ id: "f", kind: "aroll", state: "candidate", round: 1, at: "2026-10-01T00:00:00.000Z", source: "reconcile",
       evidence: "监视文件夹 w：文件名对上《乙稿》，池里没有别条对得上；前三名：《乙稿》（文件名对上）、《转写比对甲》" } as Parameters<typeof plainReason>[0]);
     expect(r).toBe("文件名和标题对上了");
-  });
-});
-
-describe("收件箱：转写失败一次、在退避重试（1b §4「没能比完」）", () => {
-  it("[P2] 等重试的那一小时算「没核对成：原因」，不算「正在核对」 — FINDING: 退避中的作业回 checking，列头写「正在核对」长达 1 小时", async () => {
-    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => ({ ok: false, unavailable: false, reason: "转写超时（90 秒未返回）" }) } });
-    const c = await videoContent(env, "退避显示稿");
-    await founderApprove(env, c.id);
-    await put(path.join(env.inbox, "IMG_7777.mov"), "take-7777");
-    await reconcileAll(env.dir);
-    await matchWorkerIdle(env.dir);
-    const report = await reconcileAll(env.dir);
-    expect(report.inbox?.checking).toBe(0);
-    expect(report.inbox?.failed.map((f) => f.name)).toContain("IMG_7777.mov");
   });
 });
 

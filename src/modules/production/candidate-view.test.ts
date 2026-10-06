@@ -7,16 +7,16 @@ import { revealFactPath } from "./sources-view.js";
 import { makeEnv, put, record, videoContent, type Env } from "./testkit.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 
-const dirs = { inbox: "/lib/inbox", chatcut: "/m/ChatCut", jianying: "/m/jy", watch: ["/u/watch-test"] };
+const dirs = { inbox: "/lib/inbox", chatcut: "/m/ChatCut", jianying: "/m/jy" };
 const base = (over: Partial<Fact>): Fact => ({ id: "f1", kind: "aroll", round: 1, state: "candidate", availability: "present", source: "reconcile", at: "t", sha256: "s", ...over });
 const match = (winner: string | null, reason = "开头转写对上") => ({ winner, reason, top3: [{ content_id: "c-a", title: "甲稿", l1: "none", l2: 0.576 }, { content_id: "c-b", title: "乙稿", l1: "none", l2: 0.075 }] });
 
 describe("候选一行的人话", () => {
   it("第一行只有种类、文件名、来源；分数与完整路径只在依据里", () => {
-    const r = candidateRow(base({ path: "/u/watch-test/IMG_0421.MOV", evidence: "监视文件夹 watch-test：开头转写对上《甲稿》（0.576，领先 0.501）", match: match("c-a") }), "c-a", dirs);
-    expect(r).toMatchObject({ name: "原片 · IMG_0421.MOV", origin: "监视文件夹「watch-test」", reason: "开头说的话和这条稿对上了" });
+    const r = candidateRow(base({ path: "/u/downloads/IMG_0421.MOV", evidence: "开头转写对上《甲稿》（0.576，领先 0.501）", match: match("c-a") }), "c-a", dirs);
+    expect(r).toMatchObject({ name: "原片 · IMG_0421.MOV", origin: "对账发现", reason: "开头说的话和这条稿对上了" });
     expect(`${r.name}${r.origin}${r.reason}`).not.toMatch(/0\.576|\/u\//);
-    expect(r.detail).toContain("/u/watch-test/IMG_0421.MOV");
+    expect(r.detail).toContain("/u/downloads/IMG_0421.MOV");
     expect(r.detail).toContain("0.576");
   });
   it("来源：收件箱 / ChatCut 导出 / 剪映导出 / agent 报的 / 你挂的；原因：文件名对上 / 更像别条", () => {

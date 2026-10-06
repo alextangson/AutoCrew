@@ -5,26 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact } from "../../storage/production-types.js";
 import { founderDecision } from "./decisions.js";
-import { setMatchDeps } from "./match/deps.js";
-import { kickMatchWorker, matchWorkerIdle, MAX_RETRIES, RETRY_DELAY_MS } from "./match/queue.js";
-import { synth } from "./match/synth-fixture.js";
 import { reconcileAll } from "./reconcile.js";
-import { setProductionDeps } from "./roots.js";
 import { setChatcutDeps } from "./sliver/chatcut-read.js";
 import { exists, founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
-let clock: number;
 let cc: string;
 beforeEach(async () => {
   env = await makeEnv({ enabled: true });
-  clock = Date.now();
   cc = path.join(path.dirname(env.dir), "chatcut-projects");
   setChatcutDeps({ projectsRoot: () => cc });
 });
-afterEach(async () => { await matchWorkerIdle(env.dir); setChatcutDeps(null); await env.cleanup(); });
+afterEach(async () => { setChatcutDeps(null); await env.cleanup(); });
 
-const A = synth(41, 500);
+const A = "撤销守卫测试的正文。".repeat(40);
 async function aroll(id: string): Promise<Fact | undefined> {
   const d = await readProductionDocOrEmpty(id, env.dir);
   return d.facts.find((f) => f.kind === "aroll" && f.round === d.round);
@@ -35,64 +29,6 @@ async function ccProject(name: string, files: string[]): Promise<void> {
   await fs.writeFile(path.join(dir, "project.json"), JSON.stringify({ name, projectId: "p1", schemaVersion: 4 }));
   for (const [i, f] of files.entries()) await fs.writeFile(path.join(dir, "assets", "video", `a${i}.json`), JSON.stringify({ id: `a${i}`, type: "video", path: f }));
 }
-
-describe("[P2] 终态失败要落到事实上", () => {
-  it("record 的核对作业重试到头还失败 → pending_match 转候选并写原因，不再永远「正在核对」", async () => {
-    setMatchDeps({ now: () => clock, thresholds: { calibrated: true, floor: 0.3, margin: 0.2 },
-      transcriber: { notReady: async () => null, transcribe: async () => ({ ok: true, text: A.slice(10, 150) }) } });
-    const cache = path.join(env.dir, "cache", "aroll-transcripts");
-    await fs.mkdir(cache, { recursive: true });
-    await fs.chmod(cache, 0o555); // 转写缓存写不了：作业抛错 → 退避重试 → 到头
-    try {
-      const a = await videoContent(env, "终态失败测试稿", "draft_ready", A);
-      await record(env, { content_id: a.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_z.mov"), "z"), request_id: "r1" });
-      await matchWorkerIdle(env.dir);
-      for (let i = 0; i < MAX_RETRIES; i++) { clock += RETRY_DELAY_MS; kickMatchWorker(env.dir); await matchWorkerIdle(env.dir); }
-      const f = await aroll(a.id);
-      expect(f?.state).toBe("candidate");
-      expect(f?.evidence).toContain("核对没做成");
-    } finally { await fs.chmod(cache, 0o755); }
-  });
-
-  it("卡片挂载核对重试到头还失败 → 核对状态转 failed 并写原因", async () => {
-    setMatchDeps({ now: () => clock, transcriber: { notReady: async () => null, transcribe: async () => ({ ok: true, text: A.slice(10, 150) }) } });
-    const cache = path.join(env.dir, "cache", "aroll-transcripts");
-    await fs.mkdir(cache, { recursive: true });
-    await fs.chmod(cache, 0o555);
-    try {
-      const a = await videoContent(env, "挂载失败测试稿", "draft_ready", A);
-      await founderApprove(env, a.id);
-      await founderDecision(a.id, "attach_aroll", { path: await put(path.join(env.outside, "m.mov"), "m") }, env.dir);
-      await matchWorkerIdle(env.dir);
-      for (let i = 0; i < MAX_RETRIES; i++) { clock += RETRY_DELAY_MS; kickMatchWorker(env.dir); await matchWorkerIdle(env.dir); }
-      expect((await aroll(a.id))?.attach_check).toMatchObject({ status: "failed", reason: expect.stringContaining("核对没做成") });
-    } finally { await fs.chmod(cache, 0o755); }
-  });
-});
-
-describe("[P2] 导出目录同时是监视文件夹：权限取并集", () => {
-  it("成片仍按导出目录克隆收下，不降成候选", async () => {
-    setProductionDeps({ roots: async () => ({ inbox: env.inbox, chatcut: env.chatcut, jianying: env.jianying, watch: [env.chatcut] }) });
-    const c = await videoContent(env, "重叠目录测试稿");
-    const r = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "重叠目录测试稿.mp4"), "cut"), request_id: "r1" });
-    expect(r).toMatchObject({ ok: true, state: "accepted" });
-  });
-});
-
-describe("[P2] rejected 的重放不再说「导入 ChatCut」", () => {
-  it("核对期间文件变了 → rejected；同一 request_id 重放给原因和「换一个文件重新 record」", async () => {
-    const src = await put(path.join(env.inbox, "IMG_r.mov"), "r");
-    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async () => {
-      await fs.writeFile(src, "changed"); const t = new Date(Date.now() - 60_000); await fs.utimes(src, t, t); return { ok: true, text: A.slice(10, 150) }; } } });
-    const a = await videoContent(env, "重放测试稿", "draft_ready", A);
-    await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: "r1" });
-    await matchWorkerIdle(env.dir);
-    const r = await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: "r1" });
-    expect(r).toMatchObject({ state: "rejected" });
-    expect(String(r.next_action)).toContain("换一个文件重新 record");
-    expect(String(r.next_action)).not.toContain("导入 ChatCut");
-  });
-});
 
 describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（§13-A）", () => {
   const TITLE = "ChatCut在用的原片稿";
@@ -115,16 +51,6 @@ describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（�
     expect(await exists(src)).toBe(true);
   });
 
-  it("收件箱自动挪：ChatCut 在用 → 不挪，原地收下", async () => {
-    setMatchDeps({ transcriber: { notReady: async () => "测试", transcribe: async () => ({ ok: true, text: "" }) } });
-    const c = await videoContent(env, TITLE);
-    const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto");
-    await ccProject("自动挪工程", [src]);
-    await reconcileAll(env.dir);
-    expect(await exists(src)).toBe(true);
-    expect(await aroll(c.id)).toMatchObject({ state: "accepted", path: src });
-  });
-
   it("ChatCut 工程目录读不了 → 核不了就先不挪：记候选、写原因，文件留原处（Codex 审 segB18 P2 取代 segB4 的「照常挪」）", async () => {
     await fs.mkdir(cc, { recursive: true });
     await fs.chmod(cc, 0o000);
@@ -138,27 +64,24 @@ describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（�
     } finally { await fs.chmod(cc, 0o755); }
   });
 
-  it("某个工程的素材 JSON 写了一半（读不出）→ 不当成「没引用」：record 不挪；收件箱自动挪这轮先不挪、写警告，修好后下一轮再挪", async () => {
+  it("某个工程的素材 JSON 写了一半（读不出）→ 不当成「没引用」：record 不挪，记候选写原因；巡检也不碰收件箱", async () => {
     const c = await videoContent(env, TITLE);
     const bad = path.join(cc, "p-x", "project.chatcutproject", "assets", "video");
     await fs.mkdir(bad, { recursive: true });
     await fs.writeFile(path.join(bad, "a0.json"), "{\"path\": \"/half");
     const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto");
-    let r = await reconcileAll(env.dir);
+    const r = await record(env, { content_id: c.id, kind: "aroll", path: src, request_id: "r1" });
+    expect(r).toMatchObject({ ok: true, state: "candidate" });
+    expect((await aroll(c.id))?.evidence).toContain("没读到 ChatCut 工程信息");
+    await reconcileAll(env.dir);
     expect(await exists(src)).toBe(true);
-    expect(r.warnings.join()).toContain("没读到 ChatCut 工程信息");
-    expect(r.warnings.join()).toContain("先不挪，稍后再试");
-    await fs.writeFile(path.join(bad, "a0.json"), JSON.stringify({ id: "a0", type: "video", path: "/somewhere/else.mov" }));
-    r = await reconcileAll(env.dir);
-    expect(await exists(src)).toBe(false);
-    expect(await aroll(c.id)).toMatchObject({ state: "accepted", auto_attached: true });
+    expect((await aroll(c.id))?.state).toBe("candidate");
   });
 
   it("核不了 ChatCut 时，撤销也不挪：拒并说原因", async () => {
     const c = await videoContent(env, TITLE);
     await founderApprove(env, c.id);
-    await put(path.join(env.inbox, `${TITLE}-原片.mov`), "undo-me");
-    await reconcileAll(env.dir);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${TITLE}-原片.mov`), "undo-me"), request_id: "r1" });
     const f = (await aroll(c.id))!;
     const bad = path.join(cc, "p-y", "project.chatcutproject", "assets", "video");
     await fs.mkdir(bad, { recursive: true });
@@ -178,14 +101,25 @@ describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（�
   });
 });
 
-describe("Codex 审 segB5：撤销 / 改挂也守 ChatCut 引用；原地收下的事实路径是绝对的", () => {
+/** 停用前自动挂上的旧数据：按 record 收下，再补上旧版自动挂上留下的标记（手动收件 spec 2026-10-06 规则 5） */
+async function legacyAutoAttached(id: string): Promise<Fact> {
+  const { withFileOwnership } = await import("./mutex.js");
+  const { mutateProduction } = await import("./service.js");
+  await withFileOwnership(() => mutateProduction(id, env.dir, (doc) => {
+    const f = doc.facts.find((x) => x.kind === "aroll" && x.round === doc.round && x.state === "accepted")!;
+    Object.assign(f, { auto_attached: true, source: "reconcile" });
+    return { value: null, events: [] };
+  }));
+  return (await aroll(id))!;
+}
+
+describe("Codex 审 segB5：撤销也守 ChatCut 引用；原地收下的事实路径是绝对的（停用前自动挂上的旧数据照常能撤）", () => {
   const TITLE = "撤销守卫测试的一条稿";
   async function autoMoved(): Promise<{ id: string; fact: Fact; inProject: string }> {
     const c = await videoContent(env, TITLE, "draft_ready", A);
     await founderApprove(env, c.id);
-    await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto");
-    await reconcileAll(env.dir);
-    const fact = (await aroll(c.id))!;
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto"), request_id: "r1" });
+    const fact = await legacyAutoAttached(c.id);
     expect(fact).toMatchObject({ state: "accepted", auto_attached: true, path: `02-aroll/${TITLE}-原片.mov` });
     return { id: c.id, fact, inProject: path.join(projectRoot(env, c.id), fact.path!) };
   }
@@ -204,8 +138,8 @@ describe("Codex 审 segB5：撤销 / 改挂也守 ChatCut 引用；原地收下�
     await founderApprove(env, c.id);
     const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "in-place");
     await ccProject("临时工程", [src]);
-    await reconcileAll(env.dir);
-    const fact = (await aroll(c.id))!;
+    await record(env, { content_id: c.id, kind: "aroll", path: src, request_id: "r1" });
+    const fact = await legacyAutoAttached(c.id);
     expect(fact).toMatchObject({ state: "accepted", auto_attached: true, path: src });
     await fs.rm(cc, { recursive: true, force: true });
     const r = await founderDecision(c.id, "undo_auto_attach", { fact_id: fact.id, sha256: fact.sha256 }, env.dir);
@@ -217,25 +151,6 @@ describe("Codex 审 segB5：撤销 / 改挂也守 ChatCut 引用；原地收下�
     expect(doc.decisions.some((d) => d.type === "auto_attach_undo")).toBe(true);
   });
 
-  it("[P2] 原地收下的原片改挂 → 不挪文件，《X》原地收下，这条撤下", async () => {
-    const B = synth(42, 500);
-    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async () => ({ ok: true, text: B.slice(20, 160) }) } });
-    const a = await videoContent(env, "改挂原地甲稿", "draft_ready", A);
-    const b = await videoContent(env, "改挂原地乙稿", "draft_ready", B);
-    await founderApprove(env, a.id);
-    const src = await put(path.join(env.outside, "shared.mov"), "shared");
-    await ccProject("挂载时在用", [src]);
-    await founderDecision(a.id, "attach_aroll", { path: src }, env.dir);
-    await matchWorkerIdle(env.dir);
-    const fact = (await aroll(a.id))!;
-    expect(fact).toMatchObject({ state: "accepted", path: src, attach_check: { status: "suggest" } });
-    await fs.rm(cc, { recursive: true, force: true });
-    const r = await founderDecision(a.id, "reassign_aroll", { fact_id: fact.id, sha256: fact.sha256, to: b.id }, env.dir);
-    expect(r).toMatchObject({ ok: true, reassigned_to: b.id });
-    expect(await fs.readFile(src, "utf8")).toBe("shared");
-    expect(await aroll(b.id)).toMatchObject({ state: "accepted", path: src });
-    expect((await aroll(a.id))?.state).toBe("rejected");
-  });
 });
 
 describe("审计补漏：重开文稿也不挪 ChatCut 按路径在用的原片", () => {

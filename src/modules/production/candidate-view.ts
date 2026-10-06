@@ -6,7 +6,7 @@ import path from "node:path";
 import type { Fact } from "../../storage/production-types.js";
 import { isWithin } from "../../storage/storage-roots.js";
 
-export interface SourceDirs { inbox: string | null; chatcut: string | null; jianying: string | null; watch: string[] }
+export interface SourceDirs { inbox: string | null; chatcut: string | null; jianying: string | null }
 export interface CandidateRow {
   fact_id: string; kind: Fact["kind"]; state: Fact["state"]; sha256?: string; started_at?: string;
   name: string; origin: string; reason: string; detail: string; path: string | null;
@@ -21,8 +21,6 @@ export function originOf(f: Fact, dirs: SourceDirs): string {
   if (f.source === "record") return "agent 报的";
   const file = f.path && path.isAbsolute(f.path) ? f.path : null;
   if (file && dirs.inbox && path.dirname(file) === dirs.inbox) return "收件箱";
-  const watch = file ? dirs.watch.find((w) => path.dirname(file) === w) : undefined;
-  if (watch) return `监视文件夹「${path.basename(watch)}」`;
   if (file && dirs.chatcut && isWithin(dirs.chatcut, file)) return "ChatCut 导出";
   if (file && dirs.jianying && isWithin(dirs.jianying, file)) return "剪映导出";
   return f.source === "legacy" ? "旧记录" : "对账发现";

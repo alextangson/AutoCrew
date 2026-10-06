@@ -1,6 +1,6 @@
 /**
  * 「等你拍板」的读方（review-inbox §3）：收集每条稿的输入交给纯函数 `contentItems`，外加全库的条目
- * （收件箱没对上的视频、写作规则 / 发布偏好提案）。只读，零写入（看板读零写入沿用）。
+ * （写作规则 / 发布偏好提案；收件箱里的视频不再列——创始人在对话里说是哪条）。只读，零写入（看板读零写入沿用）。
  */
 import { isImportedHistory } from "../../storage/imported-history.js";
 import fs from "node:fs/promises";
@@ -18,8 +18,7 @@ import { canonPlatform } from "./receipts.js";
 import { attachmentsChanged } from "./asks.js";
 import { withCoverGroups } from "./cover-groups.js";
 import { explainContent, explainContext } from "./read.js";
-import { readReconcileReport } from "./reconcile.js";
-import { cachedSha, loadHashCache } from "./hash-cache.js";
+import { loadHashCache } from "./hash-cache.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
 import { approvedCoverShas } from "./service.js";
 import { draftHash } from "../../storage/draft-hash.js";
@@ -96,51 +95,6 @@ async function confirmedCoverText(c: Content, dataDir: string): Promise<string> 
   return typeof d.cover_text === "string" ? d.cover_text.trim() : "";
 }
 
-/** 还没过剪辑的视频稿（没删、没发、没归档）：收件箱视频能指定给它们 */
-const ASSIGNABLE = new Set(["topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision", "approved", "editing"]);
-
-/** 收件箱里没对上的视频（1b §4）：猜的前三条各一个「是这条」，下拉选别的，或「不是原片，忽略」 */
-async function inboxFileItems(dataDir: string, contents: Content[]): Promise<InboxItem[]> {
-  const report = await readReconcileReport(dataDir);
-  const choices = contents.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && ASSIGNABLE.has(c.status)).map((c) => ({ id: c.id, title: c.title }));
-  const live = new Set(choices.map((c) => c.id));
-  // 已经指定出去的（消费记录记在接收的那条稿上）：下一次读就不再列，不等下一轮对账（整分支审 6 P2）
-  const consumed = new Set<string>();
-  for (const c of contents) for (const e of (await readProductionDoc(c.id, dataDir).catch(() => null))?.inbox_log ?? []) if (e.item_id.startsWith("inbox_file:") && !e.pending) consumed.add(`${e.item_id}\u0000${e.gen}`);
-  const out: InboxItem[] = [];
-  for (const f of report?.inbox?.unmatched ?? []) {
-    // 文件身份（字节）进代次：对账之间文件被换了，旧代次就指定不了新字节（整分支审 6 P2）
-    const now = await cachedSha(f.path).catch(() => null);
-    if (!now) continue;
-    const snapshot = [f.path, now.sha256, now.size, now.mtime_ms];
-    const item_id = inboxFileId(f.path);
-    const gen = genOf([item_id, snapshot]);
-    if (consumed.has(`${item_id}\u0000${gen}`)) continue;
-    const base = { path: f.path, expect_sha: now.sha256 };
-    // 报告里的证据（猜测、时长、转写、「已经用过」）只在字节还是报告那份时才给；文件变过 = 只给文件本身和下拉
-    const same = f.sha256 === now.sha256;
-    const usedBy = same ? f.used_by ?? null : null;
-    const guesses = same ? (f.guesses ?? []).filter((g) => live.has(g.content_id)).slice(0, 3) : [];
-    out.push({
-      item_id, gen, type: "inbox_file" as const, content_id: null, title: f.name,
-      summary: usedBy ? `收件箱里的视频已经用过了，但没挪走：${f.name}` : `收件箱里有个视频没对上：${f.name}`,
-      waiting: null, agent_waiting: false, since: new Date(now.mtime_ms).toISOString(), rank: 1 as const,
-      actions: [
-        ...(usedBy ? [] : [{ action: "assign", label: "指定给…", role: "primary" as const, params: base },
-          ...guesses.map((g) => ({ action: "assign", label: "是这条", role: "secondary" as const, params: { ...base, to: g.content_id } }))]),
-        { action: "ignore_inbox_file", label: "不是原片，忽略", role: "quiet" as const, params: base },
-      ],
-      detail: same
-        ? { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: f.duration_ms ?? null, transcript_head: f.transcript_head ?? null,
-          reason: f.reason ?? null, used_by: usedBy, guess: f.guess, guesses, choices: usedBy ? [] : choices, changed: false }
-        : { name: f.name, size: now.size, mtime_ms: now.mtime_ms, duration_ms: null, transcript_head: null, reason: null, used_by: null, guess: [], guesses: [], choices, changed: true },
-    });
-  }
-  return out;
-}
-
-export const inboxFileId = (file: string) => `inbox_file:${genOf(file)}`;
-
 /** 其他（默认收起）：写作规则提案、发布偏好提案——原界面、原动作，这里只列出来 */
 async function otherItems(dataDir: string): Promise<InboxItem[]> {
   const out: InboxItem[] = [];
@@ -173,7 +127,7 @@ export async function readInbox(dataDir: string, opts: { contentId?: string; now
     if (c.deletedAt || c.status === "archived" || isImportedHistory(c)) continue;
     items.push(...contentItems(await contentInput(c, dataDir, ctx), opts.now));
   }
-  if (!opts.contentId) items.push(...(await inboxFileItems(dataDir, all)), ...(await otherItems(dataDir)));
+  if (!opts.contentId) items.push(...(await otherItems(dataDir)));
   const sorted = sortItems(opts.withDrafts ? items : items.filter((i) => i.type !== "draft"));
   return { ok: true, items: sorted, count: sorted.length, agent_waiting: sorted.filter((i) => i.agent_waiting).length, generated_at: new Date().toISOString() };
 }

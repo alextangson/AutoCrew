@@ -5,11 +5,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, type Content } from "../../storage/local-store.js";
-import { CHATCUT_USES, IN_EDIT_REASSIGN, noOriginalPlace, undoBlocker } from "./undo-attach.js";
+import { noOriginalPlace, undoBlocker } from "./undo-attach.js";
 import { candidateRow, originOf, type CandidateRow, type SourceDirs } from "./candidate-view.js";
 import type { Fact } from "../../storage/production-types.js";
 import { movableRoots } from "./roots.js";
-import { readArollSources } from "./sources.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -67,10 +66,7 @@ function sliverPanel(doc: ProductionDoc, approvedSha: string | undefined): Recor
   };
 }
 
-/**
- * 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的给「不是这条」，核对说更像别条的给「改挂到《X》」/「就是这条」；
- * 前提不满足时不给按钮，给原因（「这条已经在剪了…」）。
- */
+/** 本轮 accepted 原片（1b §4.1）：能撤就给「不是这条」；前提不满足时不给按钮，给原因（「这条已经在剪了…」） */
 /** 这段原片是怎么来的（人话）：自动挂的、创始人从哪儿确认的、agent 报的、创始人挂的 */
 function arollOrigin(f: Fact, doc: ProductionDoc, dirs: SourceDirs): string {
   if (f.auto_attached) return f.source === "reconcile" ? "收件箱自动挂上" : "核对后自动挂上";
@@ -78,7 +74,7 @@ function arollOrigin(f: Fact, doc: ProductionDoc, dirs: SourceDirs): string {
   if (f.source === "record") return "agent 报的";
   const confirmed = doc.decisions.some((d) => d.type === "candidate_confirm" && d.fact_id === f.id);
   const where = originOf({ ...f, path: f.source_path ?? f.path }, dirs);
-  const known = where === "收件箱" || where.startsWith("监视文件夹") || where.endsWith("导出");
+  const known = where === "收件箱" || where.endsWith("导出");
   return confirmed ? (known ? `你从${where}确认的` : "你确认的") : where;
 }
 
@@ -89,15 +85,14 @@ async function arollRows(content: Content, doc: ProductionDoc, dataDir: string, 
     const noHome = await noOriginalPlace(content, f, dataDir);
     out.push({ fact_id: f.id, sha256: f.sha256, path: f.path, name: path.basename(f.source_path ?? f.path ?? ""), origin: arollOrigin(f, doc, dirs),
       duration_ms: f.duration_ms ?? null, at: f.at, auto_attached: f.auto_attached === true, source_path: f.source_path ?? null,
-      check: f.attach_check ?? null, undo_blocked: noHome ?? blocked, reassign_blocked: blocked ? (blocked === CHATCUT_USES ? blocked : IN_EDIT_REASSIGN) : null });
+      undo_blocked: noHome ?? blocked });
   }
   return out;
 }
 
 async function sourceDirs(dataDir: string): Promise<SourceDirs> {
   const roots = await movableRoots(dataDir);
-  const folders = (await readArollSources(dataDir).catch(() => ({ folders: [] as Array<{ path: string }> }))).folders.map((f) => f.path);
-  return { inbox: roots.inbox, chatcut: roots.chatcut, jianying: roots.jianying, watch: [...new Set([...(roots.watch ?? []), ...folders])] };
+  return { inbox: roots.inbox, chatcut: roots.chatcut, jianying: roots.jianying };
 }
 
 async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: string): Promise<CandidateRow[]> {

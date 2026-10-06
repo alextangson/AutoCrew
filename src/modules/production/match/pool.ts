@@ -6,19 +6,11 @@ import { listContents, type Content, type ContentStatus } from "../../../storage
 import { bodyHash, readProductionDoc } from "../../../storage/production-store.js";
 import { isVideoPlatform } from "../../../storage/stage-guard.js";
 import { frozenCopy } from "../service.js";
-import type { PoolEntry } from "./decide.js";
 
 /** 「draft_ready 起」包括审稿中 / 修订中：写稿段、已有正文、还能被认稿（Codex 审 segB18 P2） */
 export const AROLL_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "reviewing", "revision", "approved", "editing", "cover_pending"]);
 
-/** 导出目录的新版本（§6）：draft_ready 起全部视频稿（含已发布） */
-export const EXPORT_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "reviewing", "revision", "approved", "editing", "cover_pending", "publish_ready", "publishing", "published"]);
-
-export async function exportPool(dataDir: string): Promise<PoolEntry[]> {
-  const all = await listContents(dataDir);
-  const picked = all.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && EXPORT_POOL_STATUS.has(c.status) && Boolean((c.body ?? "").trim()));
-  return Promise.all(picked.map((c) => entryOf(c, dataDir)));
-}
+export interface PoolEntry { content_id: string; title: string; old_titles: string[]; round: number; body_hash: string; body: string }
 
 export function inArollPool(c: Content): boolean {
   return isVideoPlatform(c.platform) && !c.deletedAt && AROLL_POOL_STATUS.has(c.status) && Boolean((c.body ?? "").trim());

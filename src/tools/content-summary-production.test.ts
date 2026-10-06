@@ -4,15 +4,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeContentSave } from "./content-save.js";
 import { withFileOwnership } from "../modules/production/mutex.js";
 import { mutateProduction } from "../modules/production/service.js";
-import { setMatchDeps } from "../modules/production/match/deps.js";
-import { matchWorkerIdle } from "../modules/production/match/queue.js";
-import { synth } from "../modules/production/match/synth-fixture.js";
+import { founderDecision } from "../modules/production/decisions.js";
+import { readProductionDocOrEmpty } from "../storage/production-store.js";
 import { founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "../modules/production/testkit.js";
 import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
-afterEach(async () => { await matchWorkerIdle(env.dir); await env.cleanup(); });
+afterEach(async () => { await env.cleanup(); });
 
 const summary = (id: string, since_seq?: unknown) =>
   executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id, ...(since_seq !== undefined ? { since_seq } : {}) }) as Promise<Record<string, unknown>>;
@@ -37,47 +36,6 @@ describe("summary 的制作段字段", () => {
     expect(bytes(r)).toBeLessThanOrEqual(1536);
   });
 
-  it("写稿段稿件有 pending_match 也给 pending[] 与 aroll[]（§14-16）", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: false, unavailable: false, reason: "测试" }; } } });
-    const c = await videoContent(env, "还在写的稿");
-    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_1.mov"), "b"), request_id: "r1" });
-    const r = await summary(c.id);
-    expect(r.pending).toEqual([expect.objectContaining({ fact_id: expect.any(String), started_at: expect.any(String) })]);
-    expect(r.aroll).toEqual([expect.objectContaining({ state: "pending_match" })]);
-    expect(r.badges).toContain("正在核对原片");
-    release();
-  });
-
-  it("写稿段唯一的核对转成候选后，摘要仍给终态与原因，并翻得到落定事件（Codex 审 segA P2）", async () => {
-    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => ({ ok: false, unavailable: false, reason: "假失败" }) } });
-    const c = await videoContent(env, "还在写的另一条稿");
-    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_2.mov"), "b2"), request_id: "r1" });
-    const before = await summary(c.id);
-    await matchWorkerIdle(env.dir);
-    const r = await summary(c.id, before.next_since_seq);
-    expect(r.aroll).toEqual([expect.objectContaining({ state: "candidate", reason: expect.stringContaining("假失败") })]);
-    expect((r.changes as Array<{ type: string }>).map((x) => x.type)).toContain("aroll_match_candidate");
-  });
-
-  it("本轮原片超过 5 条：较早的 pending 落定后，翻到那条变化时一定带上它的新路径（Codex 审 segA P2）", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    const title = "很多原片的一条测试稿";
-    const c = await videoContent(env, title, "draft_ready", synth(7, 400));
-    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: true, text: synth(7, 400).slice(10, 150) }; } } });
-    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_old.mov"), "old"), request_id: "old" });
-    for (let i = 0; i < 6; i++) await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${title}-${i}.mov`), `t${i}`), request_id: `n${i}` });
-    const since = (await summary(c.id)).latest_seq as number;
-    release();
-    await matchWorkerIdle(env.dir);
-    const r = await summary(c.id, since);
-    const done = (r.changes as Array<{ type: string; fact_id?: string }>).find((x) => x.type === "aroll_match_accepted");
-    expect(done).toBeTruthy();
-    expect(r.aroll).toEqual(expect.arrayContaining([expect.objectContaining({ fact_id: done!.fact_id, state: "accepted", path: expect.stringContaining("02-aroll") })]));
-  });
-
   it("本轮原片很多、路径很长：摘要仍 ≤ 1.5KB（extra 缩到 0 时不能回成全部；Codex 审 segB P2）", async () => {
     const c = await videoContent(env, "很多长路径原片的稿");
     await founderApprove(env, c.id);
@@ -88,15 +46,9 @@ describe("summary 的制作段字段", () => {
     expect(bytes(r)).toBeLessThanOrEqual(1536);
   });
 
-  it("很多条 pending、路径很长：每页都 ≤ 1.5KB，按 aroll_next_offset 翻页能拿到每一条（Codex 审 segB7 P2）", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: false, unavailable: false, reason: "测试结束" }; } } });
-    try { await manyPending(); } finally { release(); }
-  });
-
-  async function manyPending(): Promise<void> {
-    const c = await videoContent(env, "很多核对中原片的稿");
+  it("很多条候选、路径很长：每页都 ≤ 1.5KB，按 aroll_next_offset 翻页能拿到每一条（Codex 审 segB7 P2）", async () => {
+    const c = await videoContent(env, "很多候选原片的稿");
+    await founderApprove(env, c.id);
     const ids = new Set<string>();
     for (let i = 0; i < 8; i++) {
       const r = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${"很长很长的收件箱原片文件名".repeat(3)}-${i}.mov`), `p${i}`), request_id: `r${i}` });
@@ -108,19 +60,17 @@ describe("summary 的制作段字段", () => {
       const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
       expect(bytes(r)).toBeLessThanOrEqual(1536);
       for (const a of r.aroll as Array<{ fact_id: string }>) seen.add(a.fact_id);
-      for (const p of r.pending as Array<{ fact_id: string }>) expect(ids.has(p.fact_id)).toBe(true);
+      expect(r.pending).toEqual([]);
       if (r.aroll_next_offset === undefined) break;
       offset = r.aroll_next_offset;
     }
     expect([...ids].every((id) => seen.has(id))).toBe(true);
-  }
+  });
 
-  it("原片按 (at, id) 稳定集合只用 aroll_offset 翻：每条恰好出现一次，中途落定的那条不丢（Codex 审 segB8 P2）", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: false, unavailable: false, reason: "中途落定" }; } } });
-    try {
+  it("原片按 (at, id) 稳定集合只用 aroll_offset 翻：每条恰好出现一次，中途定掉的那条不丢（Codex 审 segB8 P2）", async () => {
+    {
       const c = await videoContent(env, "原片稳定翻页的稿");
+      await founderApprove(env, c.id);
       const ids: string[] = [];
       const first = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_pending.mov"), "p"), request_id: "rp" });
       ids.push(String(first.fact_id));
@@ -134,12 +84,12 @@ describe("summary 的制作段字段", () => {
         const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
         expect(bytes(r)).toBeLessThanOrEqual(1536);
         seen.push(...(r.aroll as Array<{ fact_id: string }>).map((a) => a.fact_id));
-        if (page === 0) { release(); await matchWorkerIdle(env.dir); }
+        if (page === 0) await founderDecision(c.id, "reject_candidate", { fact_id: ids[0], sha256: (await readProductionDocOrEmpty(c.id, env.dir)).facts.find((f) => f.id === ids[0])!.sha256 }, env.dir);
         if (r.aroll_next_offset === undefined) break;
         offset = r.aroll_next_offset;
       }
       expect([...seen].sort()).toEqual([...ids].sort());
-    } finally { release(); }
+    }
   });
 
   it("原片路径很长（中文目录名）：缩到最小形状仍给全路径，总长 ≤ 1.5KB（Codex 审 segB11 P2）", async () => {

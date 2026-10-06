@@ -373,17 +373,6 @@ describe("整分支审（2a vs main）", () => {
     expect(back!.gen).not.toBe(it0.gen);
   });
 
-  it("「指定给…」用服务端给的路径，不从页面取", async () => {
-    const target = await videoContent(env, "等原片的稿");
-    await founderApprove(env, target.id);
-    await put(path.join(env.inbox, "IMG_7777.mov"), "unmatched-video");
-    await reconcileAll(env.dir);
-    const it = (await readInbox(env.dir)).items.find((i) => i.type === "inbox_file")!;
-    expect(it).toBeDefined();
-    const out = await decideItem({ item_id: it.item_id, gen: it.gen, action: "assign", to: target.id, path: "/etc/passwd" }, env.dir);
-    expect(out).toMatchObject({ ok: true });
-    expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(true);
-  });
 });
 
 describe("item_id 全局唯一（整分支审 2）", () => {
@@ -502,30 +491,6 @@ describe("整分支审 12", () => {
   });
 });
 
-describe("整分支审 6", () => {
-  async function setup() {
-    const target = await videoContent(env, "等原片的稿");
-    await founderApprove(env, target.id);
-    const file = await put(path.join(env.inbox, "IMG_8888.mov"), "bytes-one");
-    await reconcileAll(env.dir);
-    const it = (await readInbox(env.dir)).items.find((i) => i.type === "inbox_file")!;
-    return { target, file, it };
-  }
-  it("指定给… 成功后，下一次读列表就没有它了；同样的请求重发 = 回放", async () => {
-    const { target, it } = await setup();
-    const req = { item_id: it.item_id, gen: it.gen, action: "assign", to: target.id };
-    expect(await decideItem(req, env.dir)).toMatchObject({ ok: true });
-    expect((await readInbox(env.dir)).items.filter((i) => i.type === "inbox_file")).toEqual([]);
-    expect(await decideItem(req, env.dir)).toMatchObject({ ok: true, replayed: true });
-  });
-  it("对账之间收件箱里的文件被换了（同名同大小）：旧代次指定不了新字节", async () => {
-    const { target, file, it } = await setup();
-    await put(file, "bytes-two");
-    expect(await decideItem({ item_id: it.item_id, gen: it.gen, action: "assign", to: target.id }, env.dir)).toMatchObject({ ok: false, code: "stale" });
-    expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(false);
-  });
-});
-
 describe("整分支审 7", () => {
   it("组里一张被覆盖、补进新图后再选：批准有效（只看这条批准绑的那一对）", async () => {
     const c = await editing();
@@ -597,17 +562,5 @@ describe("verifier 2a 修复（第三批）", () => {
       if (old === undefined) delete process.env.AUTOCREW_LOCAL_DIR; else process.env.AUTOCREW_LOCAL_DIR = old;
       await fsp.rm(tmp, { recursive: true, force: true });
     }
-  });
-
-  it("被「不是」挪回收件箱的原片：列头「收件箱里没对上」里看得见", async () => {
-    const c = await videoContent(env, "挪回收件箱测试稿");
-    await founderApprove(env, c.id);
-    await put(path.join(env.inbox, "挪回收件箱测试稿.mov"), "take-x");
-    await reconcileAll(env.dir);
-    const f = (await doc(c.id)).facts.find((x) => x.kind === "aroll" && x.state === "accepted")!;
-    expect(f).toBeDefined();
-    expect(await founderDecision(c.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 }, env.dir)).toMatchObject({ ok: true });
-    const report = await reconcileAll(env.dir);
-    expect(report.inbox?.unmatched.map((u) => u.name)).toContain("挪回收件箱测试稿.mov");
   });
 });

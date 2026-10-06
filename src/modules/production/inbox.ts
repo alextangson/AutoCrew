@@ -22,7 +22,7 @@ import { markedCuts } from "./ready.js";
 import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 export type InboxType =
-  | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "auto_attached" | "attach_check" | "inbox_file" | "sliver"
+  | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
   | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "other";
 
 /** 按钮：主（黑底，每件最多一个）/ 次（白底细边）/ 少用（灰字）；带 note 的动作就地展开输入框 */
@@ -223,15 +223,14 @@ function coverItem(doc: ProductionDoc, content: Content, handoffText = ""): Draf
   };
 }
 
-// ---- 候选 / 自动挂上 / 挂载核对 ----
+// ---- 候选 ----
 
 function candidateItems(doc: ProductionDoc, skip: ReadonlySet<string> = new Set()): Draft[] {
   const out: Draft[] = [];
   for (const f of doc.facts.filter((x) => x.round === doc.round && !skip.has(x.id))) {
     // 发布之后的新导出留在卡片上；正式封面文件夹以外的封面图（多半是中间文件）只在卡片收成一行，都不进列表
+    // 自动找原片停用（手动收件 spec 2026-10-06）：旧的「自动挂上了，对吗」「听起来更像别条」不再出条目，卡片上照样能点「不是」
     if (f.state === "candidate" && !f.post_publish && !isStrayCover(f)) out.push(candidateItem(f));
-    else if (f.kind === "aroll" && f.state === "accepted" && f.auto_attached && f.attach_check?.status !== "kept") out.push(autoItem(f));
-    if (f.kind === "aroll" && f.state === "accepted" && f.attach_check?.status === "suggest" && f.attach_check.other_id) out.push(attachItem(f));
   }
   return out;
 }
@@ -244,25 +243,6 @@ function candidateItem(f: Fact): Draft {
     actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: factParams(f) }, { action: "reject_candidate", label: "不是", role: "secondary", params: factParams(f) }],
     detail: { fact_id: f.id, kind: f.kind, name: fileName(f.path) || null, reason: plainReason(f), ratio: f.ratio ?? null, preview: Boolean(f.sha256) },
     snapshot: [f.id, f.sha256, f.state, f.path],
-  };
-}
-
-function autoItem(f: Fact): Draft {
-  return {
-    item_id: `auto:${f.id}`, type: "auto_attached", summary: f.source === "reconcile" ? "从收件箱自动挂上了一段原片，对吗" : "核对后自动挂上了一段原片，对吗", waiting: null, agent_waiting: false, since: f.at, rank: 1,
-    actions: [{ action: "ack", label: "对，就是它", role: "primary" }, { action: "undo_auto_attach", label: "不是", role: "secondary", params: factParams(f) }],
-    detail: { fact_id: f.id, kind: "aroll", name: fileName(f.source_path ?? f.path), reason: f.source === "reconcile" ? "在原片收件箱里找到的，文件名和标题对上了" : "开头说的话和这条稿对上了", preview: Boolean(f.sha256) },
-    snapshot: [f.id, f.sha256, "auto"],
-  };
-}
-
-function attachItem(f: Fact): Draft {
-  const c = f.attach_check!;
-  return {
-    item_id: `attach:${f.id}`, type: "attach_check", summary: `这段原片听起来更像《${c.other_title ?? ""}》`, waiting: null, agent_waiting: false, since: c.at, rank: 1,
-    actions: [{ action: "keep_attach", label: "对，就是它", role: "primary", params: factParams(f) }, { action: "reassign_aroll", label: `改挂到《${c.other_title ?? ""}》`, role: "secondary", params: { ...factParams(f), to: c.other_id } }],
-    detail: { fact_id: f.id, kind: "aroll", name: fileName(f.path), other_id: c.other_id, other_title: c.other_title ?? "", reason: "开头说的话更像另一条稿", preview: Boolean(f.sha256) },
-    snapshot: [f.id, f.sha256, c.job ?? c.at, c.other_id],
   };
 }
 

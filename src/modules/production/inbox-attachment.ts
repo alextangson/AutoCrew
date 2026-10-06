@@ -10,9 +10,6 @@ import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isWithin } from "../../storage/storage-roots.js";
 /** 按文件身份（dev、ino、大小、修改时间）缓存的 sha：拖一次进度不再整份重读（整分支审 8 P2） */
 import { cachedSha } from "./observe.js";
-import { inboxFileId } from "./inbox-read.js";
-import { readReconcileReport } from "./reconcile.js";
-import { movableRoots } from "./roots.js";
 
 const TYPES: Record<string, string> = {
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
@@ -59,22 +56,5 @@ export async function openFactMedia(contentId: string, factId: string, dataDir: 
   const st = await fs.promises.stat(real);
   if (!st.isFile()) return { ok: false, status: 404, error: "不是普通文件" };
   if ((await cachedSha(real)).sha256 !== f.sha256) return { ok: false, status: 409, error: "文件变过了" };
-  return { ok: true, file: real, size: st.size, type };
-}
-
-/**
- * 收件箱里没对上的视频预览：只认这一轮对账报告里列着的文件（按条目 id 找），还得真在收件箱顶层——不收任意路径。
- */
-export async function openInboxFileMedia(itemId: string, dataDir: string): Promise<AttachmentOpen> {
-  const report = await readReconcileReport(dataDir);
-  const f = (report?.inbox?.unmatched ?? []).find((x) => inboxFileId(x.path) === itemId);
-  if (!f) return { ok: false, status: 404, error: "没有这个文件" };
-  const type = TYPES[path.extname(f.path).toLowerCase()];
-  if (!type || !type.startsWith("video/")) return { ok: false, status: 415, error: "这种文件不能在网页里预览" };
-  const inbox = (await movableRoots(dataDir)).inbox;
-  const real = await fs.promises.realpath(f.path).catch(() => null);
-  if (!inbox || !real || path.dirname(real) !== inbox) return { ok: false, status: 404, error: "文件不在收件箱了" };
-  const st = await fs.promises.stat(real);
-  if (!st.isFile()) return { ok: false, status: 404, error: "不是普通文件" };
   return { ok: true, file: real, size: st.size, type };
 }
