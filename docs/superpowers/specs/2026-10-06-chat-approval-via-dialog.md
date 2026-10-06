@@ -82,3 +82,15 @@ Batch confirm, publish items, inbox_file assign, editing cover text inside the d
 8. Dialog slot is a separate global lock (one dialog on screen), never held together with the production/ownership lock. Flow: validate → take dialog slot → release → dialog → re-take commit lock → revalidate gen + bytes → commit. Slot is released on every exit path and cleared on startup.
 9. "查看 succeeded" = the opener launched on the verified immutable copy without error; it does not prove watching. Locked screen is treated like no click (timeout) unless osascript reports no GUI (unavailable).
 10. Decision schema: add `source: "chat-dialog" | "chat-reported"` alongside existing values and `founder_words` on the decision, written in the same push (not a later patch). Agent-supplied quotes are labeled unverified for revision requests; for dialog decisions the dialog shows the quote the founder confirms.
+
+## Revision 2026-10-06 (later): drop the dialog — chat words decide
+
+After a real run the founder found the text-only dialog pointless ("看不到东西") and chose to let chat decisions stand on their own, knowingly giving up the dialog's anti-forgery seal (risk stated once; founder decided). This supersedes the dialog parts above.
+
+- All in-scope decisions (cover_pick, candidate, cut_review — approve, reject, retire, revision request) are recorded directly from chat. No dialog, no 查看, no preview copies, no dialog slot. Delete that code; no flag.
+- Both hosts (Claude Code and Codex) may record them.
+- Kept: exact item_id + gen + selector (group_id / fact_id) binding; selector_required on ambiguous items; gen change → refuse and return the fresh item; already-decided → 已在别处处理; request_id idempotency with payload binding; fresh sha check of the selected files before commit; effective values resolved once and committed exactly.
+- Every chat decision stores verbatim `founder_words` (required, non-empty) and requested_by; source `chat` (replace chat-dialog / chat-reported with one value, migrate readers; existing records with the old values stay readable). Board shows the 对话里定的 / 对话里转述 label where the founder sees decisions.
+- Cut approvals: the tool returns the cut file path in `list` and its description tells the agent to give the founder the file and ask them to watch before deciding (not enforceable).
+- Revoke: expose the existing `revoke_approval` decision through the same tool so the founder can say 撤回刚才那个 in chat. No new UI.
+- Publish items, inbox_file, ask, sliver stay web-only.
