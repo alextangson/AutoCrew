@@ -452,7 +452,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   checks.push(lengthCheck(surface, platform));
 
   // --- Check 6b: 发布出口（本体 §5）：按本体走的视频稿只发当前有效登记记录里的成片与封面 ---
-  const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir)) : null;
+  const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
   if (gated) checks.push(gated.ok
     ? { name: "登记（发布出口）", status: "pass", detail: `发当前登记的成片与封面（${gated.files.registration.id}）` }
     : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在工作台重新通过成片 / 封面，登记会自动完成" });

@@ -23,8 +23,13 @@ export function sha256Text(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+let fullHashes = 0;
+/** 测试缝：进程里一共做过几次全文件哈希（读路径应当零次，提交点照算） */
+export const fullHashCount = (): number => fullHashes;
+
 /** 全文件 sha256（流式，GB 级 A-roll 不进内存） */
 export function sha256File(file: string): Promise<string> {
+  fullHashes++;
   return new Promise((resolve, reject) => {
     const hash = createHash("sha256");
     createReadStream(file)

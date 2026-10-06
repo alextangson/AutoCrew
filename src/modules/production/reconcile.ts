@@ -26,7 +26,6 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
 import { triggerSliverCheck } from "./sliver/check.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
-import { STABLE_MS } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
 import { migrateCoverGroups } from "./cover-groups.js";
 import { validCoverApproval } from "./derive.js";
@@ -36,9 +35,10 @@ function approvedCoverShas(doc: ProductionDoc, content: Content): Set<string> {
   const d = validCoverApproval(doc, content.body ?? "");
   return new Set([d?.cover_3x4_sha, d?.cover_4x3_sha].filter((x): x is string => Boolean(x)));
 }
-import { applyObservations, cachedSha, loadHashCache, observeProject, saveHashCache, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
+import { cachedSha, loadHashCache, saveHashCache, sweepHashCache, unsettled } from "./hash-cache.js";
+import { applyObservations, observeProject, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
 import { publishEvidenceOf } from "./read.js";
-import { movableRoots, now } from "./roots.js";
+import { movableRoots } from "./roots.js";
 import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
 import { kickMatchWorker, matchWorkerError } from "./match/queue.js";
@@ -80,8 +80,11 @@ export async function listExternal(dataDir: string, warnings: string[]): Promise
     catch (e) { warnings.push(`读不了 ${dir}（${(e as NodeJS.ErrnoException).code ?? "?"}）`); continue; }
     for (const name of names.filter((n) => VIDEO_EXT.has(path.extname(n).toLowerCase()))) {
       const file = path.join(dir, name);
+      // 先看是不是还在写（一分钟内改过）：还在写的这轮不算哈希，下一轮再收
+      const st = await fs.stat(file).catch(() => null);
+      if (!st || unsettled(st.mtimeMs)) continue;
       const h = await cachedSha(file).catch(() => null);
-      if (h && now() - h.mtime_ms >= STABLE_MS) out.push({ file, name, from, ...h });
+      if (h) out.push({ file, name, from, ...h });
     }
   }
   return out;
@@ -145,7 +148,7 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
 async function shadowMove(content: Content, doc: ProductionDoc, dataDir: string): Promise<ShadowMove | null> {
   const publish = await publishEvidenceOf(content, dataDir, undefined, doc.round_started_at);
   const legacy = explain({ content, doc, enabled: false, publish });
-  const imported = await importLegacyRegistration(content, doc.round, dataDir, "1970-01-01T00:00:00.000Z");
+  const imported = await importLegacyRegistration(content, doc.round, dataDir, "1970-01-01T00:00:00.000Z", { cached: true });
   const derived = explain({ content, doc: withLegacyDecisions(doc, content, undefined, imported), enabled: true, publish });
   if (legacy.column === derived.column) return null;
   const why = imported.reason && content.video?.final ? [`旧登记没迁移：${imported.reason}`] : [];
@@ -211,7 +214,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
         if (!isVideoPlatform(c.platform)) continue;
         let doc = await reconcileOne(c, dataDir, { write: active, externals, archived, suggestions: found?.suggestions.get(c.id) ?? [], warnings: report.warnings });
         if (active && enabled) {
-          const commit = await commitRegistration(c.id, dataDir);
+          const commit = await commitRegistration(c.id, dataDir, { backoff: true });
           if (commit.ok && commit.registration) doc = await readProductionDocOrEmpty(c.id, dataDir);
           // 登记失败 / 警告进对账报告（看板顶部 + 晨报），不静默
           if (!commit.ok) report.warnings.push(`${c.title}（${c.id}）登记没完成：${commit.reason}`);
@@ -227,6 +230,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
       }
     }
   });
+  await sweepHashCache().catch(() => 0);
   await saveHashCache(dataDir).catch((e: unknown) => report.warnings.push(`哈希缓存没存上：${e instanceof Error ? e.message : String(e)}`));
   await writeJsonAtomicMkdir(reportFile(dataDir), report);
   return report;

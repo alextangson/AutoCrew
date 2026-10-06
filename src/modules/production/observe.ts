@@ -11,15 +11,16 @@ import path from "node:path";
 import type { Content } from "../../storage/local-store.js";
 import { projectFile } from "../../storage/content-project.js";
 import type { Availability, Fact, ProductionDoc } from "../../storage/production-types.js";
-import { newId, productionServiceDir } from "../../storage/production-store.js";
-import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
+import { newId } from "../../storage/production-store.js";
 import { scanCoverFolder } from "../video/handoff/cover-scan.js";
 import { COVER_ROLES, normalizeExecution } from "../video/handoff/execution-index.js";
-import { sha256File } from "../video/handoff/manifest.js";
+import { cachedSha, unsettled } from "./hash-cache.js";
 import { readProjectJson } from "../video/handoff/project-evidence.js";
 import { coverRatioOf } from "./files.js";
 import { addMember, admittedGroupKey, ensureGroup, retiredGroupOfLabel } from "./cover-groups.js";
 import { strayCoverReason } from "./plain-reason.js";
+
+export { cachedSha, loadHashCache, saveHashCache } from "./hash-cache.js";
 
 export const VIDEO_EXT = new Set([".mp4", ".mov", ".m4v"]);
 const SRT_EXT = new Set([".srt", ".vtt"]);
@@ -30,39 +31,6 @@ export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> 
 export interface Observations { warnings?: string[]; seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number }; moved?: { path: string; size: number; mtime_ms: number } }>;
   /** 封面组成员各自那份文件的状态（键：组 id + 事实 id） */
   members?: Map<string, "replaced" | "ok"> }
-
-/**
- * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
- * 重启后不必把每个 A-roll 重算一遍。它只是缓存：键对不上就重算，坏了当空。
- */
-const hashCache = new Map<string, { key: string; sha: string }>();
-let cacheDirty = false;
-
-function cacheFile(dataDir: string): string {
-  return productionServiceDir(dataDir, "hash-cache.json");
-}
-
-export async function loadHashCache(dataDir: string): Promise<void> {
-  try {
-    const raw = JSON.parse(await fs.readFile(cacheFile(dataDir), "utf8")) as Record<string, { key: string; sha: string }>;
-    for (const [k, v] of Object.entries(raw)) if (!hashCache.has(k) && typeof v?.key === "string" && /^[a-f0-9]{64}$/.test(v.sha)) hashCache.set(k, v);
-  } catch { /* 没有或坏了：当空缓存，照常重算 */ }
-}
-
-export async function saveHashCache(dataDir: string): Promise<void> {
-  if (!cacheDirty) return;
-  await writeJsonAtomicMkdir(cacheFile(dataDir), Object.fromEntries(hashCache));
-  cacheDirty = false;
-}
-
-export async function cachedSha(file: string): Promise<{ sha256: string; size: number; mtime_ms: number }> {
-  const st = await fs.stat(file);
-  const key = `${st.dev}:${st.ino}:${st.size}:${Math.trunc(st.mtimeMs)}`;
-  const hit = hashCache.get(file);
-  const sha256 = hit?.key === key ? hit.sha : await sha256File(file);
-  if (hit?.key !== key) { hashCache.set(file, { key, sha: sha256 }); cacheDirty = true; }
-  return { sha256, size: st.size, mtime_ms: Math.trunc(st.mtimeMs) };
-}
 
 async function listFiles(dir: string, recursive: boolean, skip: (rel: string) => boolean = () => false, base = dir): Promise<string[]> {
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -79,7 +47,9 @@ async function listFiles(dir: string, recursive: boolean, skip: (rel: string) =>
 
 const ext = (f: string) => path.extname(f).toLowerCase();
 
-async function fileSeen(root: string, file: string, kind: Fact["kind"], source: Fact["source"], evidence: string, extra: Partial<Seen> = {}): Promise<Seen> {
+/** 一分钟内还在变的文件这轮不看（导出 / 拷贝写到一半），下一轮再收 */
+async function fileSeen(root: string, file: string, kind: Fact["kind"], source: Fact["source"], evidence: string, extra: Partial<Seen> = {}): Promise<Seen | null> {
+  if (unsettled((await fs.stat(file)).mtimeMs)) return null;
   const h = await cachedSha(file);
   const inside = !path.relative(root, file).startsWith("..");
   return { kind, state: "accepted", source, evidence, path: inside ? path.relative(root, file) : file, ...h, ...extra };
@@ -88,12 +58,12 @@ async function fileSeen(root: string, file: string, kind: Fact["kind"], source: 
 /** 视频 / 字幕目录：video → cut（或 aroll），srt → srt */
 async function scanMedia(root: string, rel: string, recursive: boolean, videoKind: "cut" | "aroll"): Promise<Seen[]> {
   const skip = (r: string) => r.startsWith("_作废-") || r === "autocrew-video" || r.startsWith(`autocrew-video${path.sep}`);
-  const out: Seen[] = [];
+  const out: Array<Seen | null> = [];
   for (const file of await listFiles(path.join(root, rel), recursive, skip)) {
     if (VIDEO_EXT.has(ext(file))) out.push(await fileSeen(root, file, videoKind, "reconcile", `项目 ${rel}`));
     else if (videoKind === "cut" && SRT_EXT.has(ext(file))) out.push(await fileSeen(root, file, "srt", "reconcile", `项目 ${rel}`));
   }
-  return out;
+  return out.filter((x): x is Seen => x !== null);
 }
 
 /**
@@ -114,7 +84,8 @@ async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
     const rel = path.relative(root, file);
     const admitted = admittedGroupKey(rel);
     // 登记时拷出的「封面-3x4.*」在 05-cover 顶层：它们的字节就是已批的那张，按 sha 去重，不另记
-    out.push(await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : strayCoverReason(rel), { ratio, ...(admitted ? {} : { state: "candidate" as const }) }));
+    const s = await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : strayCoverReason(rel), { ratio, ...(admitted ? {} : { state: "candidate" as const }) });
+    if (s) out.push(s);
   }
   return out;
 }
@@ -136,7 +107,8 @@ async function executionSeen(content: Content, root: string, dataDir: string): P
     if (!(await fs.stat(file).then((s) => s.isFile(), () => false))) continue;
     const external = path.isAbsolute(a.path) && path.relative(root, file).startsWith("..");
     const ratio = a.role === COVER_ROLES["3:4"] ? "3:4" : a.role === COVER_ROLES["4:3"] ? "4:3" : undefined;
-    out.push(await fileSeen(root, file, kind, "legacy", `execution.json 报到（${a.role}）`, { ...(ratio ? { ratio } : {}), ...(a.version ? { version: a.version } : {}), state: external ? "candidate" : "accepted" }));
+    const s = await fileSeen(root, file, kind, "legacy", `execution.json 报到（${a.role}）`, { ...(ratio ? { ratio } : {}), ...(a.version ? { version: a.version } : {}), state: external ? "candidate" : "accepted" });
+    if (s) out.push(s);
   }
   return out;
 }
@@ -149,7 +121,8 @@ async function assetCoversSeen(content: Content, root: string, dataDir: string):
       : a.libraryPath ? path.join(dataDir, a.libraryPath) : projectFile(root, "assets", "covers", a.filename);
     if (!(await fs.stat(file).then((s) => s.isFile(), () => false))) continue;
     const ratio = await coverRatioOf(file).catch(() => null);
-    if (ratio) out.push(await fileSeen(root, file, "cover", "legacy", "meta.assets 里的封面附件", { ratio }));
+    const s = ratio ? await fileSeen(root, file, "cover", "legacy", "meta.assets 里的封面附件", { ratio }) : null;
+    if (s) out.push(s);
   }
   return out;
 }
@@ -171,7 +144,9 @@ function attachForCut(seen: Seen[], doc: ProductionDoc): void {
 async function intactCopy(doc: ProductionDoc, f: Fact, root: string): Promise<{ path: string; size: number; mtime_ms: number } | null> {
   if (f.kind !== "cover") return null;
   for (const m of (doc.cover_members ?? []).filter((x) => x.fact_id === f.id && x.path && x.path !== f.path)) {
-    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    const file = path.join(root, m.path!);
+    const st = await fs.stat(file).catch(() => null);
+    const h = st && !unsettled(st.mtimeMs) ? await cachedSha(file).catch(() => null) : null;
     if (h && h.sha256 === f.sha256) return { path: m.path!, size: h.size, mtime_ms: h.mtime_ms };
   }
   return null;
@@ -181,7 +156,10 @@ async function intactCopy(doc: ProductionDoc, f: Fact, root: string): Promise<{ 
 async function memberStates(doc: ProductionDoc, root: string): Promise<Map<string, "replaced" | "ok">> {
   const out = new Map<string, "replaced" | "ok">();
   for (const m of (doc.cover_members ?? []).filter((x) => x.path && !path.isAbsolute(x.path))) {
-    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    const file = path.join(root, m.path!);
+    const st = await fs.stat(file).catch(() => null);
+    if (st && unsettled(st.mtimeMs)) continue;
+    const h = st ? await cachedSha(file).catch(() => null) : null;
     out.set(`${m.group_id}\u0000${m.fact_id}`, h?.sha256 === m.sha256 ? "ok" : "replaced");
   }
   return out;
@@ -196,6 +174,8 @@ async function availabilityOf(doc: ProductionDoc, root: string, archived: boolea
       await fs.access(file, fs.constants.R_OK);
       const st = await fs.stat(file);
       const same = st.size === f.size && Math.trunc(st.mtimeMs) === f.mtime_ms;
+      // 还在写：这轮不判它变没变，下一轮再看
+      if (!same && unsettled(st.mtimeMs)) continue;
       const now = same ? f.sha256 : (await cachedSha(file)).sha256;
       if (now !== f.sha256 && other) { out.set(f.id, { availability: "present", moved: other }); continue; }
       const replaced = !f.replaced_at && now !== f.sha256;

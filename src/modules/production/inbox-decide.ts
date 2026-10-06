@@ -23,7 +23,7 @@ import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
 import { moveToUsed } from "./inbox-used.js";
 import { chatcutHold } from "./chatcut-refs.js";
-import { cachedSha } from "./observe.js";
+import { commitSha } from "./hash-cache.js";
 import { mutateProduction } from "./service.js";
 import { canonPlatform } from "./receipts.js";
 
@@ -82,7 +82,7 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
   if (!quote) return fail("note_required", "写一句你的原话：为什么这次破例");
   const checkId = String(ctx.item.detail.check_id);
   // 破例只作用在创始人看到的那份计划上：输入变了就拒，不在新内容上破例（Codex 审 2a-1 r5 P1）
-  if (!(await checkInputsNow(ctx.content!.id, checkId, ctx.dataDir)).same) return fail("plan_changed", "计划刚改过，按新计划重新检查后再看");
+  if (!(await checkInputsNow(ctx.content!.id, checkId, ctx.dataDir, { fresh: true })).same) return fail("plan_changed", "计划刚改过，按新计划重新检查后再看");
   const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; input_at?: string; checked_at?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
     inputs?: { plan_source?: string; plan_snapshot?: unknown; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
   if (!rec) return fail("stale", "这次检查的留档不见了，刷新再看");
@@ -118,8 +118,9 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
 
 /** 「不是原片，忽略」：字节还是创始人看到的那份才挪进「已用过/」；挪不走就说原因 */
 async function ignoreInboxFile(file: string, expectSha: string): Promise<Result> {
-  const now = await cachedSha(file).catch(() => null);
+  const now = await commitSha(file).catch(() => null);
   if (!now) return fail("gone", "这个文件已经不在收件箱了，刷新再看");
+  if (!now.ok) return fail("file_unsettled", now.reason);
   if (now.sha256 !== expectSha) return fail("stale", "这个文件刚变过，刷新再看");
   // ChatCut 工程按绝对路径在用它：挪了工程就断，不挪；核不了也不盲挪
   const hold = await chatcutHold(file).catch((e: unknown) => ({ project: null, unverified: e instanceof Error ? e.message : String(e) }));

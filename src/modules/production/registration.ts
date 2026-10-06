@@ -25,6 +25,7 @@ import type { VideoFinalRecord } from "../video/handoff/types.js";
 import { buildChecklist } from "./checklist.js";
 import { matchingRegistration, registeredSrt, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
 import { identityOf } from "./files.js";
+import { commitSha, metaKey, STILL_SETTLING } from "./hash-cache.js";
 import { checkTargetDir } from "./record-plan.js";
 import { isWithin } from "../../storage/storage-roots.js";
 import { mutateProduction, refreshContent } from "./service.js";
@@ -52,9 +53,32 @@ async function verifyFile(root: string, f: Fact, label: string): Promise<string 
   if (!f.path || path.isAbsolute(f.path)) return `${label}不在项目里（${f.path ?? "?"}）：先让创始人确认挪进项目`;
   let abs: string;
   try { abs = safeProjectPath(root, f.path); } catch (e) { return `${label}的路径不安全：${e instanceof Error ? e.message : String(e)}`; }
-  const sha = await sha256File(abs).catch(() => null);
-  if (!sha) return `${label}不见了：${f.path}`;
-  return sha === f.sha256 ? null : `${label}被改过（字节和批准时不一样）：需要重新通过`;
+  const r = await commitSha(abs).catch(() => null);
+  if (!r) return `${label}不见了：${f.path}`;
+  if (!r.ok) return `${label}：${r.reason}`;
+  return r.sha256 === f.sha256 ? null : `${label}被改过（字节和批准时不一样）：需要重新通过`;
+}
+
+/**
+ * 核失败的退避（对账每轮都会来一次）：记下当时四个文件的元数据身份；身份没变就不再全量重算、直接回上次的原因。
+ * 只对账循环用；创始人点的决定、record 照常现算。「还在写」不记（等一分钟自然就过了，而且它没算哈希）。
+ */
+const verifyFailures = new Map<string, { sig: string; reason: string }>();
+
+async function verifySignature(root: string, p: Picked): Promise<string> {
+  const files = [p.cutFact, p.c34, p.c43, p.srt];
+  const keys = await Promise.all(files.map((f) => (f.path && !path.isAbsolute(f.path) ? metaKey(path.join(root, f.path)) : Promise.resolve("outside"))));
+  return JSON.stringify([files.map((f) => `${f.id}:${f.sha256}`), keys]);
+}
+
+async function verifyWithBackoff(contentId: string, root: string, p: Picked, backoff: boolean): Promise<string | null> {
+  const sig = await verifySignature(root, p);
+  const last = verifyFailures.get(contentId);
+  if (backoff && last?.sig === sig) return last.reason;
+  const bad = await verifyAll(root, p);
+  if (bad && !bad.endsWith(STILL_SETTLING)) verifyFailures.set(contentId, { sig, reason: bad });
+  else verifyFailures.delete(contentId);
+  return bad;
 }
 
 async function verifyAll(root: string, p: Picked): Promise<string | null> {
@@ -133,7 +157,8 @@ async function sideProducts(content: Content, root: string, p: Picked, n: number
 }
 
 /** 调用方持有文件归属事务（决定、record、对账三处触发）。按本体走的视频稿才会登记 */
-export async function commitRegistration(contentId: string, dataDir: string): Promise<CommitResult> {
+/** `backoff`：只给对账循环——上次核失败、相关文件元数据都没变时不再重算 */
+export async function commitRegistration(contentId: string, dataDir: string, opts: { backoff?: boolean } = {}): Promise<CommitResult> {
   const content = await getContent(contentId, dataDir);
   if (!content || !isVideoPlatform(content.platform) || !(await isOntologyActive(dataDir, contentId))) return { ok: true, noop: "不按本体走" };
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
@@ -150,7 +175,7 @@ export async function commitRegistration(contentId: string, dataDir: string): Pr
     return { ok: true, noop: "已经登记过这组批准" };
   }
   const root = await fs.realpath(contentRoot(contentId, dataDir));
-  const bad = await verifyAll(root, picked);
+  const bad = await verifyWithBackoff(contentId, root, picked, opts.backoff === true);
   if (bad) { await recordFailure(contentId, dataDir, bad); return { ok: false, reason: bad }; }
   const n = doc.registrations.length + 1;
   const txn: Txn = { id: newId("txn"), kind: "register", content_id: contentId, round: doc.round, ops: [], at: new Date().toISOString() };

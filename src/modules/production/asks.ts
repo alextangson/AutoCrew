@@ -15,6 +15,7 @@ import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage
 import { ASK_KINDS, type Ask, type AskAnswer, type AskKind, type AskOption, type Decision, type ProductionDoc } from "../../storage/production-types.js";
 import { isWithin } from "../../storage/storage-roots.js";
 import { sha256File } from "../video/handoff/manifest.js";
+import { cachedSha, loadHashCache, STILL_SETTLING, unsettled } from "./hash-cache.js";
 import { resolveLocalFile } from "./files.js";
 import { repairQuotes } from "../publish/review-gate/plan.js";
 import { withFileOwnership } from "./mutex.js";
@@ -99,17 +100,27 @@ function answerable(ask: Ask | undefined, doc: ProductionDoc, content: Content |
 async function answerBlocked(ask: Ask | undefined, doc: ProductionDoc, content: Content | null, dataDir: string): Promise<Result | null> {
   const why = answerable(ask, doc, content);
   if (why) return fail("ask_closed", why);
-  if (content && await attachmentsChanged(content.id, ask!, dataDir)) return fail("attachments_changed", "附件变过，请重新发请示（问你的那份已经不是现在盘上的这份了）");
+  if (content && ask!.attachments.length && await attachmentsUnsettled(contentRoot(content.id, dataDir), ask!)) return fail("file_unsettled", STILL_SETTLING);
+  if (content && await attachmentsChanged(content.id, ask!, dataDir, { fresh: true })) return fail("attachments_changed", "附件变过，请重新发请示（问你的那份已经不是现在盘上的这份了）");
   return null;
 }
 
-async function attachmentShas(root: string, ask: Ask): Promise<Array<string | null>> {
-  return Promise.all(ask.attachments.map((a) => sha256File(path.join(root, a.path)).catch(() => null)));
+/** 回答是提交点：附件一分钟内还在变就先不收 */
+async function attachmentsUnsettled(root: string, ask: Ask): Promise<boolean> {
+  const stats = await Promise.all(ask.attachments.map((a) => fs.stat(path.join(root, a.path)).catch(() => null)));
+  return stats.some((st) => st !== null && unsettled(st.mtimeMs));
+}
+
+/** 回答（提交点）现算；列表 / 状态读路径按元数据缓存认 */
+async function attachmentShas(root: string, ask: Ask, fresh: boolean): Promise<Array<string | null>> {
+  return Promise.all(ask.attachments.map((a) => fresh ? sha256File(path.join(root, a.path)).catch(() => null)
+    : cachedSha(path.join(root, a.path)).then((h) => h.sha256, () => null)));
 }
 
 /** 附件在答之前变了（sha 不符 / 不见了）：条目提示「附件刚变过」 */
-export async function attachmentsChanged(contentId: string, ask: Ask, dataDir: string): Promise<boolean> {
-  const now = await attachmentShas(contentRoot(contentId, dataDir), ask);
+export async function attachmentsChanged(contentId: string, ask: Ask, dataDir: string, opts: { fresh?: boolean } = {}): Promise<boolean> {
+  await loadHashCache(dataDir);
+  const now = await attachmentShas(contentRoot(contentId, dataDir), ask, opts.fresh === true);
   return now.some((s, i) => s !== ask.attachments[i].sha256);
 }
 

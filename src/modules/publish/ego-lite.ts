@@ -81,7 +81,7 @@ async function legacyCoverPath(contentId: string, root: string): Promise<string>
 
 /** 按本体走的稿：只取当前有效登记记录里的成片与 3:4 封面，发前核批准与字节（§5） */
 async function publishFiles(content: Content, root: string): Promise<{ videoPath: string; coverPath: string }> {
-  const gated = await registeredPackage(content, root);
+  const gated = await registeredPackage(content, root, { fresh: true });
   if (gated && !gated.ok) throw new Error(gated.error);
   if (gated?.ok) return { videoPath: gated.files.video, coverPath: gated.files.cover34 };
   return { videoPath: await legacyVideoPath(content, root), coverPath: await legacyCoverPath(content.id, root) };

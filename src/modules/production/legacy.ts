@@ -14,6 +14,7 @@ import { bodyHash } from "../../storage/production-store.js";
 import { draftHash } from "../../storage/draft-hash.js";
 import type { Decision, Fact, Registration } from "../../storage/production-types.js";
 import { coverPairHash, sha256File } from "../video/handoff/manifest.js";
+import { cachedSha } from "./hash-cache.js";
 import { normalizeApprovals, type CoverSelection } from "../video/handoff/gate-state.js";
 import { readProjectJson, type ProjectDecisions } from "../video/handoff/project-evidence.js";
 
@@ -21,10 +22,11 @@ export interface LegacyImport { facts: Fact[]; decisions: Decision[]; registrati
 
 const none = (reason: string): LegacyImport => ({ facts: [], decisions: [], registrations: [], reason });
 
-async function hashAt(root: string, p: string | undefined): Promise<{ rel: string; sha: string } | null> {
+/** cached：影子对账每轮都算一遍「要挪哪些卡」，只按元数据缓存认；真迁移（启用）照常现算 */
+async function hashAt(root: string, p: string | undefined, cached: boolean): Promise<{ rel: string; sha: string } | null> {
   if (!p) return null;
   const abs = path.isAbsolute(p) ? p : path.join(root, p);
-  const sha = await sha256File(abs).catch(() => null);
+  const sha = cached ? (await cachedSha(abs).catch(() => null))?.sha256 ?? null : await sha256File(abs).catch(() => null);
   return sha ? { rel: path.isAbsolute(p) && path.relative(root, abs).startsWith("..") ? abs : path.relative(root, abs), sha } : null;
 }
 
@@ -33,16 +35,17 @@ function legacyFact(kind: Fact["kind"], round: number, at: string, file: { rel: 
 }
 
 /** 从旧登记读出完整组合；任何一环缺失或字节对不上就返回空并说原因 */
-export async function importLegacyRegistration(content: Content, round: number, dataDir: string, at: string): Promise<LegacyImport> {
+export async function importLegacyRegistration(content: Content, round: number, dataDir: string, at: string, opts: { cached?: boolean } = {}): Promise<LegacyImport> {
   const f = content.video?.final;
   if (!f || (content.status !== "publish_ready" && content.status !== "publishing")) return none("不是已登记的待发布稿");
   const root = contentRoot(content.id, dataDir);
   const approvals = normalizeApprovals(await readProjectJson<unknown>(content.id, "approvals.json", dataDir).catch(() => null));
   const selection = await readProjectJson<CoverSelection>(content.id, "cover-selection.json", dataDir).catch(() => null);
   const decisions = await readProjectJson<ProjectDecisions>(content.id, "decisions.json", dataDir).catch(() => null);
-  const cut = await hashAt(root, projectRelativeFile(`assets/${f.asset_filename}`));
-  const c34 = await hashAt(root, selection?.["3:4"]?.path), c43 = await hashAt(root, selection?.["4:3"]?.path);
-  const srt = await hashAt(root, f.srt_path);
+  const cached = opts.cached === true;
+  const cut = await hashAt(root, projectRelativeFile(`assets/${f.asset_filename}`), cached);
+  const c34 = await hashAt(root, selection?.["3:4"]?.path, cached), c43 = await hashAt(root, selection?.["4:3"]?.path, cached);
+  const srt = await hashAt(root, f.srt_path, cached);
   if (!cut || cut.sha !== f.sha256) return none("登记的成片文件不在或字节变了");
   if (approvals?.final_cut?.artifact_sha256 !== f.sha256) return none("approvals.json 里没有对得上这版成片的创始人批准");
   if (!c34 || !c43 || c34.sha !== selection?.["3:4"]?.sha256 || c43.sha !== selection?.["4:3"]?.sha256) return none("选中的封面文件不在或字节变了");

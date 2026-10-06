@@ -17,7 +17,8 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { getWorkspaceCacheDir } from "../../storage/storage-roots.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
-import { checkDuration, STABLE_MS } from "./files.js";
+import { checkDuration } from "./files.js";
+import { unsettled } from "./hash-cache.js";
 import { fileVerdict, type Found, type Verdict } from "./match/background.js";
 import { decide, describeTop3, looksLike, type MatchDecision, type PoolEntry } from "./match/decide.js";
 import { matchDeps } from "./match/deps.js";
@@ -41,7 +42,7 @@ export interface Discovery { suggestions: Map<string, Seen[]>; autoMoves: AutoMo
 const errCode = (e: unknown) => (e as NodeJS.ErrnoException).code ?? (e instanceof Error ? e.message : String(e));
 const denied = (code: string) => code === "EPERM" || code === "EACCES";
 
-/** 顶层、稳定（10 秒不变）的文件；读目录失败回错误码 */
+/** 顶层、稳定（一分钟不变）的文件；读目录失败回错误码 */
 async function listTop(dir: string, keep: (name: string) => boolean): Promise<{ files: Array<{ file: string; name: string; size: number; mtime: number }>; error?: string }> {
   let names: string[];
   try { names = (await fs.readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && !e.name.startsWith(".") && keep(e.name)).map((e) => e.name); }
@@ -49,7 +50,7 @@ async function listTop(dir: string, keep: (name: string) => boolean): Promise<{ 
   const out = [];
   for (const name of names) {
     const st = await fs.stat(path.join(dir, name)).catch(() => null);
-    if (st && now() - st.mtimeMs >= STABLE_MS) out.push({ file: path.join(dir, name), name, size: st.size, mtime: Math.trunc(st.mtimeMs) });
+    if (st && !unsettled(st.mtimeMs)) out.push({ file: path.join(dir, name), name, size: st.size, mtime: Math.trunc(st.mtimeMs) });
   }
   return { files: out };
 }

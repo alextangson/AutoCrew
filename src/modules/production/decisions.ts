@@ -6,7 +6,8 @@
  * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
  */
 import { isImportedHistory } from "../../storage/imported-history.js";
-import { contentRoot } from "../../storage/content-project.js";
+import { contentRoot, safeProjectPath } from "../../storage/content-project.js";
+import { commitSha } from "./hash-cache.js";
 import { readLibraryLocation } from "../../storage/storage-roots.js";
 import path from "node:path";
 import { getContent, getDataDir, listContents, type Content } from "../../storage/local-store.js";
@@ -79,6 +80,21 @@ async function push(ctx: Ctx, d: Omit<Decision, "id" | "round" | "at" | "source"
   })).value;
 }
 
+/**
+ * 提交点：所批文件现算全文件（不信元数据缓存——字节被换、大小和修改时间没变也要逮住）；一分钟内还在变的拒绝。
+ * 盘上找不到这份文件时不在这里拦（对账会把它标成不在，登记提交时再核）。
+ */
+async function bytesStill(ctx: Ctx, f: Fact, label: string, code: string): Promise<Result | null> {
+  if (!f.path || !f.sha256) return null;
+  let abs: string;
+  try { abs = path.isAbsolute(f.path) ? f.path : safeProjectPath(contentRoot(ctx.content.id, ctx.dataDir), f.path); }
+  catch (e) { return fail("unsafe_path", `${label}路径不安全：${e instanceof Error ? e.message : String(e)}`); }
+  const r = await commitSha(abs).catch(() => null);
+  if (!r) return null;
+  if (!r.ok) return fail("file_unsettled", r.reason);
+  return r.sha256 === f.sha256 ? null : fail(code, `${label}的文件字节和记录的不一样了（被换过）：刷新看现在的${label}再定`);
+}
+
 async function approveCut(ctx: Ctx): Promise<Result> {
   const f = factBy(ctx.doc, ctx.params, "cut");
   if (typeof f === "string") return fail("stale", f);
@@ -88,6 +104,8 @@ async function approveCut(ctx: Ctx): Promise<Result> {
   // 幂等重放只对仍然有效的批准（Codex 审 seg2 P2）：被打回之后再批，要落一条晚于打回的新决定
   const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh && validCutApproval(ctx.doc, ctx.content.body)?.id === d.id);
   if (same) return { ok: true, decision: same };
+  const changed = await bytesStill(ctx, f, "成片", "cut_replaced");
+  if (changed) return changed;
   // 抽帧检查默认拦（spec 2026-09-30 §12-1）：写批准之前在服务端重跑 / 核对指纹，不只靠推导和界面
   const gate = await sliverGate(ctx, f.sha256!);
   if (!gate.ok) return fail("sliver_blocked", `成片还不能通过：${gate.missing}。在「等你拍板」的「画面有闪帧」那件里看每处缝，修好重新导出，或逐处点「这处是故意的」`);
@@ -174,6 +192,10 @@ async function pickCover(ctx: Ctx): Promise<Result> {
   // 幂等键带组身份（Codex 审 2a-1 r6 P2）：同一对图的另一组 = 新批准，作废保护跟着当前批准走
   const same = sameDecision(view, "cover_approval", (d) => d.group_id === g!.group.id && d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && (d.cover_text ?? "") === text && d.body_hash === bh
     && validCoverApproval(view, ctx.content.body)?.id === d.id);
+  for (const [f, label] of same ? [] : [[a, "3:4 封面"], [b, "4:3 封面"]] as const) {
+    const changed = await bytesStill(ctx, f, label, "cover_replaced");
+    if (changed) return changed;
+  }
   return { ok: true, group_id: g.group.id, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, ...(text ? { cover_text: text } : {}), body_hash: bh, group_id: g.group.id }, "cover_picked")) };
 }
 

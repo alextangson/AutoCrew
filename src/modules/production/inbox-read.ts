@@ -19,7 +19,7 @@ import { attachmentsChanged } from "./asks.js";
 import { withCoverGroups } from "./cover-groups.js";
 import { explainContent, explainContext } from "./read.js";
 import { readReconcileReport } from "./reconcile.js";
-import { cachedSha } from "./observe.js";
+import { cachedSha, loadHashCache } from "./hash-cache.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
 import { approvedCoverShas } from "./service.js";
 import { draftHash } from "../../storage/draft-hash.js";
@@ -161,6 +161,7 @@ export interface InboxView { ok: true; items: InboxItem[]; count: number; agent_
 /** 全库「等你拍板」（contentId 给了就只算那一条稿，给 summary / 单一入口用） */
 /** withDrafts：「稿子写好了」不进列表（看板卡片上有「等你认稿」），但认稿决定仍按这件事的代次走 */
 export async function readInbox(dataDir: string, opts: { contentId?: string; now?: number; withDrafts?: boolean } = {}): Promise<InboxView> {
+  await loadHashCache(dataDir);
   const ctx = await explainContext(dataDir);
   // 历史作品记录不进「等你拍板」
   const all = (await listContents(dataDir)).filter((c) => !isImportedHistory(c));

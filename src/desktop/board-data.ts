@@ -3,9 +3,9 @@
  * 列归属一律用 explain()（与我的内容、晨报、desk 同一个），不另立口径；本体未启用时 explain 按旧状态给列（影子模式）。
  * 发布记录已投出的待发布稿由 explain 直接归到已发布——从前在这里读时改状态（syncPublished），现已删除。
  */
+import { cachedSha } from "../modules/production/hash-cache.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { listContents, listTopics, type Content, type Topic } from "../storage/local-store.js";
 import { isImportedHistory } from "../storage/imported-history.js";
 import { scriptText } from "../storage/my-content-plan.js";
@@ -99,16 +99,6 @@ export function countChars(text: string): number {
 
 const PUBLISH_STATUSES = new Set(["publish_ready", "publishing", "published"]);
 
-const shaCache = new Map<string, { mtimeMs: number; size: number; sha: string }>();
-async function cachedSha(file: string): Promise<string> {
-  const st = await fs.stat(file);
-  const hit = shaCache.get(file);
-  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.sha;
-  const sha = createHash("sha256").update(await fs.readFile(file)).digest("hex");
-  shaCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, sha });
-  return sha;
-}
-
 /** 已选那版的 3:4（选用 / 登记时拷成 05-cover/封面-3x4.*）；没选就不放图（§30） */
 export async function coverOf(contentId: string, dataDir: string): Promise<BoardCover | null> {
   const binding = resolveContentProject(contentId, dataDir);
@@ -118,7 +108,7 @@ export async function coverOf(contentId: string, dataDir: string): Promise<Board
   const name = names.find((n) => /^封面-3x4\.(png|jpe?g)$/i.test(n));
   if (!name) return null;
   const rel = `05-cover/${name}`;
-  return { path: rel, sha256: await cachedSha(path.join(binding.project_root, rel)) };
+  return { path: rel, sha256: (await cachedSha(path.join(binding.project_root, rel))).sha256 };
 }
 
 /** 最近一条已登记成片的语速：定稿字数 ÷ 成片分钟数 */

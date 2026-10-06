@@ -52,14 +52,15 @@ export interface PlatformResult {
 
 type Fail = { ok: false; code: string; error: string };
 
-async function registrationState(content: Content, dataDir: string): Promise<RegistrationState> {
-  const g = await registeredPackage(content, dataDir);
+async function registrationState(content: Content, dataDir: string, fresh: boolean): Promise<RegistrationState> {
+  const g = await registeredPackage(content, dataDir, { fresh });
   if (!g) return { kind: "none", reason: "这条没按内容本体登记（旧流程或非视频稿），没有登记记录可比" };
   if (!g.ok) return { kind: "blocked", error: g.error };
   return { kind: "ok", registration: g.files.registration, srt: g.files.srt };
 }
 
-async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promise<Ctx | Fail> {
+/** fresh：真要发 / 出包前现算登记文件的字节；只是看检查还新不新鲜的读路径走缓存 */
+async function buildCtx(params: Record<string, unknown>, deps: CheckDeps, fresh = false): Promise<Ctx | Fail> {
   const startedAt = new Date().toISOString();
   const dataDir = getDataDir((params._dataDir as string) || undefined);
   const id = typeof params.content_id === "string" ? params.content_id.trim() : "";
@@ -79,7 +80,7 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
   const root = contentRoot(id, dataDir);
   const loaded = await loadPlan(params.plan, root);
   if (!loaded.ok) return loaded;
-  const registration = await registrationState(content, dataDir);
+  const registration = await registrationState(content, dataDir, fresh);
   let basis: Promise<Basis> | null = null;
   return {
     content, dataDir, root, quotes: quotes.value, overrides: [...overrides.value, ...(deps.founderOverrides ?? [])], instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
@@ -209,11 +210,11 @@ type Rec = Record<string, unknown> & { platform?: string; verdict?: Verdict; pay
   plan_problems?: unknown[]; inputs?: { plan_source?: string; plan_snapshot?: Record<string, unknown>; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } };
 
 /** 按留档的输入重建检查上下文：inline 计划用留档快照，文件计划重读文件 */
-function rebuild(contentId: string, record: Rec, dataDir?: string) {
+function rebuild(contentId: string, record: Rec, dataDir?: string, fresh = false) {
   const inputs = record.inputs ?? {};
   const plan = inputs.plan_source === "inline" ? inputs.plan_snapshot ?? null : inputs.plan_source || "06-publish/publish-plan.json";
   if (plan === null) return Promise.resolve({ ok: false as const, code: "check_stale", error: "这次检查用的是直接传入的计划，但没留快照：重跑 check" });
-  return buildCtx({ _dataDir: dataDir, content_id: contentId, plan, founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) }, {});
+  return buildCtx({ _dataDir: dataDir, content_id: contentId, plan, founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) }, {}, fresh);
 }
 
 /**
@@ -226,7 +227,7 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
   const who = platformLabel(record.platform ?? "");
   if (record.verdict === "block") return { ok: false, code: "check_blocked", error: `${who}上次检查被拦了（${checkId}）：改好计划重跑 check，或创始人明确破例时带 overrides 重跑` };
   if (record.plan_problems?.length) return { ok: false, code: "check_blocked", error: `这次检查时计划本身有问题（${checkId}）：改好计划重跑 check` };
-  const ctx = await rebuild(contentId, record, dataDir);
+  const ctx = await rebuild(contentId, record, dataDir, true);
   if ("ok" in ctx) return ctx;
   const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
   if (!entry) return { ok: false, code: "check_stale", error: `发布计划里已经没有${who}了：重跑 check` };
@@ -246,10 +247,10 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
  * 这次检查的输入现在还一样吗（review-inbox §7-6，Codex 审 2a-1 r5 P1）：按留档输入重建、重算 payload 与指纹，不看结论。
  * 破例只能作用在创始人看到的那份上；计划改过就要先按新计划重新检查。fp 进「发之前再看一眼」条目的代次。
  */
-export async function checkInputsNow(contentId: string, checkId: string, dataDir?: string): Promise<{ same: boolean; fp: string }> {
+export async function checkInputsNow(contentId: string, checkId: string, dataDir?: string, opts: { fresh?: boolean } = {}): Promise<{ same: boolean; fp: string }> {
   const record = await readCheckRecord(contentId, checkId, dataDir) as Rec | null;
   if (!record) return { same: false, fp: "missing" };
-  const ctx = await rebuild(contentId, record, dataDir).catch(() => ({ ok: false as const }));
+  const ctx = await rebuild(contentId, record, dataDir, opts.fresh === true).catch(() => ({ ok: false as const }));
   if ("ok" in ctx) return { same: false, fp: "unreadable" };
   const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
   if (!entry) return { same: !record.payload_hash, fp: "no-entry" };
@@ -283,7 +284,7 @@ export async function entryPayloadHash(contentId: string, platform: string, data
 }
 
 export async function executePublishCheck(params: Record<string, unknown>, deps: CheckDeps = {}): Promise<Record<string, unknown>> {
-  const ctx = await buildCtx(params, deps);
+  const ctx = await buildCtx(params, deps, true);
   if ("ok" in ctx) return ctx;
   const named = namedPlatforms(ctx);
   const details: Detail[] = [];

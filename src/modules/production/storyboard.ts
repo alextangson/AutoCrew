@@ -15,6 +15,8 @@ import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { getContent } from "../../storage/local-store.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { sha256File } from "../video/handoff/manifest.js";
+import { cachedSha, STILL_SETTLING, unsettled } from "./hash-cache.js";
 
 export const STORYBOARD_HINT = "分镜要用 build_material_review.py 生成 03-broll/review-vNNN/review.html 再报；MD 或手写页不收";
 const DIR_RE = /^review-v(\d{3})$/;
@@ -82,7 +84,15 @@ export function pageRefs(html: string, pageDir: string): Set<string> {
  * 素材以 base 为根都对得上：相对路径、就是页面实际引用的那个文件（Codex 审 storyboard P2：别让上层目录里
  * 同名同 hash 的文件顶替页面真正加载的素材）、真实路径在项目里、是普通文件、sha 一致
  */
-async function mediaMatch(realRoot: string, base: string, media: Receipt["media"], refs: Set<string>): Promise<boolean> {
+/** 素材字节：对账扫描（cached）按元数据缓存、一分钟内还在变的当没对上（下一轮再看）；报上来那一刻现算（流式） */
+async function mediaSha(real: string, cached: boolean): Promise<string | null> {
+  if (!cached) return sha256File(real).catch(() => null);
+  const st = await fs.stat(real).catch(() => null);
+  if (!st?.isFile() || unsettled(st.mtimeMs)) return null;
+  return (await cachedSha(real).catch(() => null))?.sha256 ?? null;
+}
+
+async function mediaMatch(realRoot: string, base: string, media: Receipt["media"], refs: Set<string>, cached: boolean): Promise<boolean> {
   for (const m of media) {
     if (path.isAbsolute(m.path)) return false;
     const abs = path.resolve(base, m.path);
@@ -90,14 +100,13 @@ async function mediaMatch(realRoot: string, base: string, media: Receipt["media"
     if (!isWithin(realRoot, abs)) return false;
     const real = await fs.realpath(abs).catch(() => null);
     if (!real || !isWithin(realRoot, real)) return false;
-    const buf = await fs.readFile(real).catch(() => null);
-    if (!buf || sha256(buf) !== m.sha256) return false;
+    if ((await mediaSha(real, cached)) !== m.sha256) return false;
   }
   return true;
 }
 
 /** 核验一个审阅页（§3）。`input` 可以是绝对路径或相对项目根的路径 */
-export async function validateStoryboard(projectRoot: string, input: string): Promise<Checked<StoryboardFile>> {
+export async function validateStoryboard(projectRoot: string, input: string, opts: { cached?: boolean } = {}): Promise<Checked<StoryboardFile>> {
   if (path.extname(input).toLowerCase() !== ".html") return deny("storyboard_not_review_page", `分镜只收脚本生成的 .html 审阅页，收到的是「${path.basename(input)}」`);
   const realRoot = await fs.realpath(projectRoot);
   const abs = path.isAbsolute(input) ? input : path.resolve(realRoot, input);
@@ -109,6 +118,8 @@ export async function validateStoryboard(projectRoot: string, input: string): Pr
   if (!(await plainPath(realRoot, rel, true))) return deny("storyboard_outside", "审阅页不存在，或路径里有符号链接");
   const receiptRel = rel.replace(/\.html$/i, ".receipt.json");
   if (!(await plainPath(realRoot, receiptRel, true))) return deny("storyboard_no_receipt", "审阅页旁边没有脚本写的回执（同名 .receipt.json）");
+  const cached = opts.cached === true;
+  if (cached && (await Promise.all([rel, receiptRel].map((x) => fs.stat(path.join(realRoot, x))))).some((x) => unsettled(x.mtimeMs))) return deny("storyboard_unsettled", STILL_SETTLING);
   const receiptRaw = await fs.readFile(path.join(realRoot, receiptRel));
   const receipt = parseReceipt(receiptRaw.toString("utf8"));
   if (!receipt) return deny("storyboard_bad_receipt", "审阅页的回执读不出来或缺字段");
@@ -118,7 +129,7 @@ export async function validateStoryboard(projectRoot: string, input: string): Pr
   let ok = false;
   const refs = pageRefs(html.toString("utf8"), path.dirname(path.join(realRoot, rel)));
   for (let base = path.dirname(path.join(realRoot, rel)); isWithin(realRoot, base); base = path.dirname(base)) {
-    if (await mediaMatch(realRoot, base, receipt.media, refs)) { ok = true; break; }
+    if (await mediaMatch(realRoot, base, receipt.media, refs, cached)) { ok = true; break; }
     if (base === realRoot) break;
   }
   if (!ok) return deny("storyboard_media_changed", "审阅页引用的素材不见了 / 变了");
@@ -141,7 +152,7 @@ export async function scanStoryboards(projectRoot: string): Promise<StoryboardFi
   for (const d of dirs.filter((x) => x.isDirectory() && DIR_RE.test(x.name))) {
     const files = await fs.readdir(path.join(broll, d.name), { withFileTypes: true }).catch(() => []);
     for (const f of files.filter((x) => x.isFile() && /\.html$/i.test(x.name))) {
-      const r = await validateStoryboard(projectRoot, `03-broll/${d.name}/${f.name}`).catch(() => null);
+      const r = await validateStoryboard(projectRoot, `03-broll/${d.name}/${f.name}`, { cached: true }).catch(() => null);
       if (r?.ok) out.push(r.value);
     }
   }
@@ -191,7 +202,7 @@ export async function storyboardPanel(contentId: string, dataDir: string, doc: P
   const view = (f: Fact) => ({ fact_id: f.id, sha256: f.sha256, version: versionLabel(f.version), path: f.path, at: f.at });
   const latest = all[0];
   const file = await storyboardFile(contentRoot(contentId, dataDir), latest);
-  const now = file ? await fs.readFile(file).then(sha256, () => null) : null;
+  const now = file ? (await cachedSha(file).catch(() => null))?.sha256 ?? null : null;
   const changed = Boolean(latest.replaced_at) || (now !== null && now !== latest.sha256);
   return { latest: { ...view(latest), changed, missing: !file, ...(changed ? { note: "审阅页在报上之后被改过" } : !file ? { note: "审阅页找不到了" } : {}) }, older: all.slice(1).map(view) };
 }

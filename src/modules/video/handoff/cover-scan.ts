@@ -14,13 +14,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { dimensionsOf, type ImageFormat } from "../../research/fetch-image.js";
 import { COVER_ROLES, type ArtifactEntry, type StoredExecution } from "./execution-index.js";
-import { sha256File } from "./manifest.js";
+import { cachedSha, unsettled } from "../../production/hash-cache.js";
 
 const COVER_DIR = "05-cover";
 const VERSION_DIR = /^v0*(\d+)$/i;
 const FORMATS: Record<string, ImageFormat> = { ".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".webp": "webp" };
 const HEADER_BYTES = 256 * 1024;
-const hashCache = new Map<string, { key: string; sha256: string }>();
 
 export function coverRole(width: number, height: number): string | null {
   if (!(width > 0 && height > 0)) return null;
@@ -39,15 +38,6 @@ async function readHeader(file: string): Promise<Buffer> {
   } finally {
     await handle.close();
   }
-}
-
-async function cachedSha(file: string, size: number, mtimeMs: number): Promise<string> {
-  const key = `${size}:${Math.trunc(mtimeMs)}`;
-  const hit = hashCache.get(file);
-  if (hit?.key === key) return hit.sha256;
-  const sha256 = await sha256File(file);
-  hashCache.set(file, { key, sha256 });
-  return sha256;
 }
 
 /**
@@ -69,12 +59,13 @@ async function coverEntry(projectRoot: string, file: string, version: number, ge
   const format = FORMATS[path.extname(file).toLowerCase()];
   if (!format) return null;
   const st = await fs.lstat(file).catch(() => null);
-  if (!st?.isFile()) return null;
+  // 一分钟内还在变（还在导出 / 拷贝）：这轮不收，下一轮再看
+  if (!st?.isFile() || unsettled(st.mtimeMs)) return null;
   const dims = dimensionsOf(format, await readHeader(file));
   const role = dims ? coverRole(dims.width, dims.height) : null;
   if (!role) return null;
   return {
-    path: path.relative(projectRoot, file), sha256: await cachedSha(file, st.size, st.mtimeMs), role, version, generation,
+    path: path.relative(projectRoot, file), sha256: (await cachedSha(file)).sha256, role, version, generation,
     reported_at: new Date(st.mtimeMs).toISOString(), size: st.size, mtime_ms: Math.trunc(st.mtimeMs),
   };
 }
