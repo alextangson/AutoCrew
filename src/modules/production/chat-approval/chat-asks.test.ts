@@ -116,18 +116,21 @@ describe("decide（第 3 条）", () => {
 });
 
 describe("附件（第 4 条）", () => {
-  it("图片进会话文件夹；网页用默认浏览器打开原文件并给绝对路径；打不开也说", async () => {
+  it("图片进会话文件夹；普通 list 不开网页只给绝对路径；单看（item_id）才用默认浏览器打开；打不开也说", async () => {
     const c = await editing();
     const pr = projectRoot(env, c.id);
     const img = await put(path.join(pr, "04-edit/rough.png"), png(10, 10));
     const page = await put(path.join(pr, "03-broll/review-v001/review.html"), "<html><img src='B01.svg'></html>");
     await ask(c.id, { attachments: [img, page] });
-    const it0 = await askItem({ preview_dir: pane });
-    expect(it0.preview!.files[0].path).toMatch(/^review-preview\/.+请示-rough\.png$/);
-    expect(it0.preview!.pages![0]).toMatchObject({ path: await fs.realpath(page).catch(() => page), opened: true });
-    expect(opened).toEqual([{ file: it0.preview!.pages![0].path, app: "" }]);
+    const plain = await askItem({ preview_dir: pane });
+    expect(plain.preview!.files[0].path).toMatch(/^review-preview\/.+请示-rough\.png$/);
+    expect(plain.preview!.pages![0]).toMatchObject({ path: page, opened: false, reason: expect.stringContaining("list{item_id}") });
+    expect(opened).toEqual([]);
+    const it0 = await askItem({ preview_dir: pane, item_id: plain.item_id });
+    expect(it0.preview!.pages![0]).toMatchObject({ path: page, opened: true });
+    expect(opened).toEqual([{ file: page, app: "" }]);
     setPreviewDeps({ open: async () => { throw new Error("没有浏览器"); } });
-    const it1 = await askItem({ preview_dir: pane });
+    const it1 = await askItem({ preview_dir: pane, item_id: plain.item_id });
     expect(it1.preview!.pages![0]).toMatchObject({ opened: false, reason: expect.stringContaining("没有浏览器") });
   });
 });
