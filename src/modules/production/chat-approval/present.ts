@@ -68,6 +68,11 @@ const NEXT = [
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 
+/** 单件的完整样子（brief + 预览）：给 decide 被拒时返回「现在的样子」用；不开网页 */
+export function presentItem(item: InboxItem, dataDir: string, previewDir?: string): Promise<Result> {
+  return present(item, null, dataDir, { preview_dir: previewDir });
+}
+
 /** 清掉已定的事的预览文件、7 天以上的预览文件；清不掉返回原因（不吞） */
 export async function sweepDecided(dataDir: string, previewDir: string): Promise<string[]> {
   try {

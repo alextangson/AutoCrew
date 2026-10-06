@@ -9,7 +9,9 @@ import { getDataDir } from "../../../storage/local-store.js";
 import { withProvenance } from "../decision-provenance.js";
 import { founderDecision } from "../decisions.js";
 import { decideItem, fingerprint, type DecideDeps } from "../inbox-decide.js";
-import { verifyCheck } from "../../publish/review-gate/check.js";
+import { checkView, verifyCheck } from "../../publish/review-gate/check.js";
+import { commitSha, STILL_SETTLING } from "../hash-cache.js";
+import { presentItem } from "./present.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
@@ -23,9 +25,14 @@ const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok:
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
 export interface ChatDecideInput {
+  /** 被拒时把「现在的样子」的文件放进会话文件夹；不进请求指纹 */
+  preview_dir?: string;
   item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; option_id?: string; content_id?: string; decision_id?: string;
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
 }
+
+/** 现在的样子：和 list 一样带 brief 与预览（改了什么、文件都能直接再给他看） */
+const shownNow = (item: InboxItem, input: ChatDecideInput, dataDir: string) => presentItem(item, dataDir, input.preview_dir);
 
 type Found = { ok: true; item: InboxItem; selection: Picked } | { ok: false; result: Result };
 
@@ -33,13 +40,13 @@ type Found = { ok: true; item: InboxItem; selection: Picked } | { ok: false; res
 async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
   const item = (await readInbox(dataDir)).items.find((x) => x.item_id === input.item_id);
   if (!item) return { ok: false, result: fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子") };
-  if (item.gen !== input.gen) return { ok: false, result: fail("stale", "这件事刚变过（比如来了新的一组），先把新的样子给创始人看一遍再定", { item: await chatItem(item, dataDir) }) };
+  if (item.gen !== input.gen) return { ok: false, result: fail("stale", "这件事刚变过（比如来了新的一组），先把新的样子给创始人看一遍再定", { item: await shownNow(item, input, dataDir) }) };
   if (!item.content_id || !chatActionsOf(item).includes(input.decision)) {
     const why = CHAT_ACTIONS[item.type] ? `这件事在这里不能做「${input.decision}」` : "这类事只能在看板上定";
     return { ok: false, result: fail("not_chat_decidable", why, { board_link: boardLink(item) }) };
   }
   const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined });
-  if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await chatItem(item, dataDir) }) };
+  if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await shownNow(item, input, dataDir) }) };
   return { ok: true, item, selection };
 }
 
@@ -96,12 +103,12 @@ export async function chatDecide(input: ChatDecideInput, dataDir = getDataDir())
 }
 
 /** 锁后 decideItem 的失败换成对话的口径：代次变了 → stale + 新样子；没了 / 定过别的 → already_handled */
-async function normalize(r: Result, itemId: string, dataDir: string): Promise<Result> {
+async function normalize(r: Result, itemId: string, input: ChatDecideInput, dataDir: string): Promise<Result> {
   if (r.code === "gone" || r.code === "already_decided") return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
   if (r.code !== "stale") return r;
   const fresh = (await readInbox(dataDir)).items.find((x) => x.item_id === itemId);
   if (!fresh) return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
-  return fail("stale", "这件事刚变过，先把新的样子给创始人看一遍再定", { item: await chatItem(fresh, dataDir) });
+  return fail("stale", "这件事刚变过，先把新的样子给创始人看一遍再定", { item: await shownNow(fresh, input, dataDir) });
 }
 
 /** 测试注入（破例要重跑检查，会问 Jev）；生产走默认 */
@@ -116,10 +123,24 @@ function noteOf(input: ChatDecideInput): Result {
 }
 
 /** 「没问题」= 照这份发：现算发布包里每个文件（换了字节、还在写的都拒），计划变了也拒，拒了给现在的样子 */
-async function publishFresh(item: InboxItem, decision: string, dataDir: string): Promise<Result | null> {
-  if (decision !== "publish_check_confirm") return null;
+async function publishFresh(item: InboxItem, input: ChatDecideInput, dataDir: string): Promise<Result | null> {
+  if (input.decision !== "publish_check_confirm") return null;
   const v = await verifyCheck(item.content_id!, String(item.detail.check_id), dataDir);
-  return v.ok ? null : fail(v.code, `${v.error}：这次什么都没记`, { board_link: boardLink(item), item: await chatItem(item, dataDir) });
+  if (v.ok) return null;
+  const extra = async () => ({ board_link: boardLink(item), item: await shownNow(item, input, dataDir) });
+  if (await packageUnsettled(item, dataDir)) return fail("file_unsettled", "文件还在写，等一分钟再定：这次什么都没记", await extra());
+  return fail(v.code, `${v.error}：这次什么都没记`, await extra());
+}
+
+/** 发布包里有文件一分钟内还在变（现算时前后元数据对不上）：单独说「还在写」，不混成「过期」 */
+async function packageUnsettled(item: InboxItem, dataDir: string): Promise<boolean> {
+  const view = await checkView(item.content_id!, String(item.detail.check_id), dataDir);
+  const files = [view?.video_path, ...(view?.covers ?? []).map((c) => c.path)].filter((x): x is string => Boolean(x));
+  for (const f of files) {
+    const r = await commitSha(f);
+    if (!r.ok && r.reason === STILL_SETTLING) return true;
+  }
+  return false;
 }
 
 async function commit(input: ChatDecideInput, requester: string, dataDir: string, bind: Bind): Promise<Result> {
@@ -130,14 +151,14 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
     ...coverTextOf(item, input, selection), ...noteOf(input) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
-  const r = await withFileOwnership(async () => {
+  const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir, decideDeps));
+  // 破例要等 Jev 重跑：和网页一样由 decideItem 自己管锁的边界，不在外面握着所有权锁等模型
+  const r = input.decision === "publish_check_override" ? await run() : await withFileOwnership(async () => {
     const bytes = await verifyFacts(item.content_id!, selection.factIds, dataDir);
-    if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item), item: await chatItem(item, dataDir) });
-    const pub = await publishFresh(item, input.decision, dataDir);
-    if (pub) return pub;
-    return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir, decideDeps));
+    if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item), item: await shownNow(item, input, dataDir) });
+    return (await publishFresh(item, input, dataDir)) ?? run();
   });
-  if (r.ok !== true) return normalize(r, item.item_id, dataDir);
+  if (r.ok !== true) return normalize(r, item.item_id, input, dataDir);
   const id = (r.decision as { id?: string } | undefined)?.id;
   return { ...r, recorded_as: "chat", next_action: `告诉创始人已经按他的原话记下了${id ? `；他要撤回就 revoke{content_id:"${item.content_id}", decision_id:"${id}"}（只有批准能撤）` : ""}。` };
 }

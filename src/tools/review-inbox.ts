@@ -44,6 +44,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 
 function inputOf(params: Record<string, unknown>): ChatDecideInput {
   return {
+    preview_dir: str(params.preview_dir)?.trim() || undefined,
     item_id: str(params.item_id)?.trim() ?? "", gen: str(params.gen)?.trim() ?? "", decision: str(params.decision)?.trim() ?? "",
     group_id: str(params.group_id), fact_id: str(params.fact_id), option_id: str(params.option_id), cover_text: str(params.cover_text), note: str(params.note),
     content_id: str(params.content_id), decision_id: str(params.decision_id),

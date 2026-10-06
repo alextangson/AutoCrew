@@ -10,6 +10,10 @@ import { executePublishCheck } from "../../publish/review-gate/check.js";
 import { fakeJev, planEntry, planOf, registeredVideo, type Reg } from "../../publish/review-gate/testkit.js";
 import { setPullDeps } from "../../video/handoff/pull-deps.js";
 import { decideItem } from "../inbox-decide.js";
+import { setSettleMs } from "../hash-cache.js";
+import { withFileOwnership } from "../mutex.js";
+import type { InboxItem } from "../inbox.js";
+import { groupedResults, publishView } from "./publish-view.js";
 import { makeEnv, type Env } from "../testkit.js";
 import { setChatDecideDeps } from "./decide.js";
 import { setPreviewDeps } from "./preview.js";
@@ -24,7 +28,7 @@ beforeEach(async () => {
   pane = path.join(env.dir, "..", "session");
   await fs.mkdir(pane, { recursive: true });
 });
-afterEach(async () => { setPreviewDeps(null); setChatDecideDeps(null); setPullDeps(null); await env.cleanup(); });
+afterEach(async () => { setSettleMs(null); setPreviewDeps(null); setChatDecideDeps(null); setPullDeps(null); await env.cleanup(); });
 
 type Item = { item_id: string; gen: string; type: string; chat_decidable: boolean; brief: string; decisions: Array<{ decision: string }>; facts: { platform: string }; preview?: { files: Array<{ path: string }> } };
 const tool = (p: Record<string, unknown>) => executeReviewInbox({ _dataDir: env.dir, _host: "claude-code", _session: "s1", ...p });
@@ -125,9 +129,13 @@ describe("守卫（第 4 条）", () => {
     await runCheck(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
     const [old] = await checks();
     await runCheck(r, [planEntry(r, "douyin", ["3:4", "4:3"], { title: "换了个标题" })]);
-    const out = await decidePub(old, "publish_check_confirm");
+    const out = await decidePub(old, "publish_check_confirm", { preview_dir: pane });
     expect(out).toMatchObject({ ok: false, code: "stale" });
-    expect((out.item as { gen: string }).gen).not.toBe(old.gen);
+    const fresh = out.item as Item;
+    expect(fresh.gen).not.toBe(old.gen);
+    // Codex 审 d7aa5099 P2-2：新的样子带完整 brief 与预览
+    expect(fresh.brief).toContain("标题：「换了个标题」");
+    expect(fresh.preview!.files).toHaveLength(2);
   });
 
   it("网页上已经定了 → already_handled；网页那条路照旧；同一 request_id 重试回放", async () => {
@@ -139,5 +147,55 @@ describe("守卫（第 4 条）", () => {
     expect(await decidePub(a, "publish_check_confirm")).toMatchObject({ ok: false, code: "already_handled" });
     const once = await decidePub(b, "publish_check_confirm", { request_id: "same" });
     expect(await decidePub(b, "publish_check_confirm", { request_id: "same" })).toMatchObject({ ok: true, replayed: true, decision: { id: (once.decision as { id: string }).id } });
+  });
+});
+
+describe("Codex 审 d7aa5099", () => {
+  it("P2-1 破例等 Jev 时不握着所有权锁：别的写操作照常进得去", async () => {
+    const r = await registeredVideo(env);
+    await runCheck(r, [planEntry(r, "xiaohongshu", ["4:3"])]);
+    const [it0] = await checks();
+    let release!: () => void;
+    const gate = new Promise<void>((ok) => { release = ok; });
+    let called!: () => void;
+    const started = new Promise<void>((ok) => { called = ok; });
+    const base = fakeJev().caller;
+    setChatDecideDeps({ jev: async (st, q) => { called(); await gate; return base(st, q); } });
+    const pending = decidePub(it0, "publish_check_override", { founder_words: "这次横版就行" });
+    await started;
+    const other = await Promise.race([withFileOwnership(async () => "free"), new Promise((ok) => setTimeout(() => ok("blocked"), 1000))]);
+    release();
+    expect(other).toBe("free");
+    expect(await pending).toMatchObject({ ok: true });
+  });
+
+  it("P2-3 info（比如 16:9 裁切核对）归没查实，依据原文", () => {
+    const lines = groupedResults([{ check: "16:9 裁切核对", result: "info", basis: "B站会把封面裁成 16:9，上传时人工核一下" }]);
+    expect(lines[0]).toBe("通过（0）：无");
+    expect(lines[1]).toBe("没查实（1）：16:9 裁切核对——B站会把封面裁成 16:9，上传时人工核一下");
+  });
+
+  it("P2-4 计划条目读不出来：照样给留档的拦截原因和能做的决定", async () => {
+    const r = await registeredVideo(env);
+    const item = { item_id: "pubcheck:r1:douyin", gen: "g", type: "publish_check", content_id: r.id, title: "AI 又忘了怎么办", blocked_reason: "被拦了：计划里没有抖音",
+      detail: { check_id: "no-such-check", platform: "douyin", verdict: "block", items: [{ check: "平台", result: "block", basis: "计划里没有抖音这个平台" }] } } as unknown as InboxItem;
+    const b = (await publishView(item, env.dir)).brief;
+    expect(b).toContain("被拦（1）：平台——计划里没有抖音这个平台");
+    expect(b).toContain("「没问题」用不了");
+    expect(b).not.toContain("重跑发布检查再看");
+  });
+
+  it("提交时文件还在写 → 单独说「还在写」，不混成过期", async () => {
+    const r = await registeredVideo(env);
+    await runCheck(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
+    const [it0] = await checks();
+    setSettleMs(60_000);
+    const now = new Date();
+    await fs.utimes(path.join(r.root, r.video), now, now);
+    const it1 = (await checks())[0];
+    const out = await decidePub(it1, "publish_check_confirm");
+    expect(out).toMatchObject({ ok: false, code: "file_unsettled", error: expect.stringContaining("文件还在写，等一分钟再定") });
+    expect(it1.item_id).toBe(it0.item_id);
+    expect(await decisionsOf(r.id, "publish_check_confirm")).toHaveLength(0);
   });
 });

@@ -11,7 +11,8 @@ import type { PreviewFile } from "./preview.js";
 
 export const NO_TAGS = "没写话题";
 export const NO_SCHEDULE = "没定时（审核过了就发）";
-const PASSED = new Set(["pass", "override", "info"]);
+/** info（比如 B站「16:9 裁切核对」要人手核）不算通过：归「没查实」，依据原文照录 */
+const PASSED = new Set(["pass", "override"]);
 const BLOCKED = new Set(["block"]);
 
 const quoted = (v: string | null | undefined, empty: string) => (v?.trim() ? `「${v}」` : empty);
@@ -29,13 +30,26 @@ export function groupedResults(items: CheckItem[]): string[] {
   ];
 }
 
+const replyLine = (blocked: boolean) => (blocked ? "被拦了，「没问题」用不了：要破例就说你的原话（会原样记下），或回我「还要改：……」" : "回我「没问题」/「还要改：……」");
+
+/** 计划条目读不出来（比如计划里已经没有这个平台）：照样给留档的检查结果、拦的原因和能做的决定 */
+function missingEntryBrief(item: InboxItem, head: string, blocked: boolean): string {
+  return [
+    head,
+    "计划条目读不出来了（计划里可能已经没有这个平台），下面是这次检查留档的结果：",
+    ...groupedResults((item.detail.items as CheckItem[]) ?? []),
+    ...(item.blocked_reason ? [`注意：${item.blocked_reason}`] : []),
+    replyLine(blocked),
+  ].join("\n");
+}
+
 export async function publishView(item: InboxItem, dataDir: string): Promise<{ brief: string; files: PreviewFile[] }> {
   const d = item.detail;
   const who = platformLabel(String(d.platform));
   const view = await checkView(item.content_id!, String(d.check_id), dataDir);
   const blocked = d.verdict === "block";
   const head = `《${item.title}》发之前再看一眼（${who}）`;
-  if (!view) return { brief: [head, "这次检查的计划读不出来了：请 agent 重跑发布检查再看。"].join("\n"), files: [] };
+  if (!view) return { brief: missingEntryBrief(item, head, blocked), files: [] };
   const e = view.entry;
   const lines = [
     head,
@@ -49,7 +63,7 @@ export async function publishView(item: InboxItem, dataDir: string): Promise<{ b
     "检查结果：",
     ...groupedResults((d.items as CheckItem[]) ?? []),
     ...(item.blocked_reason && !blocked ? [`注意：${item.blocked_reason}`] : []),
-    blocked ? "被拦了，「没问题」用不了：要破例就说你的原话（会原样记下），或回我「还要改：……」" : "回我「没问题」/「还要改：……」",
+    replyLine(blocked),
   ];
   const files = view.covers.map((c, i) => ({ source: c.path, name: `${who}-封面${i + 1}-${path.basename(c.path)}`, video: false }));
   return { brief: lines.join("\n"), files };
