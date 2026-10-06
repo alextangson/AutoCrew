@@ -7,6 +7,7 @@
  * 网页的旧决定路由（卡片 / 工作台）也走这里：没带代次时按页面带来的指纹找到对应条目、取它当前的代次；
  * 找不到条目的动作（撤销批准、纠正发布、挂原片…）不在列表里，直接交给创始人决定。
  */
+import { provenanceFields } from "./decision-provenance.js";
 import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
 import { bodyHash, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Decision, InboxConsumption } from "../../storage/production-types.js";
@@ -65,7 +66,8 @@ async function consume(contentId: string, dataDir: string, entry: InboxConsumpti
 
 async function pushDecision(contentId: string, dataDir: string, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string): Promise<Decision> {
   return (await mutateProduction(contentId, dataDir, (doc) => {
-    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), source: "founder", ...d };
+    // 对话里定的（比如「让它重发」）带上对话来源与请求号，崩了重试按请求号找回，不记第二次；网页照旧 founder
+    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), ...provenanceFields(), ...d };
     doc.decisions.push(full);
     return { value: full, events: [{ type: event, detail: { decision_id: full.id, ...d } }] };
   })).value;

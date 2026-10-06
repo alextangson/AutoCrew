@@ -36,12 +36,12 @@ export async function askAttachments(item: InboxItem, doc: ProductionDoc, dataDi
   const out = { files: [] as PreviewFile[], pages: [] as Array<{ name: string; path: string; opened: boolean; reason: string }> };
   if (!a || changedOf(item)) return out;
   const root = contentRoot(item.content_id!, dataDir);
-  for (const x of a.attachments) {
+  for (const [i, x] of a.attachments.entries()) {
     const file = path.isAbsolute(x.path) ? x.path : path.join(root, x.path);
     const name = path.basename(file);
     // 网页只在单看这一件（list 带 item_id）时打开，免得每次会话开场都弹浏览器
     if (HTML.test(file)) out.pages.push({ name, ...(openPages ? await openPage(file) : { path: file, opened: false, reason: "没打开；要看就 list{item_id} 单看这一件，会用默认浏览器打开它" }) });
-    else out.files.push({ source: file, name: `请示-${name}`, video: !IMAGE.test(file) });
+    else out.files.push({ source: file, name: `请示${i + 1}-${name}`, video: !IMAGE.test(file) });
   }
   return out;
 }

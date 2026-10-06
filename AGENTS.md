@@ -15,6 +15,7 @@ Several sessions run on this machine at once, each in its own worktree under `.c
 ## Verifying
 
 - `npm run check` = typecheck + lint + vitest. `npm run smoke` for end-to-end.
+- The full suite pins every core of the founder's laptop for minutes. While iterating, run only what your change touches: `npx vitest related --run <changed files>` (plus `npm run typecheck`). Run the full `npm run check` once, right before you hand over or merge — not after every fix round. CI runs it again on push.
 - The local service runs on :4317 (`npm start` / `npm run restart`). `npm start` builds the frontend first; in a fresh worktree run `npm install` inside `frontend/` or it fails with a wall of TS7026 and never starts.
 - Before restarting :4317, check that nothing is running (recent work events, or `GET /api/update/busy`). A restart kills an in-progress draft the founder is using; if something is running, ask first.
 - Some changes (e.g. pending editorial-experiment files) only take effect after a :4317 restart — say so when you hand over instead of reporting them as live.

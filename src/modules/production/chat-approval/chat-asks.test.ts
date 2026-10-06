@@ -123,7 +123,7 @@ describe("附件（第 4 条）", () => {
     const page = await put(path.join(pr, "03-broll/review-v001/review.html"), "<html><img src='B01.svg'></html>");
     await ask(c.id, { attachments: [img, page] });
     const plain = await askItem({ preview_dir: pane });
-    expect(plain.preview!.files[0].path).toMatch(/^review-preview\/.+请示-rough\.png$/);
+    expect(plain.preview!.files[0].path).toMatch(/^review-preview\/.+请示1-rough\.png$/);
     expect(plain.preview!.pages![0]).toMatchObject({ path: page, opened: false, reason: expect.stringContaining("list{item_id}") });
     expect(opened).toEqual([]);
     const it0 = await askItem({ preview_dir: pane, item_id: plain.item_id });
@@ -132,6 +132,20 @@ describe("附件（第 4 条）", () => {
     setPreviewDeps({ open: async () => { throw new Error("没有浏览器"); } });
     const it1 = await askItem({ preview_dir: pane, item_id: plain.item_id });
     expect(it1.preview!.pages![0]).toMatchObject({ opened: false, reason: expect.stringContaining("没有浏览器") });
+  });
+});
+
+describe("Codex 审 P2：同名附件", () => {
+  it("v1/frame.png 和 v2/frame.png 各放各的，不互相覆盖", async () => {
+    const c = await editing();
+    const pr = projectRoot(env, c.id);
+    const a = await put(path.join(pr, "04-edit/v1/frame.png"), png(10, 10, "one"));
+    const b = await put(path.join(pr, "04-edit/v2/frame.png"), png(10, 10, "two"));
+    await ask(c.id, { attachments: [a, b] });
+    const files = (await askItem({ preview_dir: pane })).preview!.files.map((f) => f.path);
+    expect(new Set(files).size).toBe(2);
+    expect((await fs.readFile(path.join(pane, files[0]))).equals(png(10, 10, "one"))).toBe(true);
+    expect((await fs.readFile(path.join(pane, files[1]))).equals(png(10, 10, "two"))).toBe(true);
   });
 });
 
@@ -145,7 +159,9 @@ describe("附件变过（第 5 条）", () => {
     expect(it0.decisions.map((d) => d.decision)).toEqual(["ask_resend"]);
     expect(it0.brief).toContain("回我「让 Codex 重发」");
     expect(await decideAsk(it0, { option_id: "ok" })).toMatchObject({ ok: false, code: "not_chat_decidable" });
-    expect(await tool({ action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "ask_resend", founder_words: "让它重发", request_id: "resend" })).toMatchObject({ ok: true });
+    expect(await tool({ action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "ask_resend", founder_words: "让它重发", request_id: "resend" })).toMatchObject({ ok: true, recorded_as: "chat" });
+    // Codex 审 P2：重发的决定也带对话来源与请求号（崩了重试按请求号找回）
+    expect((await readProductionDoc(c.id, env.dir))!.decisions.find((d) => d.type === "inbox_ack")).toMatchObject({ source: "chat", request_id: "resend", founder_words: "让它重发" });
   });
 });
 
