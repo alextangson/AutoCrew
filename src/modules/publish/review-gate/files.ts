@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { dimensionsOf, type ImageFormat } from "../../research/fetch-image.js";
-import { cachedSha } from "../../production/hash-cache.js";
+import { cachedSha, commitSha } from "../../production/hash-cache.js";
 
 export interface FileFact { abs: string; ok: boolean; error?: string; sha256?: string; width?: number; height?: number }
 
@@ -21,7 +21,14 @@ async function header(abs: string): Promise<Buffer> {
   } finally { await h.close(); }
 }
 
-export async function fileFact(abs: string, image: boolean): Promise<FileFact> {
+/** fresh：要发出去的那一刻现算（字节被换、元数据没变也逮住；还在写的拒绝）；否则按元数据缓存 */
+async function shaOf(abs: string, fresh: boolean): Promise<{ sha256: string } | { error: string }> {
+  if (!fresh) return cachedSha(abs);
+  const r = await commitSha(abs);
+  return r.ok ? r : { error: r.reason };
+}
+
+export async function fileFact(abs: string, image: boolean, fresh = false): Promise<FileFact> {
   let st;
   try { st = await fs.stat(abs); } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
@@ -29,7 +36,9 @@ export async function fileFact(abs: string, image: boolean): Promise<FileFact> {
   }
   if (!st.isFile()) return { abs, ok: false, error: "不是文件" };
   try {
-    const sha256 = (await cachedSha(abs)).sha256;
+    const got = await shaOf(abs, fresh);
+    if ("error" in got) return { abs, ok: false, error: got.error };
+    const sha256 = got.sha256;
     if (!image) return { abs, ok: true, sha256 };
     const format = FORMATS[path.extname(abs).toLowerCase()];
     const dims = format ? dimensionsOf(format, await header(abs)) : null;

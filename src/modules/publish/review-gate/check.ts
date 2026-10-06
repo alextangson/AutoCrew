@@ -41,6 +41,8 @@ interface Ctx {
   registration: RegistrationState; basis: () => Promise<Basis>; caller: JevCaller;
   /** 启动检查时的制作轮次（review-inbox §7-4：检查绑轮次 / 平台 / 输入指纹） */
   round: number; deps: CheckDeps;
+  /** 发布时（执行检查 / 出包前核检查）：计划里每个要进发布包的文件都现算，不信元数据缓存 */
+  fresh: boolean;
 }
 
 interface Detail { result: PlatformResult; covers: CoverFact[]; account: string | null }
@@ -86,7 +88,7 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps, fresh 
     content, dataDir, root, quotes: quotes.value, overrides: [...overrides.value, ...(deps.founderOverrides ?? [])], instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
     prefs: await readPublishPrefs(dataDir), registration, caller: deps.jev ?? makeJevCaller(),
     basis: () => (basis ??= loadBasis(registration.kind === "ok" ? registration.srt : null, content.body ?? "")),
-    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps: { ...deps, inputAt: deps.inputAt ?? startedAt },
+    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps: { ...deps, inputAt: deps.inputAt ?? startedAt }, fresh,
   };
 }
 
@@ -144,7 +146,7 @@ function planLevelProblems(ctx: Ctx) {
 async function identityFor(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]) {
   const det = await deterministicChecks({
     contentId: ctx.content.id, siblings: ctx.content.siblings ?? [], projectRoot: ctx.root, entry, videoPath: entry.video_path ?? ctx.plan.final_video_path,
-    allowedRatios: effectiveCoverRatios(entry.platform, ctx.prefs.coverRatios), cropChecks: COVER_CROP_CHECKS[entry.platform] ?? [], registration: ctx.registration,
+    allowedRatios: effectiveCoverRatios(entry.platform, ctx.prefs.coverRatios), cropChecks: COVER_CROP_CHECKS[entry.platform] ?? [], registration: ctx.registration, fresh: ctx.fresh,
   });
   const detItems = applyOverrides(entry.platform, [...shapeItems(ctx, entry.platform, named), ...det.items], ctx.overrides);
   const payload = payloadHash(entry, ctx.content.id, det.covers, det.video?.sha256 ?? null);

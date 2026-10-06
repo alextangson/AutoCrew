@@ -24,13 +24,21 @@ let settleOverride: number | null = null;
 export function setSettleMs(ms: number | null): void { settleOverride = ms; }
 const settleMs = (): number => settleOverride ?? (process.env.VITEST && process.env.AUTOCREW_TEST_SETTLE_MS ? Number(process.env.AUTOCREW_TEST_SETTLE_MS) : SETTLE_MS);
 
+/** 修改时间离现在不到 windowMs（record 沿用 10 秒门）；测试关掉窗口时一律 false */
+export const writtenWithin = (mtimeMs: number, windowMs: number): boolean => settleMs() > 0 && now() - mtimeMs < windowMs;
+
 /** 修改时间离现在不到一分钟：扫描这轮跳过，提交点拒绝 */
 export const unsettled = (mtimeMs: number): boolean => settleMs() > 0 && now() - mtimeMs < settleMs();
 
 type Entry = { key: string; sha: string };
 const cache = new Map<string, Entry>();
 const loaded = new Set<string>();
-let dirty = false;
+/** 改动计数：version 是内存里最新的，savedVersion 是盘上那份对应的；不等 = 还有没存的 */
+let version = 0;
+let savedVersion = 0;
+let saving: Promise<void> | null = null;
+/** 同一份字节（路径 + 元数据）正在算：并发的读共用这一次，不各算一遍 */
+const inflight = new Map<string, Promise<string>>();
 let saveDir: string | null = null;
 let timer: NodeJS.Timeout | null = null;
 
@@ -48,12 +56,19 @@ export async function loadHashCache(dataDir: string): Promise<void> {
   } catch { /* 没有或坏了：当空缓存，照常重算 */ }
 }
 
+/**
+ * 存盘串行：同一时间只有一次写；快照取在写之前，写完只把「盘上对应的版本」推到那次快照。
+ * 写的途中又有改动 → 仍算没存，排下一次（不会让旧快照盖掉新快照、也不会丢掉途中的改动）。
+ */
 export async function saveHashCache(dataDir: string): Promise<void> {
   if (timer) { clearTimeout(timer); timer = null; }
-  if (!dirty) return;
-  dirty = false;
-  try { await writeJsonAtomicMkdir(cacheFile(dataDir), Object.fromEntries(cache)); }
-  catch (e) { dirty = true; throw e; }
+  while (saving) await saving.catch(() => undefined);
+  if (version === savedVersion) return;
+  const v = version;
+  const write = writeJsonAtomicMkdir(cacheFile(dataDir), Object.fromEntries(cache)).then(() => { savedVersion = Math.max(savedVersion, v); });
+  saving = write.finally(() => { saving = null; });
+  await saving;
+  if (version !== savedVersion) scheduleSave();
 }
 
 function scheduleSave(): void {
@@ -67,7 +82,7 @@ function remember(file: string, entry: Entry): void {
   cache.delete(file);
   cache.set(file, entry);
   while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value!);
-  dirty = true;
+  version++;
   scheduleSave();
 }
 
@@ -78,8 +93,18 @@ export async function cachedSha(file: string): Promise<{ sha256: string; size: n
   const hit = cache.get(file);
   let sha256: string;
   if (hit?.key === key) { sha256 = hit.sha; cache.delete(file); cache.set(file, hit); }
-  else { sha256 = await sha256File(file); remember(file, { key, sha: sha256 }); }
+  else sha256 = await sharedHash(file, key);
   return { sha256, size: st.size, mtime_ms: Math.trunc(st.mtimeMs) };
+}
+
+async function sharedHash(file: string, key: string): Promise<string> {
+  const id = `${file}\u0000${key}`;
+  let p = inflight.get(id);
+  if (!p) {
+    p = sha256File(file).then((sha) => { remember(file, { key, sha }); return sha; }).finally(() => inflight.delete(id));
+    inflight.set(id, p);
+  }
+  return p;
 }
 
 export type CommitSha = { ok: true; sha256: string; size: number; mtime_ms: number; key: string } | { ok: false; reason: string };
@@ -108,7 +133,7 @@ export async function sweepHashCache(): Promise<number> {
     cache.delete(file);
     dropped++;
   }
-  if (dropped) { dirty = true; scheduleSave(); }
+  if (dropped) { version++; scheduleSave(); }
   return dropped;
 }
 
@@ -116,7 +141,8 @@ export async function sweepHashCache(): Promise<number> {
 export function resetHashCacheMemory(): void {
   cache.clear();
   loaded.clear();
-  dirty = false;
+  inflight.clear();
+  version = savedVersion = 0;
   saveDir = null;
   if (timer) { clearTimeout(timer); timer = null; }
 }

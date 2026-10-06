@@ -30,6 +30,8 @@ export interface DetInput {
   allowedRatios: string[];
   cropChecks: string[];
   registration: RegistrationState;
+  /** 发布时：文件现算全量哈希（还在写的拒绝）；只看检查新不新鲜时走缓存 */
+  fresh?: boolean;
 }
 
 export interface DetOutput { items: CheckItem[]; covers: CoverFact[]; video: FileFact | null }
@@ -42,12 +44,12 @@ export function matchRatio(width: number, height: number, candidates: string[]):
 const block = (check: string, rule: string, basis: string, field?: string, plan_value?: unknown): CheckItem =>
   ({ check, result: "block", rule, overridable: !NON_OVERRIDABLE.has(rule), basis, ...(field ? { field } : {}), ...(plan_value !== undefined ? { plan_value } : {}) });
 
-async function loadFile(p: string, root: string, image: boolean, field: string, items: CheckItem[]): Promise<FileFact | null> {
+async function loadFile(p: string, root: string, image: boolean, field: string, items: CheckItem[], fresh = false): Promise<FileFact | null> {
   const resolved = resolveInProject(p, root);
   // 归属可以例外，但文件在不在、读不读得了、是不是登记那一份照样要查（不能借归属例外绕过 file_missing）
   if ("error" in resolved) items.push(block("文件归属", "ownership", resolved.error, field, p));
   const abs = "error" in resolved ? path.resolve(root, p) : resolved.abs;
-  const fact = await fileFact(abs, image);
+  const fact = await fileFact(abs, image, fresh);
   if (!fact.ok) items.push(block("文件", "file_missing", `${p}：${fact.error}`, field, p));
   return fact;
 }
@@ -56,7 +58,7 @@ async function coverChecks(input: DetInput, items: CheckItem[]): Promise<CoverFa
   const { entry, allowedRatios } = input;
   const covers: CoverFact[] = [];
   for (const [i, c] of entry.covers.entries()) {
-    const fact = await loadFile(c.path, input.projectRoot, true, entry.legacy_cover ? "cover_path" : `covers[${i}].path`, items);
+    const fact = await loadFile(c.path, input.projectRoot, true, entry.legacy_cover ? "cover_path" : `covers[${i}].path`, items, input.fresh === true);
     if (!fact) continue;
     const pixel = fact.width && fact.height ? matchRatio(fact.width, fact.height, KNOWN_RATIOS) ?? `${fact.width}x${fact.height}` : null;
     const slot = fact.width && fact.height ? matchRatio(fact.width, fact.height, allowedRatios) : null;
@@ -144,7 +146,7 @@ export async function deterministicChecks(input: DetInput): Promise<DetOutput> {
   const covers = await coverChecks(input, items);
   let video: FileFact | null = null;
   if (!input.videoPath) items.push(block("成片", "plan_shape", "计划没写成片路径（final_video.path 或条目 video_path）", "video"));
-  else video = await loadFile(input.videoPath, input.projectRoot, false, "video", items);
+  else video = await loadFile(input.videoPath, input.projectRoot, false, "video", items, input.fresh === true);
   registeredChecks(input, covers, video, items);
   coverTextCheck(input, items);
   textChecks(input.entry, items);

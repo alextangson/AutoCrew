@@ -147,10 +147,11 @@ async function projectAttachment(root: string, input: string): Promise<{ ok: tru
   return { ok: true, rel: path.relative(realRoot, at.value), sha256: await sha256File(at.value) };
 }
 
-async function storyboardSnapshot(root: string, doc: ProductionDoc, factId: string): Promise<{ ok: true; value: NonNullable<Ask["storyboard"]> } | { ok: false; error: string }> {
+/** mode：发请示时按 record 核（agent 刚生成），创始人回答时按 commit 核（现算、还在写的拒绝） */
+async function storyboardSnapshot(root: string, doc: ProductionDoc, factId: string, mode: "record" | "commit"): Promise<{ ok: true; value: NonNullable<Ask["storyboard"]> } | { ok: false; error: string }> {
   const f = doc.facts.find((x) => x.id === factId && x.kind === "storyboard" && x.state === "accepted");
   if (!f?.path) return { ok: false, error: `分镜请示要指定本条的分镜事实（storyboard_fact_id）：${factId || "没带"}` };
-  const v = await validateStoryboard(root, f.path);
+  const v = await validateStoryboard(root, f.path, mode);
   if (!v.ok) return { ok: false, error: v.error };
   if (v.value.sha256 !== f.sha256) return { ok: false, error: "审阅页在报上之后被改过：重新生成并 record kind=storyboard 再问" };
   const receipt = await fs.readFile(path.join(await fs.realpath(root), f.path.replace(/\.html$/i, ".receipt.json")), "utf8");
@@ -197,7 +198,7 @@ export async function executeAsk(params: Record<string, unknown>): Promise<Resul
     }
     let storyboard: Ask["storyboard"];
     if (kind === "分镜") {
-      const s = await storyboardSnapshot(root, doc, sbId);
+      const s = await storyboardSnapshot(root, doc, sbId, "record");
       if (!s.ok) return fail("storyboard_required", s.error);
       storyboard = s.value;
     }
@@ -270,7 +271,8 @@ export async function founderAnswer(content: Content, dataDir: string, askId: st
   const root = contentRoot(content.id, dataDir);
   let storyboardApproval: Omit<Decision, "id" | "round" | "at" | "source"> | null = null;
   if (ask!.storyboard) {
-    const now = await storyboardSnapshot(root, doc, ask!.storyboard.fact_id);
+    const now = await storyboardSnapshot(root, doc, ask!.storyboard.fact_id, "commit");
+    if (!now.ok && now.error.includes(STILL_SETTLING)) return fail("file_unsettled", STILL_SETTLING);
     const same = now.ok && now.value.sha256 === ask!.storyboard.sha256 && now.value.receipt_sha256 === ask!.storyboard.receipt_sha256 && now.value.assets_fp === ask!.storyboard.assets_fp && ask!.storyboard.round === doc.round;
     if (!same) return fail("storyboard_changed", "分镜在请示之后变过（页面、回执或素材）：请 agent 重新生成分镜再问");
     if (optionId === STORYBOARD_APPROVE) storyboardApproval = { type: "storyboard_approval", fact_id: ask!.storyboard.fact_id, sha256: ask!.storyboard.sha256, receipt_sha256: ask!.storyboard.receipt_sha256, ask_id: askId };

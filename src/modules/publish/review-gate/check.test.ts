@@ -11,7 +11,7 @@ import { founderDecision } from "../../production/decisions.js";
 import { registeredPackage } from "../../production/publish-gate.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env, waiveSliverCheck } from "../../production/testkit.js";
 import { executePublish } from "../../../tools/publish.js";
-import { executePublishCheck } from "./check.js";
+import { executePublishCheck, verifyCheck } from "./check.js";
 import { JevError, type JevAnswer, type JevCaller, type JevQuestion } from "./jev-client.js";
 import { saveInstruction } from "./instructions.js";
 import { addPublishRule } from "./preferences.js";
@@ -363,5 +363,25 @@ describe("没按本体登记的稿（E9）与工具入口", () => {
     expect(proposed).toMatchObject({ ok: true, proposal: { kind: "cover_ratio", platform: "xiaohongshu", value: ["3:4", "4:3"], status: "pending", host: "codex" } });
     const still = await check({ content_id: r.id, plan: plan(r, [entry(r, "xiaohongshu", ["3:4"])]) }, fakeJev().caller);
     expect(blockedRules(still, "xiaohongshu")).toEqual([]); // 提议没确认前照旧按 3:4 判
+  });
+});
+
+describe("发布时现算计划里的每个文件（fix/hash-cpu Codex P1）", () => {
+  it("计划引用的封面副本被换了字节（大小、修改时间不变）→ 出包前核检查拦下", async () => {
+    const r = await registered();
+    const copy = "06-publish/封面副本-4x3.png";
+    await fs.mkdir(path.join(r.root, "06-publish"), { recursive: true });
+    await fs.copyFile(path.join(r.root, r.c43), path.join(r.root, copy));
+    const p = { final_video: { path: r.video }, platforms: [{ ...entry(r, "bilibili", ["4:3"]), covers: [{ usage: "横版封面", ratio: "4:3", path: copy }] }] };
+    const a = await check({ content_id: r.id, plan: p }, fakeJev().caller);
+    expect(byPlatform(a, "bilibili").verdict).toBe("pass");
+    const file = path.join(r.root, copy);
+    const st = await fs.stat(file);
+    const swapped = png(1200, 900, "z");
+    expect(swapped.length).toBe(st.size);
+    await fs.writeFile(file, swapped);
+    await fs.utimes(file, st.atimeMs / 1000, st.mtimeMs / 1000);
+    const v = await verifyCheck(r.id, byPlatform(a, "bilibili").check_id, env.dir);
+    expect(v.ok).toBe(false);
   });
 });
