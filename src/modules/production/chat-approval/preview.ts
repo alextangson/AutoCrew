@@ -4,6 +4,7 @@
  * 清理只碰 review-preview/ 这一棵：定掉的事的文件、放了超过 7 天的文件。
  */
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -36,6 +37,12 @@ export function shortTitle(title: string, fallback: string): string {
   return t || fallback;
 }
 
+/** 文件夹名：短标题 + 稳定的短 id（同标题前缀的两条稿、同一稿的几件事各有各的文件夹） */
+export function previewFolder(title: string, key: { content_id: string; item_id: string }): string {
+  const id = createHash("sha256").update(`${key.content_id}\u0000${key.item_id}`).digest("hex").slice(0, 6);
+  return `${shortTitle(title, key.content_id)}-${id}`;
+}
+
 /** review-preview/ 的根：preview_dir 必须是已有的绝对目录；根若是符号链接就不碰 */
 export async function previewRoot(previewDir: string): Promise<{ ok: true; root: string } | { ok: false; reason: string }> {
   if (!path.isAbsolute(previewDir)) return { ok: false, reason: `preview_dir 要是绝对路径（会话的工作目录），收到的是「${previewDir}」` };
@@ -50,10 +57,33 @@ export async function previewRoot(previewDir: string): Promise<{ ok: true; root:
 
 const inside = (root: string, p: string) => { const r = path.relative(root, p); return r !== "" && !r.startsWith("..") && !path.isAbsolute(r); };
 
+/** 预览记录：是链接就拒（不读不写穿它）；写时先写同目录临时文件再改名，绝不写穿已有的 inode */
 async function readIndex(root: string): Promise<Index> {
-  try { const v = JSON.parse(await fs.readFile(path.join(root, INDEX), "utf8")) as Index; return v?.files ? v : { files: {} }; } catch { return { files: {} }; }
+  const file = path.join(root, INDEX);
+  const l = await fs.lstat(file).catch(() => null);
+  if (l && !l.isFile()) throw new Error(`${INDEX} 不是普通文件（可能是链接），不碰`);
+  try { const v = JSON.parse(await fs.readFile(file, "utf8")) as Index; return v?.files ? v : { files: {} }; } catch { return { files: {} }; }
 }
-const writeIndex = (root: string, idx: Index) => fs.writeFile(path.join(root, INDEX), JSON.stringify(idx, null, 1));
+async function writeIndex(root: string, idx: Index): Promise<void> {
+  const file = path.join(root, INDEX);
+  const l = await fs.lstat(file).catch(() => null);
+  if (l && !l.isFile()) throw new Error(`${INDEX} 不是普通文件（可能是链接），不碰`);
+  const tmp = path.join(root, `.index.${process.pid}.${Date.now()}.tmp`);
+  await fs.writeFile(tmp, JSON.stringify(idx, null, 1), { flag: "wx" });
+  await fs.rename(tmp, file);
+}
+
+/** 建 / 核 review-preview 和它下面的标题文件夹：每一层都必须是真文件夹（不是链接），真实路径不出 review-preview */
+async function safeDir(root: string, dir: string): Promise<void> {
+  for (const d of [root, dir]) {
+    const l = await fs.lstat(d).catch(() => null);
+    if (!l) await fs.mkdir(d);
+    else if (l.isSymbolicLink() || !l.isDirectory()) throw Object.assign(new Error(`${path.basename(d)} 不是普通文件夹（可能是链接），不往里放`), { code: "ELINK" });
+  }
+  const realRoot = await fs.realpath(root);
+  const realDir = await fs.realpath(dir);
+  if (!inside(realRoot, realDir)) throw Object.assign(new Error("预览文件夹指到了 review-preview 外面，不往里放"), { code: "ELINK" });
+}
 
 /** 放不进去：用预览 / QuickTime 打开，原因写给创始人看 */
 async function openInstead(f: PreviewFile, why: string, out: PreviewResult): Promise<void> {
@@ -75,13 +105,15 @@ async function placeOne(root: string, dir: string, f: PreviewFile, out: PreviewR
     return null;
   }
   try {
-    await fs.mkdir(dir, { recursive: true });
-    await fs.rm(dest, { force: true });
+    await safeDir(root, dir);
+    const d = await fs.lstat(dest).catch(() => null);
+    if (d && !d.isFile()) throw Object.assign(new Error(`「${f.name}」那个位置不是普通文件（可能是链接），不覆盖`), { code: "ELINK" });
+    if (d) await fs.rm(dest);
     await (f.video ? deps.link : deps.copy)(f.source, dest);
     return path.relative(path.dirname(root), dest);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    const why = f.video && code === "EXDEV" ? "原文件和会话文件夹不在同一块盘上，放进来就得复制一整份" : `没能放进会话文件夹（${code ?? (e as Error).message}）`;
+    const why = code === "ELINK" ? (e as Error).message : f.video && code === "EXDEV" ? "原文件和会话文件夹不在同一块盘上，放进来就得复制一整份" : `没能放进会话文件夹（${code ?? (e as Error).message}）`;
     await openInstead(f, why, out);
     return null;
   }
@@ -95,8 +127,12 @@ export async function placePreview(previewDir: string, title: string, key: { con
     for (const f of files) await openInstead(f, r.reason, out);
     return out;
   }
-  const dir = path.join(r.root, shortTitle(title, key.content_id));
-  const idx = await readIndex(r.root);
+  const dir = path.join(r.root, previewFolder(title, key));
+  let idx: Index;
+  try { idx = await readIndex(r.root); } catch (e) {
+    for (const f of files) await openInstead(f, (e as Error).message, out);
+    return out;
+  }
   for (const f of files) {
     const rel = await placeOne(r.root, dir, f, out);
     if (!rel) continue;
@@ -125,6 +161,7 @@ async function walk(dir: string): Promise<string[]> {
 export async function sweepPreview(previewDir: string, still: (contentId: string, itemId: string) => boolean): Promise<string[]> {
   const r = await previewRoot(previewDir);
   if (!r.ok) return [];
+  if (!(await fs.lstat(r.root).catch(() => null))) return [];
   const idx = await readIndex(r.root);
   const removed: string[] = [];
   for (const file of await walk(r.root)) {
@@ -139,7 +176,7 @@ export async function sweepPreview(previewDir: string, still: (contentId: string
     }
   }
   for (const rel of Object.keys(idx.files)) if (!(await fs.lstat(path.join(r.root, rel)).catch(() => null))) delete idx.files[rel];
-  await writeIndex(r.root, idx).catch(() => undefined);
+  await writeIndex(r.root, idx);
   await removeEmptyDirs(r.root);
   return removed;
 }

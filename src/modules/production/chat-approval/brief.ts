@@ -25,14 +25,21 @@ export function durationText(ms: number | undefined): string {
   return s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`;
 }
 
-/** 选中的组：点名的那组，否则最新一组（列表里第一组） */
+/** 选中的组：点名的那组（对不上就是 undefined，绝不拿别的组顶替），没点名就是最新一组 */
 export function pickedGroup(item: InboxItem, groupId?: string): Group | undefined {
   const groups = groupsOf(item);
-  return (groupId ? groups.find((g) => g.group_id === groupId) : undefined) ?? groups[0];
+  return groupId ? groups.find((g) => g.group_id === groupId) : groups[0];
 }
 export function pickedVersion(item: InboxItem, factId?: string): Version | undefined {
   const versions = versionsOf(item);
-  return (factId ? versions.find((v) => v.fact_id === factId) : undefined) ?? versions[0];
+  return factId ? versions.find((v) => v.fact_id === factId) : versions[0];
+}
+
+/** 点名的组 / 版对不上这件事现在的样子：返回原因，否则 null */
+export function staleSelector(item: InboxItem, sel: { group_id?: string; fact_id?: string }): string | null {
+  if (item.type === "cover_pick" && sel.group_id && !pickedGroup(item, sel.group_id)) return `这件事里没有这一组（${sel.group_id}）了：可能已经不要了，按现在的样子重新给创始人看`;
+  if (item.type === "cut_review" && sel.fact_id && !pickedVersion(item, sel.fact_id)) return `这件事里没有这一版（${sel.fact_id}）了：按现在的样子重新给创始人看`;
+  return null;
 }
 
 function coverBrief(item: InboxItem, doc: ProductionDoc, groupId?: string): string[] {

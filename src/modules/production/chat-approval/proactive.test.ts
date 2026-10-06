@@ -11,7 +11,7 @@ import { executeStatus } from "../../../tools/status.js";
 import { readInbox } from "../inbox-read.js";
 import { transcriptCacheDir, writeTranscript } from "../match/cache.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "../testkit.js";
-import { setPreviewDeps } from "./preview.js";
+import { previewFolder, setPreviewDeps } from "./preview.js";
 import { NO_CHANGE_NOTE, NO_COVER_TEXT } from "./brief.js";
 
 let env: Env;
@@ -122,7 +122,7 @@ describe("E2 多组 / 多版只放最新", () => {
     expect(it0.brief).toContain("最新一组（还有 1 组）");
     const latest = it0.preview!.files.map((f) => f.path);
     expect(latest).toHaveLength(2);
-    for (const p of latest) expect(p.startsWith(`review-preview/${TITLE}/`)).toBe(true);
+    for (const p of latest) expect(p.startsWith(`review-preview/${TITLE}-`)).toBe(true);
     expect(await fs.readFile(path.join(pane, it0.preview!.files[0].path))).toBeTruthy();
     const old = await byType("cover_pick", { preview_dir: pane, item_id: it0.item_id, group_id: a.group_id });
     expect(old.brief).toContain("上一组");
@@ -212,5 +212,68 @@ describe("E7 网页「等你拍板」不变", () => {
     await list({ preview_dir: pane });
     const { generated_at: _b, ...after } = await readInbox(env.dir);
     expect(after).toEqual(before);
+  });
+});
+
+describe("Codex 审 d2f3c63c", () => {
+  const decideCut = (it0: Item, extra: Record<string, unknown> = {}) => executeReviewInbox({ _dataDir: env.dir, _host: "claude-code", _session: "s1", action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "approve_cut", founder_words: "用", request_id: `d-${Date.now()}`, ...extra });
+
+  it("P1 标题文件夹被换成指向外面的链接 → 不删不写外面的文件，说原因", async () => {
+    const c = await editing();
+    await cut(c.id);
+    const first = await byType("cut_review", { preview_dir: pane });
+    const rel = first.preview!.files[0].path;
+    const folder = path.join(pane, path.dirname(rel));
+    expect(path.basename(folder)).toBe(previewFolder(TITLE, { content_id: c.id, item_id: first.item_id }));
+    const outside = path.join(env.outside, "victim");
+    await put(path.join(outside, path.basename(rel)), "别人的东西");
+    await fs.rm(folder, { recursive: true });
+    await fs.symlink(outside, folder);
+    const again = await byType("cut_review", { preview_dir: pane });
+    expect(again.preview!.files).toEqual([]);
+    expect(again.preview!.opened[0].reason).toContain("不是普通文件夹");
+    expect(await fs.readFile(path.join(outside, path.basename(rel)), "utf8")).toBe("别人的东西");
+  });
+
+  it("P1 .index.json 是指向外面的链接 → 不写穿；清理失败进 warnings（list 和 decide 都有），决定照样记下", async () => {
+    const c = await editing();
+    await cut(c.id);
+    await fs.mkdir(path.join(pane, "review-preview"));
+    const victim = await put(path.join(env.outside, "victim.json"), "原样");
+    await fs.symlink(victim, path.join(pane, "review-preview", ".index.json"));
+    const r = await executeReviewInbox({ _dataDir: env.dir, action: "list", preview_dir: pane });
+    expect(String((r.warnings as string[])[0])).toContain("旧预览没清掉");
+    const it0 = (r.items as Item[]).find((i) => i.type === "cut_review")!;
+    expect(it0.preview!.files).toEqual([]);
+    const d = await decideCut(it0, { preview_dir: pane });
+    expect(d, JSON.stringify(d)).toMatchObject({ ok: true });
+    expect((d.warnings as string[]).length).toBe(1);
+    expect(await fs.readFile(victim, "utf8")).toBe("原样");
+  });
+
+  it("P2 标题前 20 字相同的两条稿 → 各自的文件夹", async () => {
+    const same = "这是一个非常非常长的标题前二十个字完全相同";
+    const dirs: string[] = [];
+    for (const [n, tail] of ["甲", "乙"].entries()) {
+      const c = await videoContent(env, `${same}${tail}`);
+      await founderApprove(env, c.id);
+      const g = await record(env, { content_id: c.id, kind: "cover", paths: [await img(`${tail}-34.png`, 900, 1200), await img(`${tail}-43.png`, 1200, 900)], cover_text: "字", request_id: `g-same-${n}` });
+      expect(g.ok, JSON.stringify(g)).toBe(true);
+    }
+    for (const i of (await list({ preview_dir: pane })).filter((x) => x.type === "cover_pick")) dirs.push(path.dirname(i.preview!.files[0].path));
+    expect(dirs).toHaveLength(2);
+    expect(dirs[0]).not.toBe(dirs[1]);
+  });
+
+  it("P2 点名的组 / 版对不上 → stale_selector + 现在的 item，不拿别的顶替", async () => {
+    const c = await editing();
+    await coverGroup(c.id, "a");
+    await cut(c.id);
+    const cv = await byType("cover_pick");
+    const r1 = await executeReviewInbox({ _dataDir: env.dir, action: "list", item_id: cv.item_id, group_id: "grp-gone", preview_dir: pane });
+    expect(r1).toMatchObject({ ok: false, code: "stale_selector", item: { item_id: cv.item_id } });
+    const ct = await byType("cut_review");
+    const r2 = await executeReviewInbox({ _dataDir: env.dir, action: "list", item_id: ct.item_id, fact_id: "fact-gone" });
+    expect(r2).toMatchObject({ ok: false, code: "stale_selector", item: { item_id: ct.item_id } });
   });
 });

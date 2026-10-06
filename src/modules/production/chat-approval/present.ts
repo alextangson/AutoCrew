@@ -8,7 +8,7 @@ import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
 import type { ProductionDoc } from "../../../storage/production-types.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
-import { briefOf, pickedGroup, pickedVersion } from "./brief.js";
+import { briefOf, pickedGroup, pickedVersion, staleSelector } from "./brief.js";
 import { factPath } from "./files.js";
 import { placePreview, sweepPreview, type PreviewFile } from "./preview.js";
 import { CHAT_ACTIONS, chatItem } from "./view.js";
@@ -62,22 +62,30 @@ const NEXT = [
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 
-/** 清掉已定的事的预览文件、7 天以上的预览文件 */
-export async function sweepDecided(dataDir: string, previewDir: string): Promise<void> {
-  const all = (await readInbox(dataDir)).items;
-  await sweepPreview(previewDir, (c, i) => all.some((x) => x.content_id === c && x.item_id === i));
+/** 清掉已定的事的预览文件、7 天以上的预览文件；清不掉返回原因（不吞） */
+export async function sweepDecided(dataDir: string, previewDir: string): Promise<string[]> {
+  try {
+    const all = (await readInbox(dataDir)).items;
+    await sweepPreview(previewDir, (c, i) => all.some((x) => x.content_id === c && x.item_id === i));
+    return [];
+  } catch (e) {
+    return [`会话文件夹里的旧预览没清掉（${(e as Error).message}）`];
+  }
 }
 
 /** list：可按 content_id / item_id 收窄；带 preview_dir 时先清理再放文件 */
 export async function listForChat(dataDir = getDataDir(), input: ListInput = {}): Promise<Result> {
-  if (input.preview_dir) await sweepDecided(dataDir, input.preview_dir).catch(() => undefined);
+  const warnings = input.preview_dir ? await sweepDecided(dataDir, input.preview_dir) : [];
   const all = (await readInbox(dataDir)).items;
   const items = all.filter((i) => (!input.content_id || i.content_id === input.content_id) && (!input.item_id || i.item_id === input.item_id));
+  const named = input.item_id ? items.find((i) => i.item_id === input.item_id) : undefined;
+  const stale = named ? staleSelector(named, input) : null;
+  if (named && stale) return { ok: false, code: "stale_selector", error: stale, item: await present(named, null, dataDir, { ...input, group_id: undefined, fact_id: undefined }), ...(warnings.length ? { warnings } : {}) };
   const many = items.filter(decidable).length > 1;
   let n = 0;
   const shown = [];
   for (const i of items) shown.push(await present(i, many && decidable(i) ? ++n : null, dataDir, input));
-  return { ok: true, count: shown.length, items: shown, next_action: NEXT };
+  return { ok: true, count: shown.length, items: shown, ...(warnings.length ? { warnings } : {}), next_action: NEXT };
 }
 
 /**
