@@ -252,6 +252,24 @@ describe("Codex 审 b44fff09 P2", () => {
     expect(await decisions(c.id, "cover_approval")).toHaveLength(1);
   });
 
+  it("决定已写、消费记录没写就崩，找回前这一代被别的请求消费：仍回放成已提交，不覆盖别人的消费", async () => {
+    const c = await editing();
+    await coverGroup(c.id, "a");
+    const it0 = await itemOf("cover_pick");
+    const p = { action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "reject_cover", founder_words: "字太小", note: "字放大", request_id: "crash-race" };
+    const first = await tool(p);
+    await mutateProduction(c.id, env.dir, (d) => { d.inbox_log = (d.inbox_log ?? []).filter((e) => e.item_id !== it0.item_id); return { value: null, events: [] }; });
+    const rec = (await readRequest(env.dir, "crash-race"))!;
+    await writeRequest(env.dir, { ...rec, state: "pending", result: undefined });
+    // 找回之前，另一个请求消费了这一代
+    expect(await decide(c.id, "reject_cover", { note: "网页也说改", item_id: it0.item_id, gen: it0.gen }, env.dir)).toMatchObject({ ok: true });
+    const before = (await doc(c.id)).inbox_log!.filter((e) => e.item_id === it0.item_id);
+    const again = await tool(p);
+    expect(again).toMatchObject({ ok: true, replayed: true, decision: { id: (first.decision as { id: string }).id } });
+    expect((await readRequest(env.dir, "crash-race"))!.state).toBe("committed");
+    expect((await doc(c.id)).inbox_log!.filter((e) => e.item_id === it0.item_id)).toEqual(before);
+  });
+
   it("决定已写、消费记录没写就崩（封面打回，代次不变）：找回时补上消费，条目消失，同一代别的决定被拒", async () => {
     const c = await editing();
     const g = await coverGroup(c.id, "a");

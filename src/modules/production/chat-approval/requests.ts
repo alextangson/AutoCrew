@@ -63,11 +63,13 @@ async function findCommitted(dataDir: string, rec: RequestRecord, b: Binding): P
   const mine = (doc.inbox_log ?? []).filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
   const logged = mine.find((e) => e.action === b.decision && e.fp === b.fp);
   if (logged) return { result: logged.result };
-  if (mine.length) return "elsewhere";
-  // 决定先写、消费记录后写：崩在两者之间时只有决定在。补上这一代的消费，否则同一代还挂在列表里、还能被另一个决定再定一次
+  // 决定先写、消费记录后写：崩在两者之间时只有决定在。先按请求号认决定——它确实提交了，哪怕这一代之后被别的请求消费
   const d = doc.decisions.find((x) => x.request_id === rec.request_id);
-  if (!d) return null;
+  if (!d) return mine.length ? "elsewhere" : null;
   const result: Result = { ok: true, decision: d };
+  // 这一代已被别的请求消费：不覆盖、不补记，只回放自己的决定
+  if (mine.length) return { result };
+  // 没人消费：补上这一代的消费，否则同一代还挂在列表里、还能被另一个决定再定一次
   await mutateProduction(b.content_id, dataDir, (x) => {
     x.inbox_log = [...(x.inbox_log ?? []), { item_id: b.item_id, gen: b.gen, action: b.decision, fp: b.fp, at: new Date().toISOString(), result }].slice(-200);
     return { value: null, events: [{ type: "inbox_decided", detail: { item_id: b.item_id, action: b.decision, recovered: true } }] };
