@@ -106,8 +106,10 @@ export async function workbenchDecision(content: Content, dataDir: string, param
   }
   if (params.action === "approve" && which === "covers") {
     const a = factFor(doc, "cover", files[0]?.sha256), b = factFor(doc, "cover", files[1]?.sha256);
-    const text = (await readProjectJson<ProjectDecisions>(content.id, "decisions.json", dataDir).catch(() => null))?.cover_text ?? "";
-    return decide(content.id, "pick_cover", { cover_3x4_fact_id: a?.id, cover_3x4_sha: a?.sha256, cover_4x3_fact_id: b?.id, cover_4x3_sha: b?.sha256, cover_text: params.cover_text ?? text }, dataDir);
+    // 没带字 ≠ 故意清空：页面没传、交接也没定字时不传 cover_text，让组里自带的字顶上（Codex 审 P2）
+    const text = typeof params.cover_text === "string" ? params.cover_text
+      : (await readProjectJson<ProjectDecisions>(content.id, "decisions.json", dataDir).catch(() => null))?.cover_text || undefined;
+    return decide(content.id, "pick_cover", { cover_3x4_fact_id: a?.id, cover_3x4_sha: a?.sha256, cover_4x3_fact_id: b?.id, cover_4x3_sha: b?.sha256, ...(text !== undefined ? { cover_text: text } : {}) }, dataDir);
   }
   if (params.action === "reject" && which === "final_cut") {
     const f = factFor(doc, "cut", params.artifact_sha256);
