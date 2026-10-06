@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 /**
  * 选题会闸口的验收清单（创始人 2026-10-04 规则 1–9）：每条绕过都被拒、豁免照常放行、
  * 读失败明确报错。各开写入口都在这里走一遍真闸口（不注入替身）。
@@ -205,11 +206,19 @@ describe("每个开写入口走同一判定", () => {
     expect((await getContent(placeholder.id, f.data))?.pack).toBeUndefined();
   });
 
-  it("看板「开始写」/ 桌面后台写稿 / 桌面重写空占位 / 聊天 generate_script", async () => {
+  it("看板「开始写」没立意也放行：只建空占位、开 Claude，标 needs_angle；正文仍由写稿闸挡", async () => {
+    const t = await makeTopic(f.data, "没开会-看板");
+    const spawnImpl = vi.fn(() => { const c = new EventEmitter(); setImmediate(() => c.emit("exit", 0)); return c; });
+    const out = await startWriting(t.id, "douyin", f.data, { platform: "darwin", spawnImpl: spawnImpl as never });
+    expect(out).toMatchObject({ ok: true, created: true, opened: true, needs_angle: true });
+    expect(spawnImpl).toHaveBeenCalledTimes(1);
+    const placeholder = await getContent((out as { content_id: string }).content_id, f.data);
+    expect(placeholder?.body).toBe("");
+    expect(await aiContentWriteRefusal(placeholder!.id, f.data)).toMatchObject(NEEDS);
+  });
+
+  it("桌面后台写稿 / 桌面重写空占位 / 聊天 generate_script", async () => {
     const t = await makeTopic(f.data, "没开会");
-    const spawnImpl = vi.fn();
-    expect(await startWriting(t.id, "douyin", f.data, { platform: "darwin", spawnImpl: spawnImpl as never })).toMatchObject(NEEDS);
-    expect(spawnImpl).not.toHaveBeenCalled();
     expect(await buildIpcHandlers()["generate:script"]({ topic: t.title, platform: "douyin", topic_id: t.id, _dataDir: f.data })).toMatchObject(NEEDS);
     const placeholder = (await createPlatformVariant(t.id, "douyin", undefined, f.data)).content!;
     expect(await buildIpcHandlers()["generate:retry"]({ content_id: placeholder.id, _dataDir: f.data })).toMatchObject(NEEDS);
