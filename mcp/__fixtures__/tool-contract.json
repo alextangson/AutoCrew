@@ -1307,6 +1307,8 @@
      },
      "decision": {
       "enum": [
+       "answer_ask",
+       "ask_resend",
        "pick_cover",
        "retire_cover_group",
        "reject_cover",
@@ -1336,6 +1338,9 @@
       "type": "string"
      },
      "note": {
+      "type": "string"
+     },
+     "option_id": {
       "type": "string"
      },
      "preview_dir": {
@@ -4185,6 +4190,8 @@
      },
      "decision": {
       "enum": [
+       "answer_ask",
+       "ask_resend",
        "pick_cover",
        "retire_cover_group",
        "reject_cover",
@@ -4214,6 +4221,9 @@
       "type": "string"
      },
      "note": {
+      "type": "string"
+     },
+     "option_id": {
       "type": "string"
      },
      "preview_dir": {

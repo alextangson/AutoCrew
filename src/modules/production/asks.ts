@@ -6,6 +6,7 @@
  * - 创始人：在「等你拍板」里答（决定 ask_answer，via=founder）、撤回 agent 的转述（24 小时内）。
  * - 同条同 kind 的未答旧请示被新请示取代；取代 / 撤回 / 关闭（稿重开、归档、删除）之后的回答一律拒。
  */
+import { provenanceFields } from "./decision-provenance.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -279,9 +280,10 @@ export async function founderAnswer(content: Content, dataDir: string, askId: st
   }
   const r = await mutateProduction(content.id, dataDir, (d) => {
     const at = new Date().toISOString();
-    const dec: Decision = { id: newId("dec"), type: "ask_answer", round: d.round, at, source: "founder", ask_id: askId, option_id: optionId, ...(note ? { note } : {}) };
+    // 对话里答的：来源经调用链挂上（source chat + 原话 + 发起方）；网页照旧 founder
+    const dec: Decision = { id: newId("dec"), type: "ask_answer", round: d.round, at, ...provenanceFields(), ask_id: askId, option_id: optionId, ...(note ? { note } : {}) };
     d.decisions.push(dec);
-    if (storyboardApproval) d.decisions.push({ id: newId("dec"), round: d.round, at, source: "founder", ...storyboardApproval });
+    if (storyboardApproval) d.decisions.push({ id: newId("dec"), round: d.round, at, ...provenanceFields(), ...storyboardApproval });
     const answer: AskAnswer = { option_id: optionId, ...(note ? { note } : {}), via: "founder", at, decision_id: dec.id };
     Object.assign(d.asks!.find((x) => x.id === askId)!, { state: "answered", answer, ended_at: at });
     return { value: dec, events: [{ type: "ask_answered", detail: { ask_id: askId, option_id: optionId, via: "founder", decision_id: dec.id, ...(storyboardApproval ? { storyboard_approved: storyboardApproval.fact_id } : {}) } }] };

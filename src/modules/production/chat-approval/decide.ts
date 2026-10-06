@@ -14,7 +14,7 @@ import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
 import { verifyFacts } from "./files.js";
 import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, releaseRequest, writeRequest, type Binding, type RequestRecord } from "./requests.js";
-import { boardLink, CHAT_ACTIONS, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
+import { boardLink, CHAT_ACTIONS, chatActionsOf, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
 
 type Result = Record<string, unknown>;
 type Picked = Extract<Selection, { ok: true }>;
@@ -22,7 +22,7 @@ const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok:
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
 export interface ChatDecideInput {
-  item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; content_id?: string; decision_id?: string;
+  item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; option_id?: string; content_id?: string; decision_id?: string;
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
 }
 
@@ -33,11 +33,11 @@ async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
   const item = (await readInbox(dataDir)).items.find((x) => x.item_id === input.item_id);
   if (!item) return { ok: false, result: fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子") };
   if (item.gen !== input.gen) return { ok: false, result: fail("stale", "这件事刚变过（比如来了新的一组），先把新的样子给创始人看一遍再定", { item: await chatItem(item, dataDir) }) };
-  if (!item.content_id || !(CHAT_ACTIONS[item.type] ?? []).includes(input.decision)) {
+  if (!item.content_id || !chatActionsOf(item).includes(input.decision)) {
     const why = CHAT_ACTIONS[item.type] ? `这件事在这里不能做「${input.decision}」` : "这类事只能在看板上定";
     return { ok: false, result: fail("not_chat_decidable", why, { board_link: boardLink(item) }) };
   }
-  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined });
+  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined });
   if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await chatItem(item, dataDir) }) };
   return { ok: true, item, selection };
 }
@@ -59,7 +59,7 @@ function validInput(input: ChatDecideInput): Result | null {
 }
 
 const hashOf = (input: ChatDecideInput, requester: string) => payloadHash({ item_id: input.item_id, gen: input.gen, decision: input.decision,
-  group_id: str(input.group_id), fact_id: str(input.fact_id), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
+  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
   note: str(input.note), founder_words: str(input.founder_words), requester });
 
 type Bind = (b: Binding) => Promise<void>;
@@ -108,7 +108,7 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   if (!found.ok) return found.result;
   const { item, selection } = found;
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
-    ...coverTextOf(item, input, selection), ...(NOTE_ACTIONS.has(input.decision) ? { note: str(input.note) } : {}) };
+    ...coverTextOf(item, input, selection), ...(NOTE_ACTIONS.has(input.decision) || (input.decision === "answer_ask" && str(input.note)) ? { note: str(input.note) } : {}) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
   const r = await withFileOwnership(async () => {

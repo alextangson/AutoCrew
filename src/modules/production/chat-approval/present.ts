@@ -11,6 +11,7 @@ import type { InboxItem } from "../inbox.js";
 import { briefOf, pickedGroup, pickedVersion, staleSelector } from "./brief.js";
 import { factPath } from "./files.js";
 import { placePreview, sweepPreview, type PreviewFile } from "./preview.js";
+import { askAttachments } from "./ask-view.js";
 import { CHAT_ACTIONS, chatItem } from "./view.js";
 
 type Result = Record<string, unknown>;
@@ -50,15 +51,18 @@ async function present(item: InboxItem, n: number | null, dataDir: string, input
   const brief = await briefOf(item, doc, dataDir, sel);
   const shown = item.type === "cover_pick" ? { group_id: pickedGroup(item, sel.group_id)?.group_id }
     : item.type === "cut_review" ? { fact_id: pickedVersion(item, sel.fact_id)?.fact_id } : {};
-  const preview = input.preview_dir
-    ? await placePreview(input.preview_dir, item.title, { content_id: item.content_id!, item_id: item.item_id }, previewFiles(item, doc, dataDir, sel))
-    : null;
+  const key = { content_id: item.content_id!, item_id: item.item_id };
+  const ask = item.type === "ask" ? await askAttachments(item, doc, dataDir) : null;
+  const files = ask ? ask.files : previewFiles(item, doc, dataDir, sel);
+  const placed = input.preview_dir ? await placePreview(input.preview_dir, item.title, key, files) : null;
+  const preview = placed || ask?.pages.length ? { ...(placed ?? { files: [], opened: [], problems: [] }), ...(ask?.pages.length ? { pages: ask.pages } : {}) } : null;
   return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${brief}` : brief, shown, ...(preview ? { preview } : {}) };
 }
 
 const NEXT = [
-  "把每件的 brief 原样转述给创始人（不要自己加判断标准）；preview.files 的 path 写成 markdown 链接让他点开，preview.opened / problems 照说。",
+  "把每件的 brief 原样转述给创始人（不要自己加判断标准）；preview.files 的 path 写成 markdown 链接让他点开，preview.opened / problems 照说；preview.pages 是网页：说清打开了没有，并给绝对路径。",
   "不止一件时按 number 列成编号清单，他可以回「1 用，2 还要改：……」。说「用」就按 shown 里的 group_id / fact_id decide。",
+  "请示：他的话对得上唯一一个选项才 decide answer_ask（带 option_id，多说的话放 note）；对不上或只说「行」而选项不止一个就先问他，别猜。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 

@@ -20,7 +20,7 @@ export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_scout: "宿主执行的调研。prepare / pack 领任务；status 查进度；search 搜索（要搜索 key，没配就用你自己的搜索找网址）；read_page{perspective,url} 抓页；cite 登记逐字引文；claim_offline 登记未核验说法；perspective 交视角；synthesize 综合；angles 交角度候选。prepare 之后都带 topic_id + task_id。",
   autocrew_review_desk: "宿主审稿。pack 领审稿材料；submit 交审稿意见（带 review_pack_id、attempt、issues）。",
   autocrew_writer: "宿主写稿。pack 领写作包；pack_status 查备包；find_evidence 补证据；submit 交稿；submit_status 查交稿；gap / technique 缺口与技法参考。领包后的每次写都带 claim_token。",
-  autocrew_review_inbox: "对话里处理「等你拍板」。list{preview_dir:会话工作目录} 列事：brief 原样转述、不自己加标准，preview 里的相对路径写成 markdown 链接，多件按 number 编号；decide 照抄他原话记决定，话有歧义先问；revoke 撤回刚才的批准。",
+  autocrew_review_inbox: "对话里处理「等你拍板」。list{preview_dir:会话工作目录} 列事（含请示）：brief 原样转述，preview 路径写成 markdown 链接，多件编号；decide 照抄他原话记决定，话有歧义先问；revoke 撤回刚才的批准。",
   autocrew_desk: "待办桌。inbox 看本岗待办；claim 认领（拿 claim_token）；release 干完释放。",
   autocrew_video: "剪辑台（口播原片 → 成片），三道门由创作者决定。status 看状态与下一步；start / transcript / cut_confirm / editor_* / reassemble / review 等按 status 的 next 逐步做；handoff / match / confirm / register / report / revoke 用于交给剪辑工位与登记成片。",
   autocrew_editorial: "编辑档案与改稿反馈。profile 读档案；update_profile 改档案（需确认）；inspect 读稿与 draft_hash；feedback 记改稿要求并领改稿包。",

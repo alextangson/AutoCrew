@@ -22,6 +22,7 @@ export interface PreviewResult { files: Array<{ name: string; path: string }>; o
 type Index = { files: Record<string, { content_id: string; item_id: string; placed_at: number }> };
 
 export interface PreviewDeps {
+  /** app 为空串 = 用默认程序打开（网页 → 默认浏览器） */
   open: (file: string, app: string) => Promise<void>;
   link: (src: string, dest: string) => Promise<void>;
   copy: (src: string, dest: string) => Promise<void>;
@@ -30,7 +31,7 @@ export interface PreviewDeps {
 const realOpen = (file: string, app: string) => new Promise<void>((resolve, reject) => {
   // 测试绝不打开真的 App：必须经 setPreviewDeps 注入
   if (process.env.VITEST) return reject(new Error("测试里要注入 open"));
-  execFile("open", ["-a", app, file], (e) => (e ? reject(e) : resolve()));
+  execFile("open", app ? ["-a", app, file] : [file], (e) => (e ? reject(e) : resolve()));
 });
 const DEFAULTS: PreviewDeps = { open: realOpen, link: (s, d) => fs.link(s, d), copy: (s, d) => fs.copyFile(s, d, FS.COPYFILE_EXCL), now: () => Date.now() };
 let deps: PreviewDeps = DEFAULTS;
@@ -88,6 +89,16 @@ async function safeDir(root: string, dir: string): Promise<void> {
   const realRoot = await fs.realpath(root);
   const realDir = await fs.realpath(dir);
   if (!inside(realRoot, realDir)) throw Object.assign(new Error("预览文件夹指到了 review-preview 外面，不往里放"), { code: "ELINK" });
+}
+
+/** 网页审阅页引用相对路径的素材，单复制 html 会坏：原地用默认浏览器打开，返回绝对路径和打开没打开 */
+export async function openPage(file: string): Promise<{ path: string; opened: boolean; reason: string }> {
+  try {
+    await deps.open(file, "");
+    return { path: file, opened: true, reason: "网页引用了旁边的素材，没复制；已经用默认浏览器打开原文件" };
+  } catch (e) {
+    return { path: file, opened: false, reason: `网页没能在浏览器里打开（${(e as Error).message}），请点这个绝对路径` };
+  }
 }
 
 /** 放不进去：用预览 / QuickTime 打开，原因写给创始人看 */
