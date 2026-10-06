@@ -222,14 +222,14 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   const review = marked?.fact ?? null;
   // 创始人点了「还要改…」：在 agent 交新版 / 重新标可以审之前，说的是那句话，不再是「成片待你审」（verifier 2a P1）
   const cutAsk = marked ? cutRejectNote(doc, marked.fact.sha256!, marked.marked_at) : null;
-  if (review && !cut && cutAsk) missing.push(`你说还要改：${cutAsk}`);
+  if (review && !cut && cutAsk) missing.push(`${relayed(cutReject(doc, marked!.fact.sha256!, marked!.marked_at))}你说还要改：${cutAsk}`);
   else if (review && !cut) {
     missing.push(MISSING.cutReview);
     // 抽帧检查（spec 2026-09-30 §6）：没结果 / 有未放行的缝 / 没跑成且没整条放行 → 写进还差什么
     const v = sliverVerdict(doc, review.sha256!, null);
     if (!v.ok && v.missing) missing.push(v.missing);
   }
-  if (complete.length && !cover) missing.push(coverAsk ? `你说封面还要改：${coverAsk}` : MISSING.coverPick);
+  if (complete.length && !cover) missing.push(coverAsk ? `${relayed(coverReject(doc, complete.at(-1)?.at))}你说封面还要改：${coverAsk}` : MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
   if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
   return { missing, badges };
@@ -238,19 +238,28 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
 const clipNote = (s: string) => (Array.from(s).length > 40 ? `${Array.from(s).slice(0, 40).join("")}…` : s);
 
 /** 这版成片在「可以审了」之后被打回的那句话（之后又标过就不算） */
+const cutReject = (doc: ProductionDoc, sha: string, markedAt: string) => inRound(doc, doc.decisions).filter((d) => d.type === "cut_reject" && d.sha256 === sha && d.at >= markedAt).at(-1);
+const coverReject = (doc: ProductionDoc, newestGroupAt: string | undefined) => inRound(doc, doc.decisions).filter((d) => d.type === "cover_reject" && (!newestGroupAt || d.at >= newestGroupAt)).at(-1);
+
 export function cutRejectNote(doc: ProductionDoc, sha: string, markedAt: string): string | null {
-  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cut_reject" && d.sha256 === sha && d.at >= markedAt).at(-1);
+  const r = cutReject(doc, sha, markedAt);
   return r ? clipNote(r.note ?? "") : null;
 }
 
 /** 最新一组完整封面之后的打回（之后又交了新的一组就不算） */
 export function coverRejectNote(doc: ProductionDoc, newestGroupAt: string | undefined): string | null {
-  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cover_reject" && (!newestGroupAt || d.at >= newestGroupAt)).at(-1);
+  const r = coverReject(doc, newestGroupAt);
   return r ? clipNote(r.note ?? "") : null;
 }
 
+/** 对话里 agent 转述的「还要改」（chat-reported）：不能说成创始人自己在看板上写的 */
+export const RELAYED = "（对话里转述）";
+const relayed = (d: { source: string } | undefined) => (d?.source === "chat-reported" ? RELAYED : "");
+/** 「你说还要改」那一行（可能带「对话里转述」前缀） */
+export const isFounderAsk = (m: string) => m.startsWith("你说") || m.startsWith(`${RELAYED}你说`);
+
 function editingReason(missing: string[]): string {
-  const ask = missing.find((m) => m.startsWith("你说"));
+  const ask = missing.find(isFounderAsk);
   if (ask) return `${ask}，等 AI 交新版`;
   if (missing.includes(MISSING.cutReview)) return "有成片待你审";
   if (missing.includes(MISSING.coverPick)) return "有封面待你选";

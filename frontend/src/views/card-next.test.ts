@@ -8,4 +8,9 @@ describe("下一步", () => {
     expect(n?.text).toBe("你说还要改：前 10 秒再紧一点；等 AI 交新版，暂时不用你操作");
     expect(n?.action).toBeUndefined();
   });
+
+  it("对话里转述的还要改 → 原样带前缀，同样等 AI 交新版", () => {
+    const n = nextStep({ column: "剪辑中", stage: "剪辑中", status: "editing", missing: ["（对话里转述）你说还要改：前 10 秒再紧一点"], active: true });
+    expect(n?.text).toBe("（对话里转述）你说还要改：前 10 秒再紧一点；等 AI 交新版，暂时不用你操作");
+  });
 });

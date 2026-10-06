@@ -12,6 +12,8 @@ import { executeReviewInbox } from "../../../tools/review-inbox.js";
 import { decide, decideItem } from "../inbox-decide.js";
 import { founderDecision } from "../decisions.js";
 import { readInbox } from "../inbox-read.js";
+import { explainContent } from "../read.js";
+import { getContent } from "../../../storage/local-store.js";
 import { founderApprove, makeEnv, png, put, record, videoContent, waiveSliverCheck, type Env } from "../testkit.js";
 import { readRequest, resetSlotForTest, writeRequest } from "./requests.js";
 
@@ -322,5 +324,36 @@ describe("记录与其它路径（E15、E16）", () => {
     expect(item).toMatchObject({ chat_decidable: true, facts: { groups: [{ cover_text: "封面上的字", files: ["封面-3x4.png", "封面-4x3.png"] }] } });
     expect(String(item.board_link)).toContain("#/board?inbox=");
     expect((item.decisions as Array<{ decision: string; via: string }>).map((d) => `${d.decision}:${d.via}`)).toEqual(["pick_cover:confirm", "retire_cover_group:confirm", "reject_cover:send_back"]);
+  });
+});
+
+describe("Codex 审 aef8eb37 P2", () => {
+  it("P2-1 弹窗开着时网页批了另一组、服务重启：重试不能回成「已确认」带着别组的决定", async () => {
+    const c = await editing();
+    const a = await coverGroup(c.id, "a");
+    const b = await coverGroup(c.id, "b");
+    const it0 = await itemOf("cover_pick");
+    const p = { action: "confirm", item_id: it0.item_id, gen: it0.gen, decision: "pick_cover", group_id: String(a.group_id), founder_words: "用 A", request_id: "crash-1" };
+    // 弹窗开着：网页上批了 B，然后进程死掉（弹窗调用抛错，记录停在 dialog_open）
+    script = [async () => {
+      expect(await decide(c.id, "pick_cover", { group_id: b.group_id }, env.dir)).toMatchObject({ ok: true });
+      throw new Error("进程死了");
+    }];
+    await expect(tool(p)).rejects.toThrow("进程死了");
+    expect((await readRequest(env.dir, "crash-1"))!.state).toBe("dialog_open");
+    resetSlotForTest();
+    const r = await tool(p);
+    expect(r).toMatchObject({ ok: false, code: "already_handled" });
+    expect(String(r.error)).toContain("已在别处处理");
+    expect(r.status).toBeUndefined();
+  });
+
+  it("P2-3 对话转述的「还要改」在看板上标出来，不说成创始人自己写的", async () => {
+    const c = await editing();
+    await cut(c.id);
+    const it0 = await itemOf("cut_review");
+    await tool({ action: "send_back", item_id: it0.item_id, gen: it0.gen, decision: "reject_cut", founder_words: "开头拖", note: "开头 10 秒砍掉" });
+    const exp = await explainContent((await getContent(c.id, env.dir))!, env.dir);
+    expect(exp.missing).toContain("（对话里转述）你说还要改：开头 10 秒砍掉");
   });
 });

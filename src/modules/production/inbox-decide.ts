@@ -47,7 +47,7 @@ function allowed(item: InboxItem): InboxAction[] {
 }
 
 /** 决定的指纹：动作 + 创始人给的参数（不含条目 / 代次本身） */
-function fingerprint(action: string, params: Record<string, unknown>): string {
+export function fingerprint(action: string, params: Record<string, unknown>): string {
   const keys = Object.keys(params).filter((k) => !["item_id", "gen", "content_id", "action"].includes(k) && !k.startsWith("_")).sort();
   return JSON.stringify([action, keys.map((k) => [k, params[k]])]);
 }

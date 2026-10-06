@@ -23,6 +23,8 @@ export interface RequestRecord {
   item_id: string;
   gen: string;
   decision: string;
+  /** 真要提交的那份决定的指纹（选中的组 / 版 + 服务端定下的封面字）：重启后认「是不是这一份提交了」只认它 */
+  commit_fp?: string;
   result?: Result;
 }
 
@@ -40,6 +42,20 @@ function requestPath(dataDir: string, id: string): string {
 
 export const readRequest = (dataDir: string, id: string) => readRecord<RequestRecord>(requestPath(dataDir, id));
 export const writeRequest = (dataDir: string, rec: RequestRecord) => writeRecord(requestPath(dataDir, rec.request_id), rec);
+
+// ---- 请求号占位：同一个 request_id 同一时间只有一个调用在走（同步占，先于任何 await）----
+
+const claimed = new Set<string>();
+
+export function claimRequest(id: string): boolean {
+  if (claimed.has(id)) return false;
+  claimed.add(id);
+  return true;
+}
+
+export function releaseRequest(id: string): void {
+  claimed.delete(id);
+}
 
 // ---- 弹窗位 ----
 
@@ -61,6 +77,7 @@ export const slotHolder = () => slot;
 /** 测试专用：模拟服务重启（弹窗位清空） */
 export function resetSlotForTest(): void {
   slot = null;
+  claimed.clear();
 }
 
 // ---- 先查账 ----
@@ -69,12 +86,18 @@ export type Prior = { kind: "new" } | { kind: "replay"; result: Result } | { kin
 
 const EXPIRED: Result = { ok: false, code: "confirm_timeout", error: "上次弹窗没等到结果（服务中途重启过），这次什么都没记：换一个 request_id 再确认。" };
 
-/** 上一个进程留下的 dialog_open：这件事这一代已经消费过 = 提交了只是回执丢了 */
+const ELSEWHERE: Result = { ok: false, code: "already_handled", error: "这件事已在别处处理（做的不是这次弹窗里的那个决定），这次什么都没记：重新 list 看现在的样子" };
+
+/**
+ * 上一个进程留下的 dialog_open：这件事这一代的消费记录和这次要提交的决定逐项一致（动作 + 选中对象 + 封面字）
+ * = 提交了只是回执丢了；记了别的决定 = 已在别处处理；什么都没记 = 当作没人点。
+ */
 async function settleOrphan(dataDir: string, rec: RequestRecord): Promise<Result> {
   const log = rec.content_id ? (await readProductionDocOrEmpty(rec.content_id, dataDir)).inbox_log ?? [] : [];
-  const done = log.find((e) => e.item_id === rec.item_id && e.gen === rec.gen && e.action === rec.decision && !e.pending);
-  const result = done ? { ...done.result, ok: true, status: "confirmed", item_id: rec.item_id, gen: rec.gen } : EXPIRED;
-  await writeRequest(dataDir, { ...rec, state: done ? "committed" : "timeout", result });
+  const mine = log.filter((e) => e.item_id === rec.item_id && e.gen === rec.gen && !e.pending);
+  const done = rec.commit_fp ? mine.find((e) => e.action === rec.decision && e.fp === rec.commit_fp) : undefined;
+  const result = done ? { ...done.result, ok: true, status: "confirmed", item_id: rec.item_id, gen: rec.gen } : mine.length ? ELSEWHERE : EXPIRED;
+  await writeRequest(dataDir, { ...rec, state: done ? "committed" : mine.length ? "refused" : "timeout", result });
   return result;
 }
 

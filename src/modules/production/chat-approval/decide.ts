@@ -10,13 +10,13 @@
  */
 import { getDataDir } from "../../../storage/local-store.js";
 import { withProvenance } from "../decision-provenance.js";
-import { decideItem } from "../inbox-decide.js";
+import { decideItem, fingerprint } from "../inbox-decide.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
 import { verifyFacts } from "./files.js";
 import { runConfirmDialog } from "./dialog-loop.js";
-import { payloadHash, priorRequest, releaseSlot, takeSlot, writeRequest, isRequestId, type RequestRecord, type RequestState } from "./requests.js";
+import { claimRequest, payloadHash, priorRequest, releaseRequest, releaseSlot, takeSlot, writeRequest, isRequestId, type RequestRecord, type RequestState } from "./requests.js";
 import { boardLink, chatItem, DIALOG_ACTIONS, requesterOf, SEND_BACK_ACTIONS, selectionOf, type DialogFacts, type Selection } from "./view.js";
 
 type Result = Record<string, unknown>;
@@ -80,12 +80,15 @@ async function finish(dataDir: string, rec: RequestRecord, state: RequestState, 
   return result;
 }
 
+/** 真要提交的那份决定（弹窗前定下，提交时原样用） */
+const commitRequest = (f: DialogFacts, input: ChatDecideInput) => decisionRequest(input, f.item, f.selection, f.coverText === null ? {} : { cover_text: f.coverText });
+
 /** 点了「确认」之后：锁里重核字节，再交 decideItem（它在锁里再核代次）；带对话来源 */
 async function commit(f: DialogFacts, input: ChatDecideInput, dataDir: string): Promise<Result> {
   return withFileOwnership(async () => {
     const bytes = await verifyFacts(f.item.content_id ?? "", f.selection.factIds, dataDir);
     if (!bytes.ok) return fail(bytes.code, bytes.error);
-    const req = decisionRequest(input, f.item, f.selection, f.coverText === null ? {} : { cover_text: f.coverText });
+    const req = commitRequest(f, input);
     return withProvenance({ source: "chat-dialog", founder_words: f.founderWords, requested_by: f.requester }, () => decideItem(req, dataDir));
   });
 }
@@ -102,6 +105,16 @@ export async function confirmDecision(input: ChatDecideInput, dataDir = getDataD
   const bad = validConfirm(input);
   if (bad) return bad;
   const requestId = str(input.request_id);
+  // 先同步占住请求号（任何 await 之前）：同号并发的第二个调用直接 busy，不会各自过了查账再各弹一个窗
+  if (!claimRequest(requestId)) return fail("dialog_busy", "同一个 request_id 的确认正在进行，等它出结果");
+  try {
+    return await confirmClaimed(input, requestId, dataDir);
+  } finally {
+    releaseRequest(requestId);
+  }
+}
+
+async function confirmClaimed(input: ChatDecideInput, requestId: string, dataDir: string): Promise<Result> {
   const hash = payloadHash({ item_id: input.item_id, gen: input.gen, decision: input.decision, group_id: str(input.group_id), fact_id: str(input.fact_id),
     cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null, founder_words: str(input.founder_words), requester: requesterOf(input.host, input.session) });
   const prior = await priorRequest(dataDir, requestId, hash);
@@ -118,7 +131,7 @@ export async function confirmDecision(input: ChatDecideInput, dataDir = getDataD
   if (!takeSlot(requestId)) return fail("dialog_busy", "Mac 上已经有一个确认窗开着（可能是别的会话发起的）：等创始人点完那个再来");
   try {
     return await dialogAndCommit(facts, input, { request_id: requestId, payload_hash: hash, state: "dialog_open", at: new Date().toISOString(),
-      content_id: item.content_id, item_id: item.item_id, gen: item.gen, decision: input.decision }, dataDir);
+      content_id: item.content_id, item_id: item.item_id, gen: item.gen, decision: input.decision, commit_fp: fingerprint(input.decision, commitRequest(facts, input)) }, dataDir);
   } finally {
     releaseSlot(requestId);
   }
