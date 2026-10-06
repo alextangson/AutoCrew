@@ -8,7 +8,7 @@ const store = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); }, clear: () => store.clear(), key: () => null, length: 0 } });
 vi.mock("./board-api", () => ({
   loadCard: async () => ({ ok: true, data: { ok: true, id: "content-1-a", title: "新稿", status: "draft_ready", active: true, column: "写稿中", stage: null, reason: "已有原片，等你认稿", missing: [], badges: ["已有原片，等你认稿", "从收件箱自动挂上，不对就点「不是」"], alerts: [], candidates: [], published: [], pending_receipts: [], round: 1, can_reopen: false,
-    arolls: [{ fact_id: "f1", sha256: "s", path: "02-aroll/新稿-原片.mov", name: "IMG_1.mov", origin: "收件箱自动挂上", auto_attached: true, source_path: "/i/IMG_1.mov", check: null, undo_blocked: null, reassign_blocked: null }] } }),
+    arolls: [{ fact_id: "f1", sha256: "s", path: "02-aroll/新稿-原片.mov", name: "IMG_1.mov", origin: "收件箱自动挂上", auto_attached: true, source_path: "/i/IMG_1.mov", undo_blocked: null }] } }),
   decide: async () => ({ ok: true, data: {} }), chooseFile: async () => ({ ok: false, error: "x" }), reopenScript: async () => ({ ok: true, data: {} }),
   revealFact: async () => ({ ok: true, data: {} }), openStoryboard: async () => ({ ok: true, data: {} }),
 }));

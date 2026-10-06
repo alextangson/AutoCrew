@@ -24,7 +24,6 @@ import { UNDO } from "./board-columns";
 import { platformName } from "./board-columns";
 
 /** 有正在核对的时候面板多久重读一次 */
-const POLL_MS = 5000;
 
 type Props = { contentId: string; reload?: () => Promise<void>; open?: boolean; approveBlocked?: string | null };
 
@@ -38,13 +37,6 @@ export function CardPanel(p: Props) {
     if (r.ok) { setData(r.data); setError(null); } else setError(r.error);
   }, [p.contentId]);
   useEffect(() => { void refresh(); }, [refresh]);
-  // 有正在核对的（pending_match / 挂载核对 checking）就每 5 秒重读，结果或失败出来就停；面板关了也停（Codex 审 segB6 P2）
-  const checking = Boolean(data && ((data.candidate_rows ?? []).some((c) => c.state === "pending_match") || (data.arolls ?? []).some((r) => r.check?.status === "checking")));
-  useEffect(() => {
-    if (!checking) return;
-    const t = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(t);
-  }, [checking, refresh]);
 
   const act = async (action: string, params: Record<string, unknown>, done: string) => {
     setBusy(true);
@@ -59,11 +51,6 @@ export function CardPanel(p: Props) {
   const actOrReassign = async (action: string, params: Record<string, unknown>, done: string) => {
     const r = await act(action, params, done);
     const body = r.ok ? null : r.body;
-    // 别条稿正在核对这个原片（1b §3-7）：先说是哪条，确认后取消那边的核对再挂
-    if (body?.code === "aroll_pending_elsewhere") {
-      if (!(await confirmDialog({ title: "还是挂到这条？", body: String(body.error ?? ""), confirmLabel: "挂到这条", danger: true }))) return r;
-      return act(action, { ...params, cancel_pending: true }, done);
-    }
     if (body?.code !== "aroll_conflict" || body.reassignable !== true) return r;
     const owner = String(body.owner_title ?? body.owner_id ?? "另一条稿");
     if (!(await confirmDialog({ title: "改挂到这条？", body: reassignText(owner), confirmLabel: "改挂到这条", danger: true }))) return r;

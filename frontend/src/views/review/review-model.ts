@@ -4,7 +4,7 @@
  */
 
 export type InboxType =
-  | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "auto_attached" | "attach_check" | "inbox_file" | "sliver"
+  | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
   | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "other";
 
 export interface InboxAction {
@@ -43,7 +43,7 @@ export function sortItems(items: InboxItem[]): InboxItem[] {
 export function thumbKind(item: Pick<InboxItem, "type" | "detail">): "cover" | "video" | "srt" | "doc" {
   const t = item.type, kind = item.detail.kind;
   if (t === "cover_pick" || (t === "candidate" && kind === "cover")) return "cover";
-  if (t === "cut_review" || t === "sliver" || t === "inbox_file" || t === "auto_attached" || t === "attach_check" || (t === "candidate" && (kind === "cut" || kind === "aroll"))) return "video";
+  if (t === "cut_review" || t === "sliver" || (t === "candidate" && (kind === "cut" || kind === "aroll"))) return "video";
   if (t === "candidate" && kind === "srt") return "srt";
   return "doc";
 }
@@ -54,7 +54,7 @@ export function previewFact(item: Pick<InboxItem, "type" | "detail">): string | 
   if (item.type === "cover_pick") return (d.groups as Array<{ "3:4": { fact_id: string } | null }> | undefined)?.[0]?.["3:4"]?.fact_id ?? null;
   if (item.type === "cut_review") return (d.versions as Array<{ fact_id: string }> | undefined)?.[0]?.fact_id ?? null;
   if (item.type === "sliver") return String(d.cut_fact_id ?? "") || null;
-  if ((item.type === "candidate" || item.type === "auto_attached" || item.type === "attach_check") && d.preview) return String(d.fact_id);
+  if (item.type === "candidate" && d.preview) return String(d.fact_id);
   return null;
 }
 
@@ -147,7 +147,7 @@ export const DONE_TEXT: Record<string, string> = {
   confirm_candidate: "记下了，就是它", reject_candidate: "记下了，不是它", answer_ask: "已经回复了", undo_ask_answer: "撤回了转述的回答",
   i_published: "记下了，已经发出去了", confirm_receipt: "记下了，发了", correct_publish: "记下了，没发", approve_script: "稿子定了", revise_script: "已经告诉写稿的了",
   publish_check_confirm: "记下了，没问题", publish_check_revise: "已经告诉发布的了", publish_check_override: "按你的原话重新检查了", waive_sliver: "这处放行了",
-  waive_sliver_check: "这条不查了", ignore_inbox_file: "挪进「已用过」了", ack: "记下了", nudge: "已经催了", assign: "挂上了", keep_attach: "记下了，就是它", reassign_aroll: "改挂好了", undo_auto_attach: "挪回去了",
+  waive_sliver_check: "这条不查了", ack: "记下了", nudge: "已经催了", undo_auto_attach: "挪回去了",
 };
 
 // ---- 网页提醒（§9 第一条）：只提醒「有 agent 在等」和「挡住推进」，同一条稿 10 分钟内合并，同一件不重复 ----

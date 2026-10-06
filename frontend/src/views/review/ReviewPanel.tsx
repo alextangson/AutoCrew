@@ -6,7 +6,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { openStoryboard } from "../board-api";
-import { attachmentUrl, inboxFileUrl, mediaUrl } from "./review-api";
+import { attachmentUrl, mediaUrl } from "./review-api";
 import { platformName } from "../board-columns";
 import { plainWords, type InboxAction, type InboxItem } from "./review-model";
 
@@ -226,47 +226,9 @@ function Generic(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
-const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.round((ms % 60000) / 1000)).padStart(2, "0")}`;
-
-/** 收件箱里没对上的视频：先看片（播放器、时长、文件时间、开头说了什么），再认是哪条，或忽略 */
-function InboxFileBody(p: { item: InboxItem; act: Act }) {
-  const d = p.item.detail;
-  const guesses = (d.guesses as Array<{ content_id: string; title: string }> | undefined) ?? [];
-  // 旧对账报告只有标题：只显示，不给按钮
-  const oldGuess = guesses.length ? [] : ((d.guess as string[] | undefined) ?? []);
-  const usedBy = d.used_by as { title: string } | null;
-  const quiet = p.item.actions.filter((a) => a.role === "quiet");
-  return <>
-    <Props rows={[["文件", String(d.name ?? "")], ["时长", typeof d.duration_ms === "number" ? clock(d.duration_ms) : null],
-      ["文件时间", typeof d.mtime_ms === "number" ? new Date(d.mtime_ms).toLocaleString() : null], ["为什么", usedBy && d.reason ? String(d.reason) : null]]} />
-    <div className="ri-preview"><video controls preload="metadata" src={inboxFileUrl(p.item.item_id)} /></div>
-    {Boolean(d.changed) && <p className="ri-note">这个文件在上次核对之后变过：先看片，再从下面选是哪条</p>}
-    {typeof d.transcript_head === "string" && d.transcript_head && <p className="ri-question">开头说的：「{d.transcript_head}」</p>}
-    {!usedBy && guesses.length > 0 && <ul className="ri-check">{guesses.map((g) => {
-      const a = p.item.actions.find((x) => x.action === "assign" && x.params?.to === g.content_id);
-      return <li key={g.content_id}>《{g.title}》 {a && <Button variant="secondary" onClick={() => void p.act(a)}>{a.label}</Button>}</li>;
-    })}</ul>}
-    {!usedBy && oldGuess.length > 0 && <p className="ri-note">可能是：{oldGuess.map((t) => `《${t}》`).join("、")}</p>}
-    {!usedBy && <AssignPicker item={p.item} act={p.act} />}
-    {quiet.length > 0 && <div className="ri-actions"><span className="ri-quiet-slot">{quiet.map((a, i) => <Button key={i} variant="quiet" onClick={() => void p.act(a)}>{a.label}</Button>)}</span></div>}
-  </>;
-}
-
-/** 都不是猜的那几条：从所有还没过剪辑的视频稿里选 */
-function AssignPicker(p: { item: InboxItem; act: Act }) {
-  const choices = (p.item.detail.choices as Array<{ id: string; title: string }>) ?? [];
-  const [to, setTo] = useState(choices[0]?.id ?? "");
-  const assign = p.item.actions.find((a) => a.action === "assign" && a.params?.to === undefined);
-  if (!choices.length || !assign) return <p className="ri-reason">没有还能挂原片的视频稿</p>;
-  return <div className="ri-actions">
-    <select aria-label="指定给哪条" value={to} onChange={(e) => setTo(e.target.value)}>{choices.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select>
-    <Button variant="secondary" onClick={() => void p.act(assign, { to })}>指定给这条</Button>
-  </div>;
-}
-
 export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClose: () => void }) {
   const it = p.item;
-  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "inbox_file" ? InboxFileBody
+  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody
     : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : it.type === "publish_claim" ? ClaimBody : Generic;
   return <aside className="ri-peek" role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>

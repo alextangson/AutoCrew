@@ -32,7 +32,6 @@ export const mediaUrl = (contentId: string, factId: string) =>
   `/api/inbox/media?content_id=${encodeURIComponent(contentId)}&fact_id=${encodeURIComponent(factId)}`;
 
 /** 收件箱里没对上的视频：按条目 id 取，服务端只认对账报告里列着的文件 */
-export const inboxFileUrl = (itemId: string) => `/api/inbox/file-media?item_id=${encodeURIComponent(itemId)}`;
 
 export const attachmentUrl = (contentId: string, askId: string, index: number) =>
   `/api/inbox/attachment?content_id=${encodeURIComponent(contentId)}&ask_id=${encodeURIComponent(askId)}&index=${index}`;

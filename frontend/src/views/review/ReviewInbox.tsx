@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { focusPick } from "./inbox-focus";
-import { decideItem, INBOX_OPEN_EVENT, inboxFileUrl, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
+import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
 import { invoke, SESSION_EXPIRED } from "../../transport";
 import { DONE_TEXT, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
@@ -26,7 +26,6 @@ interface Toast { text: string; undo: (() => Promise<void>) | null; left: number
 /** 行首缩略图：封面 / 候选封面是图，成片 / 候选成片是视频帧；只有稿子类是「稿」 */
 export function Thumb(p: { item: InboxItem }) {
   const k = thumbKind(p.item), cid = p.item.content_id, fid = previewFact(p.item);
-  if (p.item.type === "inbox_file") return <span className="ri-thumb"><video muted preload="metadata" src={`${inboxFileUrl(p.item.item_id)}#t=0.5`} /></span>;
   if (k === "cover" && cid && fid) return <span className="ri-thumb"><img alt="" src={mediaUrl(cid, fid)} /></span>;
   if (k === "video" && cid && fid) return <span className="ri-thumb"><video muted preload="metadata" src={`${mediaUrl(cid, fid)}#t=0.5`} /></span>;
   return <span className="ri-thumb">{k === "cover" ? "图" : k === "video" ? "片" : k === "srt" ? "字" : "稿"}</span>;

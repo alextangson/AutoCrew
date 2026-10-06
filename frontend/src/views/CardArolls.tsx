@@ -1,9 +1,8 @@
 /**
  * 卡片上本轮已挂的原片（1b §4.1 / §7，验收修订）：
- * - 每行：文件名、怎么来的（收件箱自动挂上 / 你从监视文件夹「…」确认的 / agent 报的 / 你挂的）、时长、什么时候到的、
+ * - 每行：文件名、怎么来的（你挂的 / agent 报的 / 你确认的 / 停用前收件箱自动挂上的）、时长、什么时候到的、
  *   「在访达中显示」「不是」。能撤就给「不是」（挪回原处、回待录制）；撤不了给原因。
  * - 两段以上：先说清剪辑时都会用到，多余的点「不是」。
- * - 挂载核对说「这段原片听起来更像《X》」→「改挂到《X》」/「就是这条」；已经在剪 → 换成说明。
  */
 import { confirmDialog, toast } from "../ui";
 import { revealFact, type ArollRow } from "./board-api";
@@ -36,16 +35,6 @@ export function CardArolls(p: { contentId: string; rows: ArollRow[]; busy: boole
         {!r.undo_blocked && <button disabled={p.busy} onClick={() => void undo(r)}>不是</button>}
       </div>
       {r.undo_blocked && <p className="card-panel-note">{r.undo_blocked}</p>}
-      {r.check?.status === "checking" && <p className="card-panel-note">正在核对内容</p>}
-      {(r.check?.status === "not_ready" || r.check?.status === "failed") && <p className="card-panel-note">{r.check.reason}</p>}
-      {r.check?.status === "suggest" && <div className="card-panel-alert" role="status">
-        <p>这段原片听起来更像《{r.check.other_title}》</p>
-        <div className="card-panel-row">
-          {r.reassign_blocked ? <span className="card-panel-note">{r.reassign_blocked}</span>
-            : <button disabled={p.busy} onClick={() => void p.act("reassign_aroll", { fact_id: r.fact_id, sha256: r.sha256, to: r.check!.other_id }, `已改挂到《${r.check!.other_title}》`)}>改挂到《{r.check.other_title}》</button>}
-          <button disabled={p.busy} onClick={() => void p.act("keep_attach", { fact_id: r.fact_id, sha256: r.sha256 }, "记住了：就是这条")}>就是这条</button>
-        </div>
-      </div>}
     </div>)}
   </section>;
 }

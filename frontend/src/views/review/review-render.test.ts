@@ -19,7 +19,6 @@ vi.mock("./review-api", () => ({
   undoDecision: async (c: string, a: string, p: Record<string, unknown>) => { undone.push([c, a, p]); return { ok: true, data: {} }; },
   attachmentUrl: () => "/att",
   mediaUrl: (c: string, f: string) => `/media/${c}/${f}`,
-  inboxFileUrl: (id: string) => `/inbox-file/${id}`,
   inboxHref: (id: string) => `#/board?inbox=${id}`,
   INBOX_OPEN_EVENT: "autocrew:inbox-open",
   openInboxItem: () => {},
@@ -644,40 +643,3 @@ describe("行上直接点（不开面板）", () => {
   });
 });
 
-describe("收件箱里没对上的视频", () => {
-  const file = (detail: Record<string, unknown>, guessed = true): InboxItem => base({ item_id: "inbox_file:abc", type: "inbox_file", content_id: null, title: "A.MOV", summary: "收件箱里有个视频没对上：A.MOV",
-    actions: [{ action: "assign", label: "指定给…", role: "primary", params: { path: "/i/A.MOV", expect_sha: "s" } },
-      ...(guessed ? [{ action: "assign", label: "是这条", role: "secondary" as const, params: { path: "/i/A.MOV", expect_sha: "s", to: "content-9-z" } }] : []),
-      { action: "ignore_inbox_file", label: "不是原片，忽略", role: "quiet", params: { path: "/i/A.MOV", expect_sha: "s" } }],
-    detail: { name: "A.MOV", mtime_ms: Date.now(), duration_ms: 65000, transcript_head: "大家好，今天聊 AI。", choices: [{ id: "content-9-z", title: "猜的稿" }, { id: "content-8-y", title: "别的稿" }], ...detail } });
-  it("面板有播放器、时长、开头说的；猜的那条点「是这条」交给它；下拉选别的；忽略", async () => {
-    await mountInbox([file({ guesses: [{ content_id: "content-9-z", title: "猜的稿" }] })]);
-    await openRow("收件箱里有个视频没对上：A.MOV");
-    const peek = el.querySelector(".ri-peek")!;
-    expect(peek.querySelector("video")!.getAttribute("src")).toBe("/inbox-file/inbox_file:abc");
-    expect(peek.textContent).toContain("1:05");
-    expect(peek.textContent).toContain("大家好，今天聊 AI。");
-    await click(btn("是这条"));
-    expect(decided.at(-1)).toMatchObject({ action: "assign", to: "content-9-z" });
-    await openRow("收件箱里有个视频没对上：A.MOV");
-    const sel = el.querySelector(".ri-peek select") as HTMLSelectElement;
-    await act(async () => { sel.value = "content-8-y"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
-    await click(btn("指定给这条"));
-    expect(decided.at(-1)).toMatchObject({ action: "assign", to: "content-8-y" });
-    await openRow("收件箱里有个视频没对上：A.MOV");
-    await click(btn("不是原片，忽略"));
-    expect(decided.at(-1)).toMatchObject({ action: "ignore_inbox_file", path: "/i/A.MOV", expect_sha: "s" });
-  });
-  it("对账后文件变过：写明变过，不显示开头转写", async () => {
-    await mountInbox([file({ changed: true, transcript_head: null, duration_ms: null, guesses: [] }, false)]);
-    await openRow("收件箱里有个视频没对上：A.MOV");
-    expect(el.querySelector(".ri-peek")!.textContent).toContain("上次核对之后变过");
-    expect(el.querySelector(".ri-peek")!.textContent).not.toContain("开头说的");
-  });
-  it("旧报告只有猜的标题：只显示，不给「是这条」", async () => {
-    await mountInbox([file({ guess: ["老标题"] }, false)]);
-    await openRow("收件箱里有个视频没对上：A.MOV");
-    expect(el.querySelector(".ri-peek")!.textContent).toContain("《老标题》");
-    expect(btn("是这条")).toBeUndefined();
-  });
-});

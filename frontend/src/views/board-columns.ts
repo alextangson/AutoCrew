@@ -105,11 +105,6 @@ export interface BoardTopic {
   inSlate?: boolean;
 }
 
-/** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
-export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
-export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number;
-  /** 暂停了自动找原片：这一轮收件箱只按文件名对 */
-  paused?: boolean }
 
 /**
  * 写稿中卡片的原片提示（1b 预演反馈）：有 pending_match → 「正在核对原片」；有原片候选 → 「发现 N 个疑似原片」。
@@ -133,7 +128,7 @@ export function writingArollBadge(item: Pick<BoardItem, "column"> & { candidates
 export interface OntologyMove { id: string; title: string; from: string | null; to: string | null; rule: string | null; evidence: string[] }
 export interface OntologyState {
   enabled: boolean;
-  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[]; inbox?: InboxStatus } | null;
+  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[] } | null;
 }
 
 export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }

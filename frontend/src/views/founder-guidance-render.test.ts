@@ -82,13 +82,13 @@ describe("已挂的原片行", () => {
   it("文件名、怎么来的、时长、时间、在访达中显示 +「不是」；两段以上先说清", async () => {
     const { CardArolls } = await import("./CardArolls");
     const rows = [
-      { fact_id: "f1", sha256: "s1", path: "02-aroll/稿-原片.mov", name: "IMG_0421.MOV", origin: "你从监视文件夹「watch-test」确认的", duration_ms: 95_000, at: "2026-09-30T00:34:00Z", auto_attached: false, source_path: "/u/watch-test/IMG_0421.MOV", check: null, undo_blocked: null, reassign_blocked: null },
+      { fact_id: "f1", sha256: "s1", path: "02-aroll/稿-原片.mov", name: "IMG_0421.MOV", origin: "你确认的", duration_ms: 95_000, at: "2026-09-30T00:34:00Z", auto_attached: false, source_path: "/u/downloads/IMG_0421.MOV", undo_blocked: null },
       { fact_id: "f2", sha256: "s2", path: "02-aroll/稿-原片-2.mov", name: "稿-原片.mov", origin: "收件箱自动挂上", duration_ms: 30_000, at: "2026-09-30T00:10:00Z", auto_attached: true, source_path: "/lib/inbox/稿-原片.mov", check: null, undo_blocked: "这条已经在剪了，要换原片请重开文稿", reassign_blocked: null },
     ];
     await act(async () => { root.render(createElement(CardArolls, { contentId: "content-1-a", rows: rows as never, busy: false, act: async () => {} })); });
     expect(el.textContent).toContain("这条有 2 段原片，剪辑时都会用到；多余的点「不是」");
     expect(el.textContent).toContain("IMG_0421.MOV");
-    expect(el.textContent).toContain("你从监视文件夹「watch-test」确认的");
+    expect(el.textContent).toContain("你确认的");
     expect(el.textContent).toContain("1 分 35 秒");
     expect(el.textContent).toContain("收件箱自动挂上");
     expect([...el.querySelectorAll("button")].filter((b) => b.textContent === "不是")).toHaveLength(1);
