@@ -8,6 +8,7 @@
  * 发布回执引用 check_id、「发布前未把关」与「发布前例外」在本体发布槽里做（production/publish-check-link.ts）。
  */
 import path from "node:path";
+import { commitSha, STILL_SETTLING } from "../../production/hash-cache.js";
 import { getContent, getDataDir, type Content } from "../../../storage/local-store.js";
 import { contentRoot } from "../../../storage/content-project.js";
 import { registeredPackage } from "../../production/publish-gate.js";
@@ -276,6 +277,20 @@ export async function checkView(contentId: string, checkId: string, dataDir?: st
   const abs = video ? resolveInProject(video, ctx.root) : null;
   const covers = (record.covers ?? []).map((c) => ({ ...c, path: path.isAbsolute(c.path) ? c.path : path.join(ctx.root, c.path) }));
   return { entry, covers, video_path: abs && "abs" in abs ? abs.abs : null };
+}
+
+/**
+ * 这次检查的发布包里有文件一分钟内还在变吗（现算时前后元数据对不上）。读不了 / 不见了的不算「还在写」，
+ * 交给调用方原来的核验结论去说；这里绝不抛。
+ */
+export async function checkFilesUnsettled(contentId: string, checkId: string, dataDir?: string): Promise<boolean> {
+  const view = await checkView(contentId, checkId, dataDir).catch(() => null);
+  const files = [view?.video_path, ...(view?.covers ?? []).map((c) => c.path)].filter((x): x is string => Boolean(x));
+  for (const f of files) {
+    const r = await commitSha(f).catch(() => null);
+    if (r && !r.ok && r.reason === STILL_SETTLING) return true;
+  }
+  return false;
 }
 
 /** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */

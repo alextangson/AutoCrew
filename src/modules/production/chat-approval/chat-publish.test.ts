@@ -10,12 +10,14 @@ import { executePublishCheck } from "../../publish/review-gate/check.js";
 import { fakeJev, planEntry, planOf, registeredVideo, type Reg } from "../../publish/review-gate/testkit.js";
 import { setPullDeps } from "../../video/handoff/pull-deps.js";
 import { decideItem } from "../inbox-decide.js";
+import { readInbox } from "../inbox-read.js";
 import { setSettleMs } from "../hash-cache.js";
 import { withFileOwnership } from "../mutex.js";
 import type { InboxItem } from "../inbox.js";
 import { groupedResults, publishView } from "./publish-view.js";
 import { makeEnv, type Env } from "../testkit.js";
 import { setChatDecideDeps } from "./decide.js";
+import { readRequest } from "./requests.js";
 import { setPreviewDeps } from "./preview.js";
 
 let env: Env;
@@ -197,5 +199,59 @@ describe("Codex 审 d7aa5099", () => {
     expect(out).toMatchObject({ ok: false, code: "file_unsettled", error: expect.stringContaining("文件还在写，等一分钟再定") });
     expect(it1.item_id).toBe(it0.item_id);
     expect(await decisionsOf(r.id, "publish_check_confirm")).toHaveLength(0);
+  });
+});
+
+describe("Codex 复审 c52403c3", () => {
+  async function heldOverride(r: Reg, words = "这次横版就行") {
+    await runCheck(r, [planEntry(r, "xiaohongshu", ["4:3"])]);
+    const [it0] = await checks();
+    let release!: () => void;
+    const gate = new Promise<void>((ok) => { release = ok; });
+    let called!: () => void;
+    const started = new Promise<void>((ok) => { called = ok; });
+    const base = fakeJev().caller;
+    setChatDecideDeps({ jev: async (st, q) => { called(); await gate; return base(st, q); } });
+    const pending = decidePub(it0, "publish_check_override", { founder_words: words });
+    await started;
+    return { it0, pending, release };
+  }
+
+  it("P1 等 Jev 期间成片字节变了 → 破例被拒，没有新的当前检查", async () => {
+    const r = await registeredVideo(env);
+    const { it0, pending, release } = await heldOverride(r);
+    const video = path.join(r.root, r.video);
+    await fs.writeFile(video, "被换掉的成片");
+    const old = new Date(Date.now() - 600_000);
+    await fs.utimes(video, old, old);
+    release();
+    expect(await pending).toMatchObject({ ok: false, code: "plan_changed" });
+    const now = (await readInbox(env.dir)).items.find((i) => i.type === "publish_check");
+    expect(now?.detail.check_id).toBe((it0.facts as unknown as { check_id: string }).check_id);
+    expect(String(now?.detail.verdict)).toBe("block");
+  });
+
+  it("P1 等 Jev 期间成片还在写 → file_unsettled，没记", async () => {
+    const r = await registeredVideo(env);
+    const { pending, release } = await heldOverride(r);
+    setSettleMs(60_000);
+    const now = new Date();
+    await fs.utimes(path.join(r.root, r.video), now, now);
+    release();
+    expect(await pending).toMatchObject({ ok: false, code: "file_unsettled" });
+    expect(String((await readInbox(env.dir)).items.find((i) => i.type === "publish_check")?.detail.verdict)).toBe("block");
+  });
+
+  it("P2 成片读不了（权限被收）再点「没问题」→ 结构化拒绝 + 现在的样子，请求记录落到终态", async () => {
+    const r = await registeredVideo(env);
+    await runCheck(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
+    const [it0] = await checks();
+    const video = path.join(r.root, r.video);
+    await fs.chmod(video, 0o000);
+    const out = await decidePub(it0, "publish_check_confirm", { request_id: "gone-video" }).finally(() => fs.chmod(video, 0o644));
+    expect(out).toMatchObject({ ok: false });
+    expect(String(out.code)).not.toBe("failed");
+    expect(out.item).toBeDefined();
+    expect((await readRequest(env.dir, "gone-video"))?.state).toBe("failed");
   });
 });

@@ -9,8 +9,7 @@ import { getDataDir } from "../../../storage/local-store.js";
 import { withProvenance } from "../decision-provenance.js";
 import { founderDecision } from "../decisions.js";
 import { decideItem, fingerprint, type DecideDeps } from "../inbox-decide.js";
-import { checkView, verifyCheck } from "../../publish/review-gate/check.js";
-import { commitSha, STILL_SETTLING } from "../hash-cache.js";
+import { checkFilesUnsettled, verifyCheck } from "../../publish/review-gate/check.js";
 import { presentItem } from "./present.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
@@ -86,7 +85,9 @@ async function once(requestId: string, hash: string, dataDir: string, run: (bind
     if (recovered) return recovered;
     let rec: RequestRecord = { request_id: requestId, payload_hash: hash, state: "pending", at: new Date().toISOString() };
     await writeRequest(dataDir, rec);
-    const r = await run(async (binding) => { rec = { ...rec, binding }; await writeRequest(dataDir, rec); });
+    // 跑的途中抛了也要落到终态（failed + 看得见的原因），不留 pending
+    const r = await run(async (binding) => { rec = { ...rec, binding }; await writeRequest(dataDir, rec); })
+      .catch((e: unknown) => fail("failed", `没做成：${e instanceof Error ? e.message : String(e)}`));
     await writeRequest(dataDir, { ...rec, state: r.ok === true ? "committed" : "failed", result: r });
     return r;
   } finally {
@@ -128,19 +129,8 @@ async function publishFresh(item: InboxItem, input: ChatDecideInput, dataDir: st
   const v = await verifyCheck(item.content_id!, String(item.detail.check_id), dataDir);
   if (v.ok) return null;
   const extra = async () => ({ board_link: boardLink(item), item: await shownNow(item, input, dataDir) });
-  if (await packageUnsettled(item, dataDir)) return fail("file_unsettled", "文件还在写，等一分钟再定：这次什么都没记", await extra());
+  if (await checkFilesUnsettled(item.content_id!, String(item.detail.check_id), dataDir)) return fail("file_unsettled", "文件还在写，等一分钟再定：这次什么都没记", await extra());
   return fail(v.code, `${v.error}：这次什么都没记`, await extra());
-}
-
-/** 发布包里有文件一分钟内还在变（现算时前后元数据对不上）：单独说「还在写」，不混成「过期」 */
-async function packageUnsettled(item: InboxItem, dataDir: string): Promise<boolean> {
-  const view = await checkView(item.content_id!, String(item.detail.check_id), dataDir);
-  const files = [view?.video_path, ...(view?.covers ?? []).map((c) => c.path)].filter((x): x is string => Boolean(x));
-  for (const f of files) {
-    const r = await commitSha(f);
-    if (!r.ok && r.reason === STILL_SETTLING) return true;
-  }
-  return false;
 }
 
 async function commit(input: ChatDecideInput, requester: string, dataDir: string, bind: Bind): Promise<Result> {
