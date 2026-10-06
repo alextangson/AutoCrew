@@ -55,3 +55,12 @@ First real run showed the most common pending item is an agent ask (e.g. Codex a
 - attachments: images go to the file pane via preview_dir. HTML review pages reference relative media, so copying the html alone breaks it: open the original html in the default browser (injectable opener) and also return its absolute path; say which happened.
 - attachments changed since the ask → only `ask_resend` ("让 X 重发") is offered in chat.
 - Existing agent_reported answers and their undo window are unchanged; a chat answer is recorded as a founder answer with source chat, not as agent_reported.
+
+## Addendum 2026-10-06 (2): pre-publish checks (发之前再看一眼) in chat
+
+Founder-confirmed. `publish_check` items become chat-decidable. Post-publish items (publish_claim, published_ask) stay web-only.
+
+- brief per platform item: the plan entry verbatim — post title, caption, hashtags, cover text, scheduled time (with timezone); cover files into preview_dir; the final cut's absolute path; the check results grouped as passed / unchecked / blocked with each blocked reason verbatim.
+- decisions: `publish_check_confirm` ("没问题"; not offered when blocked), `publish_check_revise` (note required = founder's words, relayed to the agent to fix), `publish_check_override` (only when blocked; founder_words required and stored verbatim).
+- "都没问题" across several listed platform items: the agent may decide each listed item separately with the same founder quote; if the founder names specific platforms, only those. Each decide is its own request with its own gen check. Tool description must say this explicitly and forbid extending it to items not shown in the same list.
+- guards: gen change (title/caption/files changed after viewing) → stale + fresh item; confirm runs the fresh publish-time verification (commitSha on every file in the package, unsettled files refused) and surfaces refusals; already decided → already_handled; web flow unchanged; source chat with founder_words, request_id recovery as for other chat decisions.
