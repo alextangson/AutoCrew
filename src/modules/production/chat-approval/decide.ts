@@ -75,7 +75,7 @@ type Bind = (b: Binding) => Promise<void>;
  * 同一个请求号只走一个调用；同号换内容拒；有结果的回放；落了账没结果的按绑定找回，找不到再跑。
  * 一进来先落账（pending + 内容哈希），失败的也留着这份绑定。
  */
-async function once(requestId: string, hash: string, dataDir: string, run: (bind: Bind) => Promise<Result>): Promise<Result> {
+export async function once(requestId: string, hash: string, dataDir: string, run: (bind: Bind) => Promise<Result>): Promise<Result> {
   if (!claimRequest(requestId)) return fail("in_progress", "同一个 request_id 正在处理，等它出结果");
   try {
     const prior = await readRequest(dataDir, requestId);

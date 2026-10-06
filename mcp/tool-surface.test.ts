@@ -49,7 +49,11 @@ async function toolsFor(host: string) {
 /*
  * 2026-10-06 对话里「发之前再看一眼」：autocrew_review_inbox 的 decision 枚举加 3 个发布检查决定；实测 31,874，上限随之从 31,800 提到 31,900。
  */
-export const BUDGET = { total: 31_900, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-06 手动收件：autocrew_review_inbox 的 action 加 inbox_list / inbox_attach / sync 与 file、sha256、confirm_other 三个参数
+ * （复用这个工具，不新开工具；参数说明在 tools/list 里本来就去掉了），短说明只加一句；实测 32,036，上限随之从 31,900 提到 32,100。
+ */
+export const BUDGET = { total: 32_100, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

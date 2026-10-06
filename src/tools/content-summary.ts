@@ -61,7 +61,7 @@ function blockersOf(c: Content, now: number): string[] {
 
 /** 按本体走的视频稿、制作段：阶段 / 卡点 / 下一步都取推导结果（explain），不看旧状态表 */
 const ONTOLOGY_NEXT: Record<string, string> = {
-  待录制: "原片放进「我的内容/0 原片放这里」后用 autocrew_content record kind=aroll 报上来",
+  待录制: "创始人把原片放进「我的内容/0 原片放这里」、说是哪条后，用 autocrew_review_inbox inbox_list → inbox_attach 挂上",
   剪辑中: "剪辑工位把成片 / 字幕 / 封面用 autocrew_content record 报上来；成片通过、选封面只能创始人在「等你拍板」里点",
   待发布: "先 autocrew_publish check，再带各平台 check_ids 调 ego_lite_prepare；最终点击前停下问创始人",
   已发布: "已发布，可看数据回流",

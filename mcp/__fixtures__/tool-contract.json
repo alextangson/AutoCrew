@@ -1295,9 +1295,15 @@
       "enum": [
        "list",
        "decide",
-       "revoke"
+       "revoke",
+       "inbox_list",
+       "inbox_attach",
+       "sync"
       ],
       "type": "string"
+     },
+     "confirm_other": {
+      "type": "boolean"
      },
      "content_id": {
       "type": "string"
@@ -1328,6 +1334,9 @@
      "fact_id": {
       "type": "string"
      },
+     "file": {
+      "type": "string"
+     },
      "founder_words": {
       "type": "string"
      },
@@ -1350,6 +1359,9 @@
       "type": "string"
      },
      "request_id": {
+      "type": "string"
+     },
+     "sha256": {
       "type": "string"
      }
     },
@@ -4181,9 +4193,15 @@
       "enum": [
        "list",
        "decide",
-       "revoke"
+       "revoke",
+       "inbox_list",
+       "inbox_attach",
+       "sync"
       ],
       "type": "string"
+     },
+     "confirm_other": {
+      "type": "boolean"
      },
      "content_id": {
       "type": "string"
@@ -4214,6 +4232,9 @@
      "fact_id": {
       "type": "string"
      },
+     "file": {
+      "type": "string"
+     },
      "founder_words": {
       "type": "string"
      },
@@ -4236,6 +4257,9 @@
       "type": "string"
      },
      "request_id": {
+      "type": "string"
+     },
+     "sha256": {
       "type": "string"
      }
     },
