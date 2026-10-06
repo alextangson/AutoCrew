@@ -12,6 +12,7 @@ import { readReconcileReport } from "../modules/production/reconcile.js";
 import { isOntologyEnabled } from "../storage/production-store.js";
 import { briefLine, programRoot } from "../modules/update/check.js";
 import { getMachineDir } from "../storage/storage-roots.js";
+import { chatReviewLine } from "../modules/production/chat-approval/present.js";
 
 export const statusSchema = Type.Object({
   action: Type.Optional(Type.Unsafe<"overview" | "baseline" | "compare" | "track_performance" | "learning_report">({
@@ -67,7 +68,8 @@ export async function executeStatus(params: Record<string, unknown>) {
     // 有新版本时晨报带一句（self-update §2-5）；读的是本机目录里最近一次检查的结果，不现查网络
     const update = briefLine(programRoot(), getMachineDir(params._machineDir as string | undefined));
     const calibration = await calibrationReminders(dataDir); // 判断要对账：上次预测没走盲评要持续提醒
-    return { ...result, ...(update ? { update } : {}), ...(calibration.length ? { calibration } : {}) };
+    const review = await chatReviewLine(getDataDir(dataDir)).catch((e: Error) => `等你拍板的事没读出来（${e.message}）`);
+    return { ...result, ...(update ? { update } : {}), ...(review ? { review } : {}), ...(calibration.length ? { calibration } : {}) };
   }
   const [topics, contents, engine] = await Promise.all([listTopics(dataDir), listContents(dataDir), engineFallbackStats(dataDir)]);
 

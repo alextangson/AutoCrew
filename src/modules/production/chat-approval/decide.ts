@@ -26,13 +26,6 @@ export interface ChatDecideInput {
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
 }
 
-export async function listForChat(dataDir = getDataDir()): Promise<Result> {
-  const view = await readInbox(dataDir);
-  const items = await Promise.all(view.items.map((i) => chatItem(i, dataDir)));
-  return { ok: true, count: items.length, items,
-    next_action: "一件一件给创始人看（标题、哪一组 / 哪一版、事实；成片先给他 path 让他看完），听他原话再 decide。拿不准他指哪件、哪组、要做什么就先问。chat_decidable:false 的给 board_link。" };
-}
-
 type Found = { ok: true; item: InboxItem; selection: Picked } | { ok: false; result: Result };
 
 /** 条目还在、代次没变、这类事能在对话里定、选中对象明确（E6、E7、选择器） */
@@ -120,7 +113,7 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
   const r = await withFileOwnership(async () => {
     const bytes = await verifyFacts(item.content_id!, selection.factIds, dataDir);
-    if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item) });
+    if (!bytes.ok) return fail(bytes.code, bytes.error, { board_link: boardLink(item), item: await chatItem(item, dataDir) });
     return withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir));
   });
   if (r.ok !== true) return normalize(r, item.item_id, dataDir);

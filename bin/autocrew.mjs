@@ -357,7 +357,7 @@ async function statusBrief() {
   const fetchImpl = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(5_000) });
   const reply = await forwardMessage(call, { url: `${BASE_URL}mcp`, token: resolveForwarderToken(DATA_DIR), fetchImpl });
   const result = reply?.result?.structuredContent;
-  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}${result.update ? `\nAutoCrew ${result.update}` : ""}`);
+  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}${result.review ? `\nAutoCrew ${result.review}` : ""}${result.update ? `\nAutoCrew ${result.update}` : ""}`);
   const failure = reply?.error?.message ?? (reply?.result?.isError ? reply.result.content?.[0]?.text : null);
   console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
 }

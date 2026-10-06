@@ -43,3 +43,6 @@ sidecars/**/*.pyc
 node_modules.prev-*/
 dist.next/
 dist.prev-*/
+
+# 对话拍板时放进会话文件夹的预览文件（spec 2026-10-06 proactive-chat-review）
+review-preview/

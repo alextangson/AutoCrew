@@ -1338,6 +1338,9 @@
      "note": {
       "type": "string"
      },
+     "preview_dir": {
+      "type": "string"
+     },
      "request_id": {
       "type": "string"
      }
@@ -4211,6 +4214,9 @@
       "type": "string"
      },
      "note": {
+      "type": "string"
+     },
+     "preview_dir": {
       "type": "string"
      },
      "request_id": {

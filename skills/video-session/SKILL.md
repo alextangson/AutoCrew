@@ -70,6 +70,8 @@ EOF
 
 封面（gate4）由 Codex 按 [cover-generator](../cover-generator/SKILL.md) 做：只出带本人真实身份的 3:4 + 4:3 一对，走 Codex 订阅内置生图。用户在这个会话里说「做封面」时，你没有那个生图工具——先读 cover-generator 和 identity-lock.md，再派 Codex（装了 Codex 插件就用 `codex-companion task --background --write --cwd <内容项目根>`，否则给用户第 4 步手动那句），交代 paired_draft 模式、定稿路径和本期可用的钩子。不要自己调 `autocrew_cover_review` 出图：那是按次计费的 API，只在用户明说要付费通道时用，而且不出 16:9。
 
+Codex 交来封面或成片（它说做完了、或你看到这条稿有了新的封面组 / 成片版本）时，立刻调 `autocrew_review_inbox {action:"list", content_id, preview_dir:<本会话工作目录>}`，把返回的事摆给用户：`brief` 原样转述，`preview.files` 的路径写成 markdown 链接，`preview.opened` / `problems` 照说；不止一件按编号列。用户回「用」/「还要改：……」后按工具说明 decide。
+
 撤回只凭用户一句话：由当前持有认领的会话携带有效令牌调 `autocrew_video {action:"revoke", content_id, claim_token}`。状态回 `draft_ready`，这一代永久作废；之后改稿、重录、重交都是新一代。
 
 ## 6. 发布包与发布
