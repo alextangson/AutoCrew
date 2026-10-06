@@ -252,6 +252,23 @@ describe("Codex 审 b44fff09 P2", () => {
     expect(await decisions(c.id, "cover_approval")).toHaveLength(1);
   });
 
+  it("决定已写、消费记录没写就崩（封面打回，代次不变）：找回时补上消费，条目消失，同一代别的决定被拒", async () => {
+    const c = await editing();
+    const g = await coverGroup(c.id, "a");
+    const it0 = await itemOf("cover_pick");
+    const p = { action: "decide", item_id: it0.item_id, gen: it0.gen, decision: "reject_cover", founder_words: "字太小", note: "字放大", request_id: "crash-rej" };
+    expect(await tool(p)).toMatchObject({ ok: true });
+    await mutateProduction(c.id, env.dir, (d) => { d.inbox_log = (d.inbox_log ?? []).filter((e) => e.item_id !== it0.item_id); return { value: null, events: [] }; });
+    expect((await itemOf("cover_pick"))?.gen).toBe(it0.gen);
+    const rec = (await readRequest(env.dir, "crash-rej"))!;
+    await writeRequest(env.dir, { ...rec, state: "pending", result: undefined });
+    expect(await tool(p)).toMatchObject({ ok: true, replayed: true });
+    expect(await itemOf("cover_pick")).toBeUndefined();
+    expect(await decide(c.id, "pick_cover", { group_id: g.group_id, item_id: it0.item_id, gen: it0.gen }, env.dir)).toMatchObject({ ok: false });
+    expect(await decisions(c.id, "cover_approval")).toHaveLength(0);
+    expect(await decisions(c.id, "cover_reject")).toHaveLength(1);
+  });
+
   it("P2-2 提交后、记结果前死掉：重试按请求号找回已提交的决定，不看当前列表", async () => {
     const c = await editing();
     await coverGroup(c.id, "a");

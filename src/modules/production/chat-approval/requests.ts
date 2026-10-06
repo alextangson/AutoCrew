@@ -7,6 +7,8 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
+import { withFileOwnership } from "../mutex.js";
+import { mutateProduction } from "../service.js";
 import { readRecord, REQUEST_ID_RE, writeRecord } from "../../video/handoff/pull-store.js";
 
 type Result = Record<string, unknown>;
@@ -53,17 +55,33 @@ export function releaseRequest(id: string): void {
 
 const ELSEWHERE: Result = { ok: false, code: "already_handled", error: "这件事已在别处处理（记的不是这次的决定），不用再定：重新 list 看现在的样子" };
 
-/** 落了账但没有结果（中途死掉 / 失败过）：按绑定去消费记录里找。找到同一决定 = 提交了；同一代别的决定 = 已在别处处理；都没有 = null（可以再跑） */
+type Found = { result: Result } | null;
+
+/** 锁内：消费记录里同一决定 → 回它；只有决定（按请求号）→ 补写消费记录（与 decideItem 同形）再回它 */
+async function findCommitted(dataDir: string, rec: RequestRecord, b: Binding): Promise<Found | "elsewhere"> {
+  const doc = await readProductionDocOrEmpty(b.content_id, dataDir);
+  const mine = (doc.inbox_log ?? []).filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
+  const logged = mine.find((e) => e.action === b.decision && e.fp === b.fp);
+  if (logged) return { result: logged.result };
+  if (mine.length) return "elsewhere";
+  // 决定先写、消费记录后写：崩在两者之间时只有决定在。补上这一代的消费，否则同一代还挂在列表里、还能被另一个决定再定一次
+  const d = doc.decisions.find((x) => x.request_id === rec.request_id);
+  if (!d) return null;
+  const result: Result = { ok: true, decision: d };
+  await mutateProduction(b.content_id, dataDir, (x) => {
+    x.inbox_log = [...(x.inbox_log ?? []), { item_id: b.item_id, gen: b.gen, action: b.decision, fp: b.fp, at: new Date().toISOString(), result }].slice(-200);
+    return { value: null, events: [{ type: "inbox_decided", detail: { item_id: b.item_id, action: b.decision, recovered: true } }] };
+  });
+  return { result };
+}
+
+/** 落了账但没有结果（中途死掉 / 失败过）：找到同一决定 = 提交了；同一代别的决定 = 已在别处处理；都没有 = null（可以再跑） */
 export async function recoverRequest(dataDir: string, rec: RequestRecord): Promise<Result | null> {
   const b = rec.binding;
   if (!b) return null;
-  const doc = await readProductionDocOrEmpty(b.content_id, dataDir);
-  const mine = (doc.inbox_log ?? []).filter((e) => e.item_id === b.item_id && e.gen === b.gen && !e.pending);
-  const done = mine.find((e) => e.action === b.decision && e.fp === b.fp)?.result
-    // 决定先写、消费记录后写：崩在两者之间时只有决定在，按请求号认
-    ?? (() => { const d = doc.decisions.find((x) => x.request_id === rec.request_id); return d ? { decision: d } : undefined; })();
-  if (!done && !mine.length) return null;
-  const result = done ? { ...done, ok: true, recorded_as: "chat", item_id: b.item_id, gen: b.gen } : ELSEWHERE;
-  await writeRequest(dataDir, { ...rec, state: done ? "committed" : "failed", result });
+  const found = await withFileOwnership(() => findCommitted(dataDir, rec, b));
+  if (!found) return null;
+  const result = found === "elsewhere" ? ELSEWHERE : { ...found.result, ok: true, recorded_as: "chat", item_id: b.item_id, gen: b.gen };
+  await writeRequest(dataDir, { ...rec, state: found === "elsewhere" ? "failed" : "committed", result });
   return { ...result, replayed: true };
 }
