@@ -75,6 +75,14 @@ describe("published_ask（第 2 条）", () => {
     expect(urlMismatch("bilibili", "https://evil-bilibili.com/x")).toContain("不是");
     expect(urlMismatch("douyin", "javascript:alert(1)")).toContain("http");
   });
+
+  // Codex 审 P2：公众号文章不能当视频号作品；表外平台核不了就不收链接
+  it("公众号文章不算视频号；不认识的平台不收链接", () => {
+    expect(urlMismatch("wechat_video", "https://mp.weixin.qq.com/s/article-id")).toContain("不是");
+    expect(urlMismatch("wechat_video", "https://weixin.qq.com/sph/AbCd")).toBeNull();
+    expect(urlMismatch("wechat_video", "https://weixin.qq.com/other")).toContain("不是");
+    expect(urlMismatch("twitter", "https://www.douyin.com/video/1")).toContain("核不了");
+  });
 });
 
 describe("「都发了」（第 3 条）", () => {
