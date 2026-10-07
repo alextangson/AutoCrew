@@ -64,3 +64,12 @@ Founder-confirmed. `publish_check` items become chat-decidable. Post-publish ite
 - decisions: `publish_check_confirm` ("没问题"; not offered when blocked), `publish_check_revise` (note required = founder's words, relayed to the agent to fix), `publish_check_override` (only when blocked; founder_words required and stored verbatim).
 - "都没问题" across several listed platform items: the agent may decide each listed item separately with the same founder quote; if the founder names specific platforms, only those. Each decide is its own request with its own gen check. Tool description must say this explicitly and forbid extending it to items not shown in the same list.
 - guards: gen change (title/caption/files changed after viewing) → stale + fresh item; confirm runs the fresh publish-time verification (commitSha on every file in the package, unsettled files refused) and surfaces refusals; already decided → already_handled; web flow unchanged; source chat with founder_words, request_id recovery as for other chat decisions.
+
+## Addendum 2026-10-07 (3): post-publish confirmations in chat
+
+Founder-confirmed. `publish_claim` and `published_ask` become chat-decidable (supersedes "post-publish stays web-only" above).
+
+- publish_claim brief: platform, who reported (host or 数据回流), work URL / item id if present, evidence; if no URL: "没给作品链接，去平台上看一眼". Decisions: `confirm_receipt` ("对，发了"), `correct_publish` ("没发").
+- published_ask brief: platform. Decision: `i_published` ("发了"), optional URL from the founder recorded verbatim. A URL whose host doesn't match the item's platform → refuse with reason so the agent asks; never record it.
+- "都发了" across several listed items: same rule as pre-publish checks (each listed item decided separately with the same quote; only named platforms if named; never items not shown in this list).
+- guards: gen change (e.g. metrics pull already recorded the work) → stale + fresh item; already decided → already_handled; source chat + founder_words + request_id recovery; web flow unchanged.
