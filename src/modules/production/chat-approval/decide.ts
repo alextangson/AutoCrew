@@ -11,6 +11,7 @@ import { founderDecision } from "../decisions.js";
 import { decideItem, fingerprint, type DecideDeps } from "../inbox-decide.js";
 import { checkFilesUnsettled, verifyCheck } from "../../publish/review-gate/check.js";
 import { presentItem } from "./present.js";
+import { urlMismatch } from "./post-publish-view.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
@@ -26,6 +27,8 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 export interface ChatDecideInput {
   /** 被拒时把「现在的样子」的文件放进会话文件夹；不进请求指纹 */
   preview_dir?: string;
+  /** i_published：创始人给的作品链接（原样记） */
+  url?: string;
   item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; option_id?: string; content_id?: string; decision_id?: string;
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
 }
@@ -44,6 +47,8 @@ async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
     const why = CHAT_ACTIONS[item.type] ? `这件事在这里不能做「${input.decision}」` : "这类事只能在看板上定";
     return { ok: false, result: fail("not_chat_decidable", why, { board_link: boardLink(item) }) };
   }
+  const badUrl = input.decision === "i_published" && str(input.url) ? urlMismatch(String(item.detail.platform ?? ""), str(input.url)) : null;
+  if (badUrl) return { ok: false, result: fail("url_platform_mismatch", badUrl, { item: await shownNow(item, input, dataDir) }) };
   const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined });
   if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await shownNow(item, input, dataDir) }) };
   return { ok: true, item, selection };
@@ -66,7 +71,7 @@ function validInput(input: ChatDecideInput): Result | null {
 }
 
 const hashOf = (input: ChatDecideInput, requester: string) => payloadHash({ item_id: input.item_id, gen: input.gen, decision: input.decision,
-  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
+  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), ...(str(input.url) ? { url: str(input.url) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
   note: str(input.note), founder_words: str(input.founder_words), requester });
 
 type Bind = (b: Binding) => Promise<void>;
@@ -138,7 +143,7 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   if (!found.ok) return found.result;
   const { item, selection } = found;
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
-    ...coverTextOf(item, input, selection), ...noteOf(input) };
+    ...coverTextOf(item, input, selection), ...noteOf(input), ...(input.decision === "i_published" && str(input.url) ? { url: str(input.url) } : {}) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });
   // 全新的请求对象：不带 _host / _session（模型调用标记），来源经调用链挂上
   const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) }, () => decideItem(req, dataDir, decideDeps));

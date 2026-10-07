@@ -320,7 +320,7 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
     out.push({
       item_id: `claim:r${doc.round}:${s.platform}`, type: "publish_claim", summary: `${s.source === "claim" ? hostLabel(s.host) : "数据回流"}说已经发了（${platformLabel(s.platform)}）`, waiting: null, agent_waiting: false, since: s.at, rank: 2,
       actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: s.fact_id } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: s.id } }],
-      detail: { platform: s.platform, url: s.url ?? null, item: s.item_id ?? null, evidence: s.evidence },
+      detail: { platform: s.platform, url: s.url ?? null, item: s.item_id ?? null, evidence: s.evidence, reporter: s.source === "claim" ? hostLabel(s.host) : "数据回流" },
       snapshot: [s.fact_id, s.pub_state],
     });
   }

@@ -65,6 +65,7 @@ const NEXT = [
   "不止一件时按 number 列成编号清单，他可以回「1 用，2 还要改：……」。说「用」就按 shown 里的 group_id / fact_id decide。",
   "请示：他的话对得上唯一一个选项才 decide answer_ask（带 option_id，多说的话放 note）；对不上或只说「行」而选项不止一个就先问他，别猜。",
   "发之前再看一眼：他说「都没问题」时，可以对这次列出来的每件 publish_check 各 decide 一次 publish_check_confirm（同一句原话、各自的 item_id / gen / request_id）；他点了哪几个平台就只定那几个；没在这次列表里给他看过的不许顺带定。",
+  "发了没（publish_claim / published_ask）：他说「都发了」同样对这次列出来的每件各 decide 一次（同一句原话）；点了平台就只定那些；没列出来的不许顺带定。他给的作品链接原样放 url。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 

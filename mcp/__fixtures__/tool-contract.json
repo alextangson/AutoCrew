@@ -1313,6 +1313,9 @@
      },
      "decision": {
       "enum": [
+       "confirm_receipt",
+       "correct_publish",
+       "i_published",
        "answer_ask",
        "ask_resend",
        "publish_check_confirm",
@@ -1362,6 +1365,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      }
     },
@@ -4211,6 +4217,9 @@
      },
      "decision": {
       "enum": [
+       "confirm_receipt",
+       "correct_publish",
+       "i_published",
        "answer_ask",
        "ask_resend",
        "publish_check_confirm",
@@ -4260,6 +4269,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      }
     },
