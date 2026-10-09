@@ -211,6 +211,38 @@ describe("autocrew_content answer_ask = 对话拍板的别名（fix/chat-answer-
   });
 });
 
+describe("Codex 审 91f23dbe", () => {
+  const answer = (contentId: string, askId: unknown, extra: Record<string, unknown>) =>
+    agent({ action: "answer_ask", content_id: contentId, ask_id: askId, founder_quote: "行", ...extra });
+
+  it("P2-1 答过之后同样再报一次 → 回放（带同一请求号、或不带）；答的不一样 → ask_closed；旧转述同样回放", async () => {
+    const c = await editing();
+    const q = await ask(c.id);
+    expect(await answer(c.id, q.ask_id, { option_id: "ok", request_id: "a-1" })).toMatchObject({ ok: true });
+    expect(await answer(c.id, q.ask_id, { option_id: "ok", request_id: "a-1" })).toMatchObject({ ok: true, replayed: true });
+    expect(await answer(c.id, q.ask_id, { option_id: "ok" })).toMatchObject({ ok: true, replayed: true });
+    expect(await answer(c.id, q.ask_id, { option_id: "redo" })).toMatchObject({ ok: false, code: "ask_closed" });
+    expect((await readProductionDoc(c.id, env.dir))!.decisions.filter((d) => d.type === "ask_answer")).toHaveLength(1);
+    const old = await ask(c.id, { kind: "配乐", question: "配乐行吗" });
+    await seedReportedAnswer(env, c.id, String(old.ask_id), "ok", "行");
+    expect(await answer(c.id, old.ask_id, { option_id: "ok" })).toMatchObject({ ok: true, replayed: true, via: "agent_reported" });
+  });
+
+  it("P2-2 自动请求号按完整请求算：失败后换会话 / 加一句补充再答，不撞 request_conflict", async () => {
+    const c = await editing();
+    const r = await makeReview(projectRoot(env, c.id));
+    await record(env, { content_id: c.id, kind: "storyboard", path: r.file, request_id: "sb" });
+    const fact = (await readProductionDoc(c.id, env.dir))!.facts.find((x) => x.kind === "storyboard")!;
+    const q = await agent({ action: "ask", content_id: c.id, request_id: "sbq", kind: "分镜", question: "分镜行不行", storyboard_fact_id: fact.id, options: [{ id: STORYBOARD_APPROVE, label: "通过" }, { id: "redo", label: "重做" }] });
+    setSettleMs(60_000);
+    const now = new Date();
+    await fs.utimes(path.join(r.dir, "B01.svg"), now, now);
+    expect(await answer(c.id, q.ask_id, { option_id: "redo", founder_quote: "重做", _session: "sess-a" })).toMatchObject({ ok: false, code: "file_unsettled" });
+    setSettleMs(0);
+    expect(await answer(c.id, q.ask_id, { option_id: "redo", founder_quote: "重做", _session: "sess-b", note: "第 3 组换掉" })).toMatchObject({ ok: true });
+  });
+});
+
 const sha = (b: string) => crypto.createHash("sha256").update(b).digest("hex");
 /** 脚本产出的分镜审阅页（与 storyboard.test 的造法一致，素材放在页面旁边） */
 async function makeReview(pr: string) {

@@ -246,20 +246,38 @@ export async function executeAnswerAsk(params: Record<string, unknown>): Promise
   if ("err" in ctx) return ctx.err;
   const askId = str(params.ask_id), optionId = str(params.option_id), quote = str(params.founder_quote);
   if (!quote) return fail("bad_param", "answer_ask 要带 founder_quote：创始人在聊天里的原话，逐字");
-  const [{ readInbox }, { scopedId }, { chatDecide }] = await Promise.all([import("./inbox-read.js"), import("./inbox.js"), import("./chat-approval/decide.js")]);
+  const [{ readInbox }, { scopedId }, { chatDecide }, { readRequest }, { requesterOf }] = await Promise.all([import("./inbox-read.js"), import("./inbox.js"),
+    import("./chat-approval/decide.js"), import("./chat-approval/requests.js"), import("./chat-approval/view.js")]);
   const itemId = scopedId(ctx.content.id, `ask:${askId}`);
+  const note = str(params.note);
+  // 自动请求号按完整请求算（请示、选项、原话、补充的话、发起方）：换了会话或多了一句话不会撞上旧的失败记录
+  const auto = JSON.stringify([askId, optionId, quote, note, requesterOf(ctx.host, ctx.session)]);
+  const requestId = str(params.request_id) || `ans-${crypto.createHash("sha256").update(auto).digest("hex").slice(0, 32)}`;
   const item = (await readInbox(ctx.dataDir, { contentId: ctx.content.id })).items.find((x) => x.item_id === itemId && x.type === "ask");
-  // 原来的拒绝口径保留：关了 / 不在 → ask_closed；附件变过 → attachments_changed
   if (!item) {
-    const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
-    const ask = (doc.asks ?? []).find((x) => x.id === askId);
-    return fail(ask ? "ask_closed" : "not_found", ask ? answerable(ask, doc, ctx.content) ?? "这件请示已经答过或关了" : `没有这件请示：${askId}`);
+    // 答过之后条目就没了：同一请求号已提交 → 交给 chatDecide 回放；同一回答（旧转述或对话记过的）→ 回放；答的不一样才算关了
+    // 代次已经拿不到了（条目没了），按请求记录回放：同号、同一件请示才算
+    const prior = await readRequest(ctx.dataDir, requestId);
+    if (prior?.state === "committed" && prior.binding?.item_id === itemId && prior.result) return withAsk({ ...prior.result, replayed: true }, askId);
+    return closedOrReplayed(ctx, askId, optionId, quote);
   }
   if (item.detail.attachments_changed === true) return fail("attachments_changed", "附件变过，请重新发请示（问你的那份已经不是现在盘上的这份了）");
-  const requestId = str(params.request_id) || `ans-${crypto.createHash("sha256").update(`${askId}\u0000${optionId}\u0000${quote}`).digest("hex").slice(0, 32)}`;
-  const r = await chatDecide({ item_id: itemId, gen: item?.gen ?? "none", decision: "answer_ask", option_id: optionId || undefined, note: str(params.note) || undefined,
+  const r = await chatDecide({ item_id: itemId, gen: item.gen, decision: "answer_ask", option_id: optionId || undefined, note: note || undefined,
     founder_words: quote, request_id: requestId, host: ctx.host, session: ctx.session }, ctx.dataDir);
-  return r.ok === true ? { ...r, ask_id: askId, state: "answered", via: "chat" } : { ...r, ask_id: askId };
+  return withAsk(r, askId);
+}
+
+const withAsk = (r: Result, askId: string): Result => (r.ok === true ? { ...r, ask_id: askId, state: "answered", via: "chat" } : { ...r, ask_id: askId });
+
+/** 条目不在了：同一个回答已经记过（旧的 agent 转述 / 对话里记的）→ 回放；答的不一样 / 关了 → ask_closed；没这件 → not_found */
+async function closedOrReplayed(ctx: AgentCtx, askId: string, optionId: string, quote: string): Promise<Result> {
+  const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
+  const ask = (doc.asks ?? []).find((x) => x.id === askId);
+  if (!ask) return fail("not_found", `没有这件请示：${askId}`);
+  const a = ask.answer;
+  const said = a?.via === "agent_reported" ? a.quote : doc.decisions.find((d) => d.id === a?.decision_id)?.founder_words;
+  if (ask.state === "answered" && a?.option_id === optionId && said === quote) return { ok: true, ask_id: askId, state: "answered", via: a.via === "agent_reported" ? "agent_reported" : "chat", replayed: true };
+  return fail("ask_closed", answerable(ask, doc, ctx.content) ?? "这件请示已经答过了（答的不是这个）");
 }
 
 // ---- 创始人：答 / 撤回转述（调用方持有文件归属锁，经「等你拍板」单一入口） ----
