@@ -38,7 +38,7 @@ export const reviewInboxSchema = Type.Object({
 
 export const REVIEW_INBOX_DESCRIPTION = [
   "在对话里处理「等你拍板」：选封面、审成片、认候选文件、答 agent 的请示、发之前再看一眼、确认发没发。创始人在对话里说的原话就是决定，所以你只记他明确说了的。",
-  "1) list{preview_dir:你会话的工作目录, content_id?, item_id?}：列等创始人定的事。能在对话里定的每件带 brief（服务端写好的「要你判断」）、shown（这次给他看的那一组 / 一版）、preview（文件放进会话文件夹后的相对路径）。chat_decidable:false 的（发布、请示、闪帧等）只能在看板定：给他 board_link。",
+  "1) list{preview_dir:你会话的工作目录, content_id?, item_id?}：列等创始人定的事。能在对话里定的每件带 brief（服务端写好的「要你判断」）、shown（这次给他看的那一组 / 一版）、preview（文件放进会话文件夹后的相对路径）。chat_decidable:false 的（闪帧、其他提案等）只能在看板定：给他 board_link。",
   "2) brief 原样转述，不要自己加判断标准；preview.files 的 path 写成 markdown 链接 [名字](path)；preview.opened / problems 照说给他；preview.pages 是网页，给绝对路径，list{item_id} 单看时才在浏览器打开。不止一件时按 number 列编号清单。他要看更早的一组 / 一版，list{item_id, group_id / fact_id, preview_dir}。",
   "3) decide{item_id, gen, decision, group_id?/fact_id?, cover_text?, note?, founder_words, request_id, preview_dir?}：founder_words 一字不改照抄他的原话。他的话能对上不止一件 / 一组 / 一种决定（比如只说「行」「第一个」）就先问清，别猜。多组 / 多版时必须带 group_id / fact_id（reject_cover 除外：它和看板一样打回所有还没定的组，不点名；他只想改其中一组就先问清，或请他去看板）。reject_cover / reject_cut 要带 note（改哪里）。",
   "请示：decide{decision:\"answer_ask\", option_id, note?}——他的话对得上唯一一个选项才定，多说的话放 note；只说「行」而选项不止一个、或对不上任何选项，就先问他，别猜。附件变过时只能 ask_resend（让它重发）。分镜请示提交时还会再核分镜，拒了就把原因照说。",

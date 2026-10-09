@@ -59,7 +59,7 @@ export const contentSaveSchema = Type.Object({
       "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）, " +
       "'record' 报制作事实（原片 aroll / 成片 cut / 字幕 srt / 封面 cover / ChatCut 工程 chatcut_project）：只报盘上有什么，不带任何批准；认稿、成片通过、选封面只能创始人点; " +
       "'check_slivers' 导出前自查抽帧缝（两段 B-roll / 动效之间露出 <1 秒的真人），只读、不写任何记录，可带 chatcut_project_id / timeline_id; " +
-      "'mark_ready' 成片可以审了（配乐、混音都好了才标）; 'ask' 剪辑途中请示创始人（进「等你拍板」，别在聊天里问）; 'answer_ask' 逐字转述创始人在聊天里的回答（花费 / 分镜不收）; 'withdraw_ask' 撤回请示.",
+      "'mark_ready' 成片可以审了（配乐、混音都好了才标）; 'ask' 剪辑途中请示创始人（进「等你拍板」，并马上在聊天里把问题和附件给他看）; 'answer_ask' 记创始人在聊天里的回答（founder_quote 逐字，任何请示都收）; 'withdraw_ask' 撤回请示.",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),

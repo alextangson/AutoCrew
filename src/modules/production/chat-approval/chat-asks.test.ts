@@ -13,7 +13,7 @@ import { setPullDeps } from "../../video/handoff/pull-deps.js";
 import { STORYBOARD_APPROVE } from "../asks.js";
 import { setSettleMs } from "../hash-cache.js";
 import { readInbox } from "../inbox-read.js";
-import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "../testkit.js";
+import { founderApprove, makeEnv, png, projectRoot, put, record, seedReportedAnswer, videoContent, type Env } from "../testkit.js";
 import { chatReviewLine } from "./present.js";
 import { setPreviewDeps } from "./preview.js";
 
@@ -165,18 +165,49 @@ describe("附件变过（第 5 条）", () => {
   });
 });
 
-describe("agent 转述那条路不变（第 6 条）", () => {
-  it("agent 转述的回答仍是 agent_reported、带撤回窗，不进对话可定；花费仍不收转述", async () => {
+describe("autocrew_content answer_ask = 对话拍板的别名（fix/chat-answer-all-asks）", () => {
+  const answer = (contentId: string, askId: unknown, extra: Record<string, unknown>) =>
+    agent({ action: "answer_ask", content_id: contentId, ask_id: askId, founder_quote: "行", ...extra });
+
+  it("花费：收下，记成对话来源 + 原话", async () => {
+    const c = await editing();
+    const money = await ask(c.id, { kind: "花费", question: "花 10 元？" });
+    expect(await answer(c.id, money.ask_id, { option_id: "ok", founder_quote: "花吧，10 块钱" })).toMatchObject({ ok: true, via: "chat", state: "answered" });
+    const d = (await readProductionDoc(c.id, env.dir))!;
+    expect(d.decisions.find((x) => x.type === "ask_answer")).toMatchObject({ source: "chat", founder_words: "花吧，10 块钱", option_id: "ok" });
+    expect(d.asks!.find((x) => x.id === money.ask_id)!.answer).toMatchObject({ via: "founder" });
+  });
+
+  it("分镜：还在写 → file_unsettled；稳定了 → 通过，分镜批准记成对话来源", async () => {
+    const c = await editing();
+    const r = await makeReview(projectRoot(env, c.id));
+    await record(env, { content_id: c.id, kind: "storyboard", path: r.file, request_id: "sb" });
+    const fact = (await readProductionDoc(c.id, env.dir))!.facts.find((x) => x.kind === "storyboard")!;
+    const q = await agent({ action: "ask", content_id: c.id, request_id: "sbq", kind: "分镜", question: "分镜行不行", storyboard_fact_id: fact.id, options: [{ id: STORYBOARD_APPROVE, label: "通过" }, { id: "redo", label: "重做" }] });
+    setSettleMs(60_000);
+    const now = new Date();
+    await fs.utimes(path.join(r.dir, "B01.svg"), now, now);
+    expect(await answer(c.id, q.ask_id, { option_id: STORYBOARD_APPROVE, founder_quote: "通过", request_id: "sb-1" })).toMatchObject({ ok: false, code: "file_unsettled" });
+    setSettleMs(0);
+    expect(await answer(c.id, q.ask_id, { option_id: STORYBOARD_APPROVE, founder_quote: "通过", request_id: "sb-2" })).toMatchObject({ ok: true, storyboard_approved: true });
+    expect((await readProductionDoc(c.id, env.dir))!.decisions.find((x) => x.type === "storyboard_approval")).toMatchObject({ source: "chat", founder_words: "通过" });
+  });
+
+  it("多个选项没给 option_id → 拒，什么都不记", async () => {
     const c = await editing();
     const q = await ask(c.id);
-    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: q.ask_id, option_id: "ok", founder_quote: "行" })).toMatchObject({ ok: true });
-    const d = (await readProductionDoc(c.id, env.dir))!;
-    expect(d.asks!.find((a) => a.id === q.ask_id)!.answer).toMatchObject({ via: "agent_reported" });
+    expect(await answer(c.id, q.ask_id, {})).toMatchObject({ ok: false, code: "selector_required" });
+    expect((await readProductionDoc(c.id, env.dir))!.decisions.some((d) => d.type === "ask_answer")).toBe(false);
+  });
+
+  it("旧的 agent 转述记录照样显示、能撤，不进对话可定", async () => {
+    const c = await editing();
+    const q = await ask(c.id);
+    await seedReportedAnswer(env, c.id, String(q.ask_id), "ok", "行");
     const rep = (await readInbox(env.dir)).items.find((i) => i.type === "ask_reported")!;
+    expect(rep.summary).toContain("『行』");
     expect(rep.actions.map((a) => a.action)).toContain("undo_ask_answer");
     expect(((await tool({ action: "list" })).items as Item[]).find((i) => i.type === "ask_reported")!.chat_decidable).toBe(false);
-    const money = await ask(c.id, { kind: "花费", question: "花 10 元？" });
-    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: money.ask_id, option_id: "ok", founder_quote: "行" })).toMatchObject({ ok: false });
   });
 });
 

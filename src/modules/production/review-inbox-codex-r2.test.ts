@@ -10,6 +10,7 @@ import { decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { seedReportedAnswer } from "./testkit.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
@@ -100,7 +101,8 @@ describe("Codex 2a-1 第二轮 P2", () => {
     expect(seen.sort()).toEqual([...ids].sort());
     const s = await agent({ action: "summary", id: c.id, asks_offset: 3 });
     expect((s.asks as Array<{ ask_id: string; state: string }>).at(-1)).toMatchObject({ ask_id: ids[4], state: "answered" });
-    await agent({ action: "answer_ask", content_id: c.id, ask_id: ids[0], option_id: "ok", founder_quote: "行" });
+    // 旧的 agent 转述记录照样显示成 reported（新的 answer_ask 走对话原话，记成创始人回答）
+    await seedReportedAnswer(env, c.id, String(ids[0]), "ok", "行");
     const s0 = await agent({ action: "summary", id: c.id });
     expect((s0.asks as Array<{ state: string }>)[0].state).toBe("reported");
   });

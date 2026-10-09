@@ -32,7 +32,6 @@ export const REPORTED_UNDO_MS = 24 * 3600_000;
 /** 分镜请示里表示「通过」的选项 id：答它 = 同时写分镜决定 */
 export const STORYBOARD_APPROVE = "approve";
 /** 转述不收的请示：花费一旦发生撤不回；分镜通过会写分镜决定（§5.3） */
-const NO_REPORTED: ReadonlySet<AskKind> = new Set(["花费", "分镜"]);
 
 // ---- 参数正规化（中转端点会把数组 / 对象序列化成字符串） ----
 
@@ -214,7 +213,7 @@ export async function executeAsk(params: Record<string, unknown>): Promise<Resul
       return { value: { ask, replaced: replaced.map((x) => x.id) }, events: [{ type: "ask_opened", detail: { ask_id: ask.id, kind, by: ctx.host, superseded: replaced.map((x) => x.id) } }] };
     });
     return { ok: true, ask_id: r.value.ask.id, state: "open", ...(r.value.replaced.length ? { superseded: r.value.replaced } : {}),
-      next_action: "已放进创始人的「等你拍板」。不要在聊天里再问一遍；用 autocrew_content summary 看 asks[] 里的答复（带 asks_offset 翻页）。创始人在聊天里答了，用 answer_ask 逐字转述（花费、分镜不收转述）。" };
+      next_action: "已放进创始人的「等你拍板」。现在就在聊天里把问题、选项和附件给创始人看；他答了，用 answer_ask{ask_id, option_id, founder_quote:他的原话逐字}（或 autocrew_review_inbox decide answer_ask）记下，他的话对不上唯一一个选项就先问清。也可以用 autocrew_content summary 看 asks[] 里的答复（带 asks_offset 翻页）。" };
   });
 }
 
@@ -237,27 +236,30 @@ export async function executeWithdrawAsk(params: Record<string, unknown>): Promi
   });
 }
 
-/** agent 转述创始人在聊天里的回答（§5.3）：原话逐字；花费、分镜不收；24 小时内创始人可撤回 */
+/**
+ * agent 转述创始人在聊天里的回答：创始人选了「对话原话就是决定」，所以这里是对话拍板的别名——
+ * 走 autocrew_review_inbox decide answer_ask 同一条路（来源 chat、原话 = founder_quote、代次服务端按现在这件请示取），
+ * 任何 kind 都收（分镜 / 花费也是）；分镜提交时照旧再核。旧的 agent_reported 记录与撤回窗只读不动。
+ */
 export async function executeAnswerAsk(params: Record<string, unknown>): Promise<Result> {
   const ctx = await agentCtx(params);
   if ("err" in ctx) return ctx.err;
   const askId = str(params.ask_id), optionId = str(params.option_id), quote = str(params.founder_quote);
   if (!quote) return fail("bad_param", "answer_ask 要带 founder_quote：创始人在聊天里的原话，逐字");
-  return withFileOwnership(async () => {
+  const [{ readInbox }, { scopedId }, { chatDecide }] = await Promise.all([import("./inbox-read.js"), import("./inbox.js"), import("./chat-approval/decide.js")]);
+  const itemId = scopedId(ctx.content.id, `ask:${askId}`);
+  const item = (await readInbox(ctx.dataDir, { contentId: ctx.content.id })).items.find((x) => x.item_id === itemId && x.type === "ask");
+  // 原来的拒绝口径保留：关了 / 不在 → ask_closed；附件变过 → attachments_changed
+  if (!item) {
     const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
     const ask = (doc.asks ?? []).find((x) => x.id === askId);
-    if (ask?.state === "answered" && ask.answer?.via === "agent_reported" && ask.answer.option_id === optionId && ask.answer.quote === quote) return { ok: true, ask_id: askId, state: "answered", replayed: true };
-    const blocked = await answerBlocked(ask, doc, ctx.content, ctx.dataDir);
-    if (blocked) return blocked;
-    if (NO_REPORTED.has(ask!.kind)) return fail("founder_only", `「${ask!.kind}」请示只认创始人在「等你拍板」里点（或会话窗口的确认框），不收转述`);
-    if (!ask!.options.some((o) => o.id === optionId)) return fail("bad_param", `option_id 要是这件请示的选项之一：${ask!.options.map((o) => o.id).join(" / ")}`);
-    await mutateProduction(ctx.content.id, ctx.dataDir, (d) => {
-      const answer: AskAnswer = { option_id: optionId, via: "agent_reported", quote, host: ctx.host, at: new Date().toISOString() };
-      Object.assign(d.asks!.find((x) => x.id === askId)!, { state: "answered", answer, ended_at: answer.at });
-      return { value: null, events: [{ type: "ask_answered", detail: { ask_id: askId, option_id: optionId, via: "agent_reported", by: ctx.host } }] };
-    });
-    return { ok: true, ask_id: askId, state: "answered", via: "agent_reported", next_action: "已记成你转述的回答；创始人 24 小时内可以在「等你拍板」里撤回，summary 的 asks[] 会显示。" };
-  });
+    return fail(ask ? "ask_closed" : "not_found", ask ? answerable(ask, doc, ctx.content) ?? "这件请示已经答过或关了" : `没有这件请示：${askId}`);
+  }
+  if (item.detail.attachments_changed === true) return fail("attachments_changed", "附件变过，请重新发请示（问你的那份已经不是现在盘上的这份了）");
+  const requestId = str(params.request_id) || `ans-${crypto.createHash("sha256").update(`${askId}\u0000${optionId}\u0000${quote}`).digest("hex").slice(0, 32)}`;
+  const r = await chatDecide({ item_id: itemId, gen: item?.gen ?? "none", decision: "answer_ask", option_id: optionId || undefined, note: str(params.note) || undefined,
+    founder_words: quote, request_id: requestId, host: ctx.host, session: ctx.session }, ctx.dataDir);
+  return r.ok === true ? { ...r, ask_id: askId, state: "answered", via: "chat" } : { ...r, ask_id: askId };
 }
 
 // ---- 创始人：答 / 撤回转述（调用方持有文件归属锁，经「等你拍板」单一入口） ----

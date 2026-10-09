@@ -182,11 +182,11 @@ describe("回归护栏（克隆实跑通过的行为，补成测试）", () => {
     expect((await videoContent(env, "无关稿")).status).toBe("draft_ready");
   });
 
-  it("分镜请示与花费请示不收 agent 转述（R7）", async () => {
+  it("花费请示：answer_ask 收对话原话，记成对话来源（R7 改：对话原话 = 决定）", async () => {
     const c = await editing("转述边界稿");
     const ask = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "cost", kind: "花费", question: "要花 12 元，做吗？",
       options: [{ id: "yes", label: "做" }, { id: "no", label: "不做" }] }) as Record<string, unknown>;
     const r = await executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: "codex", action: "answer_ask", content_id: c.id, ask_id: ask.ask_id, option_id: "yes", founder_quote: "做吧" }) as Record<string, unknown>;
-    expect(r).toMatchObject({ ok: false, code: "founder_only" });
+    expect(r).toMatchObject({ ok: true, via: "chat", decision: { source: "chat", founder_words: "做吧" } });
   });
 });

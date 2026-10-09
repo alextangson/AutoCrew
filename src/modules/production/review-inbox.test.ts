@@ -22,6 +22,7 @@ import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
+import { seedReportedAnswer } from "./testkit.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
@@ -211,12 +212,12 @@ describe("请示（§5）", () => {
     expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: neu.ask_id, option_id: "ok", founder_quote: "可以" })).toMatchObject({ ok: false, code: "ask_closed" });
   });
 
-  it("R7 聊天转述：花费、分镜请示不收；普通请示收下、创始人 24 小时内能撤、过了不能", async () => {
+  it("R7 聊天里答：花费也收（对话原话 = 决定）；旧的 agent 转述记录照样能读、24 小时内能撤、过了不能", async () => {
     const c = await editing();
     const cost = await ask(c.id, { kind: "花费", question: "要花 20 元生图，行吗？" });
-    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: cost.ask_id, option_id: "ok", founder_quote: "行" })).toMatchObject({ ok: false, code: "founder_only" });
+    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: cost.ask_id, option_id: "ok", founder_quote: "行" })).toMatchObject({ ok: true, via: "chat" });
     const r = await ask(c.id);
-    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: r.ask_id, option_id: "ok", founder_quote: "可以就这样" })).toMatchObject({ ok: true, via: "agent_reported" });
+    await seedReportedAnswer(env, c.id, String(r.ask_id), "ok", "可以就这样");
     const it0 = (await itemOf(`ask:${r.ask_id}`, c.id))!;
     expect(it0).toMatchObject({ type: "ask_reported", summary: expect.stringContaining("『可以就这样』") });
     const late = Date.now() + 25 * 3600_000;
@@ -225,7 +226,7 @@ describe("请示（§5）", () => {
     expect((await doc(c.id)).asks!.find((a) => a.id === r.ask_id)).toMatchObject({ state: "open", history: [{ via: "agent_reported" }] });
   });
 
-  it("R7 分镜请示：只认创始人；答「通过」只批准绑定的快照，分镜变了 → 拒", async () => {
+  it("R7 分镜请示：答「通过」只批准绑定的快照，分镜变了 → 拒", async () => {
     const c = await editing();
     const dir = path.join(projectRoot(env, c.id), "03-broll/review-v001");
     const bytes = "<svg>b1</svg>";
@@ -239,7 +240,7 @@ describe("请示（§5）", () => {
     const opts = [{ id: "approve", label: "通过" }, { id: "redo", label: "重画" }];
     const r = await ask(c.id, { kind: "分镜", fact_id: sb.fact_id, options: opts });
     expect(r).toMatchObject({ ok: true });
-    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: r.ask_id, option_id: "approve", founder_quote: "行" })).toMatchObject({ ok: false, code: "founder_only" });
+    // 分镜也收对话里的原话；这里先不答，下面走看板那条路验快照绑定
     const it0 = (await itemOf(`ask:${r.ask_id}`, c.id))!;
     expect(await decideItem({ content_id: c.id, item_id: it0.item_id, gen: it0.gen, action: "answer_ask", option_id: "approve" }, env.dir)).toMatchObject({ ok: true, storyboard_approved: true });
     expect((await doc(c.id)).decisions.find((d) => d.type === "storyboard_approval")).toMatchObject({ fact_id: sb.fact_id, ask_id: r.ask_id });

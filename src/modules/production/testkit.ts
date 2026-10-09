@@ -12,7 +12,7 @@ import { executeContentSave } from "../../tools/content-save.js";
 import { setProductionDeps } from "./roots.js";
 import { setChatcutDeps } from "./sliver/chatcut-read.js";
 import { writeEnabledVersion } from "../../storage/production-store.js";
-import { resetProductionReady } from "./service.js";
+import { mutateProduction, resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
@@ -107,4 +107,15 @@ export async function waiveSliverCheck(env: Env, contentId: string, cutSha: stri
   const { founderDecision } = await import("./decisions.js");
   const r = await founderDecision(contentId, "waive_sliver_check", { cut_sha: cutSha }, env.dir);
   if (!(r as { ok: boolean }).ok) throw new Error(`整条放行失败：${JSON.stringify(r)}`);
+}
+
+/**
+ * 造一条旧的「agent 转述」回答（answer_ask 改成对话原话直接定之前留下的记录）：验证旧记录照样能读、能撤。
+ */
+export async function seedReportedAnswer(env: Env, contentId: string, askId: string, optionId: string, quote: string, host = "codex"): Promise<void> {
+  await mutateProduction(contentId, env.dir, (d) => {
+    const at = new Date().toISOString();
+    Object.assign(d.asks!.find((x) => x.id === askId)!, { state: "answered", answer: { option_id: optionId, via: "agent_reported", quote, host, at }, ended_at: at });
+    return { value: null, events: [] };
+  });
 }

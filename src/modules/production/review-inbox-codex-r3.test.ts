@@ -16,6 +16,7 @@ import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { seedReportedAnswer } from "./testkit.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
@@ -176,7 +177,7 @@ describe("Codex 2a-1 第五轮", () => {
     const c = await editing();
     const opts = [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }];
     const old = await agent({ action: "ask", content_id: c.id, request_id: "o", kind: "粗剪", question: "行吗", options: opts });
-    await agent({ action: "answer_ask", content_id: c.id, ask_id: old.ask_id, option_id: "ok", founder_quote: "可以" });
+    await seedReportedAnswer(env, c.id, String(old.ask_id), "ok", "可以");
     const neu = await agent({ action: "ask", content_id: c.id, request_id: "n", kind: "粗剪", question: "新版行吗", options: opts });
     const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${old.ask_id}`))!;
     expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "undo_ask_answer" }, env.dir)).toMatchObject({ ok: true });
