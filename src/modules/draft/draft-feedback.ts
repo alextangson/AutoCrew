@@ -87,6 +87,15 @@ export async function applyLessons(input: DraftFeedbackInput, contentId: string,
   }
 }
 
+/** 否决过的规则按否决时间排（不是建规则的顺序）；没有决定记录的排最前 */
+function rejectedByTime(profile: CreatorProfile): string[] {
+  const at = new Map<string, string>();
+  for (const d of profile.ruleDecisions ?? []) if (d.decision === "rejected") at.set(d.ruleId, d.at);
+  return profile.writingRules.filter((r) => ruleStatus(r) === "rejected")
+    .map((r) => ({ rule: r.rule, at: (r.id && at.get(r.id)) || "" }))
+    .sort((a, b) => a.at.localeCompare(b.at)).map((x) => x.rule);
+}
+
 const brief = (r: WritingRule) => ({ id: r.id, scope: r.scope ?? "voice_core", rule: r.rule });
 
 /** start 给 AI 判断 new / duplicate / conflict 用：生效（带 id）、待批、最近否决、生效数与上限 */
@@ -94,7 +103,7 @@ export function ruleJudgeContext(profile: CreatorProfile, active: WritingRule[])
   return {
     rules_detail: active.map(brief),
     pending_rules: profile.writingRules.filter((r) => ruleStatus(r) === "pending").map(brief),
-    rejected_rules: profile.writingRules.filter((r) => ruleStatus(r) === "rejected").map((r) => r.rule).slice(-REJECTED_SHOWN),
+    rejected_rules: rejectedByTime(profile).slice(-REJECTED_SHOWN),
     active_rule_count: activeRuleCount(profile),
     rule_cap: RULE_CAP,
   };

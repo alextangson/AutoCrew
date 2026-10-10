@@ -175,4 +175,23 @@ describe("save feedback", () => {
     const again = await addWritingRule({ rule: "结尾都要短", source: "user_explicit", confidence: 1 }, dir);
     expect(again.lastRuleOutcome).toBe("blocked_by_tombstone");
   });
+
+  it("Codex P2：正文没变的带意见 save → no_change，重放不会重复记原话和出处", async () => {
+    const { id, version } = await firstVersion();
+    const fb = { founder_words: "开头别铺垫", lessons: [{ rule: "开头不铺垫", scope: "voice_core", relation: "new" }] };
+    expect(await run("save", { content_id: id, base_version: version, body: BODY, feedback: fb })).toMatchObject({ ok: false, code: "no_change" });
+    expect((await getContent(id, dir))!.draftPath!.feedback).toBeUndefined();
+    expect((await rules()).some((x) => x.rule === "开头不铺垫")).toBe(false);
+  });
+
+  it("Codex P2：rejected_rules 按否决时间取最近的", async () => {
+    const add = async (t: string) => (await addWritingRule({ rule: t, source: "auto_distilled", confidence: 0.5 }, dir)).writingRules.find((x) => x.rule === t)!;
+    const a = await add("早建的规则"), b = await add("晚建的规则");
+    await decideWritingRule({ ruleId: b.id!, revision: b.revision!, decision: "rejected", eventId: "evt-rej-b" }, dir);
+    await new Promise((r) => setTimeout(r, 5));
+    await decideWritingRule({ ruleId: a.id!, revision: a.revision!, decision: "rejected", eventId: "evt-rej-a" }, dir);
+    const p = ((await run("start", { inspiration: "x" })).context as { profile: Record<string, unknown> }).profile;
+    expect(p.rejected_rules).toEqual(["晚建的规则", "早建的规则"]);
+  });
 });
+

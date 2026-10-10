@@ -59,6 +59,8 @@ function bodyRefusal(body: string | undefined): R | null {
 }
 
 async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R> {
+  // 正文和标题都没变就不会出新版本：带意见的重放会把原话和出处重复记一遍
+  if (a.feedback && a.body === c.body && (!a.title || a.title === c.title)) return fail("no_change", "正文和标题都没变，不会出新版本，意见没记：按意见改完再带 feedback 存");
   const angle = c.draftPath?.angle;
   const provenance = modelWrite(a.host, angle ? { direction: angle.main_line } : undefined);
   let saved: Content | null;

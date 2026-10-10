@@ -12,7 +12,7 @@ import { createRuleApprovalHandler } from "../../../desktop/rule-approval.js";
 import { readInbox } from "../inbox-read.js";
 import { proposePreference } from "../../publish/review-gate/preferences.js";
 import { makeEnv, type Env } from "../testkit.js";
-import { isDelegation } from "./rule-decide.js";
+import { DELEGATION_PHRASES, isDelegation } from "./rule-decide.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); setPullDeps({ benchPort: 4317 }); });
@@ -133,5 +133,20 @@ describe("writing_rule in chat", () => {
     const listed = ((await tool({ action: "list" })).items as Item[]).find((i) => i.item_id === pref.item_id)!;
     expect(listed.chat_decidable).toBe(false);
     expect(await tool({ action: "decide", item_id: pref.item_id, gen: pref.gen, decision: "approve_rule", founder_words: "要", request_id: "rq-pref" })).toMatchObject({ ok: false, code: "not_chat_decidable" });
+  });
+
+  it("Codex P2：词表里每个授权式说法加常见语气词 / 标点都不算批准（含「听你的」）", () => {
+    for (const d of DELEGATION_PHRASES) for (const tail of ["", "的", "吧", "啊", "。", "的吧", "！"]) expect(isDelegation(d + tail), d + tail).toBe(true);
+    expect(isDelegation("听你的")).toBe(true);
+    expect(isDelegation("1、3 要")).toBe(false);
+  });
+
+  it("Codex P2：档案已写、请求结果没存（崩溃）→ 同一 request_id 重试回放成功，不报已处理", async () => {
+    const r = await pending("口语化");
+    const [it] = await ruleItems();
+    // 模拟崩溃：决定已进档案（同一 chat-<request_id> 事件），但请求记录没落结果
+    await decideWritingRule({ ruleId: r.id!, revision: r.revision!, decision: "active", eventId: "chat-rq-crash" }, env.dir);
+    const res = await decide(it, "approve_rule", { request_id: "rq-crash" });
+    expect(res).toMatchObject({ ok: true, replayed: true, rule_id: r.id, decision: "approve_rule" });
   });
 });

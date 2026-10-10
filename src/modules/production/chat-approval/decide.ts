@@ -18,7 +18,7 @@ import { withFileOwnership } from "../mutex.js";
 import { verifyFacts } from "./files.js";
 import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, releaseRequest, writeRequest, type Binding, type RequestRecord } from "./requests.js";
 import { boardLink, CHAT_ACTIONS, chatActionsOf, chatDecidable, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
-import { isDelegation, RULE_DECISIONS, ruleCommit } from "./rule-decide.js";
+import { isDelegation, recoverRuleDecision, RULE_DECISIONS, ruleCommit } from "./rule-decide.js";
 
 type Result = Record<string, unknown>;
 type Picked = Extract<Selection, { ok: true }>;
@@ -145,6 +145,10 @@ async function publishFresh(item: InboxItem, input: ChatDecideInput, dataDir: st
 }
 
 async function commit(input: ChatDecideInput, requester: string, dataDir: string, bind: Bind): Promise<Result> {
+  if (RULE_DECISIONS.has(input.decision)) {
+    const done = await recoverRuleDecision(str(input.request_id), dataDir);
+    if (done) return done;
+  }
   const found = await locate(input, dataDir);
   if (!found.ok) return found.result;
   const { item, selection } = found;

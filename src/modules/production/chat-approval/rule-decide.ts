@@ -5,6 +5,7 @@
  */
 import { decideWritingRule, RuleDecisionError, type RuleDecision } from "../../profile/writing-rules.js";
 import type { InboxItem } from "../inbox.js";
+import { loadProfile } from "../../profile/creator-profile.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
@@ -14,9 +15,24 @@ export const RULE_DECISIONS: ReadonlySet<string> = new Set(["approve_rule", "rej
 /** 授权式回答：去掉标点、空白和语气词后整句就是这些 */
 const DELEGATION = new Set(["你定", "你来定", "你决定", "你看着办", "你看", "你看吧", "都行", "都可以", "随便", "随你", "听你的", "你说了算", "无所谓", "看你", "upto you", "uptoyou", "whatever"]);
 
+const PARTICLES = /[吧啊呗呀哈嘛的了]+$/u;
+const bare = (s: string) => s.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+/** 词表与输入同样去语气词后再比（「听你的」去掉「的」也得认） */
+const DELEGATION_BARE = new Set([...DELEGATION].flatMap((d) => [bare(d), bare(d).replace(PARTICLES, "")]));
+
 export function isDelegation(words: string): boolean {
-  const t = words.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "").replace(/[吧啊呗呀哈嘛的了]+$/u, "");
-  return DELEGATION.has(t);
+  const t = bare(words);
+  return DELEGATION_BARE.has(t) || DELEGATION_BARE.has(t.replace(PARTICLES, ""));
+}
+
+export const DELEGATION_PHRASES: readonly string[] = [...DELEGATION];
+
+/** 崩在「档案已写、请求结果没存」之间时：按 chat-<request_id> 事件找回，回放成功（不再去收件箱找已消失的条目） */
+export async function recoverRuleDecision(requestId: string, dataDir: string): Promise<Result | null> {
+  const profile = await loadProfile(dataDir);
+  const e = profile?.ruleDecisions?.find((x) => x.eventId === `chat-${requestId}`);
+  if (!e) return null;
+  return { ok: true, rule_id: e.ruleId, decision: e.decision === "rejected" ? "reject_rule" : e.replaces ? "replace_rule" : "approve_rule", recorded_as: "chat", replayed: true, next_action: "告诉创始人：这个决定之前已经记下了。" };
 }
 
 const SCOPE_TEXT = (scope: unknown) => (scope === "voice_core" || !scope ? "所有平台" : `只在${String(scope).replace(/^platform:/, "")}`);
