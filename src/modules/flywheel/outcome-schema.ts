@@ -16,6 +16,12 @@ export interface OutcomeMetrics {
   /** 封面点击率，百分比 0-100：平台直接给的（抖音 metrics.cover_click_rate，09-27 真实接口核实）。
    *  有它就用它；没有时展示层才退回 播放 ÷ 曝光 推算 */
   coverClickRate?: number;
+  /** 2秒跳出率，百分比 0-100（抖音 metrics.bounce_rate_2s，比例串 ×100）。决定抖音给不给第二波流量 */
+  bounce2s?: number;
+  /** 平均播放时长，秒（抖音 metrics.avg_view_second）。不是比率，负数拒收 */
+  avgWatchSeconds?: number;
+  /** 粉丝播放占比，百分比 0-100（抖音 metrics.fan_view_proportion，比例串 ×100）。爆款可低于 1% */
+  fanViewShare?: number;
   likes?: number;
   comments?: number;
   shares?: number;
@@ -64,14 +70,18 @@ const RATE_METRICS = [
   ["completionRate", "完播率"],
   ["completion5s", "5s完播率"],
   ["coverClickRate", "封面点击率"],
+  ["bounce2s", "2秒跳出率"],
+  ["fanViewShare", "粉丝播放占比"],
 ] as const;
 
 /**
  * 抖音完播率低于 1% 是真实值，不是量纲错（2026-10-02 创始人后台截图：6 分 14 秒长视频完播率 0.63%，
  * 同一条 5 秒完播 26.56%）——长视频的完播率天然很低，不再按「疑似小数比例」转人工。
+ * 粉丝播放占比同理：爆款主要靠推荐流，粉丝占比 0.4% 是真值（2026-10-10 数据分析核过）。
  */
+const DOUYIN_SUB_ONE_REAL = new Set<string>(["completionRate", "fanViewShare"]);
 function subOneIsReal(platform: string | undefined, key: string): boolean {
-  return key === "completionRate" && !!platform && normalizePlatform(platform) === "douyin";
+  return DOUYIN_SUB_ONE_REAL.has(key) && !!platform && normalizePlatform(platform) === "douyin";
 }
 
 /** 完播类指标检查：超出 0-100 拒收，(0,1) 疑似小数比例转人工（抖音完播率除外，见 subOneIsReal） */

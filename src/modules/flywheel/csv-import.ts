@@ -74,6 +74,8 @@ export function parseMetricNumber(raw: string | undefined): number | undefined {
 }
 
 /** 每个指标列出已知的列名别名；首个命中的别名生效。校准 = 编辑这里的数组。 */
+type RatioMetric = "completionRate" | "completion5s" | "bounce2s" | "fanViewShare";
+
 export interface CsvColumnMapping {
   title: string[];
   publishedAt: string[];
@@ -83,8 +85,11 @@ export interface CsvColumnMapping {
   impressions?: string[];
   completionRate?: string[];
   completion5s?: string[];
+  bounce2s?: string[];
+  avgWatchSeconds?: string[];
+  fanViewShare?: string[];
   /** 平台把这些指标导出为 0-1 小数比例时声明（实战确认后），导入按 ×100 转换；>1 视为已是百分比 */
-  ratioMetrics?: Array<"completionRate" | "completion5s">;
+  ratioMetrics?: Array<RatioMetric>;
   likes?: string[];
   comments?: string[];
   shares?: string[];
@@ -101,8 +106,12 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     views: ["播放量", "播放次数"],
     completionRate: ["完播率"],
     completion5s: ["5s完播率"],
-    // 2026-06-10 实战确认：抖音"作品列表"导出的完播率与 5s完播率都是 0-1 小数比例
-    ratioMetrics: ["completionRate", "completion5s"],
+    bounce2s: ["2s跳出率", "2秒跳出率"],
+    avgWatchSeconds: ["平均播放时长"],
+    fanViewShare: ["粉丝播放占比"],
+    // 2026-06-10 实战确认：抖音"作品列表"导出的完播率与 5s完播率都是 0-1 小数比例；
+    // 跳出率/粉丝占比按同一导出口径处理（未经实拍核过，>1 或带 % 的不会重复换算）
+    ratioMetrics: ["completionRate", "completion5s", "bounce2s", "fanViewShare"],
     likes: ["点赞量", "点赞数"],
     comments: ["评论量", "评论数"],
     shares: ["分享量", "转发量"],
@@ -178,7 +187,7 @@ function normalizeMetricDate(raw: string | undefined, defaultDate: string): stri
 
 function applyRatioConversion(
   metrics: OutcomeMetrics,
-  ratioMetrics: Array<"completionRate" | "completion5s"> | undefined,
+  ratioMetrics: Array<RatioMetric> | undefined,
   percentCells: Set<string>,
 ): void {
   if (!ratioMetrics) return;
@@ -204,13 +213,16 @@ function rowToTypedRow(
     impressions: parseMetricNumber(pick(row, mapping.impressions)),
     completionRate: parseMetricNumber(pick(row, mapping.completionRate)),
     completion5s: parseMetricNumber(pick(row, mapping.completion5s)),
+    bounce2s: parseMetricNumber(pick(row, mapping.bounce2s)),
+    avgWatchSeconds: parseMetricNumber(pick(row, mapping.avgWatchSeconds)),
+    fanViewShare: parseMetricNumber(pick(row, mapping.fanViewShare)),
     likes: parseMetricNumber(pick(row, mapping.likes)),
     comments: parseMetricNumber(pick(row, mapping.comments)),
     shares: parseMetricNumber(pick(row, mapping.shares)),
     favorites: parseMetricNumber(pick(row, mapping.favorites)),
     follows: parseMetricNumber(pick(row, mapping.follows)),
   };
-  const percentCells = new Set((["completionRate", "completion5s"] as const).filter((k) => /%\s*$/.test(pick(row, mapping[k]) ?? "")));
+  const percentCells = new Set((["completionRate", "completion5s", "bounce2s", "fanViewShare"] as const).filter((k) => /%\s*$/.test(pick(row, mapping[k]) ?? "")));
   applyRatioConversion(metrics, mapping.ratioMetrics, percentCells);
   return {
     title: pick(row, mapping.title) || "",

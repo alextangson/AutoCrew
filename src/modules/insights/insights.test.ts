@@ -68,6 +68,15 @@ describe("账号洞察事实口径", () => {
     expect(JSON.stringify(p)).not.toContain("sharesPer1000Views");
   });
 
+  it("2秒跳出率/平均播放时长/粉丝播放占比进中位数，D+7 同样", async () => {
+    await appendOutcomes([
+      outcome({ publishedAt: "2026-09-01", metricDate: "2026-09-08", metrics: { views: 10, bounce2s: 39, avgWatchSeconds: 45, fanViewShare: 5 } }),
+    ], dir);
+    const facts = await gatherInsightsFacts({ days: 30 }, dir, now);
+    const want = { bounce2s: { value: 39, samples: 1 }, avgWatchSeconds: { value: 45, samples: 1 }, fanViewShare: { value: 5, samples: 1 } };
+    expect(data(facts, "platform:douyin")).toMatchObject({ cumulative: { medians: want }, exactD7: { medians: want } });
+  });
+
   it("平台分开计算，待复核不进入基线，未来快照不进入报告", async () => {
     await appendOutcomes([
       outcome({ metrics: { views: 80 } }),

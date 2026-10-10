@@ -120,10 +120,15 @@ export function normalizeRate(raw: unknown): number | undefined {
   return pct > 100 ? undefined : pct;
 }
 
+const RATE_KEYS = new Set<keyof OutcomeMetrics>(["completionRate", "completion5s", "coverClickRate", "bounce2s", "fanViewShare"]);
+/** 不可能为负的非率指标：负数当没有（不然整行会被 validateOutcome 拒收） */
+const NON_NEGATIVE_KEYS = new Set<keyof OutcomeMetrics>(["avgWatchSeconds"]);
+
 /** 只在有值时落键:Partial<OutcomeMetrics> 里 undefined 键与不存在等价,但别写进去 */
 export function assign(metrics: Partial<OutcomeMetrics>, key: keyof OutcomeMetrics, raw: unknown): void {
-  const v = key === "completionRate" || key === "completion5s" || key === "coverClickRate" ? normalizeRate(raw) : toCount(raw);
-  if (v !== undefined) metrics[key] = v;
+  const v = RATE_KEYS.has(key) ? normalizeRate(raw) : toCount(raw);
+  if (v === undefined || (NON_NEGATIVE_KEYS.has(key) && v < 0)) return;
+  metrics[key] = v;
 }
 
 export function hasAnyMetric(metrics: Partial<OutcomeMetrics>): boolean {

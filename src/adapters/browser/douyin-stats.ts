@@ -59,6 +59,9 @@ function mapItem(base: Bag, metricBags: Bag[]): TypedRow {
   assign(metrics, "completionRate", pick("completion_rate"));
   assign(metrics, "completion5s", pick("completion_rate_5s"));
   assign(metrics, "coverClickRate", pick("cover_click_rate"));
+  assign(metrics, "bounce2s", pick("bounce_rate_2s"));
+  assign(metrics, "avgWatchSeconds", pick("avg_view_second"));
+  assign(metrics, "fanViewShare", pick("fan_view_proportion"));
   const id = douyinItemId(base);
   const coverUrl = coverUrlOf(base);
   return {
