@@ -24,6 +24,9 @@ export const METRIC_FOCUS_KEYS = [
   "impressions",
   "completionRate",
   "completion5s",
+  "bounce2s",
+  "avgWatchSeconds",
+  "fanViewShare",
   "likes",
   "comments",
   "shares",
@@ -32,6 +35,13 @@ export const METRIC_FOCUS_KEYS = [
   "engagementRate",
 ] as const;
 export type MetricFocus = keyof OutcomeMetrics | "engagementRate";
+
+/** 越低越好的指标：选题会下注默认「比基线好」，对这些指标「好」是更低（2秒跳出 50% → 30% 是中，不是没中） */
+const LOWER_IS_BETTER = new Set<string>(["bounce2s"]);
+
+export function betDirection(metric: string): HypothesisDirection {
+  return LOWER_IS_BETTER.has(metric) ? "down" : "up";
+}
 
 /** withdrawn = 选题会同日重存时从片单拿掉的下注：不再对账 */
 export type HypothesisStatus = "open" | "supported" | "refuted" | "inconclusive" | "withdrawn";

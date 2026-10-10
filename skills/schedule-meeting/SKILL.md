@@ -11,7 +11,7 @@ description: |
 ## 开会
 
 1. **读简报** `autocrew_insights {action:"meeting_brief"}`。返回 `ok:false` 就停会：把原始错误告诉创作者，不凭记忆开会。`brief.attention` 里的每一条（回流未开启/过期、未绑定作品、冷启动、量纲未核的指标）开场先说。
-2. **对账** `brief.pendingBets`：逐条报 中 / 没中 / 数据不够 / 未到期 / 无法对账 和 `reason`。「中」= 高于同平台同龄基线中位数。中或没中的，问创作者一句「按当时手里的信息重来，还会这么选吗」，原话记下；「无法对账」的把 `unmatched` 念给他，确认是哪条作品。
+2. **对账** `brief.pendingBets`：逐条报 中 / 没中 / 数据不够 / 未到期 / 无法对账 和 `reason`。「中」= 比同平台同龄基线中位数好：一般是更高，2秒跳出（bounce2s）这种越低越好的指标是更低。中或没中的，问创作者一句「按当时手里的信息重来，还会这么选吗」，原话记下；「无法对账」的把 `unmatched` 念给他，确认是哪条作品。
 3. **补标签** `brief.untagged`：已发作品缺形式（教学/观点/亲历/案例/测评）或画像（core/adjacent/surprise）的，一次问清，逐条 `autocrew_insights {action:"meeting_tag", tag:{work_key, format, persona_key}}`。
 4. **出候选**：来自灵感库（`autocrew_topic {action:"list"}`）和你提的新题（如爆款续集）。新题用 `autocrew_topic {action:"create", source:"meeting"}` 入库，描述里标「待调研」。灵感库空或都不合适，就只提真想写的，不凑数。每个候选写清：
    - 给谁看：档案画像层 key + 当前名字（`brief.personas`）
@@ -21,7 +21,7 @@ description: |
    - 赌什么：一句可证伪的话，落成 `watch{platform, metric, day: 3|7}`，metric 只能从 `brief.availableMetrics` 该平台里选
    - 事前验尸：到期没中最可能的一个原因，给最强的那个
    - 转发尴尬（只提醒、不扣分）：观众把这条转给同事或朋友，会不会暴露 TA 不想暴露的处境？转发本身是安全吐槽或表态的，标出来；这是评分表的候选维度 TS，攒够证据前不进任何分数
-5. **拍板**：创作者选中、改或毙。每个选中位由他给「高于基线中位数」的概率（具体百分数），你不代填。
+5. **拍板**：创作者选中、改或毙。每个选中位由他给「比基线中位数好」的概率（具体百分数；观察 2秒跳出时问「低于基线中位数」的概率），你不代填。
 6. **落库**：先 `autocrew_insights {action:"meeting_get"}` 拿 `revision`（新会为 0），再
    `autocrew_insights {action:"meeting_save", meeting:{expected_revision, slots, rejected, reviews}}`；slot 字段见工具说明 `autocrew://tool-guide/autocrew_insights`。一个都没选也要存（空片单 + 毙题理由）。报 `conflict` 说明别的会话刚存过：重读、给创作者看差异，再存。
 

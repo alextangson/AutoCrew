@@ -74,6 +74,26 @@ describe("parseDouyinItemList(r(fixture 锚定)", () => {
     expect(parsed.rows[1].metrics.completionRate).toBeCloseTo(41);
   });
 
+  it("2秒跳出率/平均播放时长/粉丝播放占比：比例串 ×100、秒原样；缺或空串不落键", () => {
+    const parsed = parseDouyinItemList(r(ITEM_LIST));
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    const m0 = parsed.rows[0].metrics;
+    expect(m0.bounce2s).toBeCloseTo(39.0625, 4);
+    expect(m0.avgWatchSeconds).toBeCloseTo(18.4, 4);
+    expect(m0.fanViewShare).toBeCloseTo(5.4316, 4);
+    for (const row of [parsed.rows[1], parsed.rows[2]]) {
+      for (const k of ["bounce2s", "avgWatchSeconds", "fanViewShare"]) expect(row.metrics).not.toHaveProperty(k);
+    }
+  });
+
+  it("平均播放时长为负不落键", () => {
+    const parsed = parseDouyinItemList(r(JSON.stringify({ status_code: 0, items: [
+      { id: "1", item_title: "x", create_time: 1783600000, metrics: { view_count: "10", avg_view_second: "-3" } },
+    ] })));
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    expect(parsed.rows[0].metrics).not.toHaveProperty("avgWatchSeconds");
+  });
+
   it("旧路 work_list:aweme_list 出计数,同索引 items[].metrics 出率类", () => {
     const parsed = parseDouyinItemList(r(LEGACY));
     if (parsed.kind !== "ok") throw new Error("应解析成功");

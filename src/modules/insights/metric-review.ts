@@ -22,6 +22,8 @@ export const PULLABLE_METRICS: Record<string, PullableMetric[]> = {
     { metric: "views", label: "播放" }, { metric: "likes", label: "赞" }, { metric: "comments", label: "评" },
     { metric: "shares", label: "转" }, { metric: "favorites", label: "藏" },
     { metric: "completionRate", label: "完播率" }, { metric: "completion5s", label: "5秒完播率" },
+    { metric: "bounce2s", label: "2秒跳出率" }, { metric: "avgWatchSeconds", label: "平均播放时长" },
+    { metric: "fanViewShare", label: "粉丝播放占比" },
   ],
   xiaohongshu: [
     { metric: "views", label: "播放" }, { metric: "likes", label: "赞" }, { metric: "favorites", label: "藏" },
@@ -49,6 +51,8 @@ function reasonMetric(reason: string, platform: string): keyof OutcomeMetrics | 
   if (reason.startsWith("完播率") && reason.includes("低于 1%") && normalizePlatform(platform) === "douyin") return null;
   if (reason.startsWith("完播率")) return "completionRate";
   if (reason.startsWith("封面点击率")) return "coverClickRate";
+  if (reason.startsWith("2秒跳出率")) return "bounce2s";
+  if (reason.startsWith("粉丝播放占比")) return "fanViewShare";
   if (reason.startsWith("播放为 0 但有互动") || reason.startsWith("播放量 ")) return "views";
   if (reason.startsWith("平台作品 ") && reason.includes("已绑定稿件")) return null;
   if (reason.startsWith(ATTRIBUTION_REVIEW_PREFIX)) return null;

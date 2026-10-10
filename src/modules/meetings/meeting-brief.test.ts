@@ -115,4 +115,28 @@ describe("上次下注对账", () => {
     expect(v.s3).toMatchObject({ verdict: "无法对账", unmatched: [{ contentId: c3.id, title: "抖音上的另一个标题", date: "2026-09-24" }] });
     expect(v.s4.verdict).toBe("未到期");
   });
+
+  it("回归：2秒跳出越低越好，低于基线判中、高于基线判没中", async () => {
+    // 6 个回流作品 D+7 的 2秒跳出都是 50%，基线中位 50
+    await appendOutcomes(Array.from({ length: 6 }, (_, i) => row({
+      platformTitle: `跳出基线 ${i + 1}`, publishedAt: `2026-09-1${i}T02:00:00Z`, metricDate: `2026-09-${String(17 + i).padStart(2, "0")}`,
+      metrics: { views: 100, bounce2s: 50 }, source: "auto",
+    })), f.data);
+    await writePull(f.data, { douyin: { enabled: true, lastSuccessAt: "2026-10-01T20:00:00Z" } });
+    const [good, bad] = await Promise.all(["开头真人", "开头卡通"].map((t) => makeTopic(f.data, t)));
+    const cg = await makeContent(f.data, "开头真人的稿", { topicId: good.id });
+    const cb = await makeContent(f.data, "开头卡通的稿", { topicId: bad.id });
+    await appendOutcomes([
+      row({ contentId: cg.id, platformTitle: "开头真人的稿", publishedAt: "2026-09-24T16:30:00Z", metricDate: "2026-10-02", metrics: { views: 100, bounce2s: 30 }, source: "auto" }),
+      row({ contentId: cb.id, platformTitle: "开头卡通的稿", publishedAt: "2026-09-24T16:30:00Z", metricDate: "2026-10-02", metrics: { views: 100, bounce2s: 60 }, source: "auto" }),
+    ], f.data);
+    const bounceBet = async (topicId: string, slotId: string) => ({ ...(await bet(topicId, slotId, "douyin")), metricFocus: "bounce2s" as const, direction: "down" as const });
+    await appendHypotheses([await bounceBet(good.id, "s1"), await bounceBet(bad.id, "s2")], f.data);
+    const slots = [good, bad].map((t, i) => ({ slotId: `s${i + 1}`, topicId: t.id, hypothesisId: `hyp-meeting-2026-09-25-s${i + 1}` }));
+    await saveMeetingCas({ date: "2026-09-25", slots: slots as never, rejected: [], reviews: [] }, 0, f.data);
+    const v = Object.fromEntries((await buildMeetingBrief(f.data, NOW)).pendingBets.bets.map((b) => [b.slotId, b]));
+    expect(v.s1).toMatchObject({ verdict: "中" });
+    expect(v.s1.judge?.evidence).toMatchObject({ testValue: 30, baselineValue: 50 });
+    expect(v.s2).toMatchObject({ verdict: "没中" });
+  });
 });

@@ -1,5 +1,6 @@
 /** 选题会纪要（人读）：从 meetings/<date>.json 渲染，进「我的内容/选题会」只读副本（同复盘栏的做法） */
 import type { MeetingRecord } from "./meeting-store.js";
+import { betDirection } from "../retro/hypotheses.js";
 
 const TIER_LABEL: Record<string, string> = { core: "核心受众", adjacent: "邻近受众", surprise: "意外受众" };
 
@@ -12,7 +13,7 @@ function slotBlock(s: MeetingRecord["slots"][number], i: number): string {
     `- 形式：${s.format}${s.line ? `；内容线：${s.line}` : ""}`,
     `- 为什么现在：${s.whyNow}`,
     `- 数据依据：${s.dataBasis}`,
-    `- 赌什么：${s.bet}（看 ${s.watch.platform} D+${s.watch.day} ${s.watch.metric}，高于同平台同龄中位数的概率 ${s.probability}%）`,
+    `- 赌什么：${s.bet}（看 ${s.watch.platform} D+${s.watch.day} ${s.watch.metric}，${betDirection(s.watch.metric) === "down" ? "低于" : "高于"}同平台同龄中位数的概率 ${s.probability}%）`,
     `- 事前验尸：${s.premortem}`,
     ...(s.angleDecision ? [`- 已有立意卡的处理：${s.angleDecision === "rerun" ? "重跑立意" : "接受偏离"}`] : []),
   ].join("\n");

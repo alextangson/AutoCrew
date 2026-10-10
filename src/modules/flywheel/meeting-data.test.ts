@@ -71,6 +71,15 @@ describe("抖音完播率量纲（2026-10-02 后台截图：长视频 0.63% 是�
     expect(validateOutcome({ ...base, platform: "wechat_video", metrics: { completionRate: 0.63 } }).needsReview).toBe(true);
   });
 
+  it("抖音粉丝播放占比 <1% 是真值不转人工；2秒跳出率越界拒收、<1% 转人工；平均播放时长负数拒收", async () => {
+    const { validateOutcome } = await import("./outcome-schema.js");
+    const base = { publishedAt: "2026-09-28T10:00:00+08:00", metricDate: "2026-10-02" };
+    expect(validateOutcome({ ...base, platform: "douyin", metrics: { views: 9000, fanViewShare: 0.4 } })).toMatchObject({ ok: true, needsReview: false });
+    expect(validateOutcome({ ...base, platform: "douyin", metrics: { bounce2s: 120 } }).ok).toBe(false);
+    expect(validateOutcome({ ...base, platform: "douyin", metrics: { bounce2s: 0.5 } })).toMatchObject({ ok: true, needsReview: true });
+    expect(validateOutcome({ ...base, platform: "douyin", metrics: { avgWatchSeconds: -1 } }).ok).toBe(false);
+  });
+
   it("CSV：带 % 的 0.63% 原样是 0.63；0-1 小数比例 0.0063 换算成 0.63", async () => {
     const f = await makeFixture();
     try {

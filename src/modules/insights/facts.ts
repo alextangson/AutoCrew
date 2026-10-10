@@ -37,7 +37,7 @@ function sums(rows: OutcomeMetrics[]) {
 }
 
 function medians(rows: OutcomeMetrics[]) {
-  const fields = ["views", "completionRate", "completion5s"] as const;
+  const fields = ["views", "completionRate", "completion5s", "bounce2s", "avgWatchSeconds", "fanViewShare"] as const;
   const result: Record<string, { value: number; samples: number }> = {};
   for (const key of fields) {
     const values = rows.flatMap((m) => typeof m[key] === "number" ? [m[key]!] : []);

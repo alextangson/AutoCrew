@@ -4,13 +4,16 @@
  */
 import { MIN_SAMPLES, latest, median, type DataRow, type Work } from "./data-lib";
 
-export type MetricId = "views" | "ctr" | "completionRate" | "completion5s" | "likes" | "comments" | "favorites" | "shares" | "follows";
+export type MetricId = "views" | "ctr" | "completionRate" | "completion5s" | "bounce2s" | "avgWatchSeconds" | "fanViewShare" | "likes" | "comments" | "favorites" | "shares" | "follows";
 export interface Metric { id: MetricId; label: string; rate: boolean }
 export const METRICS: Metric[] = [
   { id: "views", label: "播放", rate: false },
   { id: "ctr", label: "点击率", rate: true },
   { id: "completionRate", label: "完播率", rate: true },
   { id: "completion5s", label: "5秒完播", rate: true },
+  { id: "bounce2s", label: "2秒跳出", rate: true },
+  { id: "avgWatchSeconds", label: "平均播放时长", rate: false },
+  { id: "fanViewShare", label: "粉丝占比", rate: true },
   { id: "likes", label: "点赞", rate: false },
   { id: "comments", label: "评论", rate: false },
   { id: "favorites", label: "收藏", rate: false },

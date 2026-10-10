@@ -21,7 +21,9 @@
         "favorite_count": "876",
         "completion_rate": "32.5",
         "completion_rate_5s": "68.1",
-        "avg_view_second": "18.4"
+        "avg_view_second": "18.4",
+        "bounce_rate_2s": "0.390625",
+        "fan_view_proportion": "0.054316"
       }
     },
     {
@@ -37,7 +39,10 @@
         "share_count": "8",
         "favorite_count": "44",
         "completion_rate": "0.41",
-        "completion_rate_5s": "55.0"
+        "completion_rate_5s": "55.0",
+        "bounce_rate_2s": "",
+        "avg_view_second": "",
+        "fan_view_proportion": ""
       }
     },
     {

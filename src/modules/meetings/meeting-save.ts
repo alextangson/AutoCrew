@@ -7,7 +7,7 @@
 import { getTopic, listContents, updateTopic, type Content } from "../../storage/local-store.js";
 import { resolveEffectiveBrief } from "../research/brief-snapshot.js";
 import { angleCardsOf } from "../research/angle-cards.js";
-import { appendHypotheses, listHypotheses, type Hypothesis, type MetricFocus } from "../retro/hypotheses.js";
+import { appendHypotheses, betDirection, listHypotheses, type Hypothesis, type MetricFocus } from "../retro/hypotheses.js";
 import { applyJudgement } from "../retro/hypothesis-judge.js";
 import { shanghaiDate } from "../flywheel/outcome-schema.js";
 import { listArg, readRejected, readReviews, readSlot } from "./meeting-args.js";
@@ -79,7 +79,7 @@ async function withdrawnBets(previous: MeetingRecord | null, slots: MeetingSlot[
 
 function betOf(slot: MeetingSlot, date: string, contents: Content[], now: string): Hypothesis {
   return {
-    id: slot.hypothesisId, statement: slot.bet, metricFocus: slot.watch.metric as MetricFocus, direction: "up",
+    id: slot.hypothesisId, statement: slot.bet, metricFocus: slot.watch.metric as MetricFocus, direction: betDirection(slot.watch.metric),
     scope: { platform: slot.watch.platform }, contentIds: contents.filter((c) => c.topicId === slot.topicId && c.status !== "archived").map((c) => c.id),
     proposedAt: now, retroRunId: `meeting-${date}`, status: "open", topicId: slot.topicId, meetingDate: date,
     slotId: slot.slotId, probability: slot.probability, premortem: slot.premortem, watchDay: slot.watch.day,

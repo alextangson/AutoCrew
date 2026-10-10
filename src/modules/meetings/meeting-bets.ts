@@ -10,7 +10,7 @@ import { ageInDays, metricsNearAgeAll, type EntityGroup } from "../flywheel/metr
 import { normalizePlatform } from "../flywheel/outcome-schema.js";
 import type { PlanEntry } from "../flywheel/plan-binding.js";
 import { judgeHypothesis, type JudgeVerdict } from "../retro/hypothesis-judge.js";
-import type { Hypothesis } from "../retro/hypotheses.js";
+import { betDirection, type Hypothesis } from "../retro/hypotheses.js";
 import { isUnverified } from "../insights/metric-review.js";
 
 export type BetVerdict = "中" | "没中" | "数据不够" | "未到期" | "无法对账";
@@ -76,11 +76,13 @@ export function reconcileBet(h: Hypothesis, ctx: BetContext): BetReconcile {
   const pull = ctx.pullHealthy(b.watch.platform);
   if (!pull.ok) return { ...b, verdict: "数据不够", reason: pull.reason, judge: null, unmatched: [] };
   const pool = ctx.groups.filter((g) => !g.outlier || mine.includes(g));
-  const judge = judgeHypothesis({ ...h, contentIds, direction: "up" }, { aggregates: metricsNearAgeAll(pool, b.watch.day), ageDays: b.watch.day });
+  const direction = betDirection(h.metricFocus);
+  const judge = judgeHypothesis({ ...h, contentIds, direction }, { aggregates: metricsNearAgeAll(pool, b.watch.day), ageDays: b.watch.day });
   const { testValue, baselineValue, relDiff, reason } = judge.evidence;
   if (relDiff === null || testValue === null || baselineValue === null) {
     return { ...b, verdict: "数据不够", reason, judge, unmatched: [] };
   }
-  const verdict: BetVerdict = testValue > baselineValue ? "中" : "没中";
+  const better = direction === "down" ? testValue < baselineValue : testValue > baselineValue;
+  const verdict: BetVerdict = better ? "中" : "没中";
   return { ...b, verdict, reason: `D+${b.watch.day} ${testValue} vs 同平台同龄基线中位 ${baselineValue}（n=${judge.evidence.baselineSampleSize}）`, judge, unmatched: [] };
 }
