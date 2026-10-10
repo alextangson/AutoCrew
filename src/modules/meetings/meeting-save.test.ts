@@ -39,6 +39,7 @@ describe("meeting_save 落库", () => {
     expect(res).toMatchObject({ ok: true });
     const [h] = await listHypotheses(f.data);
     expect(h).toMatchObject({ topicId: t.id, metricFocus: "bounce2s", watchDay: 3, direction: "down" });
+    expect(renderMeetingMinutes((await readMeeting("2026-10-02", f.data))!)).toContain("低于同平台同龄中位数的概率 55%");
   });
 
   it("一个都不选也照样落记录（边界 5）", async () => {
