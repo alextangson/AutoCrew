@@ -38,6 +38,12 @@ export interface WritingRule {
   promotesRevision?: number;
   /** 已完成的升级：来自哪条平台规则（只作记录，不再参与审批） */
   promotedFrom?: string;
+  /** 从哪篇稿的哪一版改稿意见来的（对话里记下的规则；定稿时据此列这篇攒下的待批规则） */
+  origin?: { content_id: string; version: number; founder_words?: string };
+  /** AI 判断它和哪条已有规则矛盾（只作提示，批准时由创始人选替换 / 都留） */
+  conflictsWith?: string;
+  /** 停用原因（如「被 <id> 替换」） */
+  disabledReason?: string;
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */
@@ -177,7 +183,8 @@ export interface CreatorProfile {
   /** 档案写入序号（CAS 用） */
   revision?: number;
   /** 工作台审批事件（幂等键 eventId） */
-  ruleDecisions?: Array<{ eventId: string; ruleId: string; revision: number; decision: string; at: string }>;
+  ruleDecisions?: Array<{ eventId: string; ruleId: string; revision: number; decision: string; at: string; replaces?: string;
+    source?: string; founder_words?: string; requested_by?: string; request_id?: string }>;
   /** User's content industry/niche */
   industry: string;
   /** 创作者保存的表达定位；不能只保存在档案里而不交给写手。 */

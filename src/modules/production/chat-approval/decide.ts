@@ -17,7 +17,8 @@ import type { InboxItem } from "../inbox.js";
 import { withFileOwnership } from "../mutex.js";
 import { verifyFacts } from "./files.js";
 import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, releaseRequest, writeRequest, type Binding, type RequestRecord } from "./requests.js";
-import { boardLink, CHAT_ACTIONS, chatActionsOf, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
+import { boardLink, CHAT_ACTIONS, chatActionsOf, chatDecidable, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
+import { isDelegation, RULE_DECISIONS, ruleCommit } from "./rule-decide.js";
 
 type Result = Record<string, unknown>;
 type Picked = Extract<Selection, { ok: true }>;
@@ -31,6 +32,8 @@ export interface ChatDecideInput {
   url?: string;
   item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; option_id?: string; content_id?: string; decision_id?: string;
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
+  /** replace_rule：要换掉的那条生效规则 id */
+  target_rule_id?: string;
 }
 
 /** 现在的样子：和 list 一样带 brief 与预览（改了什么、文件都能直接再给他看） */
@@ -43,13 +46,13 @@ async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
   const item = (await readInbox(dataDir)).items.find((x) => x.item_id === input.item_id);
   if (!item) return { ok: false, result: fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子") };
   if (item.gen !== input.gen) return { ok: false, result: fail("stale", "这件事刚变过（比如来了新的一组），先把新的样子给创始人看一遍再定", { item: await shownNow(item, input, dataDir) }) };
-  if (!item.content_id || !chatActionsOf(item).includes(input.decision)) {
+  if (!chatDecidable(item) || !chatActionsOf(item).includes(input.decision)) {
     const why = CHAT_ACTIONS[item.type] ? `这件事在这里不能做「${input.decision}」` : "这类事只能在看板上定";
     return { ok: false, result: fail("not_chat_decidable", why, { board_link: boardLink(item) }) };
   }
   const badUrl = input.decision === "i_published" && str(input.url) ? urlMismatch(String(item.detail.platform ?? ""), str(input.url)) : null;
   if (badUrl) return { ok: false, result: fail("url_platform_mismatch", badUrl, { item: await shownNow(item, input, dataDir) }) };
-  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined });
+  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined, target_rule_id: str(input.target_rule_id) || undefined });
   if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await shownNow(item, input, dataDir) }) };
   return { ok: true, item, selection };
 }
@@ -67,11 +70,14 @@ function validInput(input: ChatDecideInput): Result | null {
   if (!str(input.founder_words)) return fail("founder_words_required", "带上创始人在对话里的原话（founder_words），一字不改照抄");
   if (!str(input.item_id) || !str(input.gen) || !str(input.decision)) return fail("invalid_params", "要带 item_id、gen 和 decision（list 里给的）");
   if (NOTE_ACTIONS.has(str(input.decision)) && !str(input.note)) return fail("note_required", "写一句要改哪里（note），给做的人看");
+  if (RULE_DECISIONS.has(str(input.decision)) && isDelegation(str(input.founder_words))) {
+    return fail("founder_words_not_approval", "「你定 / 你看着办 / 都行」这类话对写作规则不算批准：请创始人明确说哪条要、哪条不要（或替换哪条）");
+  }
   return null;
 }
 
 const hashOf = (input: ChatDecideInput, requester: string) => payloadHash({ item_id: input.item_id, gen: input.gen, decision: input.decision,
-  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), ...(str(input.url) ? { url: str(input.url) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
+  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), ...(str(input.url) ? { url: str(input.url) } : {}), ...(str(input.target_rule_id) ? { target_rule_id: str(input.target_rule_id) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
   note: str(input.note), founder_words: str(input.founder_words), requester });
 
 type Bind = (b: Binding) => Promise<void>;
@@ -142,6 +148,9 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   const found = await locate(input, dataDir);
   if (!found.ok) return found.result;
   const { item, selection } = found;
+  if (item.type === "writing_rule") {
+    return ruleCommit(item, { decision: input.decision, founder_words: str(input.founder_words), request_id: str(input.request_id), requester, target_rule_id: selection.params.target_rule_id }, dataDir);
+  }
   const req = { item_id: item.item_id, gen: item.gen, action: input.decision, content_id: item.content_id, ...selection.params,
     ...coverTextOf(item, input, selection), ...noteOf(input), ...(input.decision === "i_published" && str(input.url) ? { url: str(input.url) } : {}) };
   await bind({ content_id: item.content_id!, item_id: item.item_id, gen: item.gen, decision: input.decision, fp: fingerprint(input.decision, req) });

@@ -5,7 +5,7 @@
 
 export type InboxType =
   | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
-  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "other";
+  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "writing_rule" | "other";
 
 export interface InboxAction {
   action: string;

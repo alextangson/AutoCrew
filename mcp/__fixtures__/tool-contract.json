@@ -679,6 +679,7 @@
      "content_id": {
       "type": "string"
      },
+     "feedback": {},
      "for_whom": {
       "type": "string"
      },
@@ -1327,7 +1328,10 @@
        "approve_cut",
        "reject_cut",
        "confirm_candidate",
-       "reject_candidate"
+       "reject_candidate",
+       "approve_rule",
+       "reject_rule",
+       "replace_rule"
       ],
       "type": "string"
      },
@@ -1365,6 +1369,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "target_rule_id": {
       "type": "string"
      },
      "url": {
@@ -3583,6 +3590,7 @@
      "content_id": {
       "type": "string"
      },
+     "feedback": {},
      "for_whom": {
       "type": "string"
      },
@@ -4231,7 +4239,10 @@
        "approve_cut",
        "reject_cut",
        "confirm_candidate",
-       "reject_candidate"
+       "reject_candidate",
+       "approve_rule",
+       "reject_rule",
+       "replace_rule"
       ],
       "type": "string"
      },
@@ -4269,6 +4280,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "target_rule_id": {
       "type": "string"
      },
      "url": {

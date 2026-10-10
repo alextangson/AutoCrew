@@ -3,10 +3,11 @@
  * angle / save 在 withVersion 里：版本比对与写入同一把单稿写锁（锁里不能再调 updateContent / transitionStatus）。
  */
 import { getContent, getTopic, saveTopic, transitionStatus, type Content, type ContentTx } from "../storage/local-store.js";
-import { FirstBodyRefusedError, modelWrite } from "../storage/first-body-guard.js";
+import { FirstBodyRefusedError, isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { ScriptFrozenError } from "../storage/production-store.js";
 import { recordFounderAngle } from "../modules/research/angle-gate.js";
 import { verifyQuote } from "../modules/draft/verify-quote.js";
+import { applyLessons, type DraftFeedbackInput, type DraftFeedbackRecord, type LessonResult } from "../modules/draft/draft-feedback.js";
 import { currentVersion, draftNextNote, workbenchUrl, type DraftReviewNote } from "../modules/draft/draft-types.js";
 import { fail, withVersion } from "./draft-version.js";
 import { INVALID, normalizeChain, type DraftArgs } from "./draft-args.js";
@@ -71,18 +72,37 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   if (!saved) return fail("not_found", `稿件不存在：${c.id}`);
   const version = currentVersion(saved);
   let notes = saved.draftPath?.reviewNotes ?? [];
-  if (a.reviewNotes !== undefined) {
-    notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
-    await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes } });
+  if (a.reviewNotes !== undefined) notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
+  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, a.dataDir) : null;
+  if (a.reviewNotes !== undefined || fb) {
+    await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes, ...(fb ? { feedback: [...(saved.draftPath?.feedback ?? []), fb.record] } : {}) } });
   }
-  return { ok: true, version, status: saved.status, reviewed: notes.length > 0, format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg) };
+  return { ok: true, version, status: saved.status, reviewed: notes.length > 0, format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg), ...(fb?.receipt ?? {}) };
+}
+
+/** 版本已存之后才记意见：档案写失败不回滚这一版，回执带原始错误（不静默） */
+async function learn(input: DraftFeedbackInput, contentId: string, version: number, dataDir?: string): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
+  const lessons: LessonResult[] = [];
+  let error: string | undefined;
+  try {
+    await applyLessons(input, contentId, version, dataDir, lessons);
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, at: new Date().toISOString(), lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), outcome: l.outcome })) };
+  return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则没记进档案：${error}。如实告诉创始人` } : {}) } };
 }
 
 export async function draftSave(a: DraftArgs): Promise<R> {
   if (a.reviewNotes === INVALID) return fail("bad_param", "review_notes 解析不了：传一段文字，或一个 JSON 对象 / 数组（不超过 2 万字）");
+  if (typeof a.feedback === "string") return fail("bad_param", a.feedback);
   const bad = bodyRefusal(a.body);
   if (bad) return bad;
-  const r = await withVersion(a, (c, tx) => writeVersion(a, c, tx));
+  const r = await withVersion(a, async (c, tx) => {
+    // 第一版是按立意写的，没有意见可记
+    if (a.feedback && !await isRealDraft(c, a.dataDir)) return fail("bad_param", "feedback 只在已有一版正文之后收：第一版按立意写，不带 feedback");
+    return writeVersion(a, c, tx);
+  });
   // 已出过定稿清单的稿又改了：退回写作中（锁外推进，状态机照常校验）
   if (r.ok && r.status === "draft_ready") await transitionStatus(a.contentId!, "drafting", { host: a.host }, a.dataDir);
   if (!r.ok) return r;

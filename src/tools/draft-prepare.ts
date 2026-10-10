@@ -9,6 +9,7 @@ import { isRealDraft } from "../storage/first-body-guard.js";
 import { buildChecklist, locateMapping, normalizeMapping, saveChecklist, type FinalChecklist, type MappingInput } from "../modules/draft/draft-final.js";
 import { coverageProblems } from "../modules/draft/draft-finalize.js";
 import { currentVersion, workbenchUrl } from "../modules/draft/draft-types.js";
+import { pendingLessons } from "../modules/draft/draft-feedback.js";
 import { fail, withVersion } from "./draft-version.js";
 import type { DraftArgs } from "./draft-args.js";
 
@@ -36,7 +37,16 @@ async function prepare(a: DraftArgs, c: Content, tx: ContentTx, mapping: Mapping
   const checklist: FinalChecklist = { draft_hash: draftHash(c), prepared_at: new Date().toISOString(), items, review: reviewSummary(c, version) };
   await saveChecklist(c.id, checklist, a.dataDir);
   await tx.write({ draftPath: { ...c.draftPath!, checklistAt: checklist.prepared_at } });
-  return { ok: true, checklist, expected: { title: c.title, body: c.body, platform: c.platform }, status: c.status };
+  return { ok: true, checklist, expected: { title: c.title, body: c.body, platform: c.platform }, status: c.status, feedback: c.draftPath?.feedback };
+}
+
+/** 这篇攒下的待批规则：读档案失败不挡定稿清单，但回执带原始错误（不静默） */
+async function lessonsOf(contentId: string, feedback: Parameters<typeof pendingLessons>[1], dataDir?: string): Promise<R> {
+  try {
+    return await pendingLessons(contentId, feedback, dataDir);
+  } catch (err) {
+    return { pending_lessons: [], lessons_error: `读不了档案里这篇攒下的待批规则：${err instanceof Error ? err.message : String(err)}。如实告诉创始人` };
+  }
 }
 
 export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
@@ -50,7 +60,9 @@ export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
     if (!moved.ok) return fail("transition_failed", moved.error ?? "没能推到「等你认稿」");
   }
   const unsourced = checklist.items.filter((i) => i.status === "unsourced");
+  const lessons = await lessonsOf(a.contentId!, r.feedback as Parameters<typeof pendingLessons>[1], a.dataDir);
   return {
+    ...lessons,
     ok: true,
     status: "draft_ready",
     items: checklist.items.map((i) => ({ id: i.id, status: i.status, ...(i.kind ? { kind: i.kind } : {}), text: i.text, evidence_ids: i.evidence_ids, ...(i.reason ? { reason: i.reason } : {}), ...(i.needs_human.length ? { needs_human: i.needs_human } : {}) })),
@@ -58,7 +70,7 @@ export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
     review: checklist.review,
     workbench_url: workbenchUrl(a.contentId!),
     next_action: {
-      note: `把链接给创始人，请他在工作台看清单后点「定了」。${unsourced.length ? `有 ${unsourced.length} 处没出处：他可以保留，或让你补出处 / 删掉后重新 prepare_final。` : ""}之后再改正文，这份清单就作废，要重新 prepare_final。`,
+      note: `把链接给创始人，请他在工作台看清单后点「定了」。${(lessons.pending_lessons as unknown[]).length ? `同一条消息里把 pending_lessons 按编号列给他（有 conflicts_with 的两条并排），附现在生效 ${String(lessons.active_rule_count)} / ${String(lessons.rule_cap)} 条，请他回哪几条要 / 不要 / 替换第几条；他回了就逐条 autocrew_review_inbox decide，没回就不管。` : ""}${(lessons.repeated_rules as unknown[] | undefined)?.length ? "repeated_rules 里的规则早就有了，这次他又提：告诉他「这条已有，说明它没管住」。" : ""}${unsourced.length ? `有 ${unsourced.length} 处没出处：他可以保留，或让你补出处 / 删掉后重新 prepare_final。` : ""}之后再改正文，这份清单就作废，要重新 prepare_final。`,
     },
   };
 }

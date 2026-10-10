@@ -1,11 +1,14 @@
 /**
- * 写作规则审批（spec 2026-09-28 §3 D，P1）：规则生效的唯一入口。
+ * 写作规则审批（spec 2026-09-28 §3 D，P1）：工作台这一侧的生效入口。
  *
- * 只认浏览器会话（工作台登录 cookie）+ 同源 + JSON 请求；具名 MCP bearer、/api/invoke、对话工具都到不了这里。
+ * 模型可达入口只产出待批；生效只经两条路：这里（工作台会话），或带创始人原话的对话决定（chat-approval/rule-decide，
+ * spec 2026-10-10）。两边都走 decideWritingRule，同受生效上限约束。
+ * 这里只认浏览器会话（工作台登录 cookie）+ 同源 + JSON 请求；具名 MCP bearer、/api/invoke 都到不了。
  * 请求里的任何「用户已确认」字样都不看——证明来自这次 HTTP 请求本身的会话，不来自载荷。
  */
 import type http from "node:http";
 import { decideWritingRule, type RuleDecision } from "../modules/profile/creator-profile.js";
+import { RuleDecisionError } from "../modules/profile/writing-rules.js";
 
 export interface RuleApprovalDeps {
   authorize(req: http.IncomingMessage): "session" | "bearer" | null;
@@ -40,7 +43,8 @@ export function createRuleApprovalHandler(deps: RuleApprovalDeps) {
       const profile = await decideWritingRule({ ruleId, revision, decision: decision as RuleDecision, eventId }, await deps.resolveDataDir());
       send(200, { ok: true, rules: profile.writingRules });
     } catch (e) {
-      send(409, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      const extra = e instanceof RuleDecisionError ? { code: e.code, ...e.extra } : {};
+      send(409, { ok: false, error: e instanceof Error ? e.message : String(e), ...extra });
     }
     return true;
   };

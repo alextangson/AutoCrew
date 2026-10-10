@@ -14,7 +14,7 @@ export const DRAFT_DESCRIPTION =
   "抖音口播从灵感写到定稿（write-script 技能按 6 步调用）。start{inspiration,topic_id?} 建稿（topic_id 复用已有选题）或 start{content_id} 接手，返回档案、账号爆款、同系列主线、一手材料和当前 version；" +
   "verify_quote{content_id,url,quote} 抓网页逐字核引文，过了进证据台账并回证据编号；" +
   "angle{content_id,base_version,main_line,for_whom,opening,why_viral,chain,founder_words,chosen_option?} 记创始人选定的立意（可重调即改立意）；" +
-  "save{content_id,base_version,body,title?,note?,review_notes?} 存一版（review_notes 附 Codex 审稿意见）；" +
+  "save{content_id,base_version,body,title?,note?,review_notes?} 存一版（review_notes 附 Codex 审稿意见；按创始人意见改的带 feedback 记原话，能推广的概括成待批规则）；" +
   "prepare_final{content_id,base_version,citations} 出出处清单并推到等你认稿，「定了」只由创始人在工作台点。base_version 对不上回 version_conflict 和最新正文差异。";
 
 export const draftSchema = Type.Object({
@@ -38,6 +38,7 @@ export const draftSchema = Type.Object({
   body: Type.Optional(Type.String({ description: "save：全文（纯朗读正文）" })),
   note: Type.Optional(Type.String({ description: "save：这一版改了什么" })),
   review_notes: Type.Optional(Type.Unknown({ description: "save：Codex 审稿结果原样（JSON 或文字），调不通就写原因" })),
+  feedback: Type.Optional(Type.Unknown({ description: "save：按创始人意见改完时带 {founder_words:他这次的原话逐字, lessons?:[{rule:概括成的通用写法≤200字, scope:voice_core|platform:douyin, relation:new|duplicate|conflict, relates_to?:已有规则 id}]}；只管这篇的意见不传 lessons。第一版不收" })),
   citations: Type.Optional(Type.Array(Type.Object({
     text: Type.String(),
     evidence_ids: Type.Array(Type.String()),

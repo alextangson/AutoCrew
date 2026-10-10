@@ -2,6 +2,7 @@
  * 灵感 → 拍 A-roll 的薄路径（docs/2026-10-04-idea-to-aroll-replan.md）共用的形状。
  * 一个会话、一个 agent 写完一篇抖音口播；AutoCrew 只存东西、给数据、核事实。
  */
+import type { DraftFeedbackRecord } from "./draft-feedback.js";
 
 /** 创始人选定的立意（第 3 步）。主线另记进选题的 founderAngle，存盘入口守卫认的是那一条 */
 export interface DraftAngle {
@@ -28,6 +29,8 @@ export interface DraftPathRecord {
   angle?: DraftAngle;
   /** agent 自己跑的 Codex 审稿意见（或调不通的原因），按版本号附在稿旁；只是参考 */
   reviewNotes?: DraftReviewNote[];
+  /** 对话里的改稿意见（save 带 feedback）：每版的创始人原话与概括出的规则去向 */
+  feedback?: DraftFeedbackRecord[];
   /** 最近一次 prepare_final 出清单的时间：稿件随之更新，工作台面板据此重读清单 */
   checklistAt?: string;
 }

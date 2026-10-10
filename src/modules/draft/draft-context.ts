@@ -13,6 +13,7 @@ import { collectOwnMaterial } from "../research/own-material.js";
 import { loadLatestBrief } from "../research/brief-store.js";
 import { getDataDir, listContents, type Content, type Topic } from "../../storage/local-store.js";
 import { DRAFT_PLATFORM } from "./draft-types.js";
+import { ruleJudgeContext } from "./draft-feedback.js";
 
 const HIT_WINDOW_DAYS = 90;
 const HIT_TOP = 10;
@@ -21,10 +22,12 @@ const SAMPLE_MAX = 600;
 export async function profileContext(dataDir?: string): Promise<Record<string, unknown>> {
   const profile = await loadProfile(dataDir);
   if (!profile) return { missing: true, note: "还没有创作者档案：写作规则与口吻样本为空，照实告诉创始人" };
+  const active = rulesForPlatform(profile, DRAFT_PLATFORM);
   return {
     positioning: profile.expressionPersona || profile.industry || null,
     audience: personaSummary(profile.audiencePersona, { allTiers: true }) || null,
-    rules: rulesForPlatform(profile, DRAFT_PLATFORM).map((r) => r.rule),
+    rules: active.map((r) => r.rule),
+    ...ruleJudgeContext(profile, active),
     voice_samples: (profile.voiceSamples ?? []).slice(0, 5).map((s) => s.slice(0, SAMPLE_MAX)),
     never: profile.styleBoundaries?.never ?? [],
   };

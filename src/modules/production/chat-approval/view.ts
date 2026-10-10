@@ -16,7 +16,11 @@ export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   ask: ["answer_ask", "ask_resend"],
   publish_check: ["publish_check_confirm", "publish_check_revise", "publish_check_override"],
   publish_claim: ["confirm_receipt", "correct_publish"], published_ask: ["i_published"],
+  writing_rule: ["approve_rule", "reject_rule", "replace_rule"],
 };
+
+/** 能在对话里定：类型在表里，且挂在一条稿上——写作规则例外（不一定来自某篇稿，spec 2026-10-10 §C） */
+export const chatDecidable = (item: InboxItem): boolean => Boolean(CHAT_ACTIONS[item.type]) && (Boolean(item.content_id) || item.type === "writing_rule");
 
 /** 这件事此刻在对话里能做的决定：请示只给条目自己现在有的（附件变过 → 只有「让它重发」） */
 export function chatActionsOf(item: InboxItem): readonly string[] {
@@ -33,6 +37,7 @@ const ACTION_TEXT: Record<string, string> = {
   confirm_receipt: "对，发了", correct_publish: "没发", i_published: "发了（他给了作品链接就放 url，原样）",
   publish_check_confirm: "没问题（照这份计划发）", publish_check_revise: "还要改（note 写他要改的地方）", publish_check_override: "破例（只在被拦时；他的原话原样记下）",
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
+  approve_rule: "这条规则要（以后写稿都照它）", reject_rule: "这条不要（以后不再提）", replace_rule: "要，替换掉他点名的那条旧规则（带 target_rule_id）",
 };
 
 export interface Group { group_id: string; label: string; text: string; approved: boolean; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }
@@ -43,6 +48,7 @@ export const versionsOf = (item: InboxItem) => (item.detail.versions as Version[
 
 export function boardLink(item: InboxItem): string {
   const base = `http://127.0.0.1:${pullDeps().benchPort}/`;
+  if (item.type === "writing_rule") return `${base}#/inbox`;
   return item.content_id ? `${base}#/board?inbox=${encodeURIComponent(item.content_id)}&types=${encodeURIComponent(item.type)}` : `${base}#/inbox`;
 }
 
@@ -56,6 +62,11 @@ const pathOf = (doc: ProductionDoc, contentId: string, factId: string, dataDir: 
   const f = doc.facts.find((x) => x.id === factId);
   return f?.path ? factPath(contentId, f, dataDir) : null;
 };
+
+function ruleFacts(item: InboxItem): Record<string, unknown> {
+  const d = item.detail;
+  return { rule_id: d.rule_id, rule: d.rule, scope: d.scope, founder_words: d.founder_words, conflicts_with: d.conflicts_with, active_rule_count: d.active_rule_count, rule_cap: d.rule_cap };
+}
 
 function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record<string, unknown> {
   if (item.type === "cover_pick") {
@@ -82,11 +93,11 @@ function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record
 
 /** list 里每件事：能不能在对话里定、能做哪些决定、要给创始人看的事实、看板深链 */
 export async function chatItem(item: InboxItem, dataDir: string): Promise<Record<string, unknown>> {
-  const decidable = Boolean(CHAT_ACTIONS[item.type]) && Boolean(item.content_id);
-  const doc = decidable ? await readProductionDocOrEmpty(item.content_id!, dataDir) : null;
+  const decidable = chatDecidable(item);
+  const doc = decidable && item.type !== "writing_rule" ? await readProductionDocOrEmpty(item.content_id!, dataDir) : null;
   const decisions = chatActionsOf(item).map((d) => ({ decision: d, label: ACTION_TEXT[d], ...(NOTE_ACTIONS.has(d) ? { note: "required" } : {}) }));
   return { item_id: item.item_id, gen: item.gen, type: item.type, content_id: item.content_id, title: item.title, summary: item.summary,
-    chat_decidable: decidable, ...(decidable ? { decisions, facts: factsView(item, doc!, dataDir) } : {}), board_link: boardLink(item) };
+    chat_decidable: decidable, ...(decidable ? { decisions, facts: item.type === "writing_rule" ? ruleFacts(item) : factsView(item, doc!, dataDir) } : {}), board_link: boardLink(item) };
 }
 
 export type Selection = { ok: true; params: Record<string, string>; factIds: string[]; label: string } | { ok: false; code: string; error: string };
@@ -98,7 +109,12 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 }
 
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
-export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string }): Selection {
+export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string; target_rule_id?: string }): Selection {
+  if (item.type === "writing_rule") {
+    if (decision !== "replace_rule") return { ok: true, params: {}, factIds: [], label: String(item.detail.rule ?? "") };
+    if (!sel.target_rule_id) return bad("selector_required", "替换要说清换掉哪一条（带 target_rule_id，取生效规则的 id）；他没点名就先问他");
+    return { ok: true, params: { target_rule_id: sel.target_rule_id }, factIds: [], label: String(item.detail.rule ?? "") };
+  }
   if (item.type === "ask") return askSelection(item, decision, sel.option_id);
   if (item.type === "publish_check" || item.type === "publish_claim" || item.type === "published_ask") return { ok: true, params: {}, factIds: [], label: String(item.detail.platform ?? "") };
   if (item.type === "cover_pick") {

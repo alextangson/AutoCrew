@@ -13,7 +13,7 @@ import { attachInbox, listInbox } from "../modules/production/intake.js";
 import { runSweep, sweepHealth } from "../modules/production/sweep.js";
 
 const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync"] as const;
-const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate"] as const;
+const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule"] as const;
 
 export const reviewInboxSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke | inbox_list | inbox_attach | sync" }),
@@ -31,6 +31,7 @@ export const reviewInboxSchema = Type.Object({
   request_id: Type.Optional(Type.String({ description: "请求号，重试用同一个" })),
   content_id: Type.Optional(Type.String({ description: "revoke：稿件 id；list 带上就只列这条稿的事" })),
   decision_id: Type.Optional(Type.String({ description: "revoke：decide 回执里的决定 id" })),
+  target_rule_id: Type.Optional(Type.String({ description: "replace_rule：要换掉的那条生效规则 id" })),
   file: Type.Optional(Type.String({ description: "inbox_attach：inbox_list 给的文件名" })),
   sha256: Type.Optional(Type.String({ description: "inbox_attach：inbox_list 给的 sha256（列出之后文件换过就拒）" })),
   confirm_other: Type.Optional(Type.Boolean({ description: "inbox_attach：文件名更像别条、创始人确认还挂这条时带 true" })),
@@ -44,6 +45,7 @@ export const REVIEW_INBOX_DESCRIPTION = [
   "请示：decide{decision:\"answer_ask\", option_id, note?}——他的话对得上唯一一个选项才定，多说的话放 note；只说「行」而选项不止一个、或对不上任何选项，就先问他，别猜。附件变过时只能 ask_resend（让它重发）。分镜请示提交时还会再核分镜，拒了就把原因照说。",
   "发之前再看一眼（publish_check）：没问题 = publish_check_confirm（被拦时不给）；还要改 = publish_check_revise + note；破例 = publish_check_override（只在被拦时，他的原话放 founder_words 原样记）。他说「都没问题」：对这次 list 里列出来给他看过的每件 publish_check 各 decide 一次（同一句原话，各自的 item_id、gen、request_id）；他点了哪些平台就只定那些；没在这次列表里给他看过的绝不顺带定。",
   "发了没：publish_claim（有人说发了）= confirm_receipt「对，发了」/ correct_publish「没发」；published_ask（发了吗）= i_published，他给了作品链接就原样放 url，链接域名对不上平台会被拒，照原因问他。他说「都发了」：和发前检查同一规则——只对这次列表里给他看过的每件各定一次，点了平台就只定那些。",
+  "写作规则（writing_rule，改稿时攒下的待批规则）：要 = approve_rule；不要 = reject_rule（留墓碑，以后同一句不再提）；替换 = replace_rule + target_rule_id（新规则生效、旧规则停用）。生效规则满 12 条时只能替换（回 rule_cap_reached 带 active，问他换哪条）。他只说「你定 / 都行」不算批准（founder_words_not_approval），问他要哪条。",
   "4) revoke{content_id, decision_id, founder_words, request_id}：他说「撤回刚才那个」时用，decision_id 取 decide 回执；只能撤成片 / 封面的批准。",
   "5) 收原片：创始人说「原片放进去了，是《XX》那条」→ inbox_list 列收件箱里的视频（name、sha256、used_by 已挂在哪条、still_copying 还在拷）和能挂的稿 contents；他点名哪个文件是哪条，inbox_attach{file:文件名, sha256:列表里的, content_id:稿件 id, founder_words, request_id}。文件或稿对不上唯一一个就问他，别猜（回 ambiguous_file / ambiguous_content 带 candidates）；file_changed = 列出之后文件换过，重新 list；looks_like_other = 文件名更像别条，问他，确认后换新 request_id 带 confirm_other:true。他自己导出的成片也让他说是哪条，照 record 记。",
   "6) sync：创始人说「同步一下」时立即跑一轮安全巡检（项目文件夹对账 + 我的内容同步，平时 30 分钟一轮）；正在跑就等这一轮，joined:true。errors / warnings 照说给他。",
@@ -58,7 +60,7 @@ function inputOf(params: Record<string, unknown>): ChatDecideInput {
     item_id: str(params.item_id)?.trim() ?? "", gen: str(params.gen)?.trim() ?? "", decision: str(params.decision)?.trim() ?? "",
     group_id: str(params.group_id), fact_id: str(params.fact_id), option_id: str(params.option_id), cover_text: str(params.cover_text), note: str(params.note),
     content_id: str(params.content_id), decision_id: str(params.decision_id),
-    founder_words: str(params.founder_words) ?? "", request_id: str(params.request_id), host: params._host, session: params._session,
+    target_rule_id: str(params.target_rule_id), founder_words: str(params.founder_words) ?? "", request_id: str(params.request_id), host: params._host, session: params._session,
   };
 }
 

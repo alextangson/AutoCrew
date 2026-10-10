@@ -10,7 +10,8 @@ import { readProductionDoc } from "../../storage/production-store.js";
 import type { ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { readPublishRecord } from "../../storage/publish-record.js";
-import { loadProfile, ruleStatus } from "../profile/creator-profile.js";
+import { loadProfile, ruleStatus, type CreatorProfile, type WritingRule } from "../profile/creator-profile.js";
+import { activeRuleCount, RULE_CAP } from "../profile/writing-rules.js";
 import { pendingProposals } from "../publish/review-gate/preferences.js";
 import { checksDir } from "../publish/review-gate/check-store.js";
 import { checkInputsNow } from "../publish/review-gate/check.js";
@@ -95,15 +96,25 @@ async function confirmedCoverText(c: Content, dataDir: string): Promise<string> 
   return typeof d.cover_text === "string" ? d.cover_text.trim() : "";
 }
 
-/** 其他（默认收起）：写作规则提案、发布偏好提案——原界面、原动作，这里只列出来 */
+/**
+ * 待批写作规则（spec 2026-10-10 §C）：能在对话里定（writing_rule）；从改稿意见来的挂那篇稿的 content_id。
+ * detail 带规则原文、作用域、出处原话、冲突规则原文、现在生效数与上限。
+ */
+function ruleItem(r: WritingRule, profile: CreatorProfile): InboxItem {
+  const item_id = `rule:${r.id ?? genOf(r.rule)}`;
+  const c = r.conflictsWith ? profile.writingRules.find((x) => x.id === r.conflictsWith) : undefined;
+  const words = r.origin?.founder_words ?? null;
+  return { item_id, gen: genOf([item_id, r.revision ?? 0]), type: "writing_rule", content_id: r.origin?.content_id ?? null, title: "写作规则提案", summary: r.rule, waiting: null, agent_waiting: false,
+    since: r.createdAt ?? new Date(0).toISOString(), rank: 4, actions: [],
+    detail: { where: "settings/writing-rules", rule_id: r.id ?? null, revision: r.revision ?? 1, rule: r.rule, scope: r.scope ?? "voice_core", founder_words: words, quote: words,
+      evidence: r.evidence ?? [], conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null, active_rule_count: activeRuleCount(profile), rule_cap: RULE_CAP } };
+}
+
+/** 其他（默认收起）：写作规则提案、发布偏好提案 */
 async function otherItems(dataDir: string): Promise<InboxItem[]> {
   const out: InboxItem[] = [];
   const profile = await loadProfile(dataDir).catch(() => null);
-  for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) {
-    const item_id = `rule:${r.id ?? genOf(r.rule)}`;
-    out.push({ item_id, gen: genOf([item_id, r.revision ?? 0]), type: "other", content_id: null, title: "写作规则提案", summary: r.rule, waiting: null, agent_waiting: false,
-      since: (r as { createdAt?: string }).createdAt ?? new Date(0).toISOString(), rank: 4, actions: [], detail: { where: "settings/writing-rules", rule_id: r.id ?? null } });
-  }
+  for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) out.push(ruleItem(r, profile!));
   for (const p of await pendingProposals(dataDir).catch(() => [])) {
     const item_id = `pref:${p.id}`;
     out.push({ item_id, gen: genOf([item_id, p.at]), type: "other", content_id: null, title: "发布偏好提案", summary: Array.isArray(p.value) ? p.value.join(" / ") : p.value, waiting: null, agent_waiting: false,

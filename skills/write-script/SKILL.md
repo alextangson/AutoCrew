@@ -51,9 +51,21 @@ codex exec --skip-git-repo-check --sandbox read-only - < 填好的提示词文�
 
 创始人说改哪里就只改哪里，别的不动，改完 `save`。意见是方向性的、没指具体句子（如「缺用户心理洞察」）：先给一段简短诊断和具体改动清单，等他确认再动稿。不再重审；他要再审就按第 4 步再跑一次 Codex。他的意见改变了主线或受众，就回到第 3 步重出立意（已有调研保留），重新 `angle` 后再写；重写的第一版按第 4 步再跑一次 Codex 审稿。
 
+每次按他的意见改完 `save`，都带 `feedback.founder_words`：他这次的原话，逐字。再判断这条意见是只管这篇，还是以后每篇都该这样：
+- 只管这篇（针对某一句、某个例子）：不传 `lessons`。
+- 能推广：概括成一条通用写法（不照抄只针对这篇的话，≤200 字），放进 `lessons`，`scope` 是 `voice_core`（所有平台）或 `platform:douyin`。先对照 `start` 回执 `context.profile` 里的 `rules_detail`（生效）、`pending_rules`（待批）、`rejected_rules`（他否决过的）判断：意思已有 → `relation:"duplicate"` + `relates_to:<那条 id>`；和已有规则矛盾 → `"conflict"` + `relates_to`；否则 `"new"`。否决过的意思不要换个说法再提。
+
+```json
+{ "action": "save", "content_id": "…", "base_version": 4, "body": "…", "feedback": { "founder_words": "开头别再问「你是不是也」了", "lessons": [{ "rule": "开头不用「你是不是也……」式设问，直接从一个具体瞬间说起", "scope": "platform:douyin", "relation": "new" }] } }
+```
+
+改稿过程中不问他「以后都这样吗」，规则只记成待批，定稿时一次问。回执的 `lessons` 是每条的去向；有 `lessons_error` 说明这一版存了但规则没记进档案，把原因如实告诉他。
+
 ## 6 定稿
 
 创始人在对话里说「定了」，你调 `prepare_final{content_id, base_version, citations}`：把稿中每处引述、数字、对外部事实的断言对上证据编号，对不上的给空数组。每项可带 `kind`：默认 `claim`（要出处的事实）；类比、编的例子（「打个比方」「我编个例子」）标 `example`，我们自己的判断标 `judgment`——这两种不列为没出处，工作台折叠放在「示意/判断，不需要出处」里。`text` 要是整句；句里有归因或台账对得上的数字时，标了也不生效。它出一份出处清单、把稿推到「等你认稿」。请创始人点工作台链接看清单、对没出处的项选保留或让你补，再点「定了」。「定了」只有他能点，你不能代替；之后再改正文，清单作废，要重新 `prepare_final`。
+
+`prepare_final` 回执里的 `pending_lessons` 是这篇攒下的待批规则：在同一条消息里按编号列给他（规则原文 + 他当时的原话；有 `conflicts_with` 的把两条并排，让他选替换 / 都留 / 不要），附「现在生效 `active_rule_count` / `rule_cap` 条」。`repeated_rules` 是早就有、这次他又提的规则：告诉他「这条已有，说明它没管住」。他回「1、3 要，2 不要，4 替换第 X 条」后，先 `autocrew_review_inbox{action:"list", content_id}` 拿到每条的 `item_id` / `gen`，再逐条 `decide`：要 = `approve_rule`，不要 = `reject_rule`，替换 = `replace_rule` + `target_rule_id`，`founder_words` 照抄他的话。他只说「你定 / 都行」不算批准，问他要哪条；回 `rule_cap_reached` 就把现有生效规则列给他，问换掉哪条。他没回就不管，规则留在「等你拍板」里。
 
 ```json
 { "action": "prepare_final", "content_id": "…", "base_version": 3, "citations": [{ "text": "稿里逐字的一句", "evidence_ids": ["ev-d1"] }, { "text": "打个比方，……", "evidence_ids": [], "kind": "example" }] }

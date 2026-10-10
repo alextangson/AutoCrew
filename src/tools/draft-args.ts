@@ -1,6 +1,7 @@
 /** autocrew_draft 的参数整理：模型传来的参数不保证类型对（中转会把数组变成字符串），这里统一归一 */
 import { LOCAL_HOST } from "../storage/local-store.js";
 import { maybeJson, UNPARSABLE } from "../modules/publish/review-gate/plan.js";
+import { parseFeedback, type DraftFeedbackInput } from "../modules/draft/draft-feedback.js";
 
 export interface DraftArgs {
   action: string;
@@ -30,6 +31,8 @@ export interface DraftArgs {
   baseVersion?: number;
   /** Codex 审稿意见（文字或结构）；INVALID = 传了但解析不了 */
   reviewNotes?: string | Record<string, unknown> | unknown[] | typeof INVALID;
+  /** save：创始人这次的改稿意见；string = 解析不了的原因 */
+  feedback?: DraftFeedbackInput | string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -107,6 +110,7 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     citations: p.citations,
     baseVersion: intOf(p.base_version),
     reviewNotes: notesOf(p.review_notes),
+    feedback: parseFeedback(p.feedback),
   };
 }
 

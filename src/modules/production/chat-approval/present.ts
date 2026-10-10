@@ -13,12 +13,13 @@ import { factPath } from "./files.js";
 import { placePreview, sweepPreview, type PreviewFile } from "./preview.js";
 import { askAttachments } from "./ask-view.js";
 import { publishView } from "./publish-view.js";
-import { CHAT_ACTIONS, chatItem } from "./view.js";
+import { chatDecidable, chatItem } from "./view.js";
+import { ruleBrief } from "./rule-decide.js";
 
 type Result = Record<string, unknown>;
 export interface ListInput { preview_dir?: string; content_id?: string; item_id?: string; group_id?: string; fact_id?: string }
 
-const decidable = (i: InboxItem) => Boolean(CHAT_ACTIONS[i.type]) && Boolean(i.content_id);
+const decidable = chatDecidable;
 const IMAGE = /\.(png|jpe?g|webp|gif|heic)$/i;
 
 function fileOf(doc: ProductionDoc, item: InboxItem, factId: string | undefined, label: string, dataDir: string): PreviewFile | null {
@@ -47,6 +48,7 @@ function previewFiles(item: InboxItem, doc: ProductionDoc, dataDir: string, sel:
 async function present(item: InboxItem, n: number | null, dataDir: string, input: ListInput): Promise<Result> {
   const base = await chatItem(item, dataDir);
   if (!decidable(item)) return base;
+  if (item.type === "writing_rule") { const b = ruleBrief(item); return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${b}` : b, shown: {} }; }
   const doc = await readProductionDocOrEmpty(item.content_id!, dataDir);
   const sel = input.item_id === item.item_id ? input : {};
   const brief = await briefOf(item, doc, dataDir, sel);
@@ -66,6 +68,7 @@ const NEXT = [
   "请示：他的话对得上唯一一个选项才 decide answer_ask（带 option_id，多说的话放 note）；对不上或只说「行」而选项不止一个就先问他，别猜。",
   "发之前再看一眼：他说「都没问题」时，可以对这次列出来的每件 publish_check 各 decide 一次 publish_check_confirm（同一句原话、各自的 item_id / gen / request_id）；他点了哪几个平台就只定那几个；没在这次列表里给他看过的不许顺带定。",
   "发了没（publish_claim / published_ask）：他说「都发了」同样对这次列出来的每件各 decide 一次（同一句原话）；点了平台就只定那些；没列出来的不许顺带定。他给的作品链接原样放 url。",
+  "写作规则（writing_rule）：他说哪几条要就 approve_rule，不要就 reject_rule，替换就 replace_rule 带 target_rule_id；只说「你定 / 都行」不算，问他要哪条。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 
