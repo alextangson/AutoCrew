@@ -38,7 +38,7 @@ describe("meeting_save 落库", () => {
     const res = await save({ expected_revision: 0, slots: [slot(t.id, { watch: { platform: "douyin", metric: "bounce2s", day: 3 } })], rejected: [] });
     expect(res).toMatchObject({ ok: true });
     const [h] = await listHypotheses(f.data);
-    expect(h).toMatchObject({ topicId: t.id, metricFocus: "bounce2s", watchDay: 3 });
+    expect(h).toMatchObject({ topicId: t.id, metricFocus: "bounce2s", watchDay: 3, direction: "down" });
   });
 
   it("一个都不选也照样落记录（边界 5）", async () => {
