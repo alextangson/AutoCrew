@@ -69,6 +69,9 @@ const NEXT = [
   "发之前再看一眼：他说「都没问题」时，可以对这次列出来的每件 publish_check 各 decide 一次 publish_check_confirm（同一句原话、各自的 item_id / gen / request_id）；他点了哪几个平台就只定那几个；没在这次列表里给他看过的不许顺带定。",
   "发了没（publish_claim / published_ask）：他说「都发了」同样对这次列出来的每件各 decide 一次（同一句原话）；点了平台就只定那些；没列出来的不许顺带定。他给的作品链接原样放 url。",
   "写作规则（writing_rule）：他说哪几条要就 approve_rule，不要就 reject_rule，替换就 replace_rule 带 target_rule_id；只说「你定 / 都行」不算，问他要哪条。",
+  "认稿（draft）：brief 里是稿子全文，原样贴给他，别缩写；他说没问题就 approve_script，要改就 revise_script 带 note。waiting_behind 有值时说清成片 / 封面在等这份稿。",
+  "画面闪帧（sliver）：brief 原样转述。他说「不查了」= waive_sliver_check（只在 decisions 里有时）；「第 N 处是故意的」= waive_sliver 带 facts.points 里第 N 处的 sliver_key；「都是故意的」= 对 points 里每一处各 decide 一次 waive_sliver（同一句原话、各自的 request_id）；「去改：……」= reject_cut 带 note。",
+  "他一句话同时管闪帧和成片（比如「不查了，用」）：先 decide 闪帧那件，再 list 一次拿成片那件新的 gen，用同一句原话 decide approve_cut。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",
 ].join("");
 
@@ -80,7 +83,7 @@ export function presentItem(item: InboxItem, dataDir: string, previewDir?: strin
 /** 清掉已定的事的预览文件、7 天以上的预览文件；清不掉返回原因（不吞） */
 export async function sweepDecided(dataDir: string, previewDir: string): Promise<string[]> {
   try {
-    const all = (await readInbox(dataDir)).items;
+    const all = (await readInbox(dataDir, { withDrafts: true })).items;
     const r = await sweepPreview(previewDir, (c, i) => all.some((x) => x.content_id === c && x.item_id === i));
     return r.errors.map((e) => `会话文件夹里的旧预览没清干净：${e}`);
   } catch (e) {
@@ -91,7 +94,7 @@ export async function sweepDecided(dataDir: string, previewDir: string): Promise
 /** list：可按 content_id / item_id 收窄；带 preview_dir 时先清理再放文件 */
 export async function listForChat(dataDir = getDataDir(), input: ListInput = {}): Promise<Result> {
   const warnings = input.preview_dir ? await sweepDecided(dataDir, input.preview_dir) : [];
-  const all = (await readInbox(dataDir)).items;
+  const all = (await readInbox(dataDir, { withDrafts: true })).items;
   const items = all.filter((i) => (!input.content_id || i.content_id === input.content_id) && (!input.item_id || i.item_id === input.item_id));
   const named = input.item_id ? items.find((i) => i.item_id === input.item_id) : undefined;
   const stale = named ? staleSelector(named, input) : null;
@@ -107,7 +110,7 @@ export async function listForChat(dataDir = getDataDir(), input: ListInput = {})
  * SessionStart 那一行（§3）：有能在对话里定的事就叫 agent 第一句回复把它们列出来；没有就返回 null，什么都不说。
  */
 export async function chatReviewLine(dataDir = getDataDir()): Promise<string | null> {
-  const n = (await readInbox(dataDir)).items.filter(decidable).length;
+  const n = (await readInbox(dataDir, { withDrafts: true })).items.filter(decidable).length;
   if (!n) return null;
   return `有 ${n} 件等创始人在对话里拍板：你的第一句回复就调 autocrew_review_inbox{action:"list", preview_dir:<你这个会话的工作目录>}，按返回把它们列给他（Codex 剪辑工位忽略这句）。`;
 }

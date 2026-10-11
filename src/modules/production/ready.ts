@@ -27,9 +27,10 @@ export function latestMarkedCut(doc: ProductionDoc): { fact: Fact; marked_at: st
  */
 export function hiddenUntilScriptApproved(view: { phase: string }, status: string, what: string, ready = true): string | null {
   if (view.phase !== "writing") return null;
+  // 认稿在对话里就能定（draft 条目）：不让 agent 把创始人支到看板
   const how = status === "draft_ready"
-    ? "请创始人先在「等你拍板」的「稿子写好了，过一眼」里点「稿子没问题」"
-    : "这条稿还没交给创始人认稿：先走审稿把它交到「稿子写好了」，再请创始人点「稿子没问题」";
+    ? "现在就调 autocrew_review_inbox{action:\"list\", content_id} 把「稿子写好了」那件（type=draft，brief 里有全文）给创始人看，在对话里等他说「稿子没问题」或要改哪里，照他原话 decide"
+    : "这条稿还没交给创始人认稿：先走审稿把它交上去（状态到 draft_ready），再调 autocrew_review_inbox{action:\"list\", content_id} 在对话里请他认稿";
   // ready=false：还没交审（成片没标「可以审了」、封面没成组），认稿后也不会自己出现，不许这么承诺
   return `${what}，但稿子还没认：认稿之前「等你拍板」里不会出现${ready ? "它" : "成片 / 封面审阅"}，创始人现在看不到。${how}${ready ? "，认稿后它会自动出现" : ""}。不要替创始人认稿，也不要把候选里的导出当成片给创始人确认。`;
 }

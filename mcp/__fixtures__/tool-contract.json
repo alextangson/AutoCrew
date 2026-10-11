@@ -1331,7 +1331,11 @@
        "reject_candidate",
        "approve_rule",
        "reject_rule",
-       "replace_rule"
+       "replace_rule",
+       "waive_sliver_check",
+       "waive_sliver",
+       "approve_script",
+       "revise_script"
       ],
       "type": "string"
      },
@@ -1369,6 +1373,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "sliver_key": {
       "type": "string"
      },
      "target_rule_id": {
@@ -4242,7 +4249,11 @@
        "reject_candidate",
        "approve_rule",
        "reject_rule",
-       "replace_rule"
+       "replace_rule",
+       "waive_sliver_check",
+       "waive_sliver",
+       "approve_script",
+       "revise_script"
       ],
       "type": "string"
      },
@@ -4280,6 +4291,9 @@
       "type": "string"
      },
      "sha256": {
+      "type": "string"
+     },
+     "sliver_key": {
       "type": "string"
      },
      "target_rule_id": {

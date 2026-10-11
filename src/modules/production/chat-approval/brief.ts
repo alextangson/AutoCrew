@@ -12,6 +12,7 @@ import { KIND_NAME } from "../plain-reason.js";
 import { askBrief } from "./ask-view.js";
 import { publishView } from "./publish-view.js";
 import { postPublishBrief } from "./post-publish-view.js";
+import { draftBrief, sliverBrief } from "./script-sliver-view.js";
 import { groupsOf, versionsOf, type Group, type Version } from "./view.js";
 
 export const NO_COVER_TEXT = "没写封面字";
@@ -128,5 +129,7 @@ export async function briefOf(item: InboxItem, doc: ProductionDoc, dataDir: stri
   if (item.type === "ask") return askBrief(item, doc);
   if (item.type === "publish_check") return (await publishView(item, dataDir)).brief;
   if (item.type === "publish_claim" || item.type === "published_ask") return postPublishBrief(item);
+  if (item.type === "sliver") return sliverBrief(item);
+  if (item.type === "draft") return draftBrief(item, dataDir);
   return "";
 }

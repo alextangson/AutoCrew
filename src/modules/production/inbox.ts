@@ -146,7 +146,7 @@ function reportedAsk(a: Ask): Draft {
 
 function sliverBlocked(doc: ProductionDoc, sha: string): string | undefined {
   const gate = sliverVerdict(doc, sha, null);
-  return gate.ok ? undefined : `画面检查没过（${gate.missing ?? "还没有结果"}），先在「最新一版画面有闪帧」那件里处理`;
+  return gate.ok ? undefined : `画面检查没过（${gate.missing ?? "还没有结果"}），先处理「最新一版画面有闪帧」那件（对话里就能定，处理完这版才能通过）`;
 }
 
 function cutVersions(doc: ProductionDoc, approvedSha?: string) {

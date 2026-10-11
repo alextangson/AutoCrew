@@ -9,14 +9,16 @@ import { KIND_NAME } from "../plain-reason.js";
 import type { InboxItem } from "../inbox.js";
 import { pullDeps } from "../../video/handoff/pull-deps.js";
 import { factPath } from "./files.js";
+import { draftFacts, sliverActions, sliverFacts, sliverSelection } from "./script-sliver-view.js";
 
-/** 对话里能定的事与决定；其余类型（发布、收件箱文件、请示、闪帧…）只在看板定 */
+/** 对话里能定的事与决定；其余类型（登记卡住、其他提案…）只在看板定 */
 export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   cover_pick: ["pick_cover", "retire_cover_group", "reject_cover"], cut_review: ["approve_cut", "reject_cut"], candidate: ["confirm_candidate", "reject_candidate"],
   ask: ["answer_ask", "ask_resend"],
   publish_check: ["publish_check_confirm", "publish_check_revise", "publish_check_override"],
   publish_claim: ["confirm_receipt", "correct_publish"], published_ask: ["i_published"],
   writing_rule: ["approve_rule", "reject_rule", "replace_rule"],
+  sliver: ["waive_sliver_check", "waive_sliver", "reject_cut"], draft: ["approve_script", "revise_script"],
 };
 
 /** 能在对话里定：类型在表里，且挂在一条稿上——写作规则例外（不一定来自某篇稿，spec 2026-10-10 §C） */
@@ -25,10 +27,11 @@ export const chatDecidable = (item: InboxItem): boolean => Boolean(CHAT_ACTIONS[
 /** 这件事此刻在对话里能做的决定：请示只给条目自己现在有的（附件变过 → 只有「让它重发」） */
 export function chatActionsOf(item: InboxItem): readonly string[] {
   const all = CHAT_ACTIONS[item.type] ?? [];
+  if (item.type === "sliver") return sliverActions(item, all);
   return item.type === "ask" || item.type === "publish_check" ? all.filter((d) => item.actions.some((a) => a.action === d)) : all;
 }
 /** 要带一句「改哪里」的 */
-export const NOTE_ACTIONS: ReadonlySet<string> = new Set(["reject_cover", "reject_cut", "publish_check_revise"]);
+export const NOTE_ACTIONS: ReadonlySet<string> = new Set(["reject_cover", "reject_cut", "publish_check_revise", "revise_script"]);
 
 const ACTION_TEXT: Record<string, string> = {
   pick_cover: "用这组封面", retire_cover_group: "这组封面不要了（文件不删）", approve_cut: "成片就用这版",
@@ -37,6 +40,8 @@ const ACTION_TEXT: Record<string, string> = {
   confirm_receipt: "对，发了", correct_publish: "没发", i_published: "发了（他给了作品链接就放 url，原样）",
   publish_check_confirm: "没问题（照这份计划发）", publish_check_revise: "还要改（note 写他要改的地方）", publish_check_override: "破例（只在被拦时；他的原话原样记下）",
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
+  waive_sliver_check: "这条不查了（只在检查没跑成时有）", waive_sliver: "这处是故意的（带 sliver_key 点名哪一处）",
+  approve_script: "稿子没问题", revise_script: "稿子还要改（note 写他要改的地方）",
   approve_rule: "这条规则要（以后写稿都照它）", reject_rule: "这条不要（以后不再提）", replace_rule: "要，替换掉他点名的那条旧规则（带 target_rule_id）",
 };
 
@@ -83,6 +88,8 @@ function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record
   }
   if (item.type === "publish_claim") return { platform: item.detail.platform, url: item.detail.url ?? null, item: item.detail.item ?? null, reporter: item.detail.reporter ?? null };
   if (item.type === "published_ask") return { platform: item.detail.platform };
+  if (item.type === "sliver") return sliverFacts(item);
+  if (item.type === "draft") return draftFacts(item);
   if (item.type === "publish_check") return { check_id: item.detail.check_id, platform: item.detail.platform, verdict: item.detail.verdict };
   if (item.type === "ask") {
     const d = item.detail;
@@ -109,12 +116,14 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 }
 
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
-export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string; target_rule_id?: string }): Selection {
+export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string; target_rule_id?: string; sliver_key?: string }): Selection {
   if (item.type === "writing_rule") {
     if (decision !== "replace_rule") return { ok: true, params: {}, factIds: [], label: String(item.detail.rule ?? "") };
     if (!sel.target_rule_id) return bad("selector_required", "替换要说清换掉哪一条（带 target_rule_id，取生效规则的 id）；他没点名就先问他");
     return { ok: true, params: { target_rule_id: sel.target_rule_id }, factIds: [], label: String(item.detail.rule ?? "") };
   }
+  if (item.type === "sliver") return sliverSelection(item, decision, sel.sliver_key);
+  if (item.type === "draft") return { ok: true, params: {}, factIds: [], label: item.title };
   if (item.type === "ask") return askSelection(item, decision, sel.option_id);
   if (item.type === "publish_check" || item.type === "publish_claim" || item.type === "published_ask") return { ok: true, params: {}, factIds: [], label: String(item.detail.platform ?? "") };
   if (item.type === "cover_pick") {

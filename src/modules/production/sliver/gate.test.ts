@@ -170,9 +170,20 @@ describe("没跑成：拦、写原因、整条放行（§8、E1–E5、E14、E17
     expect(await reasonOf(s.c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("本机找不到这个 ChatCut 工程") });
   });
 
-  it("E3 schemaVersion 不认识 → 未检查", async () => {
-    await writeProject([gapTimeline(5)], { schema: 5 });
-    expect(await reasonOf((await setup()).c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("格式版本（5）不认识") });
+  it.each([5, 12])("E3 schemaVersion %i 不认识 → 未检查", async (v) => {
+    await writeProject([gapTimeline(5)], { schema: v });
+    expect(await reasonOf((await setup()).c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining(`格式版本（${v}）不认识`) });
+  });
+  it.each([9, 11])("E3 核过的格式版本 %i → 照常查", async (v) => {
+    await writeProject([gapTimeline(5)], { schema: v });
+    expect((await checks((await setup()).c.id)).at(-1)).toMatchObject({ status: "slivers" });
+  });
+  it("E3 版本不认识时记的「未检查」不复用：工程换成认识的版本后重查出结果", async () => {
+    await writeProject([gapTimeline(5)], { schema: 12 });
+    const s = await setup();
+    expect((await checks(s.c.id)).at(-1)).toMatchObject({ status: "unchecked", transient: true });
+    await writeProject([gapTimeline(5)], { schema: 11 });
+    expect((await runSliverCheck(s.c.id, env.dir))?.check).toMatchObject({ status: "slivers" });
   });
 
   it("E4 多条时间线且没指定 → 未检查；带 timeline_id 就查那条", async () => {

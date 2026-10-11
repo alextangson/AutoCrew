@@ -34,6 +34,8 @@ export interface ChatDecideInput {
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
   /** replace_rule：要换掉的那条生效规则 id */
   target_rule_id?: string;
+  /** waive_sliver：哪一处（list 里 points 的 sliver_key） */
+  sliver_key?: string;
 }
 
 /** 现在的样子：和 list 一样带 brief 与预览（改了什么、文件都能直接再给他看） */
@@ -43,7 +45,7 @@ type Found = { ok: true; item: InboxItem; selection: Picked } | { ok: false; res
 
 /** 条目还在、代次没变、这类事能在对话里定、选中对象明确（E6、E7、选择器） */
 async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
-  const item = (await readInbox(dataDir)).items.find((x) => x.item_id === input.item_id);
+  const item = (await readInbox(dataDir, { withDrafts: true })).items.find((x) => x.item_id === input.item_id);
   if (!item) return { ok: false, result: fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子") };
   if (item.gen !== input.gen) return { ok: false, result: fail("stale", "这件事刚变过（比如来了新的一组），先把新的样子给创始人看一遍再定", { item: await shownNow(item, input, dataDir) }) };
   if (!chatDecidable(item) || !chatActionsOf(item).includes(input.decision)) {
@@ -52,7 +54,7 @@ async function locate(input: ChatDecideInput, dataDir: string): Promise<Found> {
   }
   const badUrl = input.decision === "i_published" && str(input.url) ? urlMismatch(String(item.detail.platform ?? ""), str(input.url)) : null;
   if (badUrl) return { ok: false, result: fail("url_platform_mismatch", badUrl, { item: await shownNow(item, input, dataDir) }) };
-  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined, target_rule_id: str(input.target_rule_id) || undefined });
+  const selection = selectionOf(item, input.decision, { group_id: str(input.group_id) || undefined, fact_id: str(input.fact_id) || undefined, option_id: str(input.option_id) || undefined, target_rule_id: str(input.target_rule_id) || undefined, sliver_key: str(input.sliver_key) || undefined });
   if (!selection.ok) return { ok: false, result: fail(selection.code, selection.error, { item: await shownNow(item, input, dataDir) }) };
   return { ok: true, item, selection };
 }
@@ -77,7 +79,7 @@ function validInput(input: ChatDecideInput): Result | null {
 }
 
 const hashOf = (input: ChatDecideInput, requester: string) => payloadHash({ item_id: input.item_id, gen: input.gen, decision: input.decision,
-  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), ...(str(input.url) ? { url: str(input.url) } : {}), ...(str(input.target_rule_id) ? { target_rule_id: str(input.target_rule_id) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
+  group_id: str(input.group_id), fact_id: str(input.fact_id), ...(str(input.option_id) ? { option_id: str(input.option_id) } : {}), ...(str(input.url) ? { url: str(input.url) } : {}), ...(str(input.target_rule_id) ? { target_rule_id: str(input.target_rule_id) } : {}), ...(str(input.sliver_key) ? { sliver_key: str(input.sliver_key) } : {}), cover_text: typeof input.cover_text === "string" ? input.cover_text.trim() : null,
   note: str(input.note), founder_words: str(input.founder_words), requester });
 
 type Bind = (b: Binding) => Promise<void>;
@@ -118,7 +120,7 @@ export async function chatDecide(input: ChatDecideInput, dataDir = getDataDir())
 async function normalize(r: Result, itemId: string, input: ChatDecideInput, dataDir: string): Promise<Result> {
   if (r.code === "gone" || r.code === "already_decided") return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
   if (r.code !== "stale") return r;
-  const fresh = (await readInbox(dataDir)).items.find((x) => x.item_id === itemId);
+  const fresh = (await readInbox(dataDir, { withDrafts: true })).items.find((x) => x.item_id === itemId);
   if (!fresh) return fail("already_handled", "这件事已在别处处理（或已经关了），不用再定：重新 list 看现在的样子");
   return fail("stale", "这件事刚变过，先把新的样子给创始人看一遍再定", { item: await shownNow(fresh, input, dataDir) });
 }
@@ -168,8 +170,15 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   });
   if (r.ok !== true) return normalize(r, item.item_id, input, dataDir);
   const id = (r.decision as { id?: string } | undefined)?.id;
-  return { ...r, recorded_as: "chat", next_action: `告诉创始人已经按他的原话记下了${id ? `；他要撤回就 revoke{content_id:"${item.content_id}", decision_id:"${id}"}（只有批准能撤）` : ""}。` };
+  return { ...r, recorded_as: "chat", next_action: `告诉创始人已经按他的原话记下了${id ? `；他要撤回就 revoke{content_id:"${item.content_id}", decision_id:"${id}"}（只有批准能撤）` : ""}。${FOLLOW_UP[input.decision] ?? ""}` };
 }
+
+/** 定完之后紧跟着该做的：认稿后成片 / 封面才出条目；闪帧处理完成片那件才能过 */
+const FOLLOW_UP: Record<string, string> = {
+  approve_script: "认稿后成片 / 封面审阅才会出现：马上再 list{content_id} 一次，有 cut_review / cover_pick 就立刻按 brief 给他看。",
+  waive_sliver_check: "再 list{content_id} 看成片那件（cut_review）：他那句话里已经说了「用」就用同一句原话 decide approve_cut；没说就把成片给他看。",
+  waive_sliver: "还有没放行的处就接着逐处定；都放行了再 list{content_id} 看成片那件，他已说「用」就用同一句原话 decide approve_cut。",
+};
 
 /** revoke：「撤回刚才那个」——走现有的撤回批准（只撤本轮的成片 / 封面批准） */
 export async function chatRevoke(input: ChatDecideInput, dataDir = getDataDir()): Promise<Result> {
