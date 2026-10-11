@@ -95,6 +95,8 @@ export interface Fact {
   check_id?: string;
   /** 写入时盖的把关结论 */
   gate?: GateStamp;
+  /** AI 回执写入时就认定直接算已投出（2026-10-11，同时盖了把关结论）；旧回执没有 = 待核 */
+  claim_accepted?: boolean;
   note?: string;
 }
 

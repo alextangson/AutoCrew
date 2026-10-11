@@ -17,7 +17,7 @@ import { validCoverGroups, type GroupView } from "./cover-groups.js";
 import { cutRejectNote, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import type { Explanation } from "./explain.js";
 import { hostLabel } from "./host-label.js";
-import type { Slot } from "./receipts.js";
+import { overdueSchedule, type Slot } from "./receipts.js";
 import { fileName, isStrayCover, KIND_NAME, measure, plainReason } from "./plain-reason.js";
 import { markedCuts } from "./ready.js";
 import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
@@ -318,17 +318,16 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
   }
   if (!doc || !exp) return out;
   out.push(...receipts.pending.map((s) => claimItem(doc, s, `${s.source === "claim" ? hostLabel(s.host) : "数据回流"}说已经发了（${platformLabel(s.platform)}）`)));
-  out.push(...receipts.live.filter((s) => scheduledOverdue(s)).map((s) => claimItem(doc, s, `${platformLabel(s.platform)}定时时间已过一天，还没核到公开，发出去了吗`, true)));
+  out.push(...receipts.live.flatMap((s) => {
+    const sched = overdueSchedule(doc, s.round, s.platform);
+    // 指向那条定时回执：「对，发了」按公开记（decisions.confirmReceipt）
+    return sched ? [claimItem(doc, { ...s, fact_id: sched.id, at: sched.published_at! }, `${platformLabel(s.platform)}定时时间已过一天，还没核到公开，发出去了吗`, true)] : [];
+  }));
   if (exp.stage !== "待发布" && exp.stage !== "已发布") return out;
   return [...out, ...publishedAsks(doc, input, new Set([...live, ...receipts.pending.map((s) => s.platform), ...receipts.rejected.map((s) => s.platform)]))];
 }
 
 const DAY_MS = 24 * 3600 * 1000;
-
-/** AI 报的定时（直接认、没被可信观察顶掉）过了定时时间一天：问一次（2026-10-11） */
-function scheduledOverdue(s: Slot): boolean {
-  return s.by === "accepted" && s.pub_state === "scheduled" && Date.now() - Date.parse(s.at) > DAY_MS;
-}
 
 /** 「X 说已经发了」与定时过期追问共用一种条目：对，发了 / 没发 */
 function claimItem(doc: ProductionDoc, s: Slot, summary: string, overdue = false): Draft {

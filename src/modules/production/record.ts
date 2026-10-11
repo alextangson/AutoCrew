@@ -59,7 +59,7 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
   const r = await mutateProduction(content.id, dataDir, (doc) => {
     // 模型声明是一条独立的观察（不可变，不与可信回执合并）；是本轮刚说的，所以属于本轮
     const gate = accepted ? slotGate(doc, doc.round, platform) ?? planGate : undefined;
-    const obs = { ...base, ...(gate ? { gate } : {}) };
+    const obs = { ...base, ...(accepted ? { accepted: true } : {}), ...(gate ? { gate } : {}) };
     // 同一个 request_id 重放不再写；同一轮、同平台、同一个 AI、同一链接 / 作品 id / 状态已经说过：不再追加（模型反复 confirm_published）
     const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id)
       ?? doc.facts.find((f) => f.kind === "publish" && f.obs_source === "claim" && f.round === doc.round && f.platform === platform && f.by?.host === a.host

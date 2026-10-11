@@ -10,7 +10,10 @@ import { planEntry, planOf, registeredVideo, type Reg } from "../publish/review-
 import { founderDecision } from "./decisions.js";
 import { readInbox } from "./inbox-read.js";
 import { explainContent } from "./read.js";
-import { importObservations } from "./receipts.js";
+import { importObservations, observationFact, slotOf, type Observation } from "./receipts.js";
+import { readProductionDoc } from "../../storage/production-store.js";
+import { decideItem } from "./inbox-decide.js";
+import { isWorkUrl } from "./chat-approval/post-publish-view.js";
 import { mutateProduction } from "./service.js";
 import { makeEnv, record, type Env } from "./testkit.js";
 import { chatRevoke } from "./chat-approval/decide.js";
@@ -31,8 +34,8 @@ async function planned(r: Reg, platforms: string[]) {
   await fs.writeFile(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify(planOf(r, platforms.map((p) => planEntry(r, p, ["3:4", "4:3"])))));
 }
 const URLS: Record<string, string> = {
-  douyin: "https://www.douyin.com/video/1", xiaohongshu: "https://www.xiaohongshu.com/explore/2",
-  wechat_video: "https://channels.weixin.qq.com/x/3", bilibili: "https://www.bilibili.com/video/BV4",
+  douyin: "https://www.douyin.com/video/1", xiaohongshu: "https://www.xiaohongshu.com/explore/64a1b2c3d4e5f6a7b8c9d0e1",
+  bilibili: "https://www.bilibili.com/video/BV1xx411c7mD",
 };
 
 describe("「发了吗」等满一天", () => {
@@ -58,11 +61,15 @@ describe("直接认的 AI 回执", () => {
     const r = await registeredVideo(env);
     const ps = ["douyin", "xiaohongshu", "wechat_video", "bilibili"];
     await planned(r, ps);
-    for (const p of ps) expect(await claim(r, { platform: p, url: URLS[p], pub_state: "public" })).toMatchObject({ ok: true, verified: true });
-    later(48);
+    // 视频号没有可靠的作品链接形状，只能报定时直接认（Codex 审 P1）
+    for (const p of ps) {
+      const how = p === "wechat_video" ? { pub_state: "scheduled", scheduled_at: new Date(Date.now() + H).toISOString() } : { url: URLS[p], pub_state: "public" };
+      expect(await claim(r, { platform: p, ...how })).toMatchObject({ ok: true, verified: true });
+    }
     const exp = await stage(r.id);
     expect(exp.stage).toBe("已发布");
     expect(exp.reason).toContain("Codex 报已公开");
+    later(20);
     expect((await items(r.id)).filter((i) => i.type === "publish_claim" || i.type === "published_ask")).toEqual([]);
   });
 
@@ -127,5 +134,62 @@ describe("直接认的 AI 回执", () => {
     await mutateProduction(r.id, env.dir, (doc) => ({ value: importObservations(doc, [{ source: "metrics_title", platform: "douyin", item_id: "9", pub_state: "public", evidence: "数据回流按标题猜是这条" }]), events: [] }));
     expect((await ofType(r.id, "publish_claim")).map((i) => i.summary)).toEqual(["数据回流说已经发了（抖音）"]);
     expect((await stage(r.id)).stage).toBe("待发布");
+  });
+});
+
+const observe = (r: Reg, o: Omit<Observation, "evidence">) =>
+  mutateProduction(r.id, env.dir, (doc) => ({ value: importObservations(doc, [{ evidence: "测试", ...o }]), events: [] }));
+
+describe("Codex 审 a22bb235", () => {
+  it("P1 主页 / 上传页 / 登录页 / 创作者中心不算作品链接：仍待核", async () => {
+    for (const u of ["https://www.douyin.com/", "https://creator.douyin.com/creator-micro/content/upload", "https://www.douyin.com/user/self", "https://www.xiaohongshu.com/login"]) {
+      expect(isWorkUrl(u.includes("xiaohongshu") ? "xiaohongshu" : "douyin", u)).toBe(false);
+    }
+    expect(isWorkUrl("bilibili", "https://member.bilibili.com/platform/upload/video/frame")).toBe(false);
+    expect(isWorkUrl("wechat_video", "https://channels.weixin.qq.com/platform/post/list")).toBe(false);
+    expect(isWorkUrl("douyin", "https://v.douyin.com/iRNBho6u/")).toBe(true);
+    expect(isWorkUrl("bilibili", "https://b23.tv/abc123")).toBe(true);
+    expect(isWorkUrl("xiaohongshu", "https://www.xiaohongshu.com/discovery/item/64a1b2c3d4e5f6a7b8c9d0e1")).toBe(true);
+    const r = await registeredVideo(env);
+    expect(await claim(r, { platform: "douyin", url: "https://creator.douyin.com/creator-micro/content/upload", pub_state: "public" })).toMatchObject({ verified: false });
+    expect((await stage(r.id)).stage).toBe("待发布");
+  });
+
+  it("P1 发布计划也写了定时、后来变成应已公开：追问照样出；计划报公开才清", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin"]);
+    const at = new Date(Date.now() + H).toISOString();
+    await claim(r, { platform: "douyin", pub_state: "scheduled", scheduled_at: at });
+    await observe(r, { source: "plan", platform: "douyin", pub_state: "scheduled", published_at: at });
+    later(1 + 25);
+    await observe(r, { source: "plan", platform: "douyin", pub_state: "overdue", published_at: at });
+    expect((await ofType(r.id, "publish_claim")).map((i) => i.summary)).toEqual(["抖音定时时间已过一天，还没核到公开，发出去了吗"]);
+    await observe(r, { source: "plan", platform: "douyin", pub_state: "public", published_at: at });
+    expect(await ofType(r.id, "publish_claim")).toEqual([]);
+  });
+
+  it("P2 本次之前写下、没盖把关结论的 AI 回执读出来不升级：仍待核", async () => {
+    const r = await registeredVideo(env);
+    await mutateProduction(r.id, env.dir, (doc) => {
+      doc.facts.push(observationFact(doc, { source: "claim", platform: "douyin", url: URLS.douyin, pub_state: "reviewing", evidence: "codex 说已发布", by: { host: "codex" } }, doc.round));
+      return { value: null, events: [] };
+    });
+    expect((await ofType(r.id, "publish_claim")).map((i) => i.detail.platform)).toEqual(["douyin"]);
+    expect((await stage(r.id)).stage).toBe("待发布");
+  });
+
+  it("P2 定时追问答「对，发了」记成已公开；之后可信数据照样能更新这个槽", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin"]);
+    await claim(r, { platform: "douyin", pub_state: "scheduled", scheduled_at: new Date(Date.now() + H).toISOString() });
+    later(26);
+    const [it0] = await ofType(r.id, "publish_claim");
+    expect(await decideItem({ content_id: r.id, item_id: it0.item_id, gen: it0.gen, action: "confirm_receipt", ...it0.actions[0].params }, env.dir)).toMatchObject({ ok: true });
+    let slot = slotOf((await readProductionDoc(r.id, env.dir))!, 1, "douyin")!;
+    expect(slot).toMatchObject({ by: "founder", pub_state: "public" });
+    expect(await ofType(r.id, "publish_claim")).toEqual([]);
+    await observe(r, { source: "metrics_id", platform: "douyin", item_id: "7009", pub_state: "public" });
+    slot = slotOf((await readProductionDoc(r.id, env.dir))!, 1, "douyin")!;
+    expect(slot).toMatchObject({ by: "trusted", source: "metrics_id" });
   });
 });

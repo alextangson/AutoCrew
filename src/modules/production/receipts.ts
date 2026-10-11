@@ -24,7 +24,7 @@ import { entryPayloadHash } from "../publish/review-gate/check.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
 import { normalizePlatform } from "../publish/review-gate/platforms.js";
-import { urlMismatch } from "./chat-approval/post-publish-view.js";
+import { isWorkUrl } from "./chat-approval/post-publish-view.js";
 
 /** 平台名按发布闸门同一张别名表归一（「视频号」= wechat_video）：认不出的原样 */
 export const canonPlatform = (p: string): string => normalizePlatform(p) ?? p;
@@ -32,11 +32,11 @@ export const canonPlatform = (p: string): string => normalizePlatform(p) ?? p;
 export type ObsSource = "plan" | "metrics_id" | "metrics_title" | "claim";
 const TRUSTED: ReadonlySet<ObsSource> = new Set(["plan", "metrics_id"]);
 
-/** AI 的说法能不能直接认（2026-10-11）：报了定时；或带本平台作品链接且公开 / 审核中 */
+/** AI 的说法能不能直接认（2026-10-11，只在写入时判一次，记进 claim_accepted）：报了定时；或带本平台能指认作品的链接且公开 / 审核中 */
 export function claimAccepted(o: Pick<Observation, "source" | "platform" | "url" | "pub_state">): boolean {
   if (o.source !== "claim") return false;
   if (o.pub_state === "scheduled") return true;
-  return Boolean(o.url) && (o.pub_state === "public" || o.pub_state === "reviewing") && urlMismatch(o.platform, o.url!) === null;
+  return Boolean(o.url) && (o.pub_state === "public" || o.pub_state === "reviewing") && isWorkUrl(o.platform, o.url!);
 }
 
 export interface Observation {
@@ -57,6 +57,8 @@ export interface Observation {
   gate?: GateStamp;
   /** 实际提交时间（把关判定、轮次；同一条流里它变了 = 新提交） */
   submitted_at?: string;
+  /** AI 回执写入时判定直接认（claim_accepted） */
+  accepted?: boolean;
   /** 不落盘：把关证据时间（审核中按提交 → 核实 → 定时），也是旧版误写成发布时间的那个值 */
   evidence_at?: string;
 }
@@ -121,7 +123,7 @@ export function observationsOf(doc: ProductionDoc): ObsFact[] {
     ...(f.url ? { url: f.url } : {}), ...(f.item_id ? { item_id: f.item_id } : {}), pub_state: f.pub_state ?? "reviewing",
     ...(f.published_at ? { published_at: f.published_at } : {}), ...(f.reason ? { reason: f.reason } : {}),
     ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), ...(f.gate ? { gate: f.gate } : {}), evidence: f.evidence ?? "",
-    ...(f.submitted_at ? { submitted_at: f.submitted_at } : {}),
+    ...(f.submitted_at ? { submitted_at: f.submitted_at } : {}), ...(f.claim_accepted ? { accepted: true } : {}),
   }]));
 }
 
@@ -171,7 +173,7 @@ export function observationFact(doc: ProductionDoc, o: Observation, round: numbe
     at: o.published_at ?? now, seen_at: now, obs_source: o.source, platform: o.platform, pub_state: o.pub_state, verified: TRUSTED.has(o.source), evidence: o.evidence,
     ...(o.published_at ? { published_at: o.published_at } : {}), ...(o.url ? { url: o.url } : {}), ...(o.item_id ? { item_id: o.item_id } : {}),
     ...(o.reason ? { reason: o.reason } : {}), ...(o.account ? { account: o.account } : {}), ...(o.by ? { by: o.by } : {}), ...(o.check_id ? { check_id: o.check_id } : {}),
-    ...(o.gate ? { gate: o.gate } : {}), ...(o.submitted_at ? { submitted_at: o.submitted_at } : {}),
+    ...(o.gate ? { gate: o.gate } : {}), ...(o.submitted_at ? { submitted_at: o.submitted_at } : {}), ...(o.source === "claim" && o.accepted ? { claim_accepted: true } : {}),
   };
 }
 
@@ -274,7 +276,7 @@ function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[]
   // 旧版纠正指向具体事实 / 决定 id：那一条作废
   const killed = new Set(doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id && !d.target_id.startsWith("slot:")).map((d) => d.target_id!));
   return [
-    ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : claimAccepted(o) ? "accepted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
+    ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : o.source === "claim" && o.accepted ? "accepted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
     ...decisions.filter((d) => d.type === "i_published" && canonPlatform(d.platform ?? "") === platform)
       .map((d): Entry => ({ cls: "founder", at: Date.parse(d.at), pub_state: "public", fact_id: null, source: "founder", evidence: "你标了已发布", d })),
     // 创始人确认 AI 的说法：保留那条说法里的提交状态（确认真实性 ≠ 确认已公开）
@@ -324,4 +326,21 @@ export function receiptsOfRound(doc: ProductionDoc): { live: Slot[]; rejected: S
     rejected: slots.filter((s) => s.verified && s.pub_state === "rejected"),
     pending: slots.filter((s) => !s.verified),
   };
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * AI 报的定时还悬着（2026-10-11）：这个槽（纠正之后）有直接认的定时回执，最晚的定时时间过了一天，
+ * 还没有公开的确认——可信观察报公开（发布计划 public / 数据回流按作品 id）或创始人的决定。
+ * 不看槽现在由谁说了算：发布计划后来也写了定时、再变成应已公开（overdue），都不算确认。
+ */
+export function overdueSchedule(doc: ProductionDoc, round: number, platform: string): ObsFact | null {
+  const cut = correctedAt(doc, slotId(round, platform));
+  const entries = entriesOf(doc, round, platform).filter((e) => e.at > cut);
+  const sched = entries.filter((e) => e.cls === "accepted" && e.o?.pub_state === "scheduled" && e.o.published_at).map((e) => e.o!)
+    .sort((a, b) => Date.parse(a.published_at!) - Date.parse(b.published_at!)).at(-1);
+  if (!sched || Date.now() - Date.parse(sched.published_at!) <= DAY_MS) return null;
+  const confirmed = entries.some((e) => e.cls === "founder" || (e.cls === "trusted" && e.pub_state === "public"));
+  return confirmed ? null : sched;
 }
