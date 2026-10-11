@@ -15,6 +15,7 @@ import {
 } from "./production-store.js";
 import type { ProductionDoc } from "./production-types.js";
 import { isVideoPlatform } from "./stage-guard.js";
+import { provenanceFields } from "../modules/production/decision-provenance.js";
 
 // ---- 锁内投影（Codex 审 P1：认稿落盘时同步完成投影与冻结，不等下一条新事实）----
 
@@ -86,7 +87,7 @@ export function modelTransitionRefusal(target: ContentStatus, decidedBy: Editor 
   return decidedBy === "agent" && FOUNDER_ONLY_STATUSES.has(target) ? SCRIPT_APPROVAL_FOUNDER_ONLY : null;
 }
 
-/** 创始人流转落盘后：认稿写决定；从认过稿的状态拉回写稿段写撤回 */
+/** 创始人流转落盘后：认稿写决定；从认过稿的状态拉回写稿段写撤回。对话里定的带上调用链挂的来源（原话、发起方、请求号） */
 export async function recordScriptTransition(
   id: string, dataDir: string | undefined,
   content: Pick<Content, "platform" | "body">, from: ContentStatus, to: ContentStatus, decidedBy: Editor | undefined,
@@ -100,8 +101,8 @@ export async function recordScriptTransition(
   const at = new Date().toISOString();
   const hash = bodyHash(content.body);
   next.decisions.push(approving
-    ? { id: newId("dec"), type: "script_approval", round: next.round, at, source: "founder", body_hash: hash }
-    : { id: newId("dec"), type: "script_revoke", round: next.round, at, source: "founder" });
+    ? { id: newId("dec"), type: "script_approval", round: next.round, at, ...provenanceFields(), body_hash: hash }
+    : { id: newId("dec"), type: "script_revoke", round: next.round, at, ...provenanceFields() });
   const events = stampEvents(next, [{ type: approving ? "script_approved" : "script_revoked", detail: { body_hash: hash, from, to } }], at);
   await writeProductionDoc(id, dataDir, next, doc.revision);
   await appendTimeline(id, dataDir, events);

@@ -100,6 +100,8 @@ describe("认稿在对话里定（B2）", () => {
     const r = await decide(ia, "approve_script", { founder_words: "稿子没问题" });
     expect(r).toMatchObject({ ok: true, recorded_as: "chat", next_action: expect.stringContaining("再 list") });
     expect((await getContent(a.id, env.dir))!.status).toBe("approved");
+    // 认稿决定本身也要带对话来源（Codex 审 P2：曾记成网页的 founder、丢了原话和请求号）
+    expect((await doc(a.id)).decisions.find((x) => x.type === "script_approval")).toMatchObject({ source: "chat", founder_words: "稿子没问题", requested_by: "Claude（会话 sess-abc）", request_id: expect.any(String) });
     const b = await videoContent(env, "稿二", "draft_ready");
     const ib = await itemOf("draft", b.id);
     expect(await decide(ib, "revise_script")).toMatchObject({ code: "note_required" });
