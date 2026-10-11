@@ -107,7 +107,7 @@ export const contentSaveSchema = Type.Object({
   kind: Type.Optional(Type.Unsafe<string>({
     type: "string",
     enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard", "粗剪", "分镜", "样片", "花费", "配乐", "其他"],
-    description: "record：事实种类；ask：请示种类（粗剪 / 分镜 / 样片 / 花费 / 配乐 / 其他）。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
+    description: "record：事实种类；ask：请示种类（粗剪 / 分镜 / 样片 / 花费 / 配乐 / 其他）。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（带本平台 url 或报定时的直接算已投出，其余待核）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
   since_seq: Type.Optional(Type.Integer({ minimum: 0, description: "summary：只要这个时间线序号之后的变化；翻页用上次回的 next_since_seq（has_more=true 就接着翻）." })),
@@ -135,6 +135,8 @@ export const contentSaveSchema = Type.Object({
   account: Type.Optional(Type.String({ description: "record kind=publish：发布账号（可选）." })),
   url: Type.Optional(Type.String({ description: "record kind=publish：作品链接（或填 item_id）." })),
   item_id: Type.Optional(Type.String({ description: "record kind=publish：平台作品 id（或填 url）." })),
+  pub_state: Type.Optional(Type.String({ description: "kind=publish：public/reviewing/scheduled." })),
+  scheduled_at: Type.Optional(Type.String({ description: "scheduled 的定时公开时间（ISO）." })),
   claim_token: Type.Optional(Type.String({
     description:
       "认领令牌（写操作回执或 autocrew_desk claim 给的）。这篇有活认领时 update / transition 必须带它，同宿主的另一个会话也一样；没人认领就不用带，写下去会自动认领并回令牌。",

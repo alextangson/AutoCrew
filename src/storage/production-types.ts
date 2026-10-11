@@ -83,7 +83,7 @@ export interface Fact {
   round_unsure?: true;
   /** 回执观察的键（来源 | 平台 | 作品身份 | 状态 | 发布时间 | 原因），同键不重写 */
   receipt_key?: string;
-  /** 回执观察的来源：plan / metrics_id（可信）、metrics_title / claim（待核） */
+  /** 回执观察的来源：plan / metrics_id（可信）、claim（带本平台链接或报定时的直接认，其余待核）、metrics_title（待核） */
   obs_source?: "plan" | "metrics_id" | "metrics_title" | "claim";
   /** 平台上的发布时间（证据），轮次按它盖 */
   published_at?: string;

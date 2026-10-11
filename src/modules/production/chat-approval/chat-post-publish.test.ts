@@ -1,7 +1,7 @@
 /**
  * 发布后的确认在对话里定（spec 2026-10-06 proactive-chat-review，Addendum 3）：每条一个测试。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readProductionDoc } from "../../../storage/production-store.js";
@@ -14,7 +14,10 @@ import { NO_URL, urlMismatch } from "./post-publish-view.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); setPullDeps({ benchPort: 4317 }); });
-afterEach(async () => { setPullDeps(null); await env.cleanup(); });
+afterEach(async () => { vi.useRealTimers(); setPullDeps(null); await env.cleanup(); });
+// 2026-10-11：「发了吗」只在待发布满一天才问——把钟拨到登记之后 25 小时
+const aDayLater = () => vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 25 * 3600_000 });
+
 
 type Item = { item_id: string; gen: string; type: string; chat_decidable: boolean; brief: string; decisions: Array<{ decision: string }>; facts: { platform: string } };
 const tool = (p: Record<string, unknown>) => executeReviewInbox({ _dataDir: env.dir, _host: "claude-code", _session: "s1", ...p });
@@ -32,12 +35,13 @@ const claim = (r: Reg, extra: Record<string, unknown> = {}) => record(env, { con
 describe("publish_claim（第 1 条）", () => {
   it("brief：平台、谁说的、作品链接、依据；能定「对，发了」/「没发」", async () => {
     const r = await registeredVideo(env);
-    await claim(r, { url: "https://www.douyin.com/video/123" });
+    // 2026-10-11 起带本平台链接的直接认；对不上平台的链接仍要他确认
+    await claim(r, { url: "https://example.com/video/123" });
     const [it0] = await listed("publish_claim");
     expect(it0.chat_decidable).toBe(true);
     expect(it0.decisions.map((d) => d.decision)).toEqual(["confirm_receipt", "correct_publish"]);
     expect(it0.brief).toContain("Claude说已经发了（抖音）");
-    expect(it0.brief).toContain("作品链接：https://www.douyin.com/video/123");
+    expect(it0.brief).toContain("作品链接：https://example.com/video/123");
     expect(it0.brief).toContain("回我「对，发了」/「没发」");
     expect(await decideIt(it0, "confirm_receipt")).toMatchObject({ ok: true, recorded_as: "chat" });
     expect((await decisions(r.id, "publish_confirm"))[0]).toMatchObject({ source: "chat", founder_words: "发了" });
@@ -57,8 +61,9 @@ describe("published_ask（第 2 条）", () => {
   it("「发了」带作品链接原样记；链接不是这个平台的 → 拒并说原因，什么都不记", async () => {
     const r = await registeredVideo(env);
     await planned(r, ["douyin"]);
+    aDayLater();
     const [it0] = await listed("published_ask");
-    expect(it0.brief).toContain("发了吗（抖音）");
+    expect(it0.brief).toContain("待发布一天了，还没收到抖音的发布回执");
     const bad = await decideIt(it0, "i_published", { url: "https://www.xiaohongshu.com/explore/abc" });
     expect(bad).toMatchObject({ ok: false, code: "url_platform_mismatch", error: expect.stringContaining("不是抖音的作品链接"), item: { item_id: it0.item_id } });
     expect(await decisions(r.id, "i_published")).toHaveLength(0);
@@ -89,6 +94,7 @@ describe("「都发了」（第 3 条）", () => {
   it("列出来的几个平台各定一次，同一句原话", async () => {
     const r = await registeredVideo(env);
     await planned(r, ["douyin", "bilibili"]);
+    aDayLater();
     const items = await listed("published_ask");
     expect(items).toHaveLength(2);
     for (const it of items) expect(await decideIt(it, "i_published", { founder_words: "都发了" })).toMatchObject({ ok: true });
@@ -102,10 +108,11 @@ describe("守卫（第 4 条）", () => {
   it("代次对不上 → stale + 带 brief 的新样子；看过之后已经有人报了发布（这件没了）→ already_handled，都不记", async () => {
     const r = await registeredVideo(env);
     await planned(r, ["douyin"]);
+    aDayLater();
     const [old] = await listed("published_ask");
     const stale = await decideIt({ ...old, gen: "old-gen" }, "i_published");
     expect(stale).toMatchObject({ ok: false, code: "stale" });
-    expect((stale.item as Item).brief).toContain("发了吗（抖音）");
+    expect((stale.item as Item).brief).toContain("还没收到抖音的发布回执");
     await claim(r, { url: "https://www.douyin.com/video/9" });
     expect(await decideIt(old, "i_published")).toMatchObject({ ok: false, code: "already_handled" });
     expect(await decisions(r.id, "i_published")).toHaveLength(0);
@@ -114,6 +121,7 @@ describe("守卫（第 4 条）", () => {
   it("网页上已经定了 → already_handled；网页那条路照旧记 founder；同一 request_id 重试回放", async () => {
     const r = await registeredVideo(env);
     await planned(r, ["douyin", "bilibili"]);
+    aDayLater();
     const [a, b] = await listed("published_ask");
     expect(await decideItem({ content_id: r.id, item_id: a.item_id, gen: a.gen, action: "i_published" }, env.dir)).toMatchObject({ ok: true });
     expect((await decisions(r.id, "i_published"))[0]).toMatchObject({ source: "founder" });

@@ -309,6 +309,9 @@
      "platform": {
       "type": "string"
      },
+     "pub_state": {
+      "type": "string"
+     },
      "publish_url": {
       "type": "string"
      },
@@ -334,6 +337,9 @@
      },
      "review": {
       "type": "boolean"
+     },
+     "scheduled_at": {
+      "type": "string"
      },
      "siblings": {
       "items": {
@@ -1364,6 +1370,9 @@
       "type": "string"
      },
      "option_id": {
+      "type": "string"
+     },
+     "platform": {
       "type": "string"
      },
      "preview_dir": {
@@ -3227,6 +3236,9 @@
      "platform": {
       "type": "string"
      },
+     "pub_state": {
+      "type": "string"
+     },
      "publish_url": {
       "type": "string"
      },
@@ -3252,6 +3264,9 @@
      },
      "review": {
       "type": "boolean"
+     },
+     "scheduled_at": {
+      "type": "string"
      },
      "siblings": {
       "items": {
@@ -4282,6 +4297,9 @@
       "type": "string"
      },
      "option_id": {
+      "type": "string"
+     },
+     "platform": {
       "type": "string"
      },
      "preview_dir": {

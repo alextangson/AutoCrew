@@ -26,6 +26,10 @@ export interface RecordArgs {
   account?: string;
   url?: string;
   item_id?: string;
+  /** kind=publish：AI 报的平台状态（公开 / 审核中 / 定时），默认审核中 */
+  pub_state?: "public" | "reviewing" | "scheduled";
+  /** kind=publish + 定时：定时公开的时间（ISO） */
+  scheduled_at?: string;
   host: string;
   session?: string;
   /** kind=cut：agent 标「可以审了」（review-inbox §7-1） */
@@ -92,6 +96,22 @@ export function parsePaths(v: unknown): Parsed<string[] | undefined> {
   return { ok: false, code: "bad_param", error: `paths 解析不了（要是 ["3:4 路径","4:3 路径"]）：${v.slice(0, 80)}` };
 }
 
+const PUB_STATES: Record<string, "public" | "reviewing" | "scheduled"> = {
+  public: "public", 公开: "public", 已公开: "public", reviewing: "reviewing", 审核中: "reviewing", scheduled: "scheduled", 定时: "scheduled", 已定时: "scheduled",
+};
+
+/** kind=publish 的状态与定时时间：定时必须带能解析的时间 */
+function parsePubState(params: Record<string, unknown>): Parsed<Pick<RecordArgs, "pub_state" | "scheduled_at">> {
+  const raw = str(params.pub_state);
+  const at = str(params.scheduled_at);
+  if (!raw) return { ok: true, value: {} };
+  const pub_state = PUB_STATES[raw.toLowerCase()];
+  if (!pub_state) return { ok: false, code: "bad_param", error: `pub_state 只能是 public / reviewing / scheduled，收到 ${raw.slice(0, 40)}` };
+  if (pub_state !== "scheduled") return { ok: true, value: { pub_state } };
+  if (!at || Number.isNaN(Date.parse(at))) return { ok: false, code: "bad_param", error: "pub_state=scheduled 要带 scheduled_at（定时公开时间，ISO 格式）" };
+  return { ok: true, value: { pub_state, scheduled_at: new Date(Date.parse(at)).toISOString() } };
+}
+
 export function normalizeRecordArgs(params: Record<string, unknown>): Parsed<RecordArgs> {
   const content_id = str(params.content_id) ?? str(params.id);
   if (!content_id) return { ok: false, code: "bad_param", error: "record 要带 content_id" };
@@ -113,6 +133,9 @@ export function normalizeRecordArgs(params: Record<string, unknown>): Parsed<Rec
   if (ratio.value) out.ratio = ratio.value;
   if (version.value) out.version = version.value;
   if (uses.value) out.uses_aroll = uses.value;
+  const pub = parsePubState(params);
+  if (!pub.ok) return pub;
+  Object.assign(out, pub.value);
   const paths = parsePaths(params.paths);
   if (!paths.ok) return paths;
   if (paths.value) {

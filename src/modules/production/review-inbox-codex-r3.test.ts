@@ -1,7 +1,7 @@
 /**
  * 等你拍板 2a-1 Codex 第三轮会审（1 P1 + 2 P2）的回归（~/.cache/autocrew-yt/review-inbox/codex-review-2a1-r3.txt）。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readProductionDoc } from "../../storage/production-store.js";
@@ -21,7 +21,10 @@ import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
-afterEach(async () => { await env.cleanup(); });
+afterEach(async () => { vi.useRealTimers(); await env.cleanup(); });
+// 2026-10-11：「发了吗」只在待发布满一天才问——把钟拨到登记之后 25 小时
+const aDayLater = () => vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 25 * 3600_000 });
+
 
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;
 const items = async (id: string) => (await readInbox(env.dir, { contentId: id, withDrafts: true })).items;
@@ -366,6 +369,7 @@ describe("整分支审（2a vs main）", () => {
   it("「已经发出去了」之后纠正：「发了吗」换新代次回来", async () => {
     const r = await registeredVideo(env);
     await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ final_video: { path: r.video }, platforms: [{ platform: "douyin" }] }));
+    aDayLater();
     const it0 = (await byType(r.id, "published_ask"))!;
     expect(await decideItem({ content_id: r.id, item_id: it0.item_id, gen: it0.gen, action: "i_published", ...it0.actions[0].params }, env.dir)).toMatchObject({ ok: true });
     expect(await decide(r.id, "correct_publish", { target_id: "slot:1:douyin" }, env.dir)).toMatchObject({ ok: true });

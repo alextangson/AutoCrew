@@ -30,6 +30,7 @@ import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verd
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
 function slotLabel(w: Slot): string {
   if (w.by === "founder") return w.source === "founder" && w.fact_id ? "你确认过 AI 说的发布" : "你标了已发布";
+  if (w.by === "accepted") return `${hostLabel(w.host)} ${w.pub_state === "scheduled" ? "报已定时" : "报已发布"}`;
   if (w.source === "metrics_id") return "数据回流按作品 id 对上";
   return "发布计划里的记录";
 }

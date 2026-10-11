@@ -8,8 +8,11 @@
  * 2. 轮次在写入时盖一次：有发布时间 → 按历次「重开文稿」切；没有时间 → 同平台历史上见过同一链接 / 作品 id 就沿用那一轮
  *    （数据回流晚到的绑定不把旧作品算进新一轮），否则算当前轮；创始人可以「纠正」。
  * 3. 槽的状态：本轮该平台出现过的最可信的一类里，**最后一条**说了算——
- *    可信（发布计划、数据回流按作品 id）> 创始人（「我发了」、确认 AI 的说法）> 待核（AI 说发了、数据回流按标题猜）。
- *    删了重发 → 最新的算，早的留作历史。AI 的说法从不靠身份匹配自动核实：同平台同轮来了可信观察就被顶掉，或创始人确认。
+ *    可信（发布计划、数据回流按作品 id）> 创始人（「我发了」、确认 AI 的说法）> 直接认（AI 说法带本平台作品链接、或报了定时）
+ *    > 待核（AI 说发了但没链接 / 链接不是这个平台的、数据回流按标题猜）。删了重发 → 最新的算，早的留作历史。
+ *    2026-10-11 创始人改口（推翻 09-29「AI 的说法从不自动核实」）：「AI 发了还要我再确认一次」——查得到的事实不要他确认。
+ *    带本平台链接（公开 / 审核中）或报了定时的 AI 说法直接算已投出；定时时间过了一天还没可信观察核到公开，再问一次。
+ *    可信观察照样顶掉它，创始人照样能「没发」纠正。
  * 4. 纠正指向槽（`slot:<轮次>:<平台>`）：纠正时刻之前槽里的一切作废，之后新来的照算。
  * 已知代价（创始人认可）：同一轮在同一平台发了两件不同作品，只算最新的那件。
  */
@@ -21,12 +24,20 @@ import { entryPayloadHash } from "../publish/review-gate/check.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
 import { normalizePlatform } from "../publish/review-gate/platforms.js";
+import { urlMismatch } from "./chat-approval/post-publish-view.js";
 
 /** 平台名按发布闸门同一张别名表归一（「视频号」= wechat_video）：认不出的原样 */
 export const canonPlatform = (p: string): string => normalizePlatform(p) ?? p;
 
 export type ObsSource = "plan" | "metrics_id" | "metrics_title" | "claim";
 const TRUSTED: ReadonlySet<ObsSource> = new Set(["plan", "metrics_id"]);
+
+/** AI 的说法能不能直接认（2026-10-11）：报了定时；或带本平台作品链接且公开 / 审核中 */
+export function claimAccepted(o: Pick<Observation, "source" | "platform" | "url" | "pub_state">): boolean {
+  if (o.source !== "claim") return false;
+  if (o.pub_state === "scheduled") return true;
+  return Boolean(o.url) && (o.pub_state === "public" || o.pub_state === "reviewing") && urlMismatch(o.platform, o.url!) === null;
+}
 
 export interface Observation {
   source: ObsSource;
@@ -213,7 +224,7 @@ export function importObservations(doc: ProductionDoc, obs: Observation[]): numb
 
 // ---- 求值：每个平台一个槽 ----
 
-export type SlotClass = "trusted" | "founder" | "pending";
+export type SlotClass = "trusted" | "founder" | "accepted" | "pending";
 
 export interface Slot {
   /** 纠正的目标：`slot:<轮次>:<平台>` */
@@ -263,7 +274,7 @@ function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[]
   // 旧版纠正指向具体事实 / 决定 id：那一条作废
   const killed = new Set(doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id && !d.target_id.startsWith("slot:")).map((d) => d.target_id!));
   return [
-    ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
+    ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : claimAccepted(o) ? "accepted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
     ...decisions.filter((d) => d.type === "i_published" && canonPlatform(d.platform ?? "") === platform)
       .map((d): Entry => ({ cls: "founder", at: Date.parse(d.at), pub_state: "public", fact_id: null, source: "founder", evidence: "你标了已发布", d })),
     // 创始人确认 AI 的说法：保留那条说法里的提交状态（确认真实性 ≠ 确认已公开）
@@ -279,7 +290,7 @@ function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[]
 export function slotGate(doc: ProductionDoc, round: number, platform: string): GateStamp | undefined {
   const cut = correctedAt(doc, slotId(round, platform));
   const gated = entriesOf(doc, round, platform).filter((e) => e.at > cut && e.cls !== "pending")
-    .map((e) => ({ at: e.at, gate: e.d?.gate ?? (e.cls === "trusted" ? e.o?.gate : undefined) })).filter((e) => e.gate).sort((a, b) => a.at - b.at);
+    .map((e) => ({ at: e.at, gate: e.d?.gate ?? (e.cls === "trusted" || e.cls === "accepted" ? e.o?.gate : undefined) })).filter((e) => e.gate).sort((a, b) => a.at - b.at);
   return gated[0]?.gate;
 }
 
@@ -287,7 +298,7 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
   const cut = correctedAt(doc, slotId(round, platform));
   const entries = entriesOf(doc, round, platform).filter((e) => e.at > cut).sort((a, b) => a.at - b.at);
   if (!entries.length) return null;
-  const pick = (["trusted", "founder", "pending"] as const).map((c) => entries.filter((e) => e.cls === c).at(-1)).find(Boolean)!;
+  const pick = (["trusted", "founder", "accepted", "pending"] as const).map((c) => entries.filter((e) => e.cls === c).at(-1)).find(Boolean)!;
   const o = pick.o;
   return {
     id: slotId(round, platform), round, platform, pub_state: pick.pub_state, verified: pick.cls !== "pending", by: pick.cls, fact_id: pick.fact_id,

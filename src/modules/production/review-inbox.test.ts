@@ -2,7 +2,7 @@
  * 等你拍板 2a-1（spec 2026-09-30-review-inbox）：列表推导、单一决定入口（CAS）、请示、发布检查、摘要、附件、工作台。
  * 测试名带 §12 的 R 编号。只用临时库，fixtures 不含真实稿件文本。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import type http from "node:http";
@@ -27,7 +27,10 @@ import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
-afterEach(async () => { await env.cleanup(); });
+afterEach(async () => { vi.useRealTimers(); await env.cleanup(); });
+// 2026-10-11：「发了吗」只在待发布满一天才问——把钟拨到登记之后 25 小时
+const aDayLater = () => vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 25 * 3600_000 });
+
 
 const TITLE = "测试用短视频";
 const agent = (p: Record<string, unknown>, host = "claude-code") => executeContentSave({ _provenance: HUMAN_WRITE, _dataDir: env.dir, _host: host, ...p }) as Promise<Record<string, unknown>>;
@@ -352,6 +355,7 @@ describe("发布（§7-4..7）", () => {
     await fs.mkdir(path.join(r.root, "06-publish"), { recursive: true });
     await fs.writeFile(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify(planOf(r, [planEntry(r, "douyin", ["3:4"]), planEntry(r, "bilibili", ["4:3"])])));
     const asks = async () => (await items(r.id)).filter((i) => i.type === "published_ask").map((i) => i.detail.platform);
+    aDayLater();
     expect((await asks()).sort()).toEqual(["bilibili", "douyin"]);
     const dy = (await items(r.id)).find((i) => i.type === "published_ask" && i.detail.platform === "douyin")!;
     expect(await decideItem({ content_id: r.id, item_id: dy.item_id, gen: dy.gen, action: "i_published" }, env.dir)).toMatchObject({ ok: true });

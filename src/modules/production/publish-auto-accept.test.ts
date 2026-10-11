@@ -1,0 +1,131 @@
+/**
+ * AI 发布回执直接认（创始人 2026-10-11：「AI 发了还要我再确认一次」）：带本平台链接 / 报了定时的直接算已投出，
+ * 定时过一天没核到公开再问一次；「发了吗」只在待发布满一天、这个平台什么都没收到时问。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { getContent } from "../../storage/local-store.js";
+import { planEntry, planOf, registeredVideo, type Reg } from "../publish/review-gate/testkit.js";
+import { founderDecision } from "./decisions.js";
+import { readInbox } from "./inbox-read.js";
+import { explainContent } from "./read.js";
+import { importObservations } from "./receipts.js";
+import { mutateProduction } from "./service.js";
+import { makeEnv, record, type Env } from "./testkit.js";
+import { chatRevoke } from "./chat-approval/decide.js";
+
+let env: Env;
+beforeEach(async () => { env = await makeEnv({ enabled: true }); });
+afterEach(async () => { vi.useRealTimers(); await env.cleanup(); });
+
+const H = 3600_000;
+const later = (hours: number) => vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + hours * H });
+const items = async (id: string) => (await readInbox(env.dir, { contentId: id, withDrafts: true })).items;
+const ofType = async (id: string, type: string) => (await items(id)).filter((i) => i.type === type);
+const stage = async (id: string) => (await explainContent((await getContent(id, env.dir))!, env.dir));
+let rid = 0;
+const claim = (r: Reg, extra: Record<string, unknown>) => record(env, { content_id: r.id, kind: "publish", request_id: `pub-${++rid}`, ...extra }, "codex");
+async function planned(r: Reg, platforms: string[]) {
+  await fs.mkdir(path.join(r.root, "06-publish"), { recursive: true });
+  await fs.writeFile(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify(planOf(r, platforms.map((p) => planEntry(r, p, ["3:4", "4:3"])))));
+}
+const URLS: Record<string, string> = {
+  douyin: "https://www.douyin.com/video/1", xiaohongshu: "https://www.xiaohongshu.com/explore/2",
+  wechat_video: "https://channels.weixin.qq.com/x/3", bilibili: "https://www.bilibili.com/video/BV4",
+};
+
+describe("「发了吗」等满一天", () => {
+  it("刚进待发布不问；过了一天，每个没有任何回执的计划平台问一次", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin", "bilibili"]);
+    expect(await ofType(r.id, "published_ask")).toEqual([]);
+    await claim(r, { platform: "douyin", item_id: "7001" });
+    later(25);
+    const asks = await ofType(r.id, "published_ask");
+    expect(asks.map((i) => i.detail.platform)).toEqual(["bilibili"]);
+    expect(asks[0].summary).toBe("待发布一天了，还没收到B站的发布回执：发了吗");
+    expect(asks[0].actions[0].action).toBe("i_published");
+    // 只是时间往后走，代次不变
+    const gen = asks[0].gen;
+    later(30);
+    expect((await ofType(r.id, "published_ask"))[0].gen).toBe(gen);
+  });
+});
+
+describe("直接认的 AI 回执", () => {
+  it("四个平台都带本平台链接：已发布，没有任何发布条目，原因写明谁报的", async () => {
+    const r = await registeredVideo(env);
+    const ps = ["douyin", "xiaohongshu", "wechat_video", "bilibili"];
+    await planned(r, ps);
+    for (const p of ps) expect(await claim(r, { platform: p, url: URLS[p], pub_state: "public" })).toMatchObject({ ok: true, verified: true });
+    later(48);
+    const exp = await stage(r.id);
+    expect(exp.stage).toBe("已发布");
+    expect(exp.reason).toContain("Codex 报已公开");
+    expect((await items(r.id)).filter((i) => i.type === "publish_claim" || i.type === "published_ask")).toEqual([]);
+  });
+
+  it("报定时不带链接：已定时、不问；定时过一天没核到公开问一次；可信观察核到公开后那件没了", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin"]);
+    const at = new Date(Date.now() + 2 * H).toISOString();
+    expect(await claim(r, { platform: "douyin", pub_state: "scheduled", scheduled_at: at })).toMatchObject({ ok: true, verified: true });
+    const exp = await stage(r.id);
+    expect(exp.stage).toBe("已发布");
+    expect(exp.reason).toContain("抖音 Codex 报已定时");
+    expect(await ofType(r.id, "publish_claim")).toEqual([]);
+    later(2 + 25);
+    const follow = await ofType(r.id, "publish_claim");
+    expect(follow).toHaveLength(1);
+    expect(follow[0].summary).toBe("抖音定时时间已过一天，还没核到公开，发出去了吗");
+    expect(follow[0].actions.map((a) => a.action)).toEqual(["confirm_receipt", "correct_publish"]);
+    await mutateProduction(r.id, env.dir, (doc) => ({ value: importObservations(doc, [{ source: "metrics_id", platform: "douyin", item_id: "7001", pub_state: "public", evidence: "数据回流按作品 id 对上了这条" }]), events: [] }));
+    expect(await ofType(r.id, "publish_claim")).toEqual([]);
+  });
+
+  it("没链接、状态公开（只给作品 id）：仍待核", async () => {
+    const r = await registeredVideo(env);
+    expect(await claim(r, { platform: "douyin", item_id: "7001", pub_state: "public" })).toMatchObject({ verified: false });
+    expect((await ofType(r.id, "publish_claim")).map((i) => i.summary)).toEqual(["Codex说已经发了（抖音）"]);
+    expect((await stage(r.id)).stage).toBe("待发布");
+  });
+
+  it("链接是别的平台的：仍待核", async () => {
+    const r = await registeredVideo(env);
+    expect(await claim(r, { platform: "douyin", url: URLS.bilibili, pub_state: "public" })).toMatchObject({ verified: false });
+    expect(await ofType(r.id, "publish_claim")).toHaveLength(1);
+  });
+
+  it("创始人「没发」纠正直接认的槽：作废，之后的新回执照常算（看板与对话两条路）", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin", "bilibili"]);
+    await claim(r, { platform: "douyin", url: URLS.douyin });
+    await claim(r, { platform: "bilibili", url: URLS.bilibili });
+    expect((await stage(r.id)).stage).toBe("已发布");
+    later(1);
+    expect(await founderDecision(r.id, "correct_publish", { target_id: "slot:1:douyin" }, env.dir)).toMatchObject({ ok: true });
+    expect(await chatRevoke({ item_id: "", gen: "", decision: "", content_id: r.id, platform: "bilibili", founder_words: "B站其实没发", request_id: "unpub-1", host: "claude-code" }, env.dir)).toMatchObject({ ok: true });
+    expect((await stage(r.id)).stage).toBe("待发布");
+    later(26);
+    expect((await ofType(r.id, "published_ask")).map((i) => i.detail.platform).sort()).toEqual(["bilibili", "douyin"]);
+    await claim(r, { platform: "douyin", item_id: "7002" });
+    expect((await ofType(r.id, "publish_claim")).map((i) => i.detail.platform)).toEqual(["douyin"]);
+    await claim(r, { platform: "douyin", url: "https://www.douyin.com/video/2" });
+    expect(await ofType(r.id, "publish_claim")).toEqual([]);
+  });
+
+  it("没有有效发布前检查：直接认的回执照样标「发布前未把关」", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin"]);
+    await claim(r, { platform: "douyin", url: URLS.douyin });
+    expect((await stage(r.id)).alerts).toContain("1 个平台发布前未把关");
+  });
+
+  it("数据回流按标题猜的仍待核", async () => {
+    const r = await registeredVideo(env);
+    await mutateProduction(r.id, env.dir, (doc) => ({ value: importObservations(doc, [{ source: "metrics_title", platform: "douyin", item_id: "9", pub_state: "public", evidence: "数据回流按标题猜是这条" }]), events: [] }));
+    expect((await ofType(r.id, "publish_claim")).map((i) => i.summary)).toEqual(["数据回流说已经发了（抖音）"]);
+    expect((await stage(r.id)).stage).toBe("待发布");
+  });
+});

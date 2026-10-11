@@ -228,9 +228,10 @@ describe("发布回执（§6）", () => {
     expect(c.publishedAt).toBeTruthy();
   });
 
-  it("模型说发了（record kind=publish / 模型调 confirm_published）→ 待核，不动阶段；创始人确认后已发布", async () => {
+  // 2026-10-11 起带本平台链接的直接认：这里用对不上平台的链接，留住「待核 → 创始人确认」这条路
+  it("模型说发了但链接不是这个平台的（record kind=publish / 模型调 confirm_published）→ 待核，不动阶段；创始人确认后已发布", async () => {
     const s = await registered();
-    await executePublish({ _dataDir: env.dir, _host: "codex", action: "confirm_published", content_id: s.c.id, publish_url: "https://v.douyin.com/x" });
+    await executePublish({ _dataDir: env.dir, _host: "codex", action: "confirm_published", content_id: s.c.id, publish_url: "https://example.com/x" });
     expect((await getContent(s.c.id, env.dir))!.status).toBe("publish_ready");
     const doc = (await readProductionDoc(s.c.id, env.dir))!;
     const claim = doc.facts.find((f) => f.kind === "publish")!;

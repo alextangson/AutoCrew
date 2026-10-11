@@ -2,7 +2,7 @@
  * 2a 真实资料库验收（:4322，2026-10-01）：62 件里大多是已发布稿的迁移残留。用同形状的合成夹具锁住：
  * 已发布稿只剩发布相关的事；§6.2 迁移出来的封面、正式文件夹以外的封面图不进列表；说法是人话。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { readProductionDoc, writeProductionDoc } from "../../storage/production-store.js";
 import { executeContentSave } from "../../tools/content-save.js";
@@ -17,7 +17,10 @@ import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
-afterEach(async () => { await env.cleanup(); });
+afterEach(async () => { vi.useRealTimers(); await env.cleanup(); });
+// 2026-10-11：「发了吗」只在待发布满一天才问——把钟拨到登记之后 25 小时
+const aDayLater = () => vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 25 * 3600_000 });
+
 
 const items = async (id?: string) => (await readInbox(env.dir, id ? { contentId: id } : {})).items;
 
@@ -57,6 +60,7 @@ describe("已发布的稿：只剩发布相关的事", () => {
     const r = await registeredVideo(env);
     await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ final_video: { path: r.video }, platforms: [{ platform: "douyin" }, { platform: "bilibili" }] }));
     await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    aDayLater();
     expect((await items(r.id)).map((i) => i.item_id)).toEqual([scopedId(r.id, "published:r1:bilibili")]);
   });
 });

@@ -61,7 +61,11 @@ async function toolsFor(host: string) {
  * 2026-10-11 认稿与画面闪帧也能在对话里定：autocrew_review_inbox 的 decision 枚举加 4 个决定、加 sliver_key，短说明补「认稿、闪帧」；
  * 实测 32,329，上限随之从 32,300 提到 32,400。
  */
-export const BUDGET = { total: 32_400, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-11 AI 发布回执直接认：autocrew_content 加 pub_state / scheduled_at（定时也能报），autocrew_review_inbox 加 platform
+ * （对话里「X 平台没发」纠正直接认的回执）；参数说明压到零，实测 32,421，上限随之从 32,400 提到 32,500。
+ */
+export const BUDGET = { total: 32_500, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

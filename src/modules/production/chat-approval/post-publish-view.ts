@@ -32,7 +32,10 @@ export function postPublishBrief(item: InboxItem): string {
   const d = item.detail;
   const who = platformLabel(String(d.platform));
   if (item.type === "published_ask") {
-    return [`《${item.title}》发了吗（${who}）`, "要你判断：这条在这个平台上已经发出去了吗？", "回我「发了」（有作品链接就一起贴上）"].join("\n");
+    return [`《${item.title}》待发布一天了，还没收到${who}的发布回执`, "要你判断：这条在这个平台上已经发出去了吗？", "回我「发了」（有作品链接就一起贴上）"].join("\n");
+  }
+  if (d.scheduled_overdue) {
+    return [`《${item.title}》${String(d.reporter ?? "AI")}报了${who}定时发布，定时时间已过一天，还没核到公开`, "要你判断：发出去了吗？", "回我「对，发了」/「没发」"].join("\n");
   }
   const link = d.url ? `作品链接：${String(d.url)}` : d.item ? `作品 id：${String(d.item)}（${NO_URL}）` : NO_URL;
   return [

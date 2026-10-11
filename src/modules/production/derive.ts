@@ -11,6 +11,7 @@ import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
 import { isUngated } from "./publish-check-link.js";
+import { hostLabel } from "./host-label.js";
 import { sliverVerdict } from "./sliver/verdict.js";
 import { validCoverGroups, withCoverGroups } from "./cover-groups.js";
 import { latestMarkedCut } from "./ready.js";
@@ -165,10 +166,15 @@ function pendingText(w: Slot): string {
 function publishedReason(live: Slot[]): string {
   if (!live.length) return "发布记录显示已投出";
   if (live.every((s) => s.by === "founder")) return `${[...new Set(live.map((s) => label(s.platform)))].join("、")} 你标了已发布`;
-  const by = new Map<string, string[]>();
-  for (const f of live) by.set(f.pub_state, [...(by.get(f.pub_state) ?? []), label(f.platform)]);
   const text: Record<string, string> = { scheduled: "已定时投出", reviewing: "已投出、审核中", public: "已公开", overdue: "应已公开" };
-  return [...by].map(([st, ps]) => `${[...new Set(ps)].join("、")} ${text[st] ?? "已投出"}`).join("；");
+  // 直接认的 AI 说法写明是谁报的（「抖音 Codex 报已定时」）
+  const said: Record<string, string> = { scheduled: "报已定时", reviewing: "报已投出、审核中", public: "报已公开" };
+  const by = new Map<string, string[]>();
+  for (const f of live) {
+    const key = f.by === "accepted" ? `${hostLabel(f.host)} ${said[f.pub_state] ?? "报已投出"}` : text[f.pub_state] ?? "已投出";
+    by.set(key, [...(by.get(key) ?? []), label(f.platform)]);
+  }
+  return [...by].map(([t, ps]) => `${[...new Set(ps)].join("、")} ${t}`).join("；");
 }
 
 export function candidatesOf(doc: ProductionDoc): CandidateView[] {

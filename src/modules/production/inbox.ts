@@ -17,6 +17,7 @@ import { validCoverGroups, type GroupView } from "./cover-groups.js";
 import { cutRejectNote, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import type { Explanation } from "./explain.js";
 import { hostLabel } from "./host-label.js";
+import type { Slot } from "./receipts.js";
 import { fileName, isStrayCover, KIND_NAME, measure, plainReason } from "./plain-reason.js";
 import { markedCuts } from "./ready.js";
 import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
@@ -316,26 +317,50 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
     });
   }
   if (!doc || !exp) return out;
-  for (const s of receipts.pending) {
-    out.push({
-      item_id: `claim:r${doc.round}:${s.platform}`, type: "publish_claim", summary: `${s.source === "claim" ? hostLabel(s.host) : "数据回流"}说已经发了（${platformLabel(s.platform)}）`, waiting: null, agent_waiting: false, since: s.at, rank: 2,
-      actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: s.fact_id } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: s.id } }],
-      detail: { platform: s.platform, url: s.url ?? null, item: s.item_id ?? null, evidence: s.evidence, reporter: s.source === "claim" ? hostLabel(s.host) : "数据回流" },
-      snapshot: [s.fact_id, s.pub_state],
-    });
-  }
+  out.push(...receipts.pending.map((s) => claimItem(doc, s, `${s.source === "claim" ? hostLabel(s.host) : "数据回流"}说已经发了（${platformLabel(s.platform)}）`)));
+  out.push(...receipts.live.filter((s) => scheduledOverdue(s)).map((s) => claimItem(doc, s, `${platformLabel(s.platform)}定时时间已过一天，还没核到公开，发出去了吗`, true)));
   if (exp.stage !== "待发布" && exp.stage !== "已发布") return out;
-  const known = new Set([...live, ...receipts.pending.map((s) => s.platform), ...receipts.rejected.map((s) => s.platform)]);
-  for (const p of input.planned.filter((x) => !known.has(x))) {
-    out.push({
-      item_id: `published:r${doc.round}:${p}`, type: "published_ask", summary: `发了吗（${platformLabel(p)}）`, waiting: null, agent_waiting: false, since: content.updatedAt, rank: 2,
-      actions: [{ action: "i_published", label: "已经发出去了", role: "primary", params: { platform: p }, note: "optional", placeholder: "作品链接（可不填）" }],
-      detail: { platform: p },
-      // 纠正过这个平台的发布 = 新的一代
-      snapshot: [doc.round, p, doc.decisions.filter((x) => x.type === "publish_correction" && x.target_id === `slot:${doc.round}:${p}`).map((x) => x.id)],
-    });
-  }
-  return out;
+  return [...out, ...publishedAsks(doc, input, new Set([...live, ...receipts.pending.map((s) => s.platform), ...receipts.rejected.map((s) => s.platform)]))];
+}
+
+const DAY_MS = 24 * 3600 * 1000;
+
+/** AI 报的定时（直接认、没被可信观察顶掉）过了定时时间一天：问一次（2026-10-11） */
+function scheduledOverdue(s: Slot): boolean {
+  return s.by === "accepted" && s.pub_state === "scheduled" && Date.now() - Date.parse(s.at) > DAY_MS;
+}
+
+/** 「X 说已经发了」与定时过期追问共用一种条目：对，发了 / 没发 */
+function claimItem(doc: ProductionDoc, s: Slot, summary: string, overdue = false): Draft {
+  return {
+    item_id: `claim:r${doc.round}:${s.platform}`, type: "publish_claim", summary, waiting: null, agent_waiting: false, since: s.at, rank: 2,
+    actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: s.fact_id } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: s.id } }],
+    detail: { platform: s.platform, url: s.url ?? null, item: s.item_id ?? null, evidence: s.evidence, reporter: s.source === "claim" ? hostLabel(s.host) : "数据回流", ...(overdue ? { scheduled_overdue: true } : {}) },
+    snapshot: [s.fact_id, s.pub_state, overdue],
+  };
+}
+
+/**
+ * 进入待发布的时刻：本轮最近一次登记（D2 就是按登记判的）；没登记过就按成片 / 封面批准里较晚的那个。
+ * 不用 content.updatedAt（任何编辑都会动它）
+ */
+function publishReadyAt(doc: ProductionDoc, content: Content): string | null {
+  const reg = doc.registrations.filter((r) => r.round === doc.round).at(-1)?.at;
+  if (reg) return reg;
+  return [validCutApproval(doc, content.body)?.at, validCoverApproval(doc, content.body)?.at].filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
+}
+
+/** 「发了吗」只在待发布满一天、这个平台什么观察都没有时问（2026-10-11：刚批完成片就问四遍太早） */
+function publishedAsks(doc: ProductionDoc, input: ContentInput, known: ReadonlySet<string>): Draft[] {
+  const since = publishReadyAt(doc, input.content);
+  if (!since || Date.now() - Date.parse(since) <= DAY_MS) return [];
+  return input.planned.filter((p) => !known.has(p)).map((p) => ({
+    item_id: `published:r${doc.round}:${p}`, type: "published_ask" as const, summary: `待发布一天了，还没收到${platformLabel(p)}的发布回执：发了吗`, waiting: null, agent_waiting: false, since, rank: 2,
+    actions: [{ action: "i_published", label: "已经发出去了", role: "primary" as const, params: { platform: p }, note: "optional" as const, placeholder: "作品链接（可不填）" }],
+    detail: { platform: p },
+    // 纠正过这个平台的发布 = 新的一代
+    snapshot: [doc.round, p, doc.decisions.filter((x) => x.type === "publish_correction" && x.target_id === `slot:${doc.round}:${p}`).map((x) => x.id)],
+  }));
 }
 
 /** 「稿子写好了」这件事的身份与代次（卡片、看板拖动认稿要带它，别的会话改过正文就对不上） */

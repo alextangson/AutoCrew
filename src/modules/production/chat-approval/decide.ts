@@ -31,6 +31,8 @@ export interface ChatDecideInput {
   /** i_published：创始人给的作品链接（原样记） */
   url?: string;
   item_id: string; gen: string; decision: string; group_id?: string; fact_id?: string; option_id?: string; content_id?: string; decision_id?: string;
+  /** revoke：他说这个平台其实没发（纠正本轮该平台的发布槽） */
+  platform?: string;
   cover_text?: string; note?: string; founder_words: string; request_id?: string; host?: unknown; session?: unknown;
   /** replace_rule：要换掉的那条生效规则 id */
   target_rule_id?: string;
@@ -184,11 +186,13 @@ const FOLLOW_UP: Record<string, string> = {
 export async function chatRevoke(input: ChatDecideInput, dataDir = getDataDir()): Promise<Result> {
   if (!isRequestId(str(input.request_id))) return fail("invalid_params", "要带 request_id，重试用同一个");
   if (!str(input.founder_words)) return fail("founder_words_required", "带上创始人要撤回时的原话（founder_words），一字不改照抄");
-  const contentId = str(input.content_id), decisionId = str(input.decision_id);
-  if (!contentId || !decisionId) return fail("invalid_params", "要带 content_id 和 decision_id（decide 回执里给的）");
+  const contentId = str(input.content_id), decisionId = str(input.decision_id), platform = str(input.platform);
+  if (!contentId || (!decisionId && !platform)) return fail("invalid_params", "要带 content_id 和 decision_id（decide 回执里给的），或 platform（他说某个平台其实没发）");
   const requester = requesterOf(input.host, input.session);
-  const hash = payloadHash({ revoke: decisionId, content_id: contentId, founder_words: str(input.founder_words), requester });
+  const hash = payloadHash({ revoke: decisionId || `unpublish:${platform}`, content_id: contentId, founder_words: str(input.founder_words), requester });
+  // 只给平台 = 纠正本轮这个平台的发布槽（AI 回执直接认了、他说没发）
+  const [action, params] = decisionId ? ["revoke_approval", { decision_id: decisionId }] : ["correct_publish", { platform }];
   const run = () => withProvenance({ source: "chat", founder_words: str(input.founder_words), requested_by: requester, request_id: str(input.request_id) },
-    () => founderDecision(contentId, "revoke_approval", { decision_id: decisionId }, dataDir));
+    () => founderDecision(contentId, action, params, dataDir));
   return once(str(input.request_id), hash, dataDir, run);
 }

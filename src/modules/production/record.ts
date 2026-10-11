@@ -27,7 +27,8 @@ import { explainContent } from "./read.js";
 import { hiddenUntilScriptApproved } from "./ready.js";
 import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
-import { canonPlatform, observationFact } from "./receipts.js";
+import { canonPlatform, claimAccepted, observationFact, slotGate } from "./receipts.js";
+import { gateFromPlan } from "./publish-check-link.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type ReleaseOp, type Txn, type TxnOp } from "./txn.js";
 import { applyRelease } from "./release.js";
 import { STORYBOARD_HINT, validateStoryboard } from "./storyboard.js";
@@ -39,36 +40,45 @@ type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
 
 /**
- * 模型报的「发了」（record kind=publish、模型调 confirm_published）：记成本轮一条**待核**回执（§6，§13-E），
- * 不动阶段；卡上问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。调用方持有文件归属事务或不需要（只写事实）。
+ * 模型报的「发了」（record kind=publish、模型调 confirm_published）：记成本轮一条 AI 说法（§6，§13-E）。
+ * 2026-10-11 起带本平台作品链接、或报了定时的直接算已投出（receipts.claimAccepted），并像可信观察一样盖把关结论；
+ * 其余仍是待核，卡上问创始人。调用方持有文件归属事务或不需要（只写事实）。
  */
-export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note">): Promise<Receipt> {
+export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note" | "pub_state" | "scheduled_at">): Promise<Receipt> {
   const platform = a.platform || content.platform ? canonPlatform((a.platform || content.platform)!) : undefined;
   if (!platform) return fail("bad_param", "kind=publish 要带 platform");
-  if (!a.url && !a.item_id) return fail("bad_param", "kind=publish 要带作品链接 url 或平台作品 id item_id");
+  const scheduled = a.pub_state === "scheduled" && a.scheduled_at;
+  if (!a.url && !a.item_id && !scheduled) return fail("bad_param", "kind=publish 要带作品链接 url 或平台作品 id item_id（定时的报 pub_state=scheduled + scheduled_at）");
   if (a.url && !/^https?:\/\//.test(a.url)) return fail("bad_param", `url 只接受 http/https：${a.url.slice(0, 80)}`);
+  const pub_state = a.pub_state ?? ("reviewing" as const);
+  const base = { source: "claim" as const, platform, pub_state, evidence: `${a.host} 说已发布`, by: { host: a.host },
+    ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}), ...(scheduled ? { published_at: a.scheduled_at } : {}) };
+  const accepted = claimAccepted(base);
+  // 直接认的说法和创始人「我发了」一样按发布计划盖把关结论（槽里已经盖过就继承）
+  const planGate = accepted ? await gateFromPlan(content.id, platform, dataDir) : undefined;
   const r = await mutateProduction(content.id, dataDir, (doc) => {
     // 模型声明是一条独立的观察（不可变，不与可信回执合并）；是本轮刚说的，所以属于本轮
-    const obs = { source: "claim" as const, platform, pub_state: "reviewing" as const, evidence: `${a.host} 说已发布`, by: { host: a.host },
-      ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) };
-    // 同一个 request_id 重放不再写；否则追加一条（AI 的说法只能被同平台的可信观察顶掉或创始人确认）
-    // 同一轮、同平台、同一个 AI、同一链接 / 作品 id 已经说过：重复的「发了」不再追加（模型反复 confirm_published）
+    const gate = accepted ? slotGate(doc, doc.round, platform) ?? planGate : undefined;
+    const obs = { ...base, ...(gate ? { gate } : {}) };
+    // 同一个 request_id 重放不再写；同一轮、同平台、同一个 AI、同一链接 / 作品 id / 状态已经说过：不再追加（模型反复 confirm_published）
     const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id)
-      ?? doc.facts.find((f) => f.kind === "publish" && f.obs_source === "claim" && f.round === doc.round && f.platform === platform
-        && f.by?.host === a.host && (f.url ?? "") === (a.url ?? "") && (f.item_id ?? "") === (a.item_id ?? ""));
+      ?? doc.facts.find((f) => f.kind === "publish" && f.obs_source === "claim" && f.round === doc.round && f.platform === platform && f.by?.host === a.host
+        && (f.url ?? "") === (a.url ?? "") && (f.item_id ?? "") === (a.item_id ?? "") && f.pub_state === pub_state && (f.published_at ?? "") === (base.published_at ?? ""));
     const fact = same ?? { ...observationFact(doc, obs, doc.round), request_id: a.request_id };
     if (!same) doc.facts.push(fact);
     doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs({ ...a, kind: "publish", content_id: content.id }), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
-    return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url } }] };
+    return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url, accepted } }] };
   });
-  return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: false, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
-    next_action: "已记成待核的发布回执：卡上会问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。不要再改状态。" };
+  return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: accepted, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
+    next_action: accepted
+      ? "已直接记为已投出（带了本平台作品链接 / 报了定时），不用创始人确认；定时的过了定时时间一天还没核到公开会再问他。不要再改状态。"
+      : "已记成待核的发布回执，卡上会问创始人。下次报发布带上这个平台的作品链接 url（或定时的报 pub_state=scheduled + scheduled_at），带了就直接算已投出。不要再改状态。" };
 }
 
 /** 请求参数指纹（kind / 路径 / 比例 / 平台 / 链接…）：同一 request_id 换了参数不是重试 */
 function requestArgs(a: RecordArgs): string {
   return JSON.stringify([a.kind, a.path ?? "", a.ratio ?? "", a.version ?? "", a.for_cut ?? "", a.platform ?? "", a.url ?? "", a.item_id ?? "",
-    a.chatcut_project_id ?? "", a.timeline_id ?? "", [...(a.uses_aroll ?? [])].sort(), ...(a.review ? ["review"] : []), ...(a.paths ? [a.paths] : []), ...(a.pair_with ? [a.pair_with] : [])]);
+    a.chatcut_project_id ?? "", a.timeline_id ?? "", [...(a.uses_aroll ?? [])].sort(), ...(a.review ? ["review"] : []), ...(a.paths ? [a.paths] : []), ...(a.pair_with ? [a.pair_with] : []), ...(a.pub_state ? [a.pub_state, a.scheduled_at ?? ""] : [])]);
 }
 
 export async function executeRecord(params: Record<string, unknown>): Promise<Receipt> {

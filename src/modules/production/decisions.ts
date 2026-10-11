@@ -261,7 +261,8 @@ async function confirmReceipt(ctx: Ctx): Promise<Result> {
  * 槽里纠正之前的一切作废；之后新来的照算。槽已经空了再点 = 幂等。
  */
 async function correct(ctx: Ctx): Promise<Result> {
-  const raw = str(ctx.params.target_id);
+  // 对话里「X 平台没发」只知道平台：按本轮那个平台的槽算（直接认的 AI 回执不进列表，没有条目可点）
+  const raw = str(ctx.params.target_id) || (str(ctx.params.platform) ? slotId(ctx.doc.round, str(ctx.params.platform)) : "");
   const fact = ctx.doc.facts.find((f) => f.id === raw && f.kind === "publish");
   const dec = ctx.doc.decisions.find((d) => d.id === raw && d.type === "i_published");
   const id = raw.startsWith("slot:") ? normSlotId(raw) : fact ? slotId(fact.round, canonPlatform(fact.platform ?? "?")) : dec ? slotId(dec.round, canonPlatform(dec.platform ?? "?")) : "";

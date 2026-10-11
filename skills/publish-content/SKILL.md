@@ -146,7 +146,7 @@ description: >
 - `rejected` / `failed`：保留平台原因；不把其他平台一起标成失败或成功。
 - `submission_unknown`：点击后结果不明；先查作品管理，不重复点发布或重新上传。
 
-出发布包用 `autocrew_publish ego_lite_prepare`，带上 check 返回的各平台 `check_ids`：检查过期（计划或文件改过）或被拦的平台不会出包，按报错重跑 check。发布结果以项目发布计划 `06-publish/publish-plan.json` 为准（每个平台一条，带上 check 返回的 `check_id`，**点提交的那一刻按平台写 `publication.submitted_at`（带时区的实际提交时间，不是定时公开时间）**；没有实际提交时间、没带有效检查、或检查之后又改了这个平台的内容再提交的，卡片都会标「发布前未把关」且事后补检抹不掉），AutoCrew 每分钟对账读取：每条稿每一轮每个平台只有一个发布槽，最新的记录算，被驳回的不算已发布。确认公开作品后可以 `autocrew_content record kind=publish platform=… url=…`（或 item_id）报一次：它只记成「待核」，由同平台的发布计划记录 / 数据回流顶掉或创始人在卡片上确认，不会直接改成已发布；不要调用 `confirm_published` 代创始人标记。产品断连时保存待回写记录，不虚构工具成功。
+出发布包用 `autocrew_publish ego_lite_prepare`，带上 check 返回的各平台 `check_ids`：检查过期（计划或文件改过）或被拦的平台不会出包，按报错重跑 check。发布结果以项目发布计划 `06-publish/publish-plan.json` 为准（每个平台一条，带上 check 返回的 `check_id`，**点提交的那一刻按平台写 `publication.submitted_at`（带时区的实际提交时间，不是定时公开时间）**；没有实际提交时间、没带有效检查、或检查之后又改了这个平台的内容再提交的，卡片都会标「发布前未把关」且事后补检抹不掉），AutoCrew 每分钟对账读取：每条稿每一轮每个平台只有一个发布槽，最新的记录算，被驳回的不算已发布。每个平台提交后用 `autocrew_content record kind=publish platform=… url=…` 报一次：带这个平台的作品链接（公开 / 审核中）就直接算已投出，不用创始人确认；定时发布的报 `pub_state=scheduled scheduled_at=<定时公开时间>`，也直接算已定时，定时时间过了一天还没核到公开才会问创始人；只给 item_id 或链接不是这个平台的，记成「待核」等创始人确认；不要调用 `confirm_published` 代创始人标记。产品断连时保存待回写记录，不虚构工具成功。
 
 ## 定时发布后继续完成
 
