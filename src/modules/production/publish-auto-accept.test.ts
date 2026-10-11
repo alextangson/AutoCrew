@@ -193,3 +193,41 @@ describe("Codex 审 a22bb235", () => {
     expect(slot).toMatchObject({ by: "trusted", source: "metrics_id" });
   });
 });
+
+describe("Codex 复审 f0dcb71f", () => {
+  it("1 定时还没到的旧待核定时回执，创始人确认后仍是定时，不改成已公开", async () => {
+    const r = await registeredVideo(env);
+    const at = new Date(Date.now() + 72 * H).toISOString();
+    await mutateProduction(r.id, env.dir, (doc) => {
+      doc.facts.push(observationFact(doc, { source: "claim", platform: "douyin", pub_state: "scheduled", published_at: at, evidence: "codex 说已发布", by: { host: "codex" } }, doc.round));
+      return { value: null, events: [] };
+    });
+    const [it0] = await ofType(r.id, "publish_claim");
+    expect(await decideItem({ content_id: r.id, item_id: it0.item_id, gen: it0.gen, action: "confirm_receipt", ...it0.actions[0].params }, env.dir)).toMatchObject({ ok: true });
+    const doc = (await readProductionDoc(r.id, env.dir))!;
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ by: "founder", pub_state: "scheduled" });
+    expect(doc.decisions.some((d) => d.type === "i_published")).toBe(false);
+  });
+
+  it("2 重复提交撞上没被直接认的旧回执：追加新判定的事实，回执说的与存的一致", async () => {
+    const r = await registeredVideo(env);
+    await mutateProduction(r.id, env.dir, (doc) => {
+      doc.facts.push(observationFact(doc, { source: "claim", platform: "douyin", url: URLS.douyin, pub_state: "reviewing", evidence: "codex 说已发布", by: { host: "codex" } }, doc.round));
+      return { value: null, events: [] };
+    });
+    const res = await claim(r, { platform: "douyin", url: URLS.douyin });
+    const fact = (await readProductionDoc(r.id, env.dir))!.facts.find((f) => f.id === res.fact_id)!;
+    expect(res.verified).toBe(fact.claim_accepted === true);
+    expect(res.verified).toBe(true);
+    expect((await stage(r.id)).stage).toBe("已发布");
+  });
+
+  it("3 定时改期提前（+72h → +1h）：按最近报的那次算，过一天照样追问", async () => {
+    const r = await registeredVideo(env);
+    await planned(r, ["douyin"]);
+    await claim(r, { platform: "douyin", pub_state: "scheduled", scheduled_at: new Date(Date.now() + 72 * H).toISOString() });
+    await claim(r, { platform: "douyin", pub_state: "scheduled", scheduled_at: new Date(Date.now() + H).toISOString() });
+    later(26);
+    expect(await ofType(r.id, "publish_claim")).toHaveLength(1);
+  });
+});

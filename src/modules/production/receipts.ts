@@ -338,8 +338,8 @@ const DAY_MS = 24 * 3600 * 1000;
 export function overdueSchedule(doc: ProductionDoc, round: number, platform: string): ObsFact | null {
   const cut = correctedAt(doc, slotId(round, platform));
   const entries = entriesOf(doc, round, platform).filter((e) => e.at > cut);
-  const sched = entries.filter((e) => e.cls === "accepted" && e.o?.pub_state === "scheduled" && e.o.published_at).map((e) => e.o!)
-    .sort((a, b) => Date.parse(a.published_at!) - Date.parse(b.published_at!)).at(-1);
+  // 按观察顺序取最近报的那次定时（改期提前也以新的为准），不取最晚的时间
+  const sched = entries.filter((e) => e.cls === "accepted" && e.o?.pub_state === "scheduled" && e.o.published_at).sort((a, b) => a.at - b.at).at(-1)?.o;
   if (!sched || Date.now() - Date.parse(sched.published_at!) <= DAY_MS) return null;
   const confirmed = entries.some((e) => e.cls === "founder" || (e.cls === "trusted" && e.pub_state === "public"));
   return confirmed ? null : sched;

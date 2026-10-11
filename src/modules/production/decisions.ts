@@ -21,7 +21,7 @@ import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
 import { provenanceFields } from "./decision-provenance.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
-import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
+import { canonPlatform, normSlotId, overdueSchedule, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
 import { addReadyMark, adoptCandidate } from "./record.js";
 import { isStrayCover } from "./plain-reason.js";
@@ -252,7 +252,7 @@ async function confirmReceipt(ctx: Ctx): Promise<Result> {
   const f = factBy(ctx.doc, ctx.params, "publish");
   if (typeof f === "string") return fail("stale", f);
   // 定时过期追问答「对，发了」：确认的是作品已公开，不是当初那条定时说法——记成「我发了」（公开），可信观察照样能更新它
-  if (f.obs_source === "claim" && f.pub_state === "scheduled") return published({ ...ctx, params: { platform: f.platform, ...(f.url ? { url: f.url } : {}) } });
+  if (f.obs_source === "claim" && f.pub_state === "scheduled" && overdueSchedule(ctx.doc, f.round, canonPlatform(f.platform ?? "?"))?.id === f.id) return published({ ...ctx, params: { platform: f.platform, ...(f.url ? { url: f.url } : {}) } });
   const same = sameDecision(ctx.doc, "publish_confirm", (d) => d.fact_id === f.id);
   const gate = same ? undefined : slotGate(ctx.doc, f.round, canonPlatform(f.platform ?? "?")) ?? await gateFromPlan(ctx.content.id, canonPlatform(f.platform ?? "?"), ctx.dataDir);
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_confirm", fact_id: f.id, platform: f.platform, ...(gate ? { gate } : {}) }, "receipt_confirmed")) };

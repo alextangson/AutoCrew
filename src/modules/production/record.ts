@@ -63,14 +63,16 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
     // 同一个 request_id 重放不再写；同一轮、同平台、同一个 AI、同一链接 / 作品 id / 状态已经说过：不再追加（模型反复 confirm_published）
     const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id)
       ?? doc.facts.find((f) => f.kind === "publish" && f.obs_source === "claim" && f.round === doc.round && f.platform === platform && f.by?.host === a.host
-        && (f.url ?? "") === (a.url ?? "") && (f.item_id ?? "") === (a.item_id ?? "") && f.pub_state === pub_state && (f.published_at ?? "") === (base.published_at ?? ""));
+        && (f.url ?? "") === (a.url ?? "") && (f.item_id ?? "") === (a.item_id ?? "") && f.pub_state === pub_state && (f.published_at ?? "") === (base.published_at ?? "") && Boolean(f.claim_accepted) === accepted);
     const fact = same ?? { ...observationFact(doc, obs, doc.round), request_id: a.request_id };
     if (!same) doc.facts.push(fact);
     doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs({ ...a, kind: "publish", content_id: content.id }), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
     return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url, accepted } }] };
   });
-  return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: accepted, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
-    next_action: accepted
+  // 回执说的以实际用上的那条事实为准（重复提交复用的旧事实可能没被直接认）
+  const used = r.value.claim_accepted === true;
+  return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: used, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
+    next_action: used
       ? "已直接记为已投出（带了本平台作品链接 / 报了定时），不用创始人确认；定时的过了定时时间一天还没核到公开会再问他。不要再改状态。"
       : "已记成待核的发布回执，卡上会问创始人。下次报发布带上这个平台的作品链接 url（或定时的报 pub_state=scheduled + scheduled_at），带了就直接算已投出。不要再改状态。" };
 }
