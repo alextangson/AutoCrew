@@ -1,4 +1,6 @@
 /** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退 / 移入回收站）、发布行（我发了 / 撤销）。 */
+import { PlatformChips } from "./PlatformChips";
+import { showChips } from "./publish-targets";
 import { Button } from "../components/Button";
 import { useState } from "react";
 import { invoke } from "../transport";
@@ -70,7 +72,8 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
   </article>;
 }
 
-export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | null; busy: boolean; onOpen: () => void; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
+export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | null; busy: boolean; onOpen: () => void; onMenu: (open: boolean) => void; reload: () => Promise<void>;
+  siblings?: BoardItem[]; openOther?: (id: string) => void }) {
   const item = props.item;
   const publishing = item.column === "待发布" || item.column === "已发布";
   const meta = itemMeta(item, props.wpm);
@@ -88,6 +91,9 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
+        {item.noScriptApproval && <span className="bcard-meta">没走认稿就发了</span>}
+        {showChips(item.targets, item.column) && <PlatformChips targets={item.targets!} />}
+        {(props.siblings ?? []).map((s) => <span key={s.id} className="bcard-same">同主题：<button onClick={() => props.openOther?.(s.id)}>{platformName(s.platform ?? "")}{s.title && s.title !== item.title ? `《${s.title}》` : ""}</button></span>)}
       </div>
       <BackMenu item={item} onMenu={props.onMenu} reload={props.reload} />
     </div>

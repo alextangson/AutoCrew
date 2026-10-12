@@ -1,5 +1,6 @@
 /** 看板与数据页的服务端调用：读看板、开始写、我发了 / 撤销；读数据页、关联 / 撤销。失败一律回人话，不抛。 */
 import type { BoardData } from "./board-columns";
+import type { PublishTarget } from "./publish-targets";
 import { authedFetch, SESSION_EXPIRED } from "../transport";
 import type { DataPageData } from "./data-lib";
 
@@ -84,6 +85,12 @@ export interface CardPanelData {
   storyboard?: StoryboardPanel | null;
   arolls?: ArollRow[];
   candidate_rows?: CandidateRowView[];
+  /** 视频稿各发布平台（吸收 4）：状态 + 这个平台还剩的动作 */
+  targets?: PublishTarget[];
+  /** 只有回执、没走认稿就发了 */
+  no_script_approval?: boolean;
+  /** 认领：AI 在做只在租约有效且最近写过时才说（吸收 15） */
+  claim?: { host: string; live: boolean; idle_hours: number | null } | null;
 }
 /** 「发现的候选」一行（服务端已翻成人话；完整路径与分数只在 detail 里） */
 export interface CandidateRowView { fact_id: string; kind: string; state: string; sha256?: string; started_at?: string; name: string; origin: string; reason: string; detail: string; path: string | null; in_inbox?: boolean }

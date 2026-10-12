@@ -4,6 +4,7 @@
  * 拖动规则见 board-columns.dropAction：开始写、认稿、打开工作台、标已发布、往回退（同「⋯」确认）。
  * 列归属、发布状态由服务端 /api/board 算好。
  */
+import { sameTopicCards } from "./publish-targets";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
@@ -171,7 +172,8 @@ function ColumnBody(p: {
     {shown.map((c) => c.kind === "topic"
       ? <TopicCard key={c.topic.id} {...drag} topic={c.topic} busy={p.starting === c.topic.id}
         onStart={() => void p.start(c.topic.id)} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} />
-      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => p.nav.openEditor(c.item.id)} onMenu={p.pause} reload={p.reload} />)}
+      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => p.nav.openEditor(c.item.id)} onMenu={p.pause} reload={p.reload}
+        siblings={sameTopicCards(p.data.items, c.item)} openOther={(id) => p.nav.openEditor(id)} />)}
     {hidden > 0 && <button className="bcol-more" onClick={p.onExpand}>还有 {hidden} 条 ▾</button>}
     {p.col === "选题" && <p className="bcol-tip">拖到「写稿中」或点「开始写」</p>}
     {p.col === "已发布" && <button className="bcol-more" onClick={p.nav.openData}>更早的在数据页 ›</button>}

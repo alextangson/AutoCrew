@@ -38,10 +38,12 @@ const rank = (status: string): number => STAGE_RANK[status] ?? -1;
  * 只剩它可走时仍会经表序第一位回落到它（已发布 → 归档就是这条路）。
  */
 const TERMINAL = "archived";
+/** 「返回修订」永远是往回退（秩高于写作中只是为了与待审同秩）：写作中稿的默认按钮曾因此指向它（2026-10-12 真机） */
+const BACKWARD = "revision";
 
 export function defaultAdvanceTarget(currentStatus: string, transitions: AllowedTransition[]): string {
   const cur = rank(currentStatus);
-  const forward = transitions.filter((t) => rank(t.status) > cur && t.status !== TERMINAL);
+  const forward = transitions.filter((t) => rank(t.status) > cur && t.status !== TERMINAL && t.status !== BACKWARD);
   const farthest = (list: AllowedTransition[]): string =>
     list.reduce((best, t) => (rank(t.status) > rank(best.status) ? t : best)).status;
   const open = forward.filter((t) => !t.blockedReason);

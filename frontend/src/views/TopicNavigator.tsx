@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { groupAtoms, platformLabel, VARIANT_STATUS, type Content, type Topic } from "../lib";
 import { invoke, subscribeEvents } from "../transport";
 import { boardPlatforms } from "./board-model";
+import { loadBoard } from "./board-api";
+import type { BoardItem } from "./board-columns";
+import { PlatformChips } from "./PlatformChips";
 import "./topic-navigator.css";
 
 /** 编辑稿件时保留主题与其他平台入口；同名但无共同 topicId 的稿件不会被合并。 */
@@ -12,7 +15,13 @@ export function TopicNavigator(props: {
 }) {
   const [data, setData] = useState<{ topics: Topic[]; contents: Content[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 推导出的阶段（看板同一份 explain），不用原始 status；轮询只刷稿件列表，看板按事件 / 回到页面时重读
+  const [derived, setDerived] = useState<Map<string, BoardItem>>(new Map());
   const requestRef = useRef(0);
+  const loadDerived = useCallback(async () => {
+    const r = await loadBoard();
+    if (r.ok) setDerived(new Map(r.data.items.map((i) => [i.id, i])));
+  }, []);
 
   const load = useCallback(async () => {
     const request = ++requestRef.current;
@@ -30,28 +39,30 @@ export function TopicNavigator(props: {
 
   useEffect(() => {
     void load();
+    void loadDerived();
     let timer: number | undefined;
-    const refresh = () => {
+    const refresh = (withBoard = true) => {
       if (document.visibilityState === "hidden") return;
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void load(), 180);
+      timer = window.setTimeout(() => { void load(); if (withBoard) void loadDerived(); }, 180);
     };
     const off = subscribeEvents((event) => {
       if (event.kind === "engine" || event.kind === "reconnect") refresh();
     });
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
     // 普通保存不一定广播 engine 事件；定期更新“当前稿”，避免旧版本保存后仍被标作其他稿。
-    const poll = window.setInterval(refresh, 5000);
+    const poll = window.setInterval(() => refresh(false), 5000);
     return () => {
       ++requestRef.current;
       if (timer) window.clearTimeout(timer);
       window.clearInterval(poll);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
       off();
     };
-  }, [load]);
+  }, [load, loadDerived]);
 
   const atom = useMemo(() => data && groupAtoms(data.topics, data.contents)
     .find((group) => group.members.some((member) => member.id === props.contentId)), [data, props.contentId]);
@@ -96,13 +107,14 @@ export function TopicNavigator(props: {
               onClick={() => props.openEditor(current.id)}
             >
               <strong>{platformLabel(platform.platform)}</strong>
-              <span>{VARIANT_STATUS[current.status] ?? "草稿"}</span>
+              <span>{stageOf(derived, current)}</span>
               {platform.contents.length > 1 && <small>{platform.contents.length} 篇</small>}
             </button>
           );
         })}
         {isOtherDraft && <span className="topic-nav-other" aria-current="page">正在查看：{platformLabel(opened.platform)}其他稿件</span>}
       </div>
+      {(derived.get(props.contentId)?.targets?.length ?? 0) > 1 && <PlatformChips label="这条视频的各平台" targets={derived.get(props.contentId)!.targets!} />}
       {openedPlatform.contents.length > 1 && (
         <label className="topic-nav-drafts">
           <span>{platformLabel(opened.platform)}稿件</span>
@@ -122,4 +134,9 @@ export function TopicNavigator(props: {
       {error && <div className="topic-nav-notice" role="status"><span>{error}</span><button onClick={() => void load()}>重试更新</button></div>}
     </nav>
   );
+}
+
+/** 平台标签上的阶段：看板推导出的列；不在看板上（选题占位、归档）才退回原始状态 */
+function stageOf(derived: Map<string, BoardItem>, c: Content): string {
+  return derived.get(c.id)?.column ?? VARIANT_STATUS[c.status] ?? "草稿";
 }

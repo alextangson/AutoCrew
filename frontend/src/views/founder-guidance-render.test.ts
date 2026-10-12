@@ -99,28 +99,32 @@ describe("已挂的原片行", () => {
 });
 
 describe("稿件页的阶段按钮一步到位", () => {
+  // 2026-10-12：顶部状态下拉换成「现在轮到你」卡（StageCard 旧流转适配器），同样的三条行为
   const T = [{ status: "reviewing" }, { status: "approved" }, { status: "archived" }];
   async function render(currentStatus = "draft_ready") {
-    const { StageAdvance } = await import("./StageAdvance");
-    await act(async () => { root.render(createElement(StageAdvance, { contentId: "content-1-a", currentStatus, transitions: T as never, reload: async () => {}, isVideo: true, landedStage: async () => "剪辑中", loadedBody: "载入时的正文" })); });
+    const { StageCard } = await import("./StageCard");
+    const content = { id: "content-1-a", title: "稿", status: currentStatus, platform: "wechat_mp", body: "载入时的正文", updatedAt: new Date().toISOString() };
+    await act(async () => { root.render(createElement(StageCard, { content, transitions: T as never, reload: async () => {}, isVideo: false, dirty: false })); });
   }
+  const more = async (label: string) => {
+    await click(el.querySelector(".stage-card-more summary")!);
+    await click([...el.querySelectorAll(".stage-card-menu button")].find((b) => b.textContent?.includes(label))!);
+  };
 
-  it("写好 / 审过的稿默认就是「稿子没问题，进入制作」，一点就认稿", async () => {
+  it("写好 / 审过的稿默认就是「稿子没问题」，一点就认稿", async () => {
     await render("reviewing");
-    await click(button("稿子没问题，进入制作")!);
+    await click(button("稿子没问题")!);
     // 认稿带页面载入那一版正文的哈希：别的会话改过就被服务端拒（整分支审 4 P1）
     const { createHash } = await import("node:crypto");
     expect(invokes).toEqual([{ channel: "content:transition", id: "content-1-a", target_status: "approved", from_status: "reviewing", expected_body_hash: createHash("sha256").update("载入时的正文").digest("hex") }]);
   });
 
-  it("菜单里点哪项就执行哪项（不用再点顶部按钮）；「让 AI 再审一遍」是审稿；归档仍要确认", async () => {
+  it("「更多」里点哪项就执行哪项；「让 AI 再审一遍」是审稿；归档仍要确认", async () => {
     await render();
-    await click(el.querySelector("button[aria-label='选择下一阶段动作']")!);
-    await click([...el.querySelectorAll(".ed-stage-menu button")].find((b) => b.textContent?.includes("让 AI 再审一遍"))!);
+    await more("让 AI 再审一遍");
     expect(invokes.at(-1)).toMatchObject({ target_status: "reviewing" });
     expect(confirms).toEqual([]);
-    await click(el.querySelector("button[aria-label='选择下一阶段动作']")!);
-    await click([...el.querySelectorAll(".ed-stage-menu button")].find((b) => b.textContent?.includes("归档"))!);
+    await more("归档");
     expect(confirms).toEqual(["归档稿件？"]);
   });
 });

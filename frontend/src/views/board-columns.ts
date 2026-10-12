@@ -3,6 +3,7 @@
  * 发布行文案、估时长。列归属由服务端按「我的内容」同一张表算好，这里不再推一遍。
  */
 import { VIDEO_PLATFORMS, platformLabel } from "../lib";
+import type { PublishTarget } from "./publish-targets";
 import { clockLabel, durationText, relativeLabel } from "../time-format";
 
 export const COLUMNS = ["选题", "写稿中", "待录制", "剪辑中", "待发布", "已发布"] as const;
@@ -86,6 +87,12 @@ export interface BoardItem {
   draftRef?: { item_id: string; gen: string };
   /** 正在写（后台生成 / 写手认领还活着）：不许移入回收站 */
   writing?: boolean;
+  /** 视频稿各发布平台的状态与剩下的动作（一条视频一张卡）；文字稿为空 */
+  targets?: PublishTarget[];
+  /** 只有回执、没走认稿就发了：卡上一行提醒 */
+  noScriptApproval?: boolean;
+  /** 本轮轮次（按平台动作带它）；不按本体走 = null */
+  round?: number | null;
 }
 
 /** 「移入回收站」只给前三列（创始人 10-04 定）：进了剪辑就不在看板上弃用 */

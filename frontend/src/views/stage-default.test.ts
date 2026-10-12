@@ -8,6 +8,11 @@ describe("defaultAdvanceTarget", () => {
     expect(defaultAdvanceTarget("reviewing", [t("revision"), t("approved"), t("draft_ready")])).toBe("approved");
   });
 
+  it("写作中：默认「完成初稿」，不是秩更高的「返回修订」（2026-10-12 排序 bug）", () => {
+    expect(defaultAdvanceTarget("drafting", [t("revision"), t("draft_ready"), t("archived")])).toBe("draft_ready");
+    expect(defaultAdvanceTarget("drafting", [t("revision"), t("archived")])).toBe("revision");
+  });
+
   it("修订可直接过审:默认「已过审」,回待审是手选项", () => {
     expect(defaultAdvanceTarget("revision", [t("reviewing"), t("approved"), t("draft_ready")])).toBe("approved");
   });

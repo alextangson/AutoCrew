@@ -32,18 +32,18 @@ import { ArticleImagesPanel } from "./ArticleImagesPanel";
 import { EditingWorkspace } from "./EditingWorkspace";
 import { CoverWorkspace } from "./CoverWorkspace";
 import { PublishWorkspace } from "./PublishWorkspace";
-import { StageAdvance } from "./StageAdvance";
+import { StageCard } from "./StageCard";
 import { CardPanel } from "./CardPanel";
 import { progressKey } from "./card-next";
 import { ProductionBanner } from "./ProductionBanner";
 import { DraftFinalPanel } from "./DraftFinalPanel";
-import { loadCard } from "./board-api";
 import {
   platformLabel,
   videoStatus,
   VARIANT_STATUS,
   VIDEO_PLATFORMS,
   workspaceForStatus,
+  type StageWorkspace,
   WORKSPACE_LABEL,
   type AllowedTransition,
   type Content,
@@ -251,7 +251,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     const here = workspaceForStatus(c.status);
     if (panel === "cover" || panel === "video") {
       const want = panel === "cover" ? "cover" : "editing";
-      if (here !== want) toast(`这篇现在在「${WORKSPACE_LABEL[here]}」，可在顶栏选择「去${panel === "cover" ? "封面" : "剪辑"}」进入对应阶段`);
+      if (here !== want) toast(`这篇现在在「${WORKSPACE_LABEL[here]}」，可在顶部卡片的「更多」里进入对应阶段`);
       return;
     }
     setArticleImagesOpen(true);
@@ -273,6 +273,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
 
   // Hook 必须在所有提前返回之前无条件调用（加载中 → 加载完 Hook 数不能变）
   const ontology = useOntologyEnabled(Boolean(c && VIDEO_PLATFORMS.has(c.platform)));
+  // 状态在别处变了（吸收 10）：有没保存的改动就让写作台留着，直到保存 / 丢弃；进度卡单独刷新
+  const shownWorkspace = useRef<StageWorkspace>("draft");
 
   if (!c) return loadError ? (
     <div className="pad">
@@ -280,6 +282,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       <div className="row-actions"><button onClick={props.back}>← 返回看板</button><button onClick={() => void load()}>重试</button></div>
     </div>
   ) : <p className="muted pad">加载稿件…</p>;
+  if ((c as { deletedAt?: string | null }).deletedAt) return (
+    <div className="pad"><p role="status">这条稿已经移入回收站（可以在看板的回收站里恢复）。</p><div className="row-actions"><button onClick={props.back}>← 返回看板</button></div></div>
+  );
 
   const saveMutation = async (channel: string, payload: Record<string, unknown>, submitted: Partial<EditorDraft>): Promise<InvokeResult | null> => {
     if (savingRef.current) return null;
@@ -435,12 +440,19 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
-  const workspace = workspaceForStatus(c.status);
+  const statusWorkspace = workspaceForStatus(c.status);
+  const held = (dirty || saving) && shownWorkspace.current === "draft" && statusWorkspace !== "draft";
+  const workspace: StageWorkspace = held ? "draft" : statusWorkspace;
+  shownWorkspace.current = workspace;
+  const stageCard = <StageCard content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
+    transitions={isVideo ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
+    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} />;
+  const heldNote = held ? <div className="pending-edit" role="status"><p>这条已经进了「{VARIANT_STATUS[c.status] ?? c.status}」。你还有没保存的改动，写作台先留着；保存或丢弃之后再切过去。</p></div> : null;
   // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
   // 原看板卡片面板的内容（下一步、原片、候选、分镜、发布纠正、重开文稿）搬到这里（spec 2026-10-04 §2）
   const productionBanner = isVideo ? <>
     <ProductionBanner contentId={props.id} refreshKey={c.status} />
-    <CardPanel key={progressKey(c.status, c.updatedAt)} contentId={props.id} reload={async () => { await load({ quiet: true }); }} open={workspace !== "draft"}
+    <CardPanel key={progressKey(c.status, c.updatedAt)} contentId={props.id} reload={async () => { await load({ quiet: true }); }} open={workspace !== "draft"} hideNext
       approveBlocked={workspace === "draft" && (dirty || saving) ? "先保存修改，再进入下一阶段" : null} />
   </> : null;
   const stageBar = (
@@ -471,16 +483,6 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             aria-pressed={!!activeFocus}
             onClick={() => activeProposal ? proposalRef.current?.scrollIntoView({ block: "center" }) : startDraftFocus()}
           >{activeProposal ? "查看 AI 提案" : "AI 改稿"}</button>}
-          <StageAdvance
-            contentId={props.id}
-            currentStatus={c.status}
-            transitions={VIDEO_PLATFORMS.has(c.platform) ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
-            dirty={workspace === "draft" && (dirty || saving)}
-            loadedBody={c.body ?? ""}
-            reload={load}
-            isVideo={isVideo}
-            landedStage={async () => { const r = await loadCard(props.id); return r.ok ? r.data.stage ?? r.data.column : null; }}
-          />
           {workspace === "draft" && <button
             className={"ed-save-action" + (dirty ? " primary" : " is-saved")}
             disabled={saving || !dirty}
@@ -506,6 +508,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <strong className="pb-header-title">{c.title || "无标题"}</strong>
           <span className="muted">{platformLabel(c.platform)}</span>
         </div>
+        {stageCard}
         {productionBanner}
         <div className="ed-main-row"><EditingWorkspace content={c} reload={load} /></div>
       </div>
@@ -516,6 +519,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     return (
       <div className="editor editor-workspace">
         {stageBar}
+        {stageCard}
         {productionBanner}
         {props.context}
         <div className="ed-main-row">
@@ -532,6 +536,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   return (
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
+      {heldNote}
+      {stageCard}
       {productionBanner}
       <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}:${(c as { draftPath?: { checklistAt?: string } }).draftPath?.checklistAt ?? ""}`} dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />
       {props.context}
@@ -556,7 +562,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           {isVideo && (videoStarted || c.videoReadyAt) && (
             <div className="vid-warn">
               这篇已经有剪辑进度（决策与成片都留着，回文案改稿不会丢）——
-              用顶栏的下一阶段动作进入剪辑，接着制作。
+              用上面卡片的按钮（或「更多」）进入剪辑，接着制作。
             </div>
           )}
 
