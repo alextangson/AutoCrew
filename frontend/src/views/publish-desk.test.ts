@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { copyText, dataText, lengthText, railLine, stepSub } from "./desk-model";
+import { copyText, dataSub, dataText, lengthText, railLine, stepSub } from "./desk-model";
 import type { Desk, DeskReply, DeskRow, RailStep } from "./desk-api";
 
 const decided: Array<[string, Record<string, unknown>]> = [];
@@ -25,7 +25,7 @@ const { DeskProvider } = await import("./use-desk");
 const { StageCard } = await import("./StageCard");
 
 const row = (over: Partial<DeskRow> = {}): DeskRow => ({
-  platform: "douyin", label: "抖音", state: "未发", status: "未发", tone: "todo", reason: null, url: null, slot_id: null, campaigns: [],
+  platform: "douyin", label: "抖音", state: "未发", status: "未发", tone: "todo", reason: null, url: null, slot_id: null, campaigns: [], work_id: null,
   times: { scheduled_at: null, submitted_at: null, observed_at: null, public_at: null }, when: null,
   data: { kind: "note", why: "not_public", text: "公开后回流" }, copy: { kind: "missing", text: "发布包还没备" }, action: null, more: [],
   backflow: { kind: "ok", auto: true, text: "" }, ...over,
@@ -50,6 +50,8 @@ describe("纯函数", () => {
   });
   it("数据列：数字或原因，不写 0", () => {
     expect(dataText(row({ data: { kind: "metrics", views: 12000, likes: 30, comments: null, metric_date: "", first_at: "", compare: { text: "", tone: "flat" } } }))).toBe("播放 1.2 万 · 点赞 30");
+    // Codex 审 P2-6：有旧数字时照样写截至哪天 + 回流断了怎么接上
+    expect(dataSub(row({ data: { kind: "metrics", warning: "视频号登录过期，去 ego lite 登录后自动接上", views: 1, likes: null, comments: null, metric_date: "2026-10-10", first_at: "", compare: { text: "", tone: "flat" } } }))).toEqual(["数据截至 10-10", "视频号登录过期，去 ego lite 登录后自动接上"]);
     expect(dataText(row({ data: { kind: "note", why: "login", text: "视频号登录过期，去 ego lite 登录后自动接上" } }))).toContain("登录过期");
   });
   it("进度栏：窄屏一行；没有记录 / 退回如实写；字数估时长", () => {
@@ -81,9 +83,10 @@ describe("各平台表", () => {
   });
   it("手填数据：带日期、平台、轮次，只送填了的数", async () => {
     dialog = { metric_date: "2026-10-11", views: "900", likes: "", comments: "3" };
-    await render(createElement(PublishTable, props([row({ platform: "bilibili", label: "B站", state: "已公开", status: "已公开", more: ["record_metrics"] })])));
+    await render(createElement(PublishTable, props([row({ platform: "bilibili", label: "B站", state: "已公开", status: "已公开", more: ["record_metrics"], work_id: "BV1" })])));
     await click(button("手填数据"));
-    expect(decided.at(-1)).toEqual(["record_metrics", { platform: "bilibili", round: 2, metric_date: "2026-10-11", metrics: { views: 900, comments: 3 } }]);
+    // Codex 审 P2-5：带上页面看到的那件作品
+    expect(decided.at(-1)).toEqual(["record_metrics", { platform: "bilibili", round: 2, metric_date: "2026-10-11", metrics: { views: 900, comments: 3 }, expected_work_id: "BV1" }]);
   });
   it("边界 8：上一轮的折叠在「以前的发布」", async () => {
     await render(createElement(PublishTable, props([row()], { past: [{ round: 1, platform: "douyin", label: "第 1 轮 · 发布计划里的记录", url: null, at: "" }] })));

@@ -249,6 +249,10 @@ export interface Slot {
   gate?: GateStamp;
   /** 证据时间（排序与显示） */
   at: string;
+  /** 决定槽状态那条观察里明写的平台发布时间；你标的 / 回流按 id 的没有 */
+  published_at?: string;
+  /** 那条观察（或你的决定）写进来的时刻 */
+  seen_at?: string;
   /** 被顶掉的早先观察（删了重发、AI 说法被可信观察顶掉…） */
   history: string[];
 }
@@ -310,6 +314,7 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
     ...(o?.item_id ? { item_id: o.item_id } : {}), ...(o?.reason ? { reason: o.reason } : {}), ...(o?.check_id ? { check_id: o.check_id } : {}),
     ...(pick.d?.gate ?? o?.gate ? { gate: pick.d?.gate ?? o!.gate } : {}),
     at: o?.published_at ?? o?.seen_at ?? pick.d?.at ?? new Date(pick.at).toISOString(),
+    ...(o?.published_at ? { published_at: o.published_at } : {}), seen_at: pick.d?.at ?? o?.seen_at ?? new Date(pick.at).toISOString(),
     history: entries.filter((e) => e !== pick && e.fact_id).map((e) => e.fact_id!),
     ...foundLink(doc, round, platform, cut),
   };

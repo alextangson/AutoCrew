@@ -14,20 +14,20 @@ import { videoKitFor } from "../../storage/video-kits.js";
 import { staleKit } from "../../tools/pre-publish-kit.js";
 import type { PublishTarget, TargetAction } from "./targets.js";
 import type { ObsFact, Slot } from "./receipts.js";
-import { itemIdOf } from "./desk-writes.js";
+import { publicTimeOf, workIdOf } from "./desk-plan.js";
 
 const HOUR = 3600_000, DAY = 24 * HOUR;
 export type RowAction = { kind: TargetAction; label: string; fact_id?: string };
 export type MoreAction = "correct_publish" | "add_work_url" | "record_metrics" | "i_published";
 export type RowData =
-  | { kind: "metrics"; views: number; likes: number | null; comments: number | null; metric_date: string; first_at: string; compare: { text: string; tone: string } }
+  | { kind: "metrics"; warning?: string; views: number; likes: number | null; comments: number | null; metric_date: string; first_at: string; compare: { text: string; tone: string } }
   | { kind: "note"; text: string; why: "not_public" | "fresh" | "mismatch" | "no_identity" | "unmatched" | Backflow["kind"] };
 export type RowCopy =
   | { kind: "ready"; source: "实发" | "拟发"; title: string; caption: string; tags: string[] }
   | { kind: "missing" | "stale"; text: string };
 export interface DeskRow {
   platform: string; label: string; state: PublishTarget["state"]; status: string; tone: string; reason: string | null; url: string | null;
-  slot_id: string | null; campaigns: string[];
+  slot_id: string | null; campaigns: string[]; work_id: string | null;
   times: { scheduled_at: string | null; submitted_at: string | null; observed_at: string | null; public_at: string | null };
   when: string | null; data: RowData; copy: RowCopy; action: RowAction | null; more: MoreAction[]; backflow: { kind: Backflow["kind"]; auto: boolean; text: string };
 }
@@ -42,10 +42,10 @@ const LIVE = new Set(["已定时", "审核中", "已公开", "应已公开"]);
 
 function timesOf(i: RowInput): DeskRow["times"] {
   const e = i.entry, s = i.slot;
-  const scheduled = e?.scheduledAt ?? (s?.pub_state === "scheduled" ? s.at : null);
-  // 实际公开时间只认计划里报公开时带的时间；数据回流 / 你标的已发布不知道真实公开时刻
-  const publicAt = i.target.state === "已公开" && e?.state === "public" && e.time ? e.time : null;
-  return { scheduled_at: scheduled ?? null, submitted_at: e?.submittedAt ?? null, observed_at: s?.at ?? null, public_at: publicAt };
+  const scheduled = e?.scheduledAt ?? (s?.pub_state === "scheduled" ? s.published_at ?? null : null);
+  // 实际公开时间只认明写的（publicTimeOf）；回流按 id / 你标的已发布不知道真实公开时刻
+  const publicAt = i.target.state === "已公开" ? publicTimeOf(s, e) : null;
+  return { scheduled_at: scheduled ?? null, submitted_at: e?.submittedAt ?? null, observed_at: s?.seen_at ?? null, public_at: publicAt };
 }
 
 /** 状态文字：应已公开一律「应已公开 · 还没核到」（吸收 6）；按标题认的是待核（吸收 2） */
@@ -75,7 +75,8 @@ function whenOf(state: string, t: DeskRow["times"], now: number): string | null 
 /** 本轮这件作品：回执槽的作品 id / 链接解析出的 id；回流里同平台同 id 的作品（吸收 3） */
 function dataOf(i: RowInput, state: string, t: DeskRow["times"]): RowData {
   if (state !== "已公开") return { kind: "note", why: "not_public", text: "公开后回流" };
-  const ids = new Set([i.slot?.item_id, itemIdOf(i.target.platform, i.slot?.url)].filter((x): x is string => Boolean(x)));
+  const id = i.slot ? workIdOf(i.slot) : null;
+  const ids = new Set(id ? [id] : []);
   const works = ids.size ? i.works.filter((w) => w.platform === i.target.platform && w.platformItemId && ids.has(w.platformItemId)) : [];
   if (works.length > 1) return { kind: "note", why: "mismatch", text: `数据对不上是哪一条（对上了 ${works.length} 件作品）` };
   if (works.length === 1) {
@@ -83,7 +84,9 @@ function dataOf(i: RowInput, state: string, t: DeskRow["times"]): RowData {
     const views = snap.metrics.views;
     if (typeof views === "number") {
       const first = works[0].snapshots[0];
-      return { kind: "metrics", views, likes: snap.metrics.likes ?? null, comments: snap.metrics.comments ?? null, metric_date: snap.metricDate, first_at: first.recordedAt ?? first.metricDate,
+      // 回流断了照样给旧数字，但写清截至哪天 + 怎么接上（Codex 审 P2-6）
+      const broken = i.backflow.kind !== "ok" && i.backflow.kind !== "unsupported" ? { warning: i.backflow.text } : {};
+      return { kind: "metrics", ...broken, views, likes: snap.metrics.likes ?? null, comments: snap.metrics.comments ?? null, metric_date: snap.metricDate, first_at: first.recordedAt ?? first.metricDate,
         compare: comparisonText(compareViews(views, i.baselines.get(i.target.platform)), platformLabel(i.target.platform)) };
     }
   }
@@ -134,6 +137,7 @@ export function deskRow(i: RowInput): DeskRow {
   return {
     platform: i.target.platform, label: platformLabel(i.target.platform), state, status: text, tone: TONE[state] ?? "unknown",
     reason: i.target.reason ?? null, url: i.target.url ?? null, slot_id: i.target.slot_id ?? null, campaigns: i.entry?.campaigns ?? [],
+    work_id: i.slot ? workIdOf(i.slot) : null,
     times: t, when: whenOf(state, t, i.now), data: dataOf(i, state, t), copy: copyOf(i, state), action: actionOf(i, state), more: moreOf(i, state),
     backflow: { kind: i.backflow.kind, auto: i.backflow.auto, text: i.backflow.text },
   };

@@ -5,14 +5,14 @@ import type { TargetAction, TargetState } from "./publish-targets";
 
 export type MoreAction = "correct_publish" | "add_work_url" | "record_metrics" | "i_published";
 export type RowData =
-  | { kind: "metrics"; views: number; likes: number | null; comments: number | null; metric_date: string; first_at: string; compare: { text: string; tone: string } }
+  | { kind: "metrics"; warning?: string; views: number; likes: number | null; comments: number | null; metric_date: string; first_at: string; compare: { text: string; tone: string } }
   | { kind: "note"; text: string; why: string };
 export type RowCopy =
   | { kind: "ready"; source: "实发" | "拟发"; title: string; caption: string; tags: string[] }
   | { kind: "missing" | "stale"; text: string };
 export interface DeskRow {
   platform: string; label: string; state: TargetState; status: string; tone: string; reason: string | null; url: string | null;
-  slot_id: string | null; campaigns: string[];
+  slot_id: string | null; campaigns: string[]; work_id: string | null;
   times: { scheduled_at: string | null; submitted_at: string | null; observed_at: string | null; public_at: string | null };
   when: string | null; data: RowData; copy: RowCopy; action: { kind: TargetAction; label: string; fact_id?: string } | null; more: MoreAction[];
   backflow: { kind: string; auto: boolean; text: string };

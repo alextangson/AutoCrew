@@ -16,6 +16,14 @@ export function dataText(r: DeskRow): string {
   return [`播放 ${n(d.views)}`, d.likes !== null ? `点赞 ${n(d.likes)}` : null, d.comments !== null ? `评论 ${n(d.comments)}` : null].filter(Boolean).join(" · ");
 }
 
+/** 数字下面那行小字：「数据截至 10-10」；回流断了再带一句怎么接上 */
+export function dataSub(r: DeskRow): string[] {
+  const d = r.data;
+  if (d.kind !== "metrics") return [];
+  const day = /^\d{4}-(\d{2})-(\d{2})$/.exec(d.metric_date);
+  return [`数据截至 ${day ? `${day[1]}-${day[2]}` : d.metric_date}`, ...(d.warning ? [d.warning] : [])];
+}
+
 /** 本地日期 MM-DD */
 export function localDay(iso: string | null): string | null {
   if (!iso) return null;

@@ -8,7 +8,7 @@ import { confirmDialog, openDialog, toast } from "../ui";
 import { decide } from "./board-api";
 import { useGuardedAction, type ActionResult } from "./guarded-action";
 import { publishAsk, type PublishTarget } from "./publish-targets";
-import { copyText, dataText } from "./desk-model";
+import { copyText, dataSub, dataText } from "./desk-model";
 import type { Desk, DeskRow, MoreAction } from "./desk-api";
 
 const OK: ActionResult = { ok: true };
@@ -53,7 +53,7 @@ async function recordMetrics(p: Pick<TableProps, "contentId" | "desk">, r: DeskR
     { key: "metric_date", label: "数据日期", placeholder: "YYYY-MM-DD", initial: today }, { key: "views", label: "播放" }, { key: "likes", label: "点赞（选填）" }, { key: "comments", label: "评论（选填）" }] });
   if (!v) return OK;
   const metrics = Object.fromEntries((["views", "likes", "comments"] as const).filter((k) => v[k].trim()).map((k) => [k, Number(v[k])]));
-  return res(await decide(p.contentId, "record_metrics", { platform: r.platform, round: p.desk.round, metric_date: v.metric_date.trim(), metrics }));
+  return res(await decide(p.contentId, "record_metrics", { platform: r.platform, round: p.desk.round, metric_date: v.metric_date.trim(), metrics, expected_work_id: r.work_id ?? "" }));
 }
 
 export function PublishTable(p: TableProps) {
@@ -82,7 +82,7 @@ function Row({ r, busy, run, p }: { r: DeskRow; busy: boolean; run: (label: stri
       <button className="desk-row-platform" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{r.label}<span aria-hidden>{open ? "▾" : "▸"}</span></button>
       <span className="desk-row-status">{r.url && r.state === "已公开" ? <a href={r.url} target="_blank" rel="noreferrer">{r.status}</a> : r.status}{r.when && <small>{r.when}</small>}</span>
       <span className="desk-row-campaign">{r.campaigns.join("、")}</span>
-      <span className={`desk-row-data${r.data.kind === "note" ? " is-note" : ""}`}>{dataText(r)}{r.data.kind === "metrics" && <small className={`is-${r.data.compare.tone}`}>{r.data.compare.text}</small>}</span>
+      <span className={`desk-row-data${r.data.kind === "note" ? " is-note" : ""}`}>{dataText(r)}{r.data.kind === "metrics" && <small className={`is-${r.data.compare.tone}`}>{r.data.compare.text}</small>}{dataSub(r).map((t, i) => <small key={t} className={i ? "is-down" : undefined}>{t}</small>)}</span>
       <span className="desk-row-act">
         {r.action && <button className="primary" disabled={busy} onClick={() => run(`${r.action!.kind}:${r.platform}`, () => rowAction(p, r))}>{r.action.label}</button>}
         {r.more.length > 0 && <details className="stage-card-more"><summary aria-label={`${r.label}更多操作`}>更多</summary>

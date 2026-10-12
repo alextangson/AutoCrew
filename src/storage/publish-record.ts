@@ -45,6 +45,8 @@ export interface PlatformPublication {
   submittedAt?: string | null;
   /** 计划里写的定时公开时间（publication.scheduled_at 或条目 scheduled_at） */
   scheduledAt?: string | null;
+  /** 计划里明写的实际公开时间（只有 published_at）；没有 = 不知道 */
+  publishedAt?: string | null;
   /** 把关判定用的证据时间：审核中 / 被驳回的按提交 → 核实 → 定时取最早能证明投出的那个，其余同 time */
   evidenceAt?: string | null;
 }
@@ -107,6 +109,8 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     title: str(entry.title), caption: str(entry.caption), tags: Array.isArray(entry.tags) ? entry.tags.map(str).filter((t): t is string => Boolean(t)) : [], postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
     submittedAt: validTime(pub?.submitted_at),
     scheduledAt,
+    // 只认计划里明写的公开时间（verified_at 是核实时间，不冒充公开时间）
+    publishedAt: state === "public" ? validTime(pub?.published_at) : null,
     evidenceAt: state === "reviewing" || state === "rejected" ? validTime(pub?.submitted_at) ?? validTime(pub?.verified_at) ?? scheduledAt : time,
   };
 }

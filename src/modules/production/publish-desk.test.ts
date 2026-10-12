@@ -81,7 +81,7 @@ describe("各平台一行（deskRow）", () => {
     expect(r.when).toBe("还有 8 天公开");
   });
   it("边界 3 / 吸收 6：定时过了没核到 = 应已公开 · 还没核到；只有 24h 追问成立才给确认发了（带 fact_id）", () => {
-    const past = { target: target("douyin", "已定时"), slot: slot("douyin", { pub_state: "scheduled", at: "2026-10-11T10:00:00Z", by: "accepted" }) };
+    const past = { target: target("douyin", "已定时"), slot: slot("douyin", { pub_state: "scheduled", at: "2026-10-11T10:00:00Z", published_at: "2026-10-11T10:00:00Z", by: "accepted" }) };
     expect(deskRow(input(past))).toMatchObject({ state: "应已公开", status: "应已公开 · 还没核到", action: null });
     const asked = deskRow(input({ ...past, overdue: { id: "fact-claim" } as never }));
     expect(asked.action).toEqual({ kind: "confirm_receipt", label: "确认发了", fact_id: "fact-claim" });
@@ -101,9 +101,20 @@ describe("各平台一行（deskRow）", () => {
     expect(one.data).toMatchObject({ kind: "metrics", views: 150, likes: 3, comments: 1, compare: { text: "比你抖音的中位数高 50%" } });
     expect(deskRow(input({ ...pub, works: [work("douyin", "111", 1), { ...work("douyin", "111", 2), key: "dup" }] })).data).toMatchObject({ why: "mismatch" });
     expect(deskRow(input({ ...pub, works: [work("douyin", "222", 9)] })).data).toMatchObject({ why: "unmatched" });
-    const fresh = deskRow(input({ ...pub, entry: entry("douyin", { time: "2026-10-12T01:00:00Z" }) }));
+    const fresh = deskRow(input({ ...pub, entry: entry("douyin", { time: "2026-10-12T01:00:00Z", publishedAt: "2026-10-12T01:00:00Z" }) }));
     expect(fresh.data).toEqual({ kind: "note", why: "fresh", text: "公开 3 小时，数据还没回来" });
     expect(fresh.when).toBe("公开第 1 天");
+  });
+  it("Codex 审 P2-4：计划里只有核实时间（没有 published_at）= 不知道实际公开时间；观察时间取 seen_at", () => {
+    const r = deskRow(input({ target: target("douyin", "已公开", { url: "https://www.douyin.com/video/111" }), slot: slot("douyin", { url: "https://www.douyin.com/video/111", seen_at: "2026-10-11T00:00:00Z" }), entry: entry("douyin", { time: "2026-10-12T01:00:00Z", publishedAt: null }) }));
+    expect(r.times).toMatchObject({ public_at: null, observed_at: "2026-10-11T00:00:00Z" });
+    expect(r.when).toBe("不知道实际公开时间");
+  });
+  it("Codex 审 P2-6：有快照但回流登录过期 = 照样给数字，并带上怎么接上", () => {
+    const pull = defaultPullState();
+    pull.platforms.douyin = { ...pull.platforms.douyin, enabled: true, lastStatus: "needs_login" };
+    const r = deskRow(input({ target: target("douyin", "已公开", { url: "https://www.douyin.com/video/111" }), slot: slot("douyin", { url: "https://www.douyin.com/video/111" }), works: [work("douyin", "111", 50)], backflow: backflowOf("douyin", pull) }));
+    expect(r.data).toMatchObject({ kind: "metrics", views: 50, metric_date: "2026-10-11", warning: "抖音登录过期，去 ego lite 登录后自动接上" });
   });
   it("边界 5：回流断了写原因，不写 0；B站不回流时更多里能手填", () => {
     const pull = defaultPullState();
@@ -172,13 +183,17 @@ describe("读模型与两个新写操作（端到端）", () => {
     expect(await founderDecision(c.id, "add_work_url", { platform: "douyin", round: 2, url: "https://www.douyin.com/video/7" }, env.dir)).toMatchObject({ ok: false, code: "stale" });
     expect(await founderDecision(c.id, "add_work_url", { platform: "xiaohongshu", round: 1, url: "https://www.xiaohongshu.com/explore/64a1b2c3d4e5" }, env.dir)).toMatchObject({ ok: false, code: "no_slot" });
     expect(await decide(c.id, "add_work_url", { platform: "douyin", round: 1, url: "https://www.douyin.com/video/7" }, env.dir)).toMatchObject({ ok: true });
+    // Codex 审 P1：已指认一件作品后，换成另一件的链接拒（先纠正），不混
+    expect(await founderDecision(c.id, "add_work_url", { platform: "douyin", round: 1, url: "https://www.douyin.com/video/8" }, env.dir)).toMatchObject({ ok: false, code: "work_conflict" });
     const r = await publishDesk(c.id, env.dir) as { desk: { rows: Array<{ status: string; url: string }> } };
     expect(r.desk.rows[0]).toMatchObject({ status: "已公开", url: "https://www.douyin.com/video/7" });
   });
 
   it("吸收 4：手填数据带平台 + 作品 + 日期 + 轮次；自动回流的平台不收；记上后行里出数字", async () => {
     const c = await live([{ platform: "bilibili", url: "https://www.bilibili.com/video/BV1xx411c7mD" }]);
-    const ask = (p: Record<string, unknown>) => founderDecision(c.id, "record_metrics", { platform: "bilibili", round: 1, metric_date: "2026-10-11", metrics: { views: 1200, likes: 30, comments: 4 }, ...p }, env.dir);
+    const ask = (p: Record<string, unknown>) => founderDecision(c.id, "record_metrics", { platform: "bilibili", round: 1, metric_date: "2026-10-11", metrics: { views: 1200, likes: 30, comments: 4 }, expected_work_id: "BV1xx411c7mD", ...p }, env.dir);
+    // Codex 审 P2-5：页面看到的作品对不上 = stale
+    expect(await ask({ expected_work_id: "BV1other0000" })).toMatchObject({ ok: false, code: "stale" });
     expect(await ask({ round: undefined })).toMatchObject({ ok: false, code: "round_required" });
     expect(await ask({ metric_date: "2099-01-01" })).toMatchObject({ ok: false, code: "bad_date" });
     expect(await ask({ metrics: { views: -1 } })).toMatchObject({ ok: false, code: "bad_metrics" });
@@ -186,9 +201,28 @@ describe("读模型与两个新写操作（端到端）", () => {
     expect(await ask({})).toMatchObject({ ok: true });
     const o = (await listOutcomes(env.dir)).find((x) => x.contentId === c.id)!;
     expect(o).toMatchObject({ platform: "bilibili", platformItemId: "BV1xx411c7mD", metricDate: "2026-10-11", source: "paste" });
+    // Codex 审 P2-3：没有明写的公开时间就不编 publishedAt
+    expect(o.publishedAt ?? null).toBeNull();
     const r = await publishDesk(c.id, env.dir) as { desk: { rows: Array<{ data: { kind: string; views?: number } }>; rail: { steps: Array<{ key: string; state: string }> } } };
     expect(r.desk.rows[0].data).toMatchObject({ kind: "metrics", views: 1200 });
     expect(r.desk.rail.steps.find((s) => s.key === "data")!.state).toBe("完成");
+  });
+
+  it("Codex 审 P2-3：你标的已发布（确认时间晚于数据日期）照样收更早的数据", async () => {
+    const c = await live([]);
+    expect(await founderDecision(c.id, "i_published", { platform: "bilibili", round: 1, url: "https://www.bilibili.com/video/BV1xx411c7mD" }, env.dir)).toMatchObject({ ok: true });
+    expect(await founderDecision(c.id, "record_metrics", { platform: "bilibili", round: 1, metric_date: "2020-01-01", metrics: { views: 5 }, expected_work_id: "BV1xx411c7mD" }, env.dir)).toMatchObject({ ok: true });
+  });
+
+  it("Codex 审 P2-2：重开后计划里那条（提交早于重开）不当本轮的活动 / 实发文案 / 时间", async () => {
+    const c = await live([{ platform: "douyin" }]);
+    await put(path.join(projectRoot(env, c.id), "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", title: "上一轮标题", caption: "上一轮简介", campaigns: [{ name: "旧活动", selected: true }], publication: { status: "published", published_at: "2026-10-01T10:00:00Z", submitted_at: "2026-10-01T09:00:00Z" } }] }));
+    const { reopenScript } = await import("./reopen.js");
+    expect(await reopenScript(c.id, env.dir, undefined, 1)).toMatchObject({ ok: true });
+    expect(await founderDecision(c.id, "i_published", { platform: "douyin", round: 2 }, env.dir)).toMatchObject({ ok: true });
+    const r = await publishDesk(c.id, env.dir) as { desk: { rows: Array<{ campaigns: string[]; copy: { kind: string; source?: string }; times: { public_at: string | null } }> } };
+    expect(r.desk.rows[0]).toMatchObject({ campaigns: [], times: { public_at: null } });
+    expect(r.desk.rows[0].copy.source).not.toBe("实发");
   });
 
   it("边界 8：重开后表只显示本轮，上一轮进「以前的发布」", async () => {

@@ -13,7 +13,8 @@ import type { DataRow } from "../flywheel/data-rows.js";
 import { dataRows } from "../../desktop/data-page.js";
 import { countChars, wordsPerMinute } from "../../desktop/board-data.js";
 import { cardPanel } from "./panel.js";
-import { canonPlatform, overdueSchedule, slotOf } from "./receipts.js";
+import { overdueSchedule, slotOf } from "./receipts.js";
+import { planEntryFor } from "./desk-plan.js";
 import { validCoverApproval } from "./derive.js";
 import { deskRow, type DeskRow } from "./desk-rows.js";
 import { railSteps } from "./desk-rail.js";
@@ -60,15 +61,14 @@ export async function publishDesk(contentId: string, dataDir: string, now = Date
   const content = (await getContent(contentId, dataDir))!;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const record = await readPublishRecord(content.id, content.manualPublications, dataDir);
-  const entries = record.kind === "none" ? [] : record.platforms;
   const data = await readData(dataDir);
   const baselines = platformBaselines(data.rows);
   const works = data.rows.flatMap((r) => r.works);
-  const rows = (card.targets as PublishTarget[]).map((target) => deskRow({
-    content, target, slot: slotOf(doc, doc.round, target.platform), entry: entries.find((e) => canonPlatform(e.platform) === target.platform),
+  const rows = (card.targets as PublishTarget[]).map((target) => { const slot = slotOf(doc, doc.round, target.platform); return deskRow({
+    content, target, slot, entry: planEntryFor(doc, record, target.platform, slot),
     overdue: overdueSchedule(doc, doc.round, target.platform), works, baselines, now,
     backflow: data.dataErr ? { kind: "unreadable", auto: false, text: `数据读不出来：${data.dataErr}` } : backflowOf(target.platform, data.pull, data.pullErr),
-  }));
+  }); });
   const live = rows.filter((r) => ["已定时", "审核中", "已公开", "应已公开"].includes(r.state));
   const rail = railSteps({ doc, body: content.body, firstSubmitAt: earliest(live.map((r) => r.times.submitted_at ?? r.times.observed_at)),
     firstDataAt: earliest(rows.map((r) => (r.data.kind === "metrics" ? r.data.first_at : null))) });

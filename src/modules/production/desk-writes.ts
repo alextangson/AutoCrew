@@ -11,6 +11,8 @@ import { recordOutcome } from "../flywheel/outcome-store.js";
 import { readPullState } from "../flywheel/pull-state.js";
 import { backflowOf } from "../flywheel/backflow.js";
 import { push, staleRound, type Ctx } from "./decisions.js";
+import { readPublishRecord } from "../../storage/publish-record.js";
+import { planEntryFor, publicTimeOf } from "./desk-plan.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
@@ -50,6 +52,10 @@ export async function addWorkUrl(ctx: Ctx): Promise<Result> {
   const slot = liveSlot(ctx, platform);
   if (typeof slot === "string") return fail("no_slot", slot);
   if (slot.url === url) return { ok: true, unchanged: true };
+  // 一个槽只指认一件作品（Codex 审 P1）：新链接是另一件 / 认不出是哪件，就不混
+  const had = slot.item_id ?? itemIdOf(platform, slot.url);
+  const next = itemIdOf(platform, url);
+  if (had && next !== had) return fail("work_conflict", next ? "这个链接是另一件作品：要换作品，先在「更多」里纠正这个平台，再标已发" : "认不出这个链接是哪件作品（短链要换成作品页链接），和已记的作品对不上");
   return { ok: true, decision: await push(ctx, { type: "publish_link", platform, note: url }, "publish_link_added") };
 }
 
@@ -85,9 +91,12 @@ export async function recordMetrics(ctx: Ctx): Promise<Result> {
   if (flow.auto) return fail("auto_backflow", "这个平台有自动回流，数据会自己回来；回流断了先接上回流");
   const itemId = slot.item_id ?? itemIdOf(platform, slot.url);
   if (!itemId) return fail("work_unknown", "认不出是哪件作品：先在「补作品链接」里补上这个平台的作品链接");
+  // 页面上看到的那件作品（Codex 审 P2-5）：弹窗开着时槽换了作品，拒，不记到替换后的那件上
+  if (str(ctx.params.expected_work_id) !== itemId) return fail("stale", "这个平台的作品刚变过：刷新看一下再填");
   const metrics = metricsOf(ctx.params.metrics);
   if (typeof metrics === "string") return fail("bad_metrics", metrics);
-  const publicAt = slot.pub_state === "public" ? slot.at : null;
+  const record = await readPublishRecord(ctx.content.id, ctx.content.manualPublications, ctx.dataDir);
+  const publicAt = publicTimeOf(slot, planEntryFor(ctx.doc, record, platform, slot));
   const date = metricDateOf(ctx.params.metric_date, publicAt, Date.now());
   if (typeof date !== "string") return date;
   const w = await recordOutcome({ contentId: ctx.content.id, platform, platformTitle: ctx.content.title, publishedAt: publicAt, metricDate: date, metrics, source: "paste", platformItemId: itemId }, ctx.dataDir);
