@@ -201,3 +201,22 @@ describe("卡上的恢复动作（吸收 15）", () => {
     expect(await founderDecision(r.id, "retry_registration", {}, env.dir)).toMatchObject({ ok: true });
   });
 });
+
+describe("Codex 复审 f74f8c86..HEAD", () => {
+  let env: Env;
+  beforeEach(async () => { env = await makeEnv({ enabled: false }); await writeEnabledVersion(env.dir); });
+  afterEach(async () => { await env.cleanup(); });
+
+  it("[P2] 成片批准被撤了：即使留着登记失败记录，也不给「重试登记」", async () => {
+    const r = await registeredVideo(env);
+    const { mutateProduction } = await import("./service.js");
+    const { cardPanel } = await import("./panel.js");
+    const { readProductionDoc } = await import("../../storage/production-store.js");
+    await mutateProduction(r.id, env.dir, (doc) => { doc.commit_failure = { round: doc.round, reason: "字幕对不上", at: new Date().toISOString() } as never; return { value: null, events: [] }; });
+    const cutOk = (await readProductionDoc(r.id, env.dir))!.decisions.find((d) => d.type === "cut_approval")!;
+    expect(await founderDecision(r.id, "revoke_approval", { decision_id: cutOk.id }, env.dir)).toMatchObject({ ok: true });
+    // 前提：失败记录还在（不然这条测不到东西）
+    expect((await readProductionDoc(r.id, env.dir))!.commit_failure).toBeTruthy();
+    expect(await cardPanel(r.id, env.dir)).toMatchObject({ recovery: null });
+  });
+});

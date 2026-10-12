@@ -17,7 +17,7 @@ export function CardCandidates(p: { contentId: string; rows: CandidateRowView[];
     {c.detail && <details><summary className="card-panel-note">依据</summary><pre className="card-panel-detail">{c.detail}</pre></details>}
     <div className="card-panel-row">
       {/* 列表不列的候选（发布后导出、已发布、归了别条）在卡片上直接定，否则无处可定（整分支审 16 P2） */}
-      {p.inbox && c.in_inbox ? (c.state === "candidate" && <button className="btn-ghost" onClick={p.inbox}>去『等你拍板』处理</button>) : (!p.inbox || c.state === "candidate") && <>
+      {p.inbox && c.in_inbox ? (c.state === "candidate" && <span className="card-panel-note">在对话里跟 agent 说就能处理 <button className="bcard-link" onClick={p.inbox}>打开列表</button></span>) : (!p.inbox || c.state === "candidate") && <>
         <button disabled={p.busy} onClick={() => void p.confirm("confirm_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "已确认是这条")}>是这条</button>
         <button disabled={p.busy} onClick={() => void p.act("reject_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "记住了：不是这条")}>不是这条</button></>}
       {c.path && <button className="bcard-link" onClick={() => void reveal(c.fact_id)}>在访达中显示</button>}

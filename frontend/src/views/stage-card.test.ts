@@ -133,4 +133,10 @@ describe("StageCard 渲染", () => {
     expect(confirms).toEqual(["纠正抖音的发布记录？"]);
     expect(decided[1]).toEqual(["correct_publish", { platform: "douyin", round: 2, target_id: "slot:2:douyin" }]);
   });
+  it("剪辑中也能确认 AI 报的发了（核不了的回执）：带平台、轮次、fact_id；不给标已发", async () => {
+    await render({ status: "editing", stage: "剪辑中", column: "剪辑中", targets: [T("douyin", "待核", ["confirm_receipt", "correct_publish"], { fact_id: "f9", slot_id: "slot:2:douyin" })] });
+    expect(button("标已发")).toBeUndefined();
+    await click(button("确认发了")!);
+    expect(decided[0]).toEqual(["confirm_receipt", { platform: "douyin", round: 2, fact_id: "f9" }]);
+  });
 });

@@ -227,7 +227,8 @@ export function StoryboardSection(p: { contentId: string; s: StoryboardPanel }) 
 
 /** 「去『等你拍板』处理」：逐件的决定只在列表里做，卡片上不重复放按钮 */
 function InboxLink(p: { go: () => void }) {
-  return <button className="btn-ghost" onClick={p.go}>去『等你拍板』处理</button>;
+  // 稿件页上的说法：在对话里跟 agent 说就能处理；列表照样能点开
+  return <span className="card-panel-note">在对话里跟 agent 说就能处理 <button className="bcard-link" onClick={p.go}>打开列表</button></span>;
 }
 
 /**
@@ -235,7 +236,7 @@ function InboxLink(p: { go: () => void }) {
  * 之后「成片剪好了，看一遍」出现在「等你拍板」里。
  */
 export function UnreviewedCut(p: { u: { count: number; editor_label: string }; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>; goInbox: () => void }) {
-  const now = async () => { await p.act("review_now", {}, "好，最新一版放进「等你拍板」了"); p.goInbox(); };
+  const now = async () => { await p.act("review_now", {}, "好，最新一版可以审了：在对话里跟 agent 说就能处理"); p.goInbox(); };
   return <section className="card-panel-row" aria-label="还没说可以审">
     <span className="card-panel-note">有 {p.u.count} 个导出，{p.u.editor_label}还没说可以审了</span>
     <button className="btn-ghost" disabled={p.busy} onClick={() => void now()}>我现在就要审</button>

@@ -79,7 +79,7 @@ export function StageCard(p: StageCardProps) {
     {model.text && <p className="stage-card-text">{model.text}</p>}
     {model.notes.map((n) => <p key={n} className="stage-card-note">{n}</p>)}
     {data && showChips(data.targets, data.stage ?? data.column) && <PlatformChips targets={data.targets!} busy={g.busy}
-      onAction={data.active && ["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? targetAct : undefined} />}
+      onAction={data.active ? targetAct : undefined} only={["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? undefined : RECEIPT_ONLY} />}
     {pr && <div className="stage-card-row">
       <button className="primary" disabled={g.busy || Boolean(blocked)} onClick={() => void exec(pr.label, pr.run, pr.confirm)}>{g.busy ? "处理中…" : pr.label}</button>
       {(blocked ?? pr.note) && <span className="stage-card-why">{blocked ?? pr.note}</span>}
@@ -87,6 +87,9 @@ export function StageCard(p: StageCardProps) {
     {g.error && <p className="stage-card-error" role="alert">没做成：{g.error} <button className="bcard-link" disabled={g.busy} onClick={() => void g.retry()}>重试</button></p>}
   </section></div>;
 }
+
+/** 没到发布段：AI 报的发了（核不了）照样能在卡上确认（Codex 复审 P2）；纠正在「更多」 */
+const RECEIPT_ONLY: ReadonlySet<TargetAction> = new Set(["confirm_receipt"]);
 
 const needsSaved = (run: Run) => run.kind === "transition" || (run.kind === "next" && run.action === "approve_script");
 

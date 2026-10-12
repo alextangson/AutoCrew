@@ -113,7 +113,7 @@ function derivedMore(d: CardPanelData, transitions: AllowedTransition[]): MoreIt
   if (d.approvals?.cut) out.push({ key: "revoke-cut", label: "撤回成片批准", run: { kind: "decide", action: "revoke_approval", params: { decision_id: d.approvals.cut.id } }, confirm: { ...UNDO.revoke_cut, danger: true } });
   if (d.approvals?.cover) out.push({ key: "revoke-cover", label: "撤回封面批准", run: { kind: "decide", action: "revoke_approval", params: { decision_id: d.approvals.cover.id } }, confirm: { title: "撤回封面批准？", body: "这组封面的批准撤掉，已登记的发布包立刻不能发；要重新选封面。", danger: true } });
   for (const t of d.targets ?? []) {
-    if (!t.actions.includes("correct_publish") || t.state === "待核") continue;
+    if (!t.actions.includes("correct_publish")) continue;
     out.push({ key: `correct:${t.platform}`, label: `纠正：${platformLabel(t.platform)}其实没发`, run: { kind: "target", target: t, action: "correct_publish" },
       confirm: { title: `纠正${platformLabel(t.platform)}的发布记录？`, body: `${UNDO.correct_publish.body}只动${platformLabel(t.platform)}这一个平台。`, danger: true } });
   }

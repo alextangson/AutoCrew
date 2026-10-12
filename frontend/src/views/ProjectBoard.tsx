@@ -14,7 +14,6 @@ import { CodexPublishButton } from "./CodexPublish";
 import { showCodexPublish } from "./codex-publish";
 import { artifactUrl, RevealLink, when } from "./board-parts";
 import { coverVersions } from "./cover-board";
-import { inboxHref, loadInbox } from "./review/review-api";
 import { boardFiles, codexLine, nowKind, refreshFailedLine, stepperStates, type NowKind } from "./board-view";
 import { boardAnomalies, fileName, type ProjectReview } from "./project-board";
 
@@ -139,25 +138,16 @@ function NoHandoff(props: { contentId: string; status: string; reload: () => Pro
 
 /**
  * 本体下的工作台（review-inbox §10，R18）：只看——本轮全部成片（最新一版 / 上一版…按剪好时间）、全部封面组、文件、文案。
- * 不放审核按钮；这条有要你拍板的事时给一个「去『等你拍板』处理」。
+ * 不放审核按钮；要你拍板的事由页面顶部的卡说。
  */
 export function ReadOnlyWorkbench(p: { review: ProjectReview; content: BoardContent; error?: string | null }) {
   const id = p.content.id, arts = p.review.execution?.artifacts ?? [];
-  const [pending, setPending] = useState<number | null>(null);
-  useEffect(() => {
-    let live = true;
-    void loadInbox().then((r) => { if (live && r.ok) setPending(r.data.items.filter((i) => i.content_id === id).length); });
-    return () => { live = false; };
-  }, [id]);
   const cuts = arts.filter((a) => a.role === "final-cut").sort((a, b) => b.reported_at.localeCompare(a.reported_at));
   const covers = coverVersions(arts).sort((a, b) => b.at.localeCompare(a.at));
   const label = (i: number) => (i === 0 ? "最新一版" : i === 1 ? "上一版" : `往前第 ${i} 版`);
   return <div className="pb-board">
-    <section className="pb-now" aria-label="这条在哪">
-      <h3 className="pb-now-title">{p.review.editor_label ?? "agent"} 在剪；要你拍板的事都在「等你拍板」</h3>
-      {pending ? <p><a href={inboxHref(id)}>去『等你拍板』处理（{pending} 件）</a></p> : <p className="pb-now-sub">现在没有要你拍板的事。</p>}
-      {p.error && <p role="alert" className="pb-inline-error">{p.error}</p>}
-    </section>
+    {/* 「谁在剪 / 要不要你拍板」由页面顶部的卡说（2026-10-12），这里只留成片 / 封面 / 文件 / 文案 */}
+    {p.error && <p role="alert" className="pb-inline-error">{p.error}</p>}
     <details className="pb-section" open={cuts.length > 0}><summary>成片（{cuts.length}）</summary>
       <ul className="pb-files">{cuts.map((a, i) => <li key={a.sha256}><span className="pb-files-label">{label(i)} · {when(a.reported_at)}</span>
         <video controls preload="metadata" style={{ width: "100%", maxWidth: 480 }} src={artifactUrl(id, a)} /><RevealLink contentId={id} target={a.sha256} /></li>)}</ul>

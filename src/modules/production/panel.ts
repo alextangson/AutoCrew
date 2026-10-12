@@ -171,7 +171,8 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     checklist,
     // 卡上的恢复动作（吸收 15）：登记的文件不见了 → 找回后重新核对；登记没写成 → 重试登记
     recovery: exp.alerts.includes("文件不见了") ? { kind: "files_missing", reason: exp.reason }
-      : doc.commit_failure?.round === doc.round && exp.stage === "剪辑中" ? { kind: "registration_failed", reason: doc.commit_failure.reason } : null,
+      // 只在 D3（成片、封面批准都有效、卡在登记）时给重试；批准被撤了要的是重新审，不是重试
+      : doc.commit_failure?.round === doc.round && exp.rule === "D3" && cut && cover ? { kind: "registration_failed", reason: doc.commit_failure.reason } : null,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布
     can_reopen: doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval"),
     published_now: receipts.live.length > 0 || content.status === "published",
