@@ -10,34 +10,12 @@ import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { VIDEO_PLATFORMS, isHttpUrl, needsPublishUrlBackfill, publishUrlPlatformWarning, type Content } from "../lib";
-import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
+import type { VersionLike } from "../version-diff";
+import { AdoptionBlock, VersionList, adoptionLabel, runPreCheck } from "./EditorToolParts";
 import { AssetsSection } from "./AssetsSection";
 
 /** 能点「我已发布,确认」的状态:clipboard / 推草稿箱 / 视频发布件三条路殊途同归 */
 const CONFIRMABLE_STATUSES = new Set(["approved", "publish_ready", "publishing"]);
-
-/** 存量版本备注是英文自动串(V5.6.2 起后端已改中文)——显示层兜底汉化 */
-function versionNoteLabel(note?: string): string {
-  if (!note) return "";
-  if (note === "Initial draft") return "初稿";
-  const edit = note.match(/^Edit v(\d+)$/);
-  if (edit) return `第 ${edit[1]} 版`;
-  const revert = note.match(/^Reverted to v(\d+)$/);
-  if (revert) return `回滚到 v${revert[1]}`;
-  return note;
-}
-
-const ADOPT: Array<[string, string]> = [
-  ["adopted", "直接能用"],
-  ["light_edit", "小改后能用"],
-  ["rewritten", "基本要重写"],
-];
-
-const ADOPT_LABEL = new Map(ADOPT);
-
-function adoptionLabel(verdict?: string): string {
-  return verdict === "rejected" ? "未采纳" : (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
-}
 
 export interface EditorToolsProps {
   contentId: string;
@@ -50,7 +28,6 @@ export interface EditorToolsProps {
 
 export function EditorTools(props: EditorToolsProps) {
   const { contentId, content: c, versions, dirty, reload, send } = props;
-  const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
   const [clip, setClip] = useState<{ copyText: string; publishUrl: string; fromVideoKit?: boolean } | null>(null);
   const [digestText, setDigestText] = useState(c.digest ?? "");
   const [digestBusy, setDigestBusy] = useState(false);
@@ -62,7 +39,6 @@ export function EditorTools(props: EditorToolsProps) {
   const [publishUrlDraft, setPublishUrlDraft] = useState("");
   const [checkBusy, setCheckBusy] = useState(false);
   const [urlBusy, setUrlBusy] = useState(false);
-  const [rejudging, setRejudging] = useState(false);
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
   const urlWarning = publishUrlPlatformWarning(publishUrlDraft, c.platform);
   const publishedLink = c.publishUrl && isHttpUrl(c.publishUrl) ? c.publishUrl : null;
@@ -77,22 +53,6 @@ export function EditorTools(props: EditorToolsProps) {
       setDefaultTheme(d?.theme ?? null);
     });
   }, []);
-
-  // 改判:只发 verdict(reason/reason_note 通道保留给 MCP,界面不再问原因)。
-  // recordAdoption 整条覆盖 → 系统推导的 derived 标记自然消失,改判后就是人给的裁决。
-  const submitAdoption = async (verdict: string) => {
-    const r = await invoke("content:adoption", { id: contentId, verdict });
-    if (!r.ok) return toast(r.error ?? "记录失败");
-    const stats = (r as { stats?: { rate: number | null; judged: number; adopted: number; lightEdit: number } }).stats;
-    toast(
-      "已按你的判定更正——团队会据此学习你的标准" +
-        (stats && stats.rate !== null && stats.judged > 0
-          ? ` · 可用率 ${Math.round(stats.rate * 100)}%（${stats.adopted + stats.lightEdit}/${stats.judged}）`
-          : ""),
-    );
-    setRejudging(false);
-    void reload();
-  };
 
   const doClipboard = async () => {
     if (dirty) return toast("先保存修改，再生成发布文案");
@@ -147,29 +107,10 @@ export function EditorTools(props: EditorToolsProps) {
     }
   };
 
-  // 发布前检查:六项内容检查 + 阶段门。还没到「待发布」的稿子全过会被后端顺手推进去;
-  // 被阶段门拦下时结果里有「卡在阶段门」那一条,照样报出来,绝不谎报全过
-  const runPreCheck = async () => {
+  const doPreCheck = async () => {
     if (dirty) return toast("先保存修改，再做发布前检查");
     setCheckBusy(true);
-    try {
-      const r = await invoke("publish:pre_check", { content_id: contentId });
-      if (!r.ok) return toast(r.error ?? "发布前检查没跑起来");
-      const d = r as unknown as { allPassed?: boolean; checks?: Array<{ name: string; status: string; detail: string }> };
-      if (d.allPassed) {
-        toast("检查全过——可以去平台发了,发完回来点确认");
-        void reload();
-        return;
-      }
-      // 报出具体挂在哪一项:只说「未通过」用户不知道改什么,发布流程就成死胡同
-      const fails = (d.checks ?? [])
-        .filter((x) => x.status === "fail")
-        .map((x) => `${x.name}:${x.detail.replace(/\s+/g, " ").trim()}`)
-        .join("；");
-      toast(fails ? `发布前检查未过——${fails.slice(0, 200)}` : "发布前检查未过");
-    } finally {
-      setCheckBusy(false);
-    }
+    try { await runPreCheck(contentId, reload); } finally { setCheckBusy(false); }
   };
 
   const pushWechat = async () => {
@@ -196,26 +137,7 @@ export function EditorTools(props: EditorToolsProps) {
 
   return (
     <div className="ed-publishing-tools">
-      {/* 采纳判定:发布确认时由系统按改动量自动判一次,这里只做展示 + 改判入口 */}
-      {c.adoption && (
-        <div className="ed-section adoption-verdict">
-          <span className="mono muted">
-            采纳判定：{adoptionLabel(c.adoption.verdict)}
-            {c.adoption.derived ? "（系统按改动量判定）" : ""}
-          </span>
-          <button onClick={() => setRejudging((v) => !v)}>{rejudging ? "收起" : "改判"}</button>
-          {rejudging &&
-            ADOPT.map(([v, label]) => (
-              <button
-                key={v}
-                className={c.adoption?.verdict === v ? "chip chip-pub" : ""}
-                onClick={() => void submitAdoption(v)}
-              >
-                {c.adoption?.verdict === v ? "✓ " : ""}{label}
-              </button>
-            ))}
-        </div>
-      )}
+      <AdoptionBlock contentId={contentId} content={c} reload={reload} />
 
       <details className="ed-tools" open>
         <summary>发布准备</summary>
@@ -230,7 +152,7 @@ export function EditorTools(props: EditorToolsProps) {
             <strong>{c.videoKit ? "重新准备视频发布包" : "准备视频发布包"}</strong>
             <span>包含平台标题、文案、分镜与封面</span>
           </button>}
-          <button className="ed-tool-action" disabled={checkBusy || dirty} onClick={() => void runPreCheck()}>
+          <button className="ed-tool-action" disabled={checkBusy || dirty} onClick={() => void doPreCheck()}>
             <strong>{checkBusy ? "检查中…" : "发布前检查"}</strong><span>检查内容、素材与当前发布条件</span>
           </button>
         </div>
@@ -397,62 +319,7 @@ export function EditorTools(props: EditorToolsProps) {
         </details>
       )}
 
-      {versions.length > 0 && (
-        <details className="ed-tools ed-version-tools">
-          <summary>版本记录 · {versions.length} 版</summary>
-          <div className="ed-versions">
-            <div className="ed-version-head">
-              <span className="mono muted">共 {versions.length} 版 · 每次保存都会记录修改说明</span>
-            </div>
-            {[...versions].reverse().slice(0, 8).map((v) => {
-              const previous = versions.find((item) => item.version === v.version - 1);
-              const diff = compareVersions(previous, v);
-              const note = isGenericVersionNote(v.note) ? diff.summary : versionNoteLabel(v.note);
-              const expanded = expandedVersion === v.version;
-              return (
-                <div key={v.version} className="ed-version-card">
-                  <div className="ed-version-row">
-                    <span className="mono ed-version-number">v{v.version}</span>
-                    <div className="ed-version-main">
-                      <strong>{note}</strong>
-                      {!isGenericVersionNote(v.note) && <span className="muted">{diff.summary}</span>}
-                      <span className="mono muted">{new Date(v.savedAt).toLocaleString("zh-CN", { hour12: false })}</span>
-                    </div>
-                    {v.version > 1 && (
-                      <button onClick={() => setExpandedVersion(expanded ? null : v.version)}>
-                        {expanded ? "收起差异" : "查看差异"}
-                      </button>
-                    )}
-                    {v.version !== versions.length && (
-                      <button
-                        onClick={async () => {
-                          if (dirty) return toast("先保存当前修改，再恢复历史版本");
-                          const r = await invoke("content:revert", { id: contentId, version: v.version });
-                          toast(r.ok ? `已恢复第 ${v.version} 版内容，并保存为新版本` : (r.error ?? "恢复失败"));
-                          if (r.ok) void reload();
-                        }}
-                      >恢复这版</button>
-                    )}
-                  </div>
-                  {expanded && (
-                    <div className="ed-version-diff">
-                      {diff.titleChanged && previous?.title && v.title && (
-                        <div><span className="diff-del">− {previous.title}</span><span className="diff-add">＋ {v.title}</span></div>
-                      )}
-                      {diff.removed.slice(0, 6).map((text, index) => <p key={`del-${index}`} className="diff-del">− {text}</p>)}
-                      {diff.added.slice(0, 6).map((text, index) => <p key={`add-${index}`} className="diff-add">＋ {text}</p>)}
-                      {!diff.titleChanged && diff.removed.length === 0 && diff.added.length === 0 && (
-                        <p className="muted">与上一版正文一致。</p>
-                      )}
-                      {(diff.removed.length > 6 || diff.added.length > 6) && <p className="mono muted">仅展示前 6 处差异。</p>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </details>
-      )}
+      <VersionList contentId={contentId} versions={versions} dirty={dirty} reload={reload} />
     </div>
   );
 }

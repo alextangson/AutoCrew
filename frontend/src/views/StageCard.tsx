@@ -14,6 +14,8 @@ import { useGuardedAction, type ActionResult } from "./guarded-action";
 import { derivedModel, legacyModel, type CardModel, type Confirm, type Run } from "./stage-card-model";
 import { publishAsk, showChips, targetDecision, type PublishTarget, type TargetAction } from "./publish-targets";
 import { PlatformChips } from "./PlatformChips";
+import { useDesk } from "./use-desk";
+import { RailLine } from "./ProgressRail";
 import { isHttpUrl, platformLabel } from "../lib";
 
 export interface StageCardProps {
@@ -27,6 +29,8 @@ export interface StageCardProps {
   onStage?: (stage: string | null) => void;
   /** 写作台自己有标题输入框，卡上就不再重复标题 */
   showTitle?: boolean;
+  /** 发布表模式（吸收 14）：平台标签只显示状态、不带动作，动作都在表的行里；卡上没事时写读模型给的一句 */
+  deskMode?: boolean;
 }
 
 const OK: ActionResult = { ok: true };
@@ -38,26 +42,35 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** 本体视频稿在发布台读模型里已经有卡片数据（一个刷新协调器，吸收 8）；没有时自己读 */
 function useCard(id: string, refreshKey: string, onStage?: (s: string | null) => void) {
+  const ext = useDesk();
   const [data, setData] = useState<CardPanelData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     const r = await loadCard(id);
     if (r.ok) { setData(r.data); setError(null); onStage?.(r.data.stage ?? r.data.column); } else setError(r.error);
   }, [id, onStage]);
-  useEffect(() => { void refresh(); }, [refresh, refreshKey]);
-  return { data, error, refresh };
+  // 读模型读不出来时卡片退回自己读（卡片接口还在，主按钮照样能用）
+  const own = !ext || (Boolean(ext.error) && !ext.data);
+  useEffect(() => { if (own) void refresh(); }, [refresh, refreshKey, own]);
+  const extCard = ext?.data?.card ?? null;
+  useEffect(() => { if (extCard) onStage?.(extCard.stage ?? extCard.column); }, [extCard, onStage]);
+  if (ext && !own) return { data: extCard, error: extCard ? null : ext.error, refresh: ext.refresh, desk: ext.data?.active ? ext.data.desk : null };
+  return { data, error, refresh, desk: null };
 }
 
 export function StageCard(p: StageCardProps) {
   const c = p.content;
-  const { data, error, refresh } = useCard(c.id, `${c.status}@${c.updatedAt}`, p.onStage);
+  const { data, error, refresh, desk } = useCard(c.id, `${c.status}@${c.updatedAt}`, p.onStage);
   const g = useGuardedAction();
   if (p.isVideo && !data) return <section className="stage-card is-loading" aria-busy={!error}>
     {error ? <p className="stage-card-error" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p> : <p className="stage-card-head">读取中…</p>}
   </section>;
   const idle = Math.floor((Date.now() - Date.parse(c.updatedAt)) / 3600_000);
-  const model: CardModel = data?.active ? derivedModel(data, p.transitions, Number.isFinite(idle) ? idle : null) : legacyModel(c.status, p.transitions, p.isVideo);
+  const base: CardModel = data?.active ? derivedModel(data, p.transitions, Number.isFinite(idle) ? idle : null) : legacyModel(c.status, p.transitions, p.isVideo);
+  // 已发布、没事可做：「还有 N 天公开」/「公开第 N 天：比你抖音的中位数高 X%」（spec §2 / 吸收 1）
+  const model: CardModel = p.deskMode && base.tone === "none" && desk?.summary ? { ...base, text: desk.summary } : base;
   const exec = (label: string, run: Run, confirm?: Confirm) => g.run(label, async () => {
     if (confirm && !(await confirmDialog({ ...confirm, confirmLabel: label }))) return OK;
     const r = await perform(run, p, data);
@@ -69,8 +82,9 @@ export function StageCard(p: StageCardProps) {
   const blocked = pr?.blockedReason ?? (p.dirty && pr && needsSaved(pr.run) ? "先保存修改，再进入下一阶段" : undefined);
   const stage = data?.stage ?? data?.column ?? null;
   return <div className="stage-card-wrap">
-    <p className="stage-card-meta">{platformLabel(c.platform)}{stage ? ` · ${stage}` : ""}</p>
+    {!p.deskMode && <p className="stage-card-meta">{platformLabel(c.platform)}{stage ? ` · ${stage}` : ""}</p>}
     {p.showTitle !== false && <h1 className="stage-card-title">{c.title || "无标题"}</h1>}
+    {desk && !p.deskMode && <RailLine desk={desk} />}
     <section className={`stage-card is-${model.tone}`} aria-label="下一步">
     <div className="stage-card-top">
       <span className="stage-card-head">{model.head}</span>
@@ -79,7 +93,7 @@ export function StageCard(p: StageCardProps) {
     {model.text && <p className="stage-card-text">{model.text}</p>}
     {model.notes.map((n) => <p key={n} className="stage-card-note">{n}</p>)}
     {data && showChips(data.targets, data.stage ?? data.column) && <PlatformChips targets={data.targets!} busy={g.busy}
-      onAction={data.active ? targetAct : undefined} only={["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? undefined : RECEIPT_ONLY} />}
+      onAction={data.active && !p.deskMode ? targetAct : undefined} only={["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? undefined : RECEIPT_ONLY} />}
     {pr && <div className="stage-card-row">
       <button className="primary" disabled={g.busy || Boolean(blocked)} onClick={() => void exec(pr.label, pr.run, pr.confirm)}>{g.busy ? "处理中…" : pr.label}</button>
       {(blocked ?? pr.note) && <span className="stage-card-why">{blocked ?? pr.note}</span>}

@@ -33,6 +33,8 @@ import { EditingWorkspace } from "./EditingWorkspace";
 import { CoverWorkspace } from "./CoverWorkspace";
 import { PublishWorkspace } from "./PublishWorkspace";
 import { StageCard } from "./StageCard";
+import { DeskFrame, VideoPublishSlot } from "./DeskFrame";
+import { PublishDesk } from "./PublishDesk";
 import { CardPanel } from "./CardPanel";
 import { progressKey } from "./card-next";
 import { DraftFinalPanel } from "./DraftFinalPanel";
@@ -444,9 +446,12 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const held = (dirty || saving) && shownWorkspace.current === "draft" && statusWorkspace !== "draft";
   const workspace: StageWorkspace = held ? "draft" : statusWorkspace;
   shownWorkspace.current = workspace;
-  const stageCard = <StageCard content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
+  const cardEl = (deskMode = false) => <StageCard content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
     transitions={isVideo ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
-    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft"} />;
+    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft" && !deskMode} deskMode={deskMode} />;
+  const stageCard = cardEl();
+  // 视频稿：一个发布台读模型 + 本体启用时的左侧进度栏（发布台 spec 吸收 8 / 12）
+  const frame = (node: ReactNode) => <DeskFrame contentId={props.id} refreshKey={progressKey(c.status, c.updatedAt)} isVideo={isVideo} versions={versions}>{node}</DeskFrame>;
   const heldNote = held ? <div className="pending-edit" role="status"><p>这条已经进了「{VARIANT_STATUS[c.status] ?? c.status}」。你还有没保存的改动，写作台先留着；保存或丢弃之后再切过去。</p></div> : null;
   // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
   // 原看板卡片面板的内容（下一步、原片、候选、分镜、发布纠正、重开文稿）搬到这里（spec 2026-10-04 §2）
@@ -500,7 +505,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   if (c.source === "imported_history") return <HistoryRecordView content={c} back={props.back} />;
 
   if (workspace === "editing" || (workspace === "cover" && isVideo)) {
-    return (
+    return frame(
       <div className="editor editor-workspace">
         <div className="ed-topbar ed-workspace-header pb-header">
           <button className="ed-quiet-button ed-back-button" onClick={props.back}>← 看板</button>
@@ -515,24 +520,31 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   }
 
   if (workspace !== "draft") {
-    return (
+    const legacy = <>
+      {stageCard}
+      {productionBanner}
+      {props.context}
+      <div className="ed-main-row">
+        {/* 视频稿的封面在剪辑看板里挑 Codex 交的版本（见上），这里只剩公众号稿的封面台 */}
+        {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
+        {workspace === "publish" && (
+          <PublishWorkspace content={c} versions={versions} reload={load} send={send} />
+        )}
+      </div>
+    </>;
+    // 本体启用的视频稿到了发布：封面 + 卡 + 各平台表（发布台 spec）；其余照旧
+    const body = workspace === "publish" && isVideo
+      ? <VideoPublishSlot fallback={legacy} desk={<PublishDesk content={c} versions={versions} reload={async () => { await load({ quiet: true }); }} stage={derivedStage} stageCard={cardEl(true)} extra={productionBanner} />} />
+      : legacy;
+    return frame(
       <div className="editor editor-workspace">
         {stageBar}
-        {stageCard}
-        {productionBanner}
-        {props.context}
-        <div className="ed-main-row">
-          {/* 视频稿的封面在剪辑看板里挑 Codex 交的版本（见上），这里只剩公众号稿的封面台 */}
-          {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
-          {workspace === "publish" && (
-            <PublishWorkspace content={c} versions={versions} reload={load} send={send} />
-          )}
-        </div>
+        {body}
       </div>
     );
   }
 
-  return (
+  return frame(
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {heldNote}
