@@ -99,7 +99,7 @@ const stripTags = (caption: string) => caption.replace(/#[^\s#]+/g, "").replace(
 /** 已投出的显示实发（计划里的），未发的显示拟发（发布包）；发布包没备 / 过期不显示旧文案（边界 2 / 吸收 11） */
 function copyOf(i: RowInput, state: string): RowCopy {
   const e = i.entry;
-  if (LIVE.has(state) && e && (e.title || e.caption)) {
+  if ((LIVE.has(state) || state === "被驳回") && e?.submitted && (e.title || e.caption)) {
     return { kind: "ready", source: "实发", title: e.title ?? i.content.title, caption: stripTags(e.caption ?? ""), tags: e.tags?.length ? e.tags : captionTags(e.caption ?? "") };
   }
   const kit = videoKitFor(i.content, i.target.platform);
