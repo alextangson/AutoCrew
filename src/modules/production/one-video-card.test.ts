@@ -172,3 +172,32 @@ describe("[P2] 没认稿、唯一的回执被驳回", () => {
     expect(e.alerts[0]).toContain(ALL_REJECTED);
   });
 });
+
+describe("卡上的恢复动作（吸收 15）", () => {
+  let env: Env;
+  beforeEach(async () => { env = await makeEnv({ enabled: false }); await writeEnabledVersion(env.dir); });
+  afterEach(async () => { await env.cleanup(); });
+
+  it("登记的文件不见了：面板给 files_missing；放回后 recheck_files 重新核对、红字消失", async () => {
+    const r = await registeredVideo(env);
+    const { readProductionDoc } = await import("../../storage/production-store.js");
+    const { reconcileContent } = await import("./reconcile.js");
+    const { cardPanel } = await import("./panel.js");
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const cut = (await readProductionDoc(r.id, env.dir))!.facts.find((f) => f.kind === "cut" && f.state === "accepted")!;
+    const file = path.join(r.root, cut.path!);
+    const bytes = await fs.readFile(file);
+    await fs.rm(file);
+    await reconcileContent(r.id, env.dir);
+    expect(await cardPanel(r.id, env.dir)).toMatchObject({ recovery: { kind: "files_missing" } });
+    await fs.writeFile(file, bytes);
+    const t = new Date(Date.now() - 60_000); await fs.utimes(file, t, t);
+    expect(await founderDecision(r.id, "recheck_files", {}, env.dir)).toMatchObject({ ok: true, stage: "待发布" });
+    expect(await cardPanel(r.id, env.dir)).toMatchObject({ recovery: null });
+  });
+  it("retry_registration 是合法决定（登记由统一的 commitRegistration 重跑）", async () => {
+    const r = await registeredVideo(env);
+    expect(await founderDecision(r.id, "retry_registration", {}, env.dir)).toMatchObject({ ok: true });
+  });
+});

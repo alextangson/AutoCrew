@@ -35,7 +35,6 @@ import { PublishWorkspace } from "./PublishWorkspace";
 import { StageCard } from "./StageCard";
 import { CardPanel } from "./CardPanel";
 import { progressKey } from "./card-next";
-import { ProductionBanner } from "./ProductionBanner";
 import { DraftFinalPanel } from "./DraftFinalPanel";
 import {
   platformLabel,
@@ -275,6 +274,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const ontology = useOntologyEnabled(Boolean(c && VIDEO_PLATFORMS.has(c.platform)));
   // 状态在别处变了（吸收 10）：有没保存的改动就让写作台留着，直到保存 / 丢弃；进度卡单独刷新
   const shownWorkspace = useRef<StageWorkspace>("draft");
+  const [derivedStage, setDerivedStage] = useState<string | null>(null);
 
   if (!c) return loadError ? (
     <div className="pad">
@@ -446,12 +446,11 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   shownWorkspace.current = workspace;
   const stageCard = <StageCard content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
     transitions={isVideo ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
-    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} />;
+    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft"} />;
   const heldNote = held ? <div className="pending-edit" role="status"><p>这条已经进了「{VARIANT_STATUS[c.status] ?? c.status}」。你还有没保存的改动，写作台先留着；保存或丢弃之后再切过去。</p></div> : null;
   // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
   // 原看板卡片面板的内容（下一步、原片、候选、分镜、发布纠正、重开文稿）搬到这里（spec 2026-10-04 §2）
   const productionBanner = isVideo ? <>
-    <ProductionBanner contentId={props.id} refreshKey={c.status} />
     <CardPanel key={progressKey(c.status, c.updatedAt)} contentId={props.id} reload={async () => { await load({ quiet: true }); }} open={workspace !== "draft"} hideNext
       approveBlocked={workspace === "draft" && (dirty || saving) ? "先保存修改，再进入下一阶段" : null} />
   </> : null;
@@ -461,7 +460,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
         <button className="ed-quiet-button ed-back-button" onClick={props.back}>← 管线看板</button>
         <div className="ed-current-draft">
           <strong>{platformLabel(c.platform)}</strong>
-          <span className="ed-status-label">{VARIANT_STATUS[c.status] ?? c.status}</span>
+          <span className="ed-status-label">{derivedStage ?? VARIANT_STATUS[c.status] ?? c.status}</span>
           {workspace !== "draft" && <span className="muted">{WORKSPACE_LABEL[workspace]}</span>}
         </div>
         <button className="ed-quiet-button" title="复制一句话，粘到 WorkBuddy 里让它通过 AutoCrew 打开这篇" onClick={() => void copyForWorkbuddy(c.title, props.id)}>复制给 WorkBuddy</button>

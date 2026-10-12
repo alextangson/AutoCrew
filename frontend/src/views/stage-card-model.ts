@@ -32,7 +32,7 @@ export type Run =
   | { kind: "decide"; action: string; params: Record<string, unknown> }
   | { kind: "reopen" };
 export interface Confirm { title: string; body: string; danger?: boolean }
-export interface Primary { label: string; run: Run; blockedReason?: string; confirm?: Confirm }
+export interface Primary { label: string; run: Run; blockedReason?: string; confirm?: Confirm; note?: string }
 export interface MoreItem { key: string; label: string; run: Run; blockedReason?: string; confirm?: Confirm }
 export interface CardModel { tone: "you" | "ai" | "none"; head: string; text: string; primary: Primary | null; more: MoreItem[]; notes: string[] }
 
@@ -83,12 +83,18 @@ export function derivedModel(d: CardPanelData, transitions: AllowedTransition[],
   const notes = [...(d.no_script_approval ? ["没走认稿就发了（只提醒，不挡）"] : []), ...(d.alerts ?? [])];
   let primary: Primary | null = null;
   let text = n?.text ?? "";
-  if (col === "待发布" || col === "已发布") {
+  if (d.recovery) {
+    // 恢复动作优先：文件不见了 / 登记没写成时，别的都发不了
+    primary = d.recovery.kind === "files_missing"
+      ? { label: "文件找回来了，重新核对", run: { kind: "decide", action: "recheck_files", params: {} } }
+      : { label: "重试登记", run: { kind: "decide", action: "retry_registration", params: {} } };
+    text = d.recovery.kind === "files_missing" ? "登记的文件不见了：放回原处后点这里重新核对" : `登记没写成：${d.recovery.reason}`;
+  } else if (col === "待发布" || col === "已发布") {
     primary = targetPrimary(targets);
     const bad = targets.find((t) => t.state === "被驳回");
     if (bad) text = `${platformLabel(bad.platform)}没过审${bad.reason ? `：${bad.reason}` : ""}`;
     else if (col === "待发布" && primary) text = "都通过了，可以发了；发完逐个平台标已发";
-  } else if (n?.action) primary = { label: n.label ?? "下一步", run: { kind: "next", action: n.action } };
+  } else if (n?.action) primary = { label: n.label ?? "下一步", run: { kind: "next", action: n.action }, ...(n.note ? { note: n.note } : {}) };
   const tone = primary ? "you" : col === "已发布" ? "none" : "ai";
   const head = tone === "you" ? "现在轮到你" : tone === "none" ? "没有要你做的" : aiHead(d.claim, idleHours);
   return { tone, head, text, primary, more: derivedMore(d, transitions), notes };

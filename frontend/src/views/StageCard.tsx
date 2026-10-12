@@ -23,6 +23,10 @@ export interface StageCardProps {
   /** 有没保存的改动：认稿 / 推进要等存盘（认的必须是你看过并保存的那份） */
   dirty: boolean;
   reload: () => Promise<void>;
+  /** 推导出的阶段（看板同一份 explain）：编辑器顶栏的小标签用它，不用原始 status */
+  onStage?: (stage: string | null) => void;
+  /** 写作台自己有标题输入框，卡上就不再重复标题 */
+  showTitle?: boolean;
 }
 
 const OK: ActionResult = { ok: true };
@@ -34,21 +38,20 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function useCard(id: string, isVideo: boolean, refreshKey: string) {
+function useCard(id: string, refreshKey: string, onStage?: (s: string | null) => void) {
   const [data, setData] = useState<CardPanelData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    if (!isVideo) return;
     const r = await loadCard(id);
-    if (r.ok) { setData(r.data); setError(null); } else setError(r.error);
-  }, [id, isVideo]);
+    if (r.ok) { setData(r.data); setError(null); onStage?.(r.data.stage ?? r.data.column); } else setError(r.error);
+  }, [id, onStage]);
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
   return { data, error, refresh };
 }
 
 export function StageCard(p: StageCardProps) {
   const c = p.content;
-  const { data, error, refresh } = useCard(c.id, p.isVideo, `${c.status}@${c.updatedAt}`);
+  const { data, error, refresh } = useCard(c.id, `${c.status}@${c.updatedAt}`, p.onStage);
   const g = useGuardedAction();
   if (p.isVideo && !data) return <section className="stage-card is-loading" aria-busy={!error}>
     {error ? <p className="stage-card-error" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p> : <p className="stage-card-head">读取中…</p>}
@@ -64,7 +67,11 @@ export function StageCard(p: StageCardProps) {
   const targetAct = (t: PublishTarget, a: TargetAction) => void exec(`${a}:${t.platform}`, { kind: "target", target: t, action: a });
   const pr = model.primary;
   const blocked = pr?.blockedReason ?? (p.dirty && pr && needsSaved(pr.run) ? "先保存修改，再进入下一阶段" : undefined);
-  return <section className={`stage-card is-${model.tone}`} aria-label="下一步">
+  const stage = data?.stage ?? data?.column ?? null;
+  return <div className="stage-card-wrap">
+    <p className="stage-card-meta">{platformLabel(c.platform)}{stage ? ` · ${stage}` : ""}</p>
+    {p.showTitle !== false && <h1 className="stage-card-title">{c.title || "无标题"}</h1>}
+    <section className={`stage-card is-${model.tone}`} aria-label="下一步">
     <div className="stage-card-top">
       <span className="stage-card-head">{model.head}</span>
       <MoreMenu model={model} busy={g.busy} dirty={p.dirty} exec={exec} />
@@ -75,10 +82,10 @@ export function StageCard(p: StageCardProps) {
       onAction={data.active && ["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? targetAct : undefined} />}
     {pr && <div className="stage-card-row">
       <button className="primary" disabled={g.busy || Boolean(blocked)} onClick={() => void exec(pr.label, pr.run, pr.confirm)}>{g.busy ? "处理中…" : pr.label}</button>
-      {blocked && <span className="stage-card-why">{blocked}</span>}
+      {(blocked ?? pr.note) && <span className="stage-card-why">{blocked ?? pr.note}</span>}
     </div>}
     {g.error && <p className="stage-card-error" role="alert">没做成：{g.error} <button className="bcard-link" disabled={g.busy} onClick={() => void g.retry()}>重试</button></p>}
-  </section>;
+  </section></div>;
 }
 
 const needsSaved = (run: Run) => run.kind === "transition" || (run.kind === "next" && run.action === "approve_script");

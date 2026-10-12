@@ -85,12 +85,20 @@ export function CardPanel(p: Props) {
 
   // 没按本体走的稿（旧流程 / 图文）不显示这块；读失败要说出来，不装作没有
   if (data && !data.active) return null;
+  // 顶部卡在时，下面只剩卡上没有的东西；一样都没有就不占位
+  if (data && p.hideNext && !panelHasExtra(data)) return null;
   return <details className="card-panel card-panel-inline" id="card-progress" aria-label="这条视频的进度" open={Boolean(error) || (p.open ?? true)}>
-    <summary className="card-panel-head"><h2>这条视频的进度{data ? ` · ${data.title}` : ""}</h2></summary>
+    <summary className="card-panel-head"><h2>{p.hideNext ? "素材与历史" : `这条视频的进度${data ? ` · ${data.title}` : ""}`}</h2></summary>
     {error && <p className="board2-stale" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p>}
     {!data && !error && <p className="card-panel-note">读取中</p>}
     {data && <PanelBody goInbox={(types) => { window.location.hash = inboxHref(p.contentId, types); }} approveBlocked={p.approveBlocked ?? null} hideNext={p.hideNext} data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} refresh={async () => { await Promise.all([refresh(), p.reload?.()]); }} />}
   </details>;
+}
+
+/** 卡上没有、只在这块里的：原片 / 候选 / 分镜 / 闪帧 / 历史发布 / 核对清单 / 中间封面 / 未标可审的导出 / 挂原片 */
+export function panelHasExtra(d: CardPanelData): boolean {
+  return Boolean((d.arolls ?? []).length || (d.candidate_rows ?? []).length || d.storyboard || d.slivers?.blocked || (d.past_receipts ?? []).length
+    || d.checklist || d.stray_covers || d.unreviewed || d.column === "待录制" || d.missing.includes("A-roll"));
 }
 
 /** 改挂确认的说法：原片现在归谁、改挂之后那条稿就不再拥有它 */
@@ -111,10 +119,13 @@ function PanelBody(p: {
   return <>
     {!p.hideNext && <CardNext d={d} busy={p.busy} act={p.act} openEditor={() => undefined} refresh={p.refresh} goInbox={p.goInbox} approveBlocked={p.approveBlocked} />}
     {d.active && d.unreviewed && <UnreviewedCut u={d.unreviewed} busy={p.busy} act={p.act} goInbox={() => p.goInbox(["cut_review"])} />}
-    <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason && !next ? ` · ${d.reason}` : ""}</p>
-    {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.map(onScreen).join("、")}</p>}
-    {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
-    {d.badges.filter((b) => b !== d.reason && !covered(b)).map((b) => <p key={b} className="card-panel-note">{onScreen(b)}</p>)}
+    {/* 顶部卡在时（稿件页）：阶段、还差、红字、平台行、重开都在卡上，这里只留卡上没有的 */}
+    {!p.hideNext && <>
+      <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason && !next ? ` · ${d.reason}` : ""}</p>
+      {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.map(onScreen).join("、")}</p>}
+      {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
+      {d.badges.filter((b) => b !== d.reason && !covered(b)).map((b) => <p key={b} className="card-panel-note">{onScreen(b)}</p>)}
+    </>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} inbox={() => p.goInbox(["candidate"])} />}
     {d.active && d.stray_covers && <StrayCovers n={d.stray_covers.count} busy={p.busy} act={p.act} />}
     {d.active && <CardArolls contentId={d.id} rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
@@ -130,7 +141,7 @@ function PanelBody(p: {
         </div>
       </details>
     </section>}
-    {d.active && (d.pending_receipts ?? []).length > 0 && <section><h3>待你确认的发布</h3>{d.pending_receipts!.map((r) => <div key={r.fact_id} className="card-panel-row">
+    {d.active && !p.hideNext && (d.pending_receipts ?? []).length > 0 && <section><h3>待你确认的发布</h3>{d.pending_receipts!.map((r) => <div key={r.fact_id} className="card-panel-row">
       <span>{r.host} 说已发到 {platformName(r.platform ?? "")}{r.url ? `：${r.url}` : ""}，是吗？</span>
       <InboxLink go={() => p.goInbox(["publish_claim"])} />
     </div>)}</section>}
@@ -138,12 +149,12 @@ function PanelBody(p: {
     {d.active && d.slivers && d.slivers.blocked && <section><h3>画面检查</h3><div className="card-panel-row">
       <span>{d.slivers.status === "slivers" ? `画面有闪帧（${d.slivers.items.filter((x) => !x.waived).length} 处）` : d.slivers.missing ?? "画面检查还没有结果"}</span>
       {d.slivers.status !== "none" && <InboxLink go={() => p.goInbox(["sliver"])} />}</div></section>}
-    {d.active && <PublishedSection d={d} busy={p.busy} act={p.act} />}
+    {d.active && !p.hideNext && <PublishedSection d={d} busy={p.busy} act={p.act} />}
     {d.active && (d.past_receipts ?? []).length > 0 && <details><summary className="card-panel-note">以前几轮的发布（历史，不算本轮）</summary>
       {d.past_receipts!.map((r) => <p key={`${r.round}-${r.platform}`} className="card-panel-note">{platformName(r.platform)} · {r.label}{r.url ? `：${r.url}` : ""}</p>)}
     </details>}
     {d.active && d.checklist && <p className="bcol-note">实拍版核对清单：项目里的 {d.checklist}</p>}
-    {d.active && d.can_reopen && <footer className="card-panel-actions">
+    {d.active && !p.hideNext && d.can_reopen && <footer className="card-panel-actions">
       <button className="btn-ghost" disabled={p.busy} onClick={() => void p.reopen()}>重开文稿</button>
     </footer>}
   </>;

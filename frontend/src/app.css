@@ -452,3 +452,7 @@ h2.serif { font-size: var(--fs-2xl); line-height: 1.3; margin-bottom: var(--s3);
 .stage-card-menu > button { width: 100%; display: block; text-align: left; padding: var(--s2) var(--s3); border: none; border-radius: var(--radius); background: transparent; }
 .stage-card-menu > button:hover:not(:disabled) { background: var(--surface); }
 .stage-card-menu small { display: block; font-size: var(--fs-xs); color: var(--muted); }
+.stage-card-wrap { max-width: var(--w-draft); margin: var(--s4) auto var(--s3); padding: 0 var(--s4); }
+.stage-card-wrap .stage-card { margin: var(--s2) 0 0; }
+.stage-card-meta { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
+.stage-card-title { margin: var(--s1) 0 0; font-family: var(--font-serif, serif); font-size: var(--fs-2xl); line-height: 1.3; }

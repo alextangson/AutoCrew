@@ -61,6 +61,18 @@ describe("卡片模型", () => {
     const items = [{ id: "a", topicId: "t", platform: "douyin" }, { id: "b", topicId: "t", platform: "wechat_mp" }, { id: "c", topicId: null, platform: "douyin" }];
     expect(sameTopicCards(items, items[0]).map((x) => x.id)).toEqual(["b"]);
   });
+  it("恢复动作当主按钮：文件不见了 → 重新核对；登记没写成 → 重试登记（盖过已发布 / 待发布的平台动作）", () => {
+    const miss = derivedModel(panel({ stage: "待发布", recovery: { kind: "files_missing", reason: "x" }, targets: [T("douyin", "未发", ["i_published"])] }) as never, [], 0);
+    expect(miss.primary).toMatchObject({ label: "文件找回来了，重新核对", run: { kind: "decide", action: "recheck_files" } });
+    const reg = derivedModel(panel({ stage: "剪辑中", recovery: { kind: "registration_failed", reason: "字幕对不上" }, targets: [] }) as never, [], 0);
+    expect(reg.primary?.run).toEqual({ kind: "decide", action: "retry_registration", params: {} });
+    expect(reg.text).toContain("字幕对不上");
+  });
+  it("卡下面的面板只留卡上没有的：一样都没有就不占位", async () => {
+    const { panelHasExtra } = await import("./CardPanel");
+    expect(panelHasExtra(panel({ column: "已发布", missing: [] }) as never)).toBe(false);
+    expect(panelHasExtra(panel({ column: "已发布", missing: [], past_receipts: [{ round: 1, platform: "douyin", label: "x", url: null, at: "" }] }) as never)).toBe(true);
+  });
   it("防重复执行器：在飞时第二次不发；失败原因留着，重试再跑", async () => {
     const states: Array<{ busy: boolean; error: string | null }> = [];
     const r = createGuardedRunner((s) => states.push(s));

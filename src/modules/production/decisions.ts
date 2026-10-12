@@ -5,6 +5,7 @@
  *
  * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
  */
+import { reconcileContent } from "./reconcile.js";
 import { isImportedHistory } from "../../storage/imported-history.js";
 import { contentRoot, safeProjectPath } from "../../storage/content-project.js";
 import { commitSha } from "./hash-cache.js";
@@ -36,12 +37,12 @@ import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/ve
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
   | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
-  | "undo_auto_attach" | "retire_cover_group" | "review_now" | "reject_stray_covers";
+  | "undo_auto_attach" | "retire_cover_group" | "review_now" | "reject_stray_covers" | "recheck_files" | "retry_registration";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
-  "undo_auto_attach", "retire_cover_group", "review_now", "reject_stray_covers",
+  "undo_auto_attach", "retire_cover_group", "review_now", "reject_stray_covers", "recheck_files", "retry_registration",
 ];
 
 type Result = Record<string, unknown>;
@@ -359,6 +360,8 @@ const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
   pick_cover: pickCover, retire_cover_group: retireCoverGroup, review_now: reviewNow, reject_stray_covers: rejectStrayCovers, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+  // 稿件页卡上的两个恢复动作（吸收 15）：重新核对文件（先对账再登记）、重试登记；登记由下面统一的 commitRegistration 跑
+  recheck_files: async () => ({ ok: true }), retry_registration: async () => ({ ok: true }),
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
   undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
 };
@@ -371,6 +374,8 @@ export async function founderDecision(contentId: string, action: string, params:
   if (!DECISION_ACTIONS.includes(action as DecisionAction)) return fail("bad_request", `不认识的决定：${action}`);
   if (!(await isOntologyActive(dataDir, contentId))) return fail("ontology_not_enabled", "本体还没启用（或这条被排除），这个决定还不能在这里做");
   await ensureProductionReady(dataDir);
+  // 文件找回来了：先按盘上现状对账（文件在不在由对账写），再走登记
+  if (action === "recheck_files") await reconcileContent(contentId, dataDir);
   return withFileOwnership(async () => {
     const content = await getContent(contentId, dataDir);
     if (!content || content.deletedAt) return fail("not_found", "这条稿不在了");

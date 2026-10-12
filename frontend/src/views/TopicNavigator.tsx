@@ -4,7 +4,6 @@ import { invoke, subscribeEvents } from "../transport";
 import { boardPlatforms } from "./board-model";
 import { loadBoard } from "./board-api";
 import type { BoardItem } from "./board-columns";
-import { PlatformChips } from "./PlatformChips";
 import "./topic-navigator.css";
 
 /** 编辑稿件时保留主题与其他平台入口；同名但无共同 topicId 的稿件不会被合并。 */
@@ -114,7 +113,6 @@ export function TopicNavigator(props: {
         })}
         {isOtherDraft && <span className="topic-nav-other" aria-current="page">正在查看：{platformLabel(opened.platform)}其他稿件</span>}
       </div>
-      {(derived.get(props.contentId)?.targets?.length ?? 0) > 1 && <PlatformChips label="这条视频的各平台" targets={derived.get(props.contentId)!.targets!} />}
       {openedPlatform.contents.length > 1 && (
         <label className="topic-nav-drafts">
           <span>{platformLabel(opened.platform)}稿件</span>

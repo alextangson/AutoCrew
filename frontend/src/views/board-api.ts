@@ -91,6 +91,8 @@ export interface CardPanelData {
   no_script_approval?: boolean;
   /** 认领：AI 在做只在租约有效且最近写过时才说（吸收 15） */
   claim?: { host: string; live: boolean; idle_hours: number | null } | null;
+  /** 卡上的恢复动作：文件不见了 / 登记没写成 */
+  recovery?: { kind: "files_missing" | "registration_failed"; reason: string } | null;
 }
 /** 「发现的候选」一行（服务端已翻成人话；完整路径与分数只在 detail 里） */
 export interface CandidateRowView { fact_id: string; kind: string; state: string; sha256?: string; started_at?: string; name: string; origin: string; reason: string; detail: string; path: string | null; in_inbox?: boolean }
