@@ -44,7 +44,9 @@ const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ o
  * 2026-10-11 起带本平台作品链接、或报了定时的直接算已投出（receipts.claimAccepted），并像可信观察一样盖把关结论；
  * 其余仍是待核，卡上问创始人。调用方持有文件归属事务或不需要（只写事实）。
  */
-export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note" | "pub_state" | "scheduled_at">): Promise<Receipt> {
+class StaleRound extends Error {}
+
+export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note" | "pub_state" | "scheduled_at"> & { round?: number }): Promise<Receipt> {
   const platform = a.platform || content.platform ? canonPlatform((a.platform || content.platform)!) : undefined;
   if (!platform) return fail("bad_param", "kind=publish 要带 platform");
   const scheduled = a.pub_state === "scheduled" && a.scheduled_at;
@@ -57,6 +59,8 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
   // 直接认的说法和创始人「我发了」一样按发布计划盖把关结论（槽里已经盖过就继承）
   const planGate = accepted ? await gateFromPlan(content.id, platform, dataDir) : undefined;
   const r = await mutateProduction(content.id, dataDir, (doc) => {
+    // 带了轮次就在写锁内核：重开之后，上一轮的「发了」不能记进新一轮
+    if (a.round !== undefined && a.round !== doc.round) throw new StaleRound();
     // 模型声明是一条独立的观察（不可变，不与可信回执合并）；是本轮刚说的，所以属于本轮
     const gate = accepted ? slotGate(doc, doc.round, platform) ?? planGate : undefined;
     const obs = { ...base, ...(accepted ? { accepted: true } : {}), ...(gate ? { gate } : {}) };
@@ -68,7 +72,8 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
     if (!same) doc.facts.push(fact);
     doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs({ ...a, kind: "publish", content_id: content.id }), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
     return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url, accepted } }] };
-  });
+  }).catch((e: unknown) => { if (e instanceof StaleRound) return null; throw e; });
+  if (!r) return fail("stale", "这条已经重开过，报的是上一轮：刷新再看");
   // 回执说的以实际用上的那条事实为准（重复提交复用的旧事实可能没被直接认）
   const used = r.value.claim_accepted === true;
   return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: used, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,

@@ -1841,6 +1841,9 @@
      "publish_url": {
       "type": "string"
      },
+     "round": {
+      "type": "integer"
+     },
      "schedule": {
       "type": "string"
      },
@@ -4770,6 +4773,9 @@
      },
      "publish_url": {
       "type": "string"
+     },
+     "round": {
+      "type": "integer"
      },
      "schedule": {
       "type": "string"

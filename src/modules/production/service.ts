@@ -83,7 +83,8 @@ function frozenRel(root: string, hash: string): string {
 
 /** 进入剪辑中时冻结正文：写冻结副本、记 doc.frozen（§2.5） */
 async function freezeIfNeeded(content: Content, doc: ProductionDoc, exp: Explanation, dataDir: string): Promise<boolean> {
-  if (exp.phase !== "production" || exp.stage === "待录制" || exp.stage === null || isFrozen(doc)) return false;
+  // 只有回执、没认稿（吸收 5）：显示已发布，但不冻结正文
+  if (exp.no_script_approval || exp.phase !== "production" || exp.stage === "待录制" || exp.stage === null || isFrozen(doc)) return false;
   const root = contentRoot(content.id, dataDir);
   const hash = bodyHash(content.body);
   const rel = frozenRel(root, hash);

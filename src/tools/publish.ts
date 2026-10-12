@@ -45,6 +45,7 @@ export const publishSchema = Type.Object({
   wechat_publish_script: Type.Optional(Type.String({ description: "Override path to the WeChat publish.py script." })),
   hashtags: Type.Optional(Type.Array(Type.String(), { description: "Hashtags for the content. Overrides content hashtags if provided." })),
   publish_url: Type.Optional(Type.String({ description: "The URL where content was published (for confirm_published action)." })),
+  round: Type.Optional(Type.Integer({ description: "confirm_published：这条稿当前轮次（卡上给的）；对不上 = 已重开，拒。" })),
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
   digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
   schedule: Type.Optional(Type.String({ description: "Optional platform-local scheduled time carried into the ego lite browser hand-off." })),
@@ -225,9 +226,12 @@ export async function executePublish(
       // 一条视频四平台共用一条稿：发在哪个平台必须明说，不拿稿件平台顶（spec 2026-10-12 吸收 3）
       const platform = typeof params.platform === "string" ? params.platform.trim() : "";
       if (!platform) return { ok: false, code: "platform_required", error: "confirm_published 要带 platform：这条视频发在哪个平台（douyin / wechat_video / xiaohongshu / bilibili），每个平台各确认一次" };
+      // 轮次在写锁内核（recordPublishClaim / founderDecision 各自锁内比对）：重开后旧轮的确认被拒
+      const round = params.round === undefined || params.round === null || params.round === "" ? undefined : Number(params.round);
+      if (round !== undefined && !Number.isInteger(round)) return { ok: false, code: "bad_param", error: "round 要是整数轮次" };
       const r = isModelCall(params)
-        ? await recordPublishClaim(content, getDataDir(dataDir), { platform, url: rawUrl || undefined, host: String(params._host ?? "model"), request_id: `confirm-${Date.now()}` })
-        : await founderDecision(contentId, "i_published", { platform, url: rawUrl }, getDataDir(dataDir));
+        ? await recordPublishClaim(content, getDataDir(dataDir), { platform, url: rawUrl || undefined, host: String(params._host ?? "model"), request_id: `confirm-${Date.now()}`, ...(round !== undefined ? { round } : {}) })
+        : await founderDecision(contentId, "i_published", { platform, url: rawUrl, ...(round !== undefined ? { round } : {}) }, getDataDir(dataDir));
       if (!r.ok) return r;
       if (rawUrl && !isModelCall(params)) await updateContent(contentId, { publishUrl: rawUrl }, dataDir);
       return { ...r, action: "confirm_published", content_id: contentId };

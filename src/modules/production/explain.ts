@@ -125,7 +125,9 @@ export function deriveExplanation(input: ExplainInput): Explanation {
   const d = doc ?? emptyProductionDoc();
   const approved = Boolean(scriptApprovalFor(d, content.body ?? ""));
   // 只有回执、没有认稿（吸收 5）：列 = 已发布，标「没走认稿」；不冻结、不补认稿、不改正文。topic_saved 只在有已投出回执时才上看板
-  if (!approved && publishReceipts(d).live.length) return noApprovalPublished(d, content);
+  // 全部被驳回也要先判（吸收 12）：不然最后一个已投出的被驳回就掉回写稿中，红字和「重新提交」都没了
+  const rc = publishReceipts(d);
+  if (!approved && (rc.live.length || (rc.rejected.length && !rc.pending.length))) return noApprovalPublished(d, content);
   if (content.status === "topic_saved") return nonProduction(null, "other", null);
   // 写稿段也把候选带出来：认稿前发现的疑似 A-roll 要在卡上看得见（E4）
   if (!approved) {

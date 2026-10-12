@@ -111,7 +111,8 @@ async function perform(run: Run, p: StageCardProps, d: CardPanelData | null): Pr
     if (run.action === "approve_script") {
       if (p.dirty) return { ok: false, error: "先保存修改，再认稿" };
       if (!d?.draft_item) return { ok: false, error: "稿子刚改过，重新看一眼" };
-      return res(await decideItem({ content_id: c.id, item_id: d.draft_item.item_id, gen: d.draft_item.gen, action: "approve_script" }));
+      // 认的是编辑器里显示并保存的那份正文：别的会话在中间改过，服务端按哈希拒
+      return res(await decideItem({ content_id: c.id, item_id: d.draft_item.item_id, gen: d.draft_item.gen, action: "approve_script", expected_body_hash: await sha256Hex(c.body) }));
     }
     return { ok: false, error: "这一步要按平台标：在下面的平台标签上点" };
   }

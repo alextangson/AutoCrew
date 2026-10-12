@@ -144,3 +144,31 @@ describe("AI 想新建平台稿（边界 10 / 吸收 7）", () => {
     expect(res).toMatchObject({ ok: false, code: "same_video_variant" });
   });
 });
+
+describe("Codex 审 261f5a8c..f74f8c86", () => {
+  let env: Env;
+  beforeEach(async () => { env = await makeEnv({ enabled: false }); await writeEnabledVersion(env.dir); });
+  afterEach(async () => { await env.cleanup(); });
+
+  it("[P1] 没认稿的稿标已发：显示已发布但不冻结正文", async () => {
+    const c = await videoContent(env, "导入的视频", "drafting", "导入正文。");
+    expect(await founderDecision(c.id, "i_published", { platform: "douyin" }, env.dir)).toMatchObject({ ok: true, stage: "已发布" });
+    const { readProductionDoc } = await import("../../storage/production-store.js");
+    expect((await readProductionDoc(c.id, env.dir))?.frozen).toBeFalsy();
+  });
+  it("[P2] confirm_published 带了旧轮次：两条路都拒", async () => {
+    const r = await registeredVideo(env);
+    expect(await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, platform: "douyin", round: 5, publish_url: "https://v.douyin.com/abc", _host: "codex" })).toMatchObject({ ok: false, code: "stale" });
+    expect(await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, platform: "douyin", round: 5 })).toMatchObject({ ok: false, code: "stale" });
+    expect(await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, platform: "douyin", round: 1 })).toMatchObject({ ok: true });
+  });
+});
+
+describe("[P2] 没认稿、唯一的回执被驳回", () => {
+  it("判全部被驳回（待发布 + 红字），不掉回写稿中", () => {
+    const dd: ProductionDoc = { ...emptyProductionDoc(), facts: [pub("douyin", "rejected", { reason: "违规" })] };
+    const e = explain({ content: video("draft_ready"), doc: dd, enabled: true, publish: { verified: false } });
+    expect(e).toMatchObject({ column: "待发布", rule: "D1R", no_script_approval: true });
+    expect(e.alerts[0]).toContain(ALL_REJECTED);
+  });
+});

@@ -98,7 +98,8 @@ describe("StageCard 渲染", () => {
     expect(el.textContent).toContain("先保存修改");
     await render({ status: "draft_ready" });
     await click(button("稿子没问题")!);
-    expect(inboxCalls).toEqual([{ content_id: "content-1-a", item_id: "draft:1", gen: "g1", action: "approve_script" }]);
+    const { createHash } = await import("node:crypto");
+    expect(inboxCalls).toEqual([{ content_id: "content-1-a", item_id: "draft:1", gen: "g1", action: "approve_script", expected_body_hash: createHash("sha256").update("正文").digest("hex") }]);
   });
   it("失败：原因常驻在卡里 + 重试，不静默", async () => {
     decideReply = { ok: false, error: "稿子刚改过" };
