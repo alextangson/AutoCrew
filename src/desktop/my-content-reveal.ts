@@ -15,9 +15,9 @@ import type { RevealDeps } from "./project-reveal.js";
 
 export type MyContentRevealResult =
   | { ok: true; path: string; opened: true }
-  | { ok: false; code: "bad_request" | "not_found" | "not_in_view" | "open_failed"; error: string; path?: string };
+  | { ok: false; code: "bad_request" | "not_found" | "not_in_view" | "view_unreadable" | "open_failed"; error: string; path?: string };
 
-export interface MyContentRevealDeps extends RevealDeps { viewRoot?: string | null }
+export interface MyContentRevealDeps extends RevealDeps { viewRoot?: string | null; openTimeoutMs?: number; retryMs?: number }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -39,6 +39,17 @@ export async function missingReason(root: string, id: string, title: string, col
   return "「我的内容」还没同步到这条（每分钟对一次账，稍后再点）";
 }
 
+const UNREADABLE = "「我的内容」正在同步或读不出，稍后再点";
+
+/** 清单坏了 / 读不出（对账中途覆盖）：等一下重读一次；还不行就算读不出，不当成「没有这条」 */
+async function readManifest(file: string, retryMs: number): Promise<{ dirs?: Record<string, string> } | null | "unreadable"> {
+  for (let i = 0; i < 2; i++) {
+    try { return await readJson<{ dirs?: Record<string, string> }>(file); }
+    catch { if (i === 0) await new Promise((r) => setTimeout(r, retryMs)); }
+  }
+  return "unreadable";
+}
+
 type Found = { ok: true; path: string } | Extract<MyContentRevealResult, { ok: false }>;
 
 async function locate(id: string, dataDir: string, deps: MyContentRevealDeps): Promise<Found> {
@@ -46,7 +57,8 @@ async function locate(id: string, dataDir: string, deps: MyContentRevealDeps): P
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
   const root = deps.viewRoot === undefined ? defaultViewRoot() : deps.viewRoot;
   if (!root) return { ok: false, code: "not_in_view", error: "没有配置资料库，没有「我的内容」文件夹" };
-  const manifest = await readJson<{ dirs?: Record<string, string> }>(path.join(root, VIEW_MANIFEST));
+  const manifest = await readManifest(path.join(root, VIEW_MANIFEST), deps.retryMs ?? 300);
+  if (manifest === "unreadable") return { ok: false, code: "view_unreadable", error: UNREADABLE };
   if (!manifest) return { ok: false, code: "not_in_view", error: "「我的内容」还没生成过" };
   // 只认「栏目/稿件文件夹」这一层
   const rel = Object.entries(manifest.dirs ?? {}).find(([r, owner]) => owner === id && r.split("/").length === 2)?.[0];
@@ -62,21 +74,23 @@ async function locate(id: string, dataDir: string, deps: MyContentRevealDeps): P
   return { ok: true, path: real };
 }
 
-/** 等 spawn 真起来或报错，不吞失败 */
-function openDir(dir: string, deps: RevealDeps): Promise<string | null> {
+/** 等 open 退出：非 0 / 报错 / 超时都算没打开 */
+function openDir(dir: string, deps: MyContentRevealDeps): Promise<string | null> {
   return new Promise((resolve) => {
+    let done = false;
+    const end = (v: string | null) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    const t = setTimeout(() => end("open 一直没返回（超时）"), deps.openTimeoutMs ?? 10_000);
     try {
-      const child = (deps.spawnImpl ?? spawn)("open", [dir], { detached: true, stdio: "ignore" });
-      child.once?.("error", (e: Error) => resolve(errMsg(e)));
-      child.once?.("spawn", () => { child.unref?.(); resolve(null); });
-      if (!child.once) resolve(null);
-    } catch (e) { resolve(errMsg(e)); }
+      const child = (deps.spawnImpl ?? spawn)("open", [dir], { stdio: "ignore" });
+      child.once("error", (e: Error) => end(errMsg(e)));
+      child.once("exit", (code: number | null, sig: string | null) => end(code === 0 ? null : `open 退出码 ${code ?? sig}`));
+    } catch (e) { end(errMsg(e)); }
   });
 }
 
 export async function revealMyContent(id: string, dataDir: string, deps: MyContentRevealDeps = {}): Promise<MyContentRevealResult> {
   if (!/^content-\d+-[a-z0-9]+$/.test(id)) return { ok: false, code: "bad_request", error: "参数不对" };
-  const at = await locate(id, dataDir, deps).catch((e): Found => ({ ok: false, code: "not_in_view", error: `读「我的内容」失败：${errMsg(e)}` }));
+  const at = await locate(id, dataDir, deps).catch((e): Found => ({ ok: false, code: "view_unreadable", error: `读「我的内容」失败：${errMsg(e)}` }));
   if (!at.ok) return at;
   if ((deps.platform ?? process.platform) !== "darwin") return { ok: false, code: "open_failed", error: `这台机器不是 macOS，打不开访达；路径：${at.path}`, path: at.path };
   const fail = await openDir(at.path, deps);

@@ -14,10 +14,10 @@ import { publishDesk } from "../modules/production/publish-desk.js";
 import { founderApprove, makeEnv, setContent, videoContent, type Env } from "../modules/production/testkit.js";
 import type { Content } from "../storage/local-store.js";
 
-/** 假 spawn：下一轮发 spawn（成功）或 error（失败） */
-const fakeSpawn = (fail?: string) => vi.fn(() => {
-  const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
-  setImmediate(() => (fail ? child.emit("error", new Error(fail)) : child.emit("spawn")));
+/** 假 spawn：fail=报错；exit=退出码（默认 0）；hang=永不退出 */
+const fakeSpawn = (fail?: string, exit: number | "hang" = 0) => vi.fn(() => {
+  const child = new EventEmitter();
+  setImmediate(() => { if (fail) child.emit("error", new Error(fail)); else { child.emit("spawn"); if (exit !== "hang") child.emit("exit", exit, null); } });
   return child;
 }) as unknown as typeof spawn;
 
@@ -82,6 +82,23 @@ describe("revealMyContent", () => {
     await fs.mkdir(path.join(view, "2 待录制/1012 访达样例"), { recursive: true });
     expect(await revealMyContent(c.id, env.dir, { ...mac(), platform: "linux" })).toMatchObject({ ok: false, code: "open_failed", error: expect.stringContaining("不是 macOS") });
     expect(await revealMyContent(c.id, env.dir, mac(fakeSpawn("spawn open ENOENT")))).toMatchObject({ ok: false, code: "open_failed", error: "访达没打开：spawn open ENOENT" });
+  });
+});
+
+describe("Codex 审 P2", () => {
+  it("open 非 0 退出 / 一直不返回 → open_failed，不报打开了", async () => {
+    await fs.mkdir(path.join(view, "2 待录制/1012 访达样例"), { recursive: true });
+    await manifest({ "2 待录制/1012 访达样例": c.id });
+    expect(await revealMyContent(c.id, env.dir, mac(fakeSpawn(undefined, 1)))).toMatchObject({ ok: false, code: "open_failed", error: "访达没打开：open 退出码 1" });
+    expect(await revealMyContent(c.id, env.dir, { ...mac(fakeSpawn(undefined, "hang")), openTimeoutMs: 20 })).toMatchObject({ ok: false, code: "open_failed", error: expect.stringContaining("超时") });
+  });
+  it("清单坏了 = view_unreadable（不是 not_in_view）；重读一次赶上对账写完就成功", async () => {
+    await fs.writeFile(path.join(view, ".autocrew-view.json"), "{半截");
+    expect(await revealMyContent(c.id, env.dir, { ...mac(), retryMs: 5 })).toEqual({ ok: false, code: "view_unreadable", error: "「我的内容」正在同步或读不出，稍后再点" });
+    await fs.mkdir(path.join(view, "2 待录制/1012 访达样例"), { recursive: true });
+    await fs.writeFile(path.join(view, ".autocrew-view.json"), "{半截");
+    setTimeout(() => void manifest({ "2 待录制/1012 访达样例": c.id }), 10);
+    expect(await revealMyContent(c.id, env.dir, { ...mac(), retryMs: 80 })).toMatchObject({ ok: true });
   });
 });
 

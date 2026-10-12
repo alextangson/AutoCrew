@@ -66,6 +66,14 @@ it("4：打开失败（非 macOS / spawn 报错）原因写在按钮旁，不给
   expect(button("打开项目文件夹")).toBeUndefined();
 });
 
+it("Codex 审 P2：清单读不出 = 原因，不给项目文件夹兜底", async () => {
+  replies["/api/my-content-reveal"] = { ok: false, code: "view_unreadable", error: "「我的内容」正在同步或读不出，稍后再点" };
+  await render(createElement(RailDetails, { contentId: "content-1-a", desk: desk(), claim: null }));
+  await click(button("在访达打开这一条"));
+  expect(el.textContent).toContain("正在同步或读不出");
+  expect(button("打开项目文件夹")).toBeUndefined();
+});
+
 it("7：宽屏进度栏和窄屏一行小字的「详情」里都有这两样", async () => {
   deskReply = { ok: true, data: { active: true, card: { id: "content-1-a", claim } as never, desk: desk({ handoff }) } };
   await render(createElement(DeskProvider, { contentId: "content-1-a", refreshKey: "k", children: null }, createElement(ProgressRail, {}), createElement(RailLine, { desk: desk({ handoff }) })));
