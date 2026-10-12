@@ -4,7 +4,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getContent, type Content } from "../../storage/local-store.js";
+import { getContent, LOCAL_HOST, type Content } from "../../storage/local-store.js";
 import { noOriginalPlace, undoBlocker } from "./undo-attach.js";
 import { candidateRow, originOf, type CandidateRow, type SourceDirs } from "./candidate-view.js";
 import type { Fact } from "../../storage/production-types.js";
@@ -127,7 +127,8 @@ const HOUR_MS = 3600_000;
 /** 「AI 在做」只在认领租约有效且最近有写入时才说（吸收 15）；否则说 AI 已 N 小时没动静 */
 function claimView(content: Content): { host: string; live: boolean; idle_hours: number | null } | null {
   const c = content.claim;
-  if (!c) return null;
+  // 创始人自己（local-user）占着不是「AI 在做」
+  if (!c || c.host === LOCAL_HOST) return null;
   const leaseOk = Date.parse(c.leaseUntil) > Date.now();
   const idle = Math.floor((Date.now() - Date.parse(c.lastWriteAt ?? content.updatedAt)) / HOUR_MS);
   return { host: hostLabel(c.host), live: leaseOk && idle < 2, idle_hours: Number.isFinite(idle) ? idle : null };

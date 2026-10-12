@@ -92,7 +92,12 @@ export function derivedModel(d: CardPanelData, transitions: AllowedTransition[],
   } else if (col === "待发布" || col === "已发布") {
     primary = targetPrimary(targets);
     const bad = targets.find((t) => t.state === "被驳回");
-    if (bad) text = `${platformLabel(bad.platform)}没过审${bad.reason ? `：${bad.reason}` : ""}`;
+    if (bad) {
+      text = `${platformLabel(bad.platform)}没过审${bad.reason ? `：${bad.reason}` : ""}`;
+      // 同一句被驳回已经是卡的正文，红字里不再重复
+      const dup = `${platformLabel(bad.platform)}被驳回`;
+      for (let i = notes.length - 1; i >= 0; i--) if (notes[i].startsWith(dup)) notes.splice(i, 1);
+    }
     else if (col === "待发布" && primary) text = "都通过了，可以发了；发完逐个平台标已发";
   } else if (n?.action) primary = { label: n.label ?? "下一步", run: { kind: "next", action: n.action }, ...(n.note ? { note: n.note } : {}) };
   const tone = primary ? "you" : col === "已发布" ? "none" : "ai";

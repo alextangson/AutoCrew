@@ -35,6 +35,7 @@ describe("卡片模型", () => {
     const bad = derivedModel(panel({ stage: "已发布", targets: [T("douyin", "已公开", ["correct_publish"]), T("bilibili", "被驳回", ["resubmit", "correct_publish"], { reason: "封面违规" })] }) as never, [], 0);
     expect(bad.primary?.label).toBe("重新提交：B站");
     expect(bad.text).toContain("B站没过审：封面违规");
+    expect(derivedModel(panel({ stage: "已发布", alerts: ["B站被驳回：封面违规"], targets: [T("bilibili", "被驳回", ["resubmit"], { reason: "封面违规" })] }) as never, [], 0).notes).toEqual([]);
     const done = derivedModel(panel({ stage: "已发布", targets: [T("douyin", "已公开", ["correct_publish"])] }) as never, [], 0);
     expect(done).toMatchObject({ tone: "none", head: "没有要你做的", primary: null });
     expect(done.more.map((x) => x.label)).toContain("纠正：抖音其实没发");
