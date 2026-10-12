@@ -56,7 +56,10 @@ description: >
    无合适活动时正常发布。尚缺的平台信息单独标记，不拖住其余已备齐且获授权的平台。
 3. 从 [publish-plan.example.json](references/publish-plan.example.json) 按实际任务建立
    `06-publish/publish-plan.json`，替换示例、删除不用的项。已有记录就地更新，不覆盖回执。
-   每个平台独立一个条目；若关联 AutoCrew，使用自己的 `content_id`，不能四平台共用一个。
+   每个平台独立一个条目；若关联 AutoCrew，**同一条视频四个平台共用同一个 `content_id`**（顶层与每个条目都填它）。
+   不为登记或发布新建平台稿：`autocrew_content create_variant` 建视频平台稿会被拒（`same_video_variant`），
+   要发的平台加进这份计划即可；每个平台各交一份 `autocrew_pre_publish video_kit`（带 `platform`）、各跑一次检查，
+   `confirm_published` 也要带 `platform`。只有同选题另做一条内容不同的视频，才 `create_variant` 带 `distinct_video: true`。
 4. 用户给了排期就记录带时区的具体时间；没给时间则不猜，也不默认立即发布。检查计划
    公开时间是否在活动投稿期内，另记收集表截止期；未知截止时刻不能凭空补成 23:59。
 5. 同一批四平台发布使用一个 ego task space，保存实际 `spaceId` 和页面 label，按 ID 恢复；

@@ -35,6 +35,7 @@ import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/pro
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+import { sameVideoRefusal } from "./variant-guard.js";
 import { boardTrashRefusal } from "../modules/production/trash-guard.js";
 import { FirstBodyRefusedError, provenanceOf } from "../storage/first-body-guard.js";
 
@@ -69,6 +70,7 @@ export const contentSaveSchema = Type.Object({
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
   platform: Type.Optional(Type.String({ description: "Target platform: xhs, douyin, wechat_video, wechat_mp, bilibili" })),
   topicId: Type.Optional(Type.String({ description: "Related topic id (for save/create_variant)" })),
+  distinct_video: Type.Optional(Type.Boolean({ description: "create_variant：同选题另做一条内容不同的新视频时才填 true。同一条视频发多平台不建变体，在发布计划里加平台。" })),
   status: Type.Optional(Type.Unsafe<string>({
     type: "string",
     enum: ALL_STATUSES as unknown as string[],
@@ -479,6 +481,9 @@ export async function executeContentSave(
       error: "平台变体的新正文也必须走 writer pack/submit；只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
       next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: topicId, platform } },
     };
+    // AI 想为同一条视频再建平台稿（边界 10）：拒，指去发布计划加平台；工作台手动建不拦
+    const sameVideo = modelCall ? await sameVideoRefusal(topicId, platform, params.distinct_video, dataDir) : null;
+    if (sameVideo) return sameVideo;
     // 选题会闸口：模型给还没有真稿的选题开第一篇（占位）要过闸口；人手录入、手动导入的成稿不拦
     if (modelCall && !(hasBody && manualImport)) {
       const refused = await newDraftAngleRefusal(topicId, dataDir);

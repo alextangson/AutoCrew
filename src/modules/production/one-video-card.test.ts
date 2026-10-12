@@ -16,7 +16,9 @@ import { ALL_REJECTED } from "./derive.js";
 import { publishTargets } from "./targets.js";
 import { founderDecision } from "./decisions.js";
 import { registeredVideo } from "../publish/review-gate/testkit.js";
-import { makeEnv, type Env } from "./testkit.js";
+import { makeEnv, setContent, videoContent, type Env } from "./testkit.js";
+import { sameVideoRefusal } from "../../tools/variant-guard.js";
+import { executeContentSave } from "../../tools/content-save.js";
 
 const kit = (platform: string, caption = `${platform} 的简介`): VideoKit => ({ platform, postTitle: `${platform} 标题`, caption, storyboard: [], coverText: "封面", coverPrompt: "", generatedAt: "2026-10-12T00:00:00.000Z" });
 const NOW = new Date().toISOString();
@@ -117,5 +119,28 @@ describe("按平台动作带平台和轮次（吸收 3）", () => {
     const r = await registeredVideo(env);
     expect(await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, _host: "codex" })).toMatchObject({ ok: false, code: "platform_required" });
     expect((await getContent(r.id, env.dir))!.status).not.toBe("published");
+  });
+});
+
+describe("AI 想新建平台稿（边界 10 / 吸收 7）", () => {
+  let env: Env;
+  beforeEach(async () => { env = await makeEnv({ enabled: false }); await writeEnabledVersion(env.dir); });
+  afterEach(async () => { await env.cleanup(); });
+
+  it("同选题已有带制作记录的视频稿：视频平台拒、指去发布计划；distinct_video 放行；文字平台照常；没制作的不拦", async () => {
+    const r = await registeredVideo(env);
+    await setContent(env, r.id, { topicId: "topic-1" });
+    expect(await sameVideoRefusal("topic-1", "bilibili", undefined, env.dir)).toMatchObject({ ok: false, code: "same_video_variant", content_id: r.id });
+    expect(await sameVideoRefusal("topic-1", "bilibili", true, env.dir)).toBeNull();
+    expect(await sameVideoRefusal("topic-1", "wechat_mp", undefined, env.dir)).toBeNull();
+    const fresh = await videoContent(env, "还没开拍的稿");
+    await setContent(env, fresh.id, { topicId: "topic-2" });
+    expect(await sameVideoRefusal("topic-2", "bilibili", undefined, env.dir)).toBeNull();
+  });
+  it("模型调 create_variant 走到这道闸，不建稿", async () => {
+    const r = await registeredVideo(env);
+    await setContent(env, r.id, { topicId: "topic-1" });
+    const res = await executeContentSave({ action: "create_variant", topicId: "topic-1", platform: "xiaohongshu", _host: "codex", _dataDir: env.dir });
+    expect(res).toMatchObject({ ok: false, code: "same_video_variant" });
   });
 });

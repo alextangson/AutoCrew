@@ -211,6 +211,9 @@
      "diff_note": {
       "type": "string"
      },
+     "distinct_video": {
+      "type": "boolean"
+     },
      "fact_id": {
       "type": "string"
      },
@@ -3137,6 +3140,9 @@
      },
      "diff_note": {
       "type": "string"
+     },
+     "distinct_video": {
+      "type": "boolean"
      },
      "fact_id": {
       "type": "string"

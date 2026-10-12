@@ -2,6 +2,8 @@
   "schema_version": 1,
   "example_only": true,
   "project_id": null,
+  "content_id": null,
+  "content_id_rule": "同一条视频四个平台共用这一个 AutoCrew content_id：每个平台条目的 content_id 都填它；不为登记或发布新建平台稿。内容不同的（公众号文章）才是另一条稿。",
   "project_root": null,
   "source_system": null,
   "final_video": {
