@@ -12,7 +12,7 @@ import { decide, loadCard, reopenScript, type CardPanelData } from "./board-api"
 import { decideItem, inboxHref } from "./review/review-api";
 import { useGuardedAction, type ActionResult } from "./guarded-action";
 import { derivedModel, legacyModel, type CardModel, type Confirm, type Run } from "./stage-card-model";
-import { publishAsk, targetDecision, type PublishTarget, type TargetAction } from "./publish-targets";
+import { publishAsk, showChips, targetDecision, type PublishTarget, type TargetAction } from "./publish-targets";
 import { PlatformChips } from "./PlatformChips";
 import { isHttpUrl, platformLabel } from "../lib";
 
@@ -71,7 +71,8 @@ export function StageCard(p: StageCardProps) {
     </div>
     {model.text && <p className="stage-card-text">{model.text}</p>}
     {model.notes.map((n) => <p key={n} className="stage-card-note">{n}</p>)}
-    {data?.targets && data.targets.length > 0 && <PlatformChips targets={data.targets} busy={g.busy} onAction={data.active ? targetAct : undefined} />}
+    {data && showChips(data.targets, data.stage ?? data.column) && <PlatformChips targets={data.targets!} busy={g.busy}
+      onAction={data.active && ["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? targetAct : undefined} />}
     {pr && <div className="stage-card-row">
       <button className="primary" disabled={g.busy || Boolean(blocked)} onClick={() => void exec(pr.label, pr.run, pr.confirm)}>{g.busy ? "处理中…" : pr.label}</button>
       {blocked && <span className="stage-card-why">{blocked}</span>}
