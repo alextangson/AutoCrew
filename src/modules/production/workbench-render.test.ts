@@ -36,7 +36,9 @@ describe("本体稿的工作台（P1-1）", () => {
         review: review as never, error: "", refreshError: "", lastOkAt: null, busy: false, submit: async () => true,
       }));
       // 等你拍板 2a（§10）：工作台只看详情，不放审核按钮；拍板去「等你拍板」
-      expect(html).toContain("要你拍板的事都在「等你拍板」");
+      // 2026-10-12：「谁在剪 / 要你拍板」那一框并进稿件页顶部的卡，看板只留成片 / 封面 / 文件 / 文案
+      expect(html).toContain("pb-board");
+      expect(html).not.toContain("要你拍板的事都在「等你拍板」");
       expect(html).toContain(withAroll ? "原片.mov" : "还没交接原片");
       expect(html).not.toContain("通过成片");
     });
