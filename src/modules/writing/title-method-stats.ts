@@ -5,6 +5,7 @@
  * 不拿空值当 0 算平均；没有方法 id 的旧稿归「未标记」，不回填猜测；「自拟」单列，不算进任何方法。
  * 满 4 条带方法的已发布稿给中期报告提醒，满 8 条给终版提醒。
  */
+import { primaryVideoKit, videoKitFor } from "../../storage/video-kits.js";
 import { listContents, normalizeLegacyStatus, type Content } from "../../storage/local-store.js";
 import { listLatestOutcomes } from "../flywheel/outcome-store.js";
 import { normalizePlatform, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
@@ -37,8 +38,8 @@ export interface TitleMethodReport {
 
 /** 这条稿发出去用的方法：只认本平台发布包里记的；旧稿没有 = 未标记 */
 function methodOf(c: Content): string {
-  const kit = c.videoKit;
-  return kit && kit.platform === c.platform && kit.titleMethod ? kit.titleMethod : UNTAGGED;
+  const kit = c.platform ? videoKitFor(c, c.platform) : undefined;
+  return kit?.titleMethod ? kit.titleMethod : UNTAGGED;
 }
 
 /** 点击率（百分比）：平台给的封面点击率优先，没有时用 播放 ÷ 曝光；都缺 = undefined，不当 0 */
@@ -78,7 +79,7 @@ export function titlePostSamples(contents: Content[], outcomes: PerformanceOutco
   return published.map((c) => {
     const o = outcomes.find((x) => x.contentId === c.id && x.platform === normalizePlatform(c.platform || ""));
     const clickRate = clickRateOf(o);
-    return { id: c.id, title: c.videoKit?.postTitle || c.title, method: methodOf(c), clickRate, flagged: !!o?.needsReview && clickRate === undefined };
+    return { id: c.id, title: primaryVideoKit(c)?.postTitle || c.title, method: methodOf(c), clickRate, flagged: !!o?.needsReview && clickRate === undefined };
   });
 }
 

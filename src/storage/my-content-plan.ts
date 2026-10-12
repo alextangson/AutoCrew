@@ -1,4 +1,5 @@
 /** 「我的内容」视图的目标清单：从稿件算出每个栏目下应该出现哪些文件。只读，不碰视图目录。 */
+import { primaryVideoKit } from "./video-kits.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Content, VideoKit } from "./local-store.js";
@@ -104,7 +105,7 @@ export async function scriptText(c: Content, root: string): Promise<string | nul
 async function publishKit(c: Content, root: string): Promise<VideoKit | null> {
   const raw = await readIfExists(path.join(root, "06-publish/copy", `${c.platform ?? "unknown"}.json`));
   if (raw !== null) return (JSON.parse(raw) as { kit?: VideoKit }).kit ?? null;
-  return c.videoKit ?? null;
+  return primaryVideoKit(c) ?? null;
 }
 
 function renderKit(c: Content, kit: VideoKit): string {

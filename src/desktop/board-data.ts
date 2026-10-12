@@ -22,6 +22,7 @@ import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-s
 import { editorLabel } from "../modules/production/workbench.js";
 import { draftRef } from "../modules/production/inbox.js";
 import { isBeingWritten } from "../modules/production/trash-guard.js";
+import { publishTargets, type PublishTarget } from "../modules/production/targets.js";
 
 export { isBeingWritten };
 
@@ -69,6 +70,12 @@ export interface BoardItem {
   active: boolean;
   /** 正在写（后台生成占位稿或还活着的写手认领）：看板不许移入回收站 */
   writing: boolean;
+  /** 视频稿的各发布平台（一条视频一张卡）：状态 + 这个平台还剩什么动作；文字稿 = [] */
+  targets: PublishTarget[];
+  /** 只有回执、没走认稿就发了：只提醒 */
+  noScriptApproval: boolean;
+  /** 本轮轮次（按平台动作要带它）；不按本体走 = null */
+  round: number | null;
 }
 
 export interface BoardTopic {
@@ -133,14 +140,17 @@ async function productionInfo(id: string, dataDir: string): Promise<{ storyboard
 
 async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise<BoardItem | null> {
   const current = c;
-  const publish: PublishRecord | null = PUBLISH_STATUSES.has(c.status) || c.manualPublications?.length
+  // 视频稿总读发布计划：平台标签要计划里的平台清单（吸收 13）
+  const publish: PublishRecord | null = PUBLISH_STATUSES.has(c.status) || c.manualPublications?.length || isVideoPlatform(c.platform)
     ? await readPublishRecord(c.id, c.manualPublications, dataDir) : null;
   const exp = await explainContent(c, dataDir, ctx, publish);
   const col = exp.column;
   const active = ctx.enabled && !ctx.excluded.has(current.id) && isVideoPlatform(current.platform);
   // 归档 / 未知状态 / 选题占位不进任何列（§6）
   if (!col) return null;
+  const doc = isVideoPlatform(current.platform) ? await readProductionDoc(current.id, dataDir).catch(() => null) : null;
   return {
+    targets: publishTargets(current, doc, publish, active), noScriptApproval: exp.no_script_approval === true, round: active ? doc?.round ?? 1 : null,
     id: current.id, title: current.title, platform: current.platform ?? null, status: current.status,
     topicId: current.topicId ?? null, column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
     draftReadyAt: current.draftReadyAt ?? null, chars: countChars(current.body ?? ""),

@@ -18,7 +18,8 @@ import { latestMarkedCut } from "./ready.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
-export type Rule = "D1" | "D2" | "D3" | "D4" | "D5";
+/** D1R = 本轮各平台全部被驳回（吸收 12）：回待发布 */
+export type Rule = "D1" | "D1R" | "D2" | "D3" | "D4" | "D5";
 
 /** D1 的外部输入：AutoCrew 发布器写的 publish-plan / 数据回流 = 已核实回执（§6） */
 export interface PublishEvidence { verified: boolean; badge?: string; /** 最早投出的时间（投影到 published 时盖 publishedAt） */ at?: string }
@@ -298,6 +299,7 @@ export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEv
     return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);
+  if (receipts.rejected.length && !receipts.pending.length) return allRejected(base, receipts.rejected, chat);
   base.badges = [...notes.badges, ...chat];
   base.alerts = [...notes.alerts, ...overwrittenAlerts(doc)];
   const cut = validCutApproval(doc, body), cover = validCoverApproval(doc, body);
@@ -328,6 +330,14 @@ export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEv
 }
 
 export const PENDING_BADGE = "正在核对原片";
+export const ALL_REJECTED = "全部被驳回";
+
+/** 本轮投出去的平台全部被驳回（吸收 12）：回待发布，红字写每个平台的原因 */
+function allRejected(base: Pick<Derived, "candidates" | "publishable" | "badges" | "missing" | "alerts">, rejected: Slot[], chat: string[]): Derived {
+  const why = rejected.map((s) => `${label(s.platform)}${s.reason ? `：${s.reason}` : ""}`).join("；");
+  return { ...base, stage: "待发布", rule: "D1R", badges: chat, alerts: [`${ALL_REJECTED}（${why}）`], publishable: false,
+    evidence: rejected.map((s) => `槽 ${s.id}（被驳回）`), reason: `${ALL_REJECTED}，改好重新提交` };
+}
 
 /** 写稿段稿件已有制作事实：仍在写稿中，只挂 badge（§2.1） */
 export function writingBadge(doc: ProductionDoc | null): string | null {

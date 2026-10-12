@@ -4,6 +4,7 @@
  * 文件：<dataDir>/outcomes.jsonl，一行一条 PerformanceOutcome。
  * 幂等：同 outcomeKey 后写覆盖先写（读取时 latest-wins），journal 本身永不改写。
  */
+import { videoKitsOf } from "../../storage/video-kits.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -276,7 +277,7 @@ export async function draftPlatforms(c: Content, dataDir?: string): Promise<Map<
     out.set(key, list);
   };
   add(c.platform);
-  if (c.videoKit) add(c.videoKit.platform, c.videoKit.postTitle);
+  for (const kit of Object.values(videoKitsOf(c))) add(kit.platform, kit.postTitle);
   for (const m of c.manualPublications ?? []) add(m.platform);
   const record = await readPublishRecord(c.id, c.manualPublications, getDataDir(dataDir));
   if (record.kind !== "none") for (const p of record.platforms) add(p.platform, p.title ?? null);

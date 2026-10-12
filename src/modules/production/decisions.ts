@@ -233,9 +233,19 @@ async function candidate(ctx: Ctx, confirm: boolean): Promise<Result> {
   return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: f.id, sha256: f.sha256 }, "candidate_confirmed") };
 }
 
+/** 卡上的按平台动作带着轮次：页面开着期间重开过文稿 = 旧轮的按钮，拒 */
+function staleRound(ctx: Ctx): Result | null {
+  const r = ctx.params.round;
+  if (r === undefined || r === null || r === "") return null;
+  return Number(r) === ctx.doc.round ? null : fail("stale", "这条已经重开过，按钮是上一轮的：刷新再看");
+}
+
 async function published(ctx: Ctx): Promise<Result> {
-  const platform = canonPlatform(str(ctx.params.platform) || ctx.content.platform || "");
+  // 平台必须明说（一条视频发多平台，不拿稿件平台顶）；带了轮次就必须是这一轮（spec 2026-10-12 吸收 3）
+  const platform = canonPlatform(str(ctx.params.platform));
   if (!platform) return fail("platform_required", "说一下发在哪个平台");
+  const stale = staleRound(ctx);
+  if (stale) return stale;
   const url = str(ctx.params.url);
   if (url && !/^https?:\/\//i.test(url)) return fail("bad_url", "作品链接只接受 http / https 开头的地址");
   // 幂等只对「这个槽现在就是你标的那条」：纠正过之后再点，要落一条新的
@@ -264,6 +274,8 @@ async function confirmReceipt(ctx: Ctx): Promise<Result> {
  */
 async function correct(ctx: Ctx): Promise<Result> {
   // 对话里「X 平台没发」只知道平台：按本轮那个平台的槽算（直接认的 AI 回执不进列表，没有条目可点）
+  const stale = staleRound(ctx);
+  if (stale) return stale;
   const raw = str(ctx.params.target_id) || (str(ctx.params.platform) ? slotId(ctx.doc.round, str(ctx.params.platform)) : "");
   const fact = ctx.doc.facts.find((f) => f.id === raw && f.kind === "publish");
   const dec = ctx.doc.decisions.find((d) => d.id === raw && d.type === "i_published");

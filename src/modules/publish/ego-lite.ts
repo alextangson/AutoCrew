@@ -1,4 +1,5 @@
 import { contentFile, contentRoot, safeProjectPath } from "../../storage/content-project.js";
+import { videoKitFor } from "../../storage/video-kits.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, getCoverReview, getDataDir, type Asset, type Content } from "../../storage/local-store.js";
@@ -112,7 +113,7 @@ export async function prepareEgoLitePublish(
 
   const { videoPath, coverPath } = await publishFiles(content, root);
 
-  const kit = content.videoKit;
+  const kit = videoKitFor(content, platform);
   const fallback = formatForClipboard(platform, content.title, content.body, content.hashtags ?? []);
   const title = kit?.postTitle?.trim() || fallback.formattedTitle;
   const caption = kit?.caption?.trim() || fallback.formattedBody;

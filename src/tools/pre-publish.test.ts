@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { primaryVideoKit, videoKitFor } from "../storage/video-kits.js";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -206,11 +207,11 @@ describe("video_kit 宿主发布包", () => {
     const tool = (extra: Record<string, unknown>) =>
       executePrePublishTool({ content_id: c.id, _dataDir: dataDir, _host: "claude", ...extra });
     expect(await tool({ action: "video_kit", platform: "xiaohongshu", kit: KIT })).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude" } });
-    expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toBeUndefined();
     expect(await tool({ action: "check" })).toMatchObject({ ok: true, allPassed: false });
     const saved = await tool({ action: "video_kit", platform: "xiaohongshu", kit: KIT, claim_token: claimed.claim.token });
     expect(saved).toMatchObject({ ok: true, status: "kit_saved", claim_token: claimed.claim.token });
-    expect((await getContent(c.id, dataDir))!.videoKit).toMatchObject({ source: "host" });
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toMatchObject({ source: "host" });
   });
 
   it("保存到 videoKit：记当前稿指纹、source=host，标签并进简介末尾，下一步指向 check", async () => {
@@ -218,13 +219,13 @@ describe("video_kit 宿主发布包", () => {
     const r = await saveKit(c.id, "xiaohongshu", { ...KIT, hashtags: ["AI工具", "#职场"] });
     expect(r).toMatchObject({ ok: true, status: "kit_saved", next_action: { tool: "autocrew_pre_publish", params: { action: "check", content_id: c.id } } });
     const saved = (await getContent(c.id, dataDir))!;
-    expect(saved.videoKit).toMatchObject({ platform: "xiaohongshu", postTitle: KIT.post_title, coverText: KIT.cover_text, source: "host" });
-    expect(saved.videoKit!.draftHash).toBe(editorialDraftHash(saved));
-    expect(saved.videoKit!.caption.startsWith(KIT.caption)).toBe(true);
-    expect(saved.videoKit!.caption.endsWith("#AI工具 #职场")).toBe(true);
+    expect(primaryVideoKit(saved)).toMatchObject({ platform: "xiaohongshu", postTitle: KIT.post_title, coverText: KIT.cover_text, source: "host" });
+    expect(primaryVideoKit(saved)!.draftHash).toBe(editorialDraftHash(saved));
+    expect(primaryVideoKit(saved)!.caption.startsWith(KIT.caption)).toBe(true);
+    expect(primaryVideoKit(saved)!.caption.endsWith("#AI工具 #职场")).toBe(true);
     // 已在简介里的标签不重复并入
     await saveKit(c.id, "xiaohongshu", { ...KIT, caption: `${KIT.caption} #AI工具`, hashtags: ["AI工具"] });
-    expect((await getContent(c.id, dataDir))!.videoKit!.caption.match(/#AI工具/g)).toHaveLength(1);
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)!.caption.match(/#AI工具/g)).toHaveLength(1);
   });
 
   const invalid: Array<[string, Record<string, unknown>, string]> = [
@@ -244,7 +245,7 @@ describe("video_kit 宿主发布包", () => {
       const failures = (r as { failures: Array<{ field: string; detail: string }> }).failures;
       expect(failures.map((f) => f.field)).toContain(field);
       expect(failures.every((f) => f.detail.length > 0)).toBe(true);
-      expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+      expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toBeUndefined();
     });
   }
 
@@ -254,20 +255,23 @@ describe("video_kit 宿主发布包", () => {
     expect(r).toMatchObject({ ok: false, code: "kit_invalid", failures: [{ field: "caption" }] });
   });
 
-  it("platform 缺失或与稿件不符 → platform_mismatch；非视频平台 → not_video_platform", async () => {
+  // 一条视频一张卡（spec 2026-10-12）：视频稿可以交别的视频平台的包；平台必须明说；文字稿不收
+  it("platform 缺失 → platform_required；非视频平台 → not_video_platform；视频稿可交别的视频平台的包", async () => {
     const c = await mkVideo("douyin");
-    expect(await saveKit(c.id, "xiaohongshu")).toMatchObject({ ok: false, code: "platform_mismatch", expected_platform: "douyin" });
-    expect(await executePrePublishTool({ action: "video_kit", content_id: c.id, kit: KIT, _dataDir: dataDir })).toMatchObject({ ok: false, code: "platform_mismatch" });
+    expect(await executePrePublishTool({ action: "video_kit", content_id: c.id, kit: KIT, _dataDir: dataDir })).toMatchObject({ ok: false, code: "platform_required" });
+    expect(await saveKit(c.id, "wechat_mp")).toMatchObject({ ok: false, code: "platform_required" });
     const mp = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, dataDir);
     expect(await saveKit(mp.id, "wechat_mp")).toMatchObject({ ok: false, code: "not_video_platform" });
-    expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toBeUndefined();
+    expect(await saveKit(c.id, "xiaohongshu")).toMatchObject({ ok: true, status: "kit_saved" });
+    expect(videoKitFor((await getContent(c.id, dataDir))!, "xiaohongshu")).toMatchObject({ platform: "xiaohongshu" });
   });
 
   it("成片没登记（videoDone 未盖）就不出发布包：video_not_done，next_action 是看状态（P6-e narration-not-state）", async () => {
     const c = await mkVideo("xiaohongshu", { videoDone: undefined, status: "editing" });
     const r = await saveKit(c.id, "xiaohongshu");
     expect(r).toMatchObject({ ok: false, code: "video_not_done", content_status: "editing", next_action: { tool: "autocrew_content", params: { action: "get", id: c.id } } });
-    expect((await getContent(c.id, dataDir))?.videoKit).toBeUndefined();
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toBeUndefined();
   });
 
   it("稿件改了之后 check 报 kit_stale，next_action 指回 video_kit", async () => {

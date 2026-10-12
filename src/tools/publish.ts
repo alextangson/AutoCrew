@@ -1,4 +1,5 @@
 import { isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
+import { videoKitFor } from "../storage/video-kits.js";
 import { historyGuard } from "./history-guard.js";
 import { isOntologyActive, isOntologyEnabled } from "../storage/production-store.js";
 import { recordPublishClaim } from "../modules/production/record.js";
@@ -53,7 +54,7 @@ export const publishSchema = Type.Object({
   instruction_id: Type.Optional(Type.String({ description: "For 'check': the ins-… id from the last line of the workbench 「让 Codex 发布」 text, if the founder pasted one. Omit when there is none." })),
   overrides: Type.Optional(Type.Unknown({ description: "For 'check': [{platform, rule, founder_quote}] — only when the founder explicitly asked to break a blocked rule (rule = the blocked item's rule name, founder_quote verbatim); shown verbatim in summary_table." })),
   kind: Type.Optional(Type.String({ description: "For 'propose_preference': cover_ratio (platform + ratio list) or rule (free-text publish rule)." })),
-  platform: Type.Optional(Type.String({ description: "For 'propose_preference': platform the preference applies to (required for cover_ratio)." })),
+  platform: Type.Optional(Type.String({ description: "For 'propose_preference': platform the preference applies to (required for cover_ratio). For 'confirm_published' on video drafts: required — which platform it went out on (one content_id serves all four video platforms). For 'clipboard': which video platform's kit to copy." })),
   value: Type.Optional(Type.Unknown({ description: "For 'propose_preference': ratio list like [\"3:4\",\"4:3\"] for cover_ratio, or the rule text for rule." })),
   founder_quote: Type.Optional(Type.String({ description: "For 'propose_preference': the founder's exact words behind this preference." })),
 });
@@ -139,11 +140,13 @@ export async function executePublish(
     if (!content) {
       return { ok: false, error: `Content not found: ${contentId}` };
     }
-    const platform = (content.platform || "xiaohongshu") as ClipboardPlatform;
+    // 视频稿四平台共用一条稿：带 platform 取那个平台的发布包；文字稿只认自己的平台
+    const asked = typeof params.platform === "string" ? params.platform.trim() : "";
+    const platform = (asked && VIDEO_PLATFORMS.has(asked) && VIDEO_PLATFORMS.has(content.platform ?? "") ? asked : content.platform || "xiaohongshu") as ClipboardPlatform;
     const hashtags = (params.hashtags as string[] | undefined) || content.hashtags || [];
     // V5.4b:视频平台有发布件 → 发的是发布件(平台标题+发布文案,已含标签),不是口播稿截断
-    if (content.videoKit?.caption && VIDEO_PLATFORMS.has(platform)) {
-      const kit = content.videoKit;
+    const kit = VIDEO_PLATFORMS.has(platform) ? videoKitFor(content, platform) : undefined;
+    if (kit?.caption) {
       const output = formatForClipboard(platform, kit.postTitle || content.title, kit.caption, []);
       return { ok: true, data: { ...output, fromVideoKit: true } };
     }
@@ -219,9 +222,12 @@ export async function executePublish(
     // 否则「稿成→发布」的用时会被越算越短——这条纪律现在由 transitionStatus 统一守。
     // 本体 §6：按本体走的视频稿，模型说「发了」= 待核回执，创始人点 = 「我发了」决定；状态由推导投影
     if (isVideoPlatform(content.platform) && await isOntologyActive(dataDir, contentId)) {
+      // 一条视频四平台共用一条稿：发在哪个平台必须明说，不拿稿件平台顶（spec 2026-10-12 吸收 3）
+      const platform = typeof params.platform === "string" ? params.platform.trim() : "";
+      if (!platform) return { ok: false, code: "platform_required", error: "confirm_published 要带 platform：这条视频发在哪个平台（douyin / wechat_video / xiaohongshu / bilibili），每个平台各确认一次" };
       const r = isModelCall(params)
-        ? await recordPublishClaim(content, getDataDir(dataDir), { platform: content.platform, url: rawUrl || undefined, host: String(params._host ?? "model"), request_id: `confirm-${Date.now()}` })
-        : await founderDecision(contentId, "i_published", { platform: content.platform, url: rawUrl }, getDataDir(dataDir));
+        ? await recordPublishClaim(content, getDataDir(dataDir), { platform, url: rawUrl || undefined, host: String(params._host ?? "model"), request_id: `confirm-${Date.now()}` })
+        : await founderDecision(contentId, "i_published", { platform, url: rawUrl }, getDataDir(dataDir));
       if (!r.ok) return r;
       if (rawUrl && !isModelCall(params)) await updateContent(contentId, { publishUrl: rawUrl }, dataDir);
       return { ...r, action: "confirm_published", content_id: contentId };

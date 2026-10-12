@@ -4,12 +4,13 @@ import { contentFile } from "../../storage/content-project.js";
  * 平台原生发布文案 + 分镜表 + 竖版封面。approved 后按需生成(不塞进生成管线,
  * 只在真要发视频时多一次调用),存到 Content.videoKit,剪贴板/预填从这里取文案。
  */
+import { putVideoKit } from "../../storage/video-kits.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
-import { getContent, updateContent, getDataDir } from "../../storage/local-store.js";
+import { getContent, updateContentWith, getDataDir } from "../../storage/local-store.js";
 import type { VideoKit, StoryboardShot } from "../../storage/local-store.js";
 import { VIDEO_PLATFORMS } from "../../storage/stage-guard.js";
 import { loadProfile, personaSummary, rulesForPlatform } from "../profile/creator-profile.js";
@@ -197,7 +198,8 @@ export async function prepareVideoKit(
     }
   }
 
-  const updated = await updateContent(contentId, { videoKit: kit }, dataDir);
+  // 只换本平台那一份，别的平台的包在锁内原样保留
+  const updated = await updateContentWith(contentId, (current) => putVideoKit(current, kit), dataDir);
   if (!updated) throw new Error(`发布件落库失败:${contentId}`);
   return { kit, tokensUsed: result.totalTokens, ...(coverError ? { coverError } : {}) };
 }

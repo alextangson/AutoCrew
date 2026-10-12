@@ -50,7 +50,7 @@ describe("P2-3 / P3 回执与决定", () => {
   it("[P3 #16] 模型反复 confirm_published 同一链接：只记一条待核", async () => {
     await enable();
     const r = await registeredVideo(env);
-    for (let i = 0; i < 3; i++) await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, publish_url: "https://v.douyin.com/abc", _host: "codex" });
+    for (let i = 0; i < 3; i++) await executePublish({ _dataDir: env.dir, action: "confirm_published", content_id: r.id, platform: "douyin", publish_url: "https://v.douyin.com/abc", _host: "codex" });
     const doc = (await readProductionDoc(r.id, env.dir))!;
     expect(doc.facts.filter((f) => f.kind === "publish" && f.obs_source === "claim")).toHaveLength(1);
   });

@@ -14,6 +14,7 @@
  * 5. **冻结 render-manifest**：render 只吃这份 manifest，绝不回头读 timeline（§2.8）。
  *    冻结前复检全部素材指纹——A-roll 是引用不是拷贝，这是最后一次能发现它被换掉的机会。
  */
+import { primaryVideoKit } from "../../storage/video-kits.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent } from "../../storage/local-store.js";
@@ -293,7 +294,7 @@ function manifestOverlays(
 /** 片头大字取发布件的 `coverText`（§2.3）——postTitle 是平台发布标题，不是给画面用的 */
 async function titleTextOf(dataDir: string, contentId: string): Promise<string | undefined> {
   const content = await getContent(contentId, dataDir);
-  return content?.videoKit?.coverText?.trim() || undefined;
+  return (content ? primaryVideoKit(content)?.coverText?.trim() : undefined) || undefined;
 }
 
 /**

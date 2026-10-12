@@ -25,6 +25,8 @@ import { draftRef } from "./inbox.js";
 import { readInbox } from "./inbox-read.js";
 import { isStrayCover } from "./plain-reason.js";
 import { hostLabel } from "./host-label.js";
+import { readPublishRecord } from "../../storage/publish-record.js";
+import { publishTargets } from "./targets.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
@@ -120,6 +122,17 @@ function strayCovers(doc: ProductionDoc): { count: number } | null {
   return n ? { count: n } : null;
 }
 
+const HOUR_MS = 3600_000;
+
+/** 「AI 在做」只在认领租约有效且最近有写入时才说（吸收 15）；否则说 AI 已 N 小时没动静 */
+function claimView(content: Content): { host: string; live: boolean; idle_hours: number | null } | null {
+  const c = content.claim;
+  if (!c) return null;
+  const leaseOk = Date.parse(c.leaseUntil) > Date.now();
+  const idle = Math.floor((Date.now() - Date.parse(c.lastWriteAt ?? content.updatedAt)) / HOUR_MS);
+  return { host: hostLabel(c.host), live: leaseOk && idle < 2, idle_hours: Number.isFinite(idle) ? idle : null };
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
@@ -127,10 +140,14 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const exp = await explainContent(content, dataDir);
   // 卡片上「稿子没问题」要带它：创始人看到的那一版（别的会话改过正文就对不上，服务端拒）
   const draft = draftRef(content);
-  const base = { ok: true, ...(draft ? { draft_item: draft } : {}), id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
-    column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates };
-  if (!active) return base;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
+  const record = isVideoPlatform(content.platform) ? await readPublishRecord(content.id, content.manualPublications, dataDir) : null;
+  const base = { ok: true, ...(draft ? { draft_item: draft } : {}), id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
+    column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates,
+    // 一条视频一张卡：各平台状态与剩下的动作（吸收 4）；只有回执没认稿 = 只提醒
+    targets: publishTargets(content, doc, record, active), no_script_approval: exp.no_script_approval === true,
+    claim: claimView(content) };
+  if (!active) return base;
   const receipts = publishReceipts(doc);
   // 一行 = 一个平台的发布槽（本轮每个平台只有一个）；纠正指向槽 id；按真实时间新的在前
   const published = receipts.live.map((w) => ({ id: w.id, kind: "slot", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null,

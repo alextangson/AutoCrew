@@ -388,8 +388,10 @@ export interface Content {
   performanceData: Record<string, number>;
   /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */
   adoption?: AdoptionRecord;
-  /** 视频发布件（IA v5 V5.4b）:发布文案/分镜/封面——口播稿是"读的",发布件是"发的" */
+  /** 旧单平台发布包（已迁移到 videoKits，只读兼容） */
   videoKit?: VideoKit;
+  /** 按平台的视频发布包（一条视频发多平台）；读写一律经 storage/video-kits.ts，旧 videoKit 读时迁移 */
+  videoKits?: Record<string, VideoKit>;
   /** 最近一次生成/处理失败的原因（防呆:失败留痕,成功后清空）。UI 据此显示中断徽章与重试 */
   lastError?: string | null;
   /**
@@ -1037,6 +1039,15 @@ export function reviewContextHash(
 export async function updateContent(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
   return contentWrite(id, dataDir, () => updateContentLocked(id, updates, dataDir));
+}
+
+/** 锁内按当前稿算补丁再写（逐平台发布包这类「改一格、别的原样」的合并写） */
+export async function updateContentWith(id: string, patch: (current: Content) => ContentUpdates, dataDir?: string): Promise<Content | null> {
+  if (!isContentId(id)) return null;
+  return contentWrite(id, dataDir, async () => {
+    const current = await getContent(id, dataDir);
+    return current ? updateContentLocked(id, patch(current), dataDir) : null;
+  });
 }
 
 /**

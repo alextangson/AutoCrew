@@ -1,4 +1,5 @@
 /** A redo journal gives multi-file exports a recoverable commit boundary on ordinary files. */
+import { primaryVideoKit, videoKitsOf } from "./video-kits.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -44,9 +45,13 @@ export async function exportProjectViews(content: Content, root: string): Promis
   for (const version of content.versions) await projection(projectFile(root, "versions", `v${version.version}.md`), version.body);
   await projection(path.join(root, "01-script/evidence/ledger.json"), JSON.stringify(content.evidenceLedger ?? [], null, 2));
   await projection(path.join(root, "01-script/reviews/current.json"), JSON.stringify({ generated: true, revision, review: content.review ?? null }, null, 2));
-  if (content.videoKit) {
-    await projection(path.join(root, "06-publish/copy", `${content.platform ?? "unknown"}.json`), JSON.stringify({ generated: true, revision, kit: content.videoKit }, null, 2));
-    await projection(path.join(root, "06-publish/packages", `${revision}.json`), JSON.stringify({ generated: true, content_id: content.id, kit: content.videoKit, final: content.video?.final ?? null }, null, 2));
+  // 按平台各投影一份文案；packages 收全部平台的包
+  const kits = videoKitsOf(content);
+  for (const [platform, kit] of Object.entries(kits)) {
+    await projection(path.join(root, "06-publish/copy", `${platform}.json`), JSON.stringify({ generated: true, revision, kit }, null, 2));
+  }
+  if (Object.keys(kits).length) {
+    await projection(path.join(root, "06-publish/packages", `${revision}.json`), JSON.stringify({ generated: true, content_id: content.id, kit: primaryVideoKit(content), kits, final: content.video?.final ?? null }, null, 2));
   }
   if (content.publishedAt || content.publishUrl) await projection(path.join(root, "06-publish/receipts/current.json"), JSON.stringify({ generated: true, revision, publishedAt: content.publishedAt, publishUrl: content.publishUrl }, null, 2));
   if (Object.keys(content.performanceData ?? {}).length) await projection(path.join(root, "06-publish/metrics", `${revision}.json`), JSON.stringify({ generated: true, revision, recorded_at: content.updatedAt, metrics: content.performanceData }, null, 2));

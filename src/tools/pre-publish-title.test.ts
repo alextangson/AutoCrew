@@ -1,4 +1,5 @@
 /** video_kit 的标题方法字段（docs/2026-10-03-title-methods-spec.md §五–§七）与 action=title_methods */
+import { primaryVideoKit } from "../storage/video-kits.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +28,7 @@ describe("video_kit 标题方法", () => {
     const c = await mk();
     const r = await save(c.id, "douyin", KIT);
     expect(r).toMatchObject({ ok: true, video_kit: { title_method: "identity-call" } });
-    const kit = (await getContent(c.id, dataDir))!.videoKit!;
+    const kit = primaryVideoKit((await getContent(c.id, dataDir))!)!;
     expect(kit.titleMethod).toBe("identity-call");
     expect(kit.titleCandidates).toHaveLength(3);
   });
@@ -37,7 +38,7 @@ describe("video_kit 标题方法", () => {
     const r = await save(c.id, "douyin", { ...KIT, title_method: "made-up" }) as { code: string; failures: Array<{ field: string; detail: string }> };
     expect(r.code).toBe("kit_invalid");
     expect(r.failures.find((f) => f.field === "title_method")!.detail).toContain("pitfall-list");
-    expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)).toBeUndefined();
   });
 
   it("候选不分属 3 个类 → kit_invalid", async () => {
@@ -56,15 +57,15 @@ describe("video_kit 标题方法", () => {
   it("创始人自己写：title_method=自拟 照收；整个 kit 被序列化成字符串也能读", async () => {
     const c = await mk();
     expect(await save(c.id, "douyin", JSON.stringify({ ...KIT, post_title: "我自己起的标题", title_method: "自拟" }) as unknown as Record<string, unknown>)).toMatchObject({ ok: true });
-    expect((await getContent(c.id, dataDir))!.videoKit!.titleMethod).toBe("自拟");
+    expect(primaryVideoKit((await getContent(c.id, dataDir))!)!.titleMethod).toBe("自拟");
   });
 
   it("同一视频不同平台各记各的方法 id", async () => {
     const d = await mk("douyin"), b = await mk("bilibili");
     await save(d.id, "douyin", KIT);
     await save(b.id, "bilibili", { ...KIT, post_title: "【干货】回差评从半小时到五分钟", title_method: "before-after" });
-    expect((await getContent(d.id, dataDir))!.videoKit!.titleMethod).toBe("identity-call");
-    expect((await getContent(b.id, dataDir))!.videoKit!.titleMethod).toBe("before-after");
+    expect(primaryVideoKit((await getContent(d.id, dataDir))!)!.titleMethod).toBe("identity-call");
+    expect(primaryVideoKit((await getContent(b.id, dataDir))!)!.titleMethod).toBe("before-after");
   });
 
   it("标题数字正文里没有 → 回执带 warnings，但照样保存", async () => {
