@@ -33,16 +33,19 @@ import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./se
 import { groupById, groupOfPair, isRetired, withCoverGroups, type GroupView } from "./cover-groups.js";
 import { currentCut, cutOf, runSliverCheck } from "./sliver/check.js";
 import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/verdict.js";
+import { addWorkUrl, recordMetrics } from "./desk-writes.js";
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
   | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
-  | "undo_auto_attach" | "retire_cover_group" | "review_now" | "reject_stray_covers" | "recheck_files" | "retry_registration";
+  | "undo_auto_attach" | "retire_cover_group" | "review_now" | "reject_stray_covers" | "recheck_files" | "retry_registration"
+  | "add_work_url" | "record_metrics";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
   "undo_auto_attach", "retire_cover_group", "review_now", "reject_stray_covers", "recheck_files", "retry_registration",
+  "add_work_url", "record_metrics",
 ];
 
 type Result = Record<string, unknown>;
@@ -51,7 +54,7 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
 
 export const FOUNDER_ONLY = "这是创始人的决定，只能在看板 / 工作台上点，AI 宿主不能代做。";
 
-interface Ctx { content: Content; doc: ProductionDoc; dataDir: string; params: Record<string, unknown> }
+export interface Ctx { content: Content; doc: ProductionDoc; dataDir: string; params: Record<string, unknown> }
 
 const inRound = (doc: ProductionDoc) => doc.facts.filter((f) => f.round === doc.round);
 
@@ -70,7 +73,7 @@ function sameDecision(doc: ProductionDoc, type: DecisionType, fp: (d: Decision) 
   return latest && fp(latest) && !revoked.has(latest.id) ? latest : null;
 }
 
-async function push(ctx: Ctx, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string, fact?: (doc: ProductionDoc) => void): Promise<Decision> {
+export async function push(ctx: Ctx, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string, fact?: (doc: ProductionDoc) => void): Promise<Decision> {
   return (await mutateProduction(ctx.content.id, ctx.dataDir, (doc) => {
     // 来源与原话同一次写进去（chat-approval §Codex 10）：对话确认流程在调用链上挂来源，网页照旧 founder
     const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), ...provenanceFields(), ...d };
@@ -235,7 +238,7 @@ async function candidate(ctx: Ctx, confirm: boolean): Promise<Result> {
 }
 
 /** 卡上的按平台动作带着轮次：页面开着期间重开过文稿 = 旧轮的按钮，拒 */
-function staleRound(ctx: Ctx): Result | null {
+export function staleRound(ctx: Ctx): Result | null {
   const r = ctx.params.round;
   if (r === undefined || r === null || r === "") return null;
   return Number(r) === ctx.doc.round ? null : fail("stale", "这条已经重开过，按钮是上一轮的：刷新再看");
@@ -364,6 +367,8 @@ const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   recheck_files: async () => ({ ok: true }), retry_registration: async () => ({ ok: true }),
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
   undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
+  // 发布台手动工具（spec 2026-10-12 发布台 吸收 4 / 5）：按槽补作品链接、按平台手填数据
+  add_work_url: addWorkUrl, record_metrics: recordMetrics,
 };
 
 /**

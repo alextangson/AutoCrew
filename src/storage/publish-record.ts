@@ -36,6 +36,9 @@ export interface PlatformPublication {
   /** 该平台上用的标题 / 平台作品 id：数据关联（§33）的额外匹配键 */
   title?: string | null;
   postId?: string | null;
+  /** 计划里这个平台实发的简介 / 标签（发布台「实发文案」） */
+  caption?: string | null;
+  tags?: string[];
   /** 发布前把关的 check_id（发布审查闸门：技能在计划里每个平台带上） */
   checkId?: string | null;
   /** 实际提交时间，只认计划里的 submitted_at（创始人 09-30 从严）；授权时间、定时公开时间都不算。发布前把关与重开后的轮次都按它判 */
@@ -101,7 +104,7 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     reason: state === "rejected" ? str(pub?.reject_reason) ?? str(pub?.reason) ?? str(pub?.evidence) : null,
     url: str(pub?.url) ?? str(pub?.post_url),
     campaigns: campaignsOf(entry), manual: null,
-    title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
+    title: str(entry.title), caption: str(entry.caption), tags: Array.isArray(entry.tags) ? entry.tags.map(str).filter((t): t is string => Boolean(t)) : [], postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
     submittedAt: validTime(pub?.submitted_at),
     scheduledAt,
     evidenceAt: state === "reviewing" || state === "rejected" ? validTime(pub?.submitted_at) ?? validTime(pub?.verified_at) ?? scheduledAt : time,

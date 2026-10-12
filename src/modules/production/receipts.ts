@@ -311,7 +311,14 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
     ...(pick.d?.gate ?? o?.gate ? { gate: pick.d?.gate ?? o!.gate } : {}),
     at: o?.published_at ?? o?.seen_at ?? pick.d?.at ?? new Date(pick.at).toISOString(),
     history: entries.filter((e) => e !== pick && e.fact_id).map((e) => e.fact_id!),
+    ...foundLink(doc, round, platform, cut),
   };
+}
+
+/** 发布台「补作品链接」（吸收 5）：纠正之后最近一次补的链接盖住显示用的链接，状态 / 时间 / 把关不动 */
+function foundLink(doc: ProductionDoc, round: number, platform: string, cut: number): { url?: string } {
+  const d = doc.decisions.filter((x) => x.type === "publish_link" && x.round === round && canonPlatform(x.platform ?? "") === platform && Date.parse(x.at) > cut && x.note).at(-1);
+  return d ? { url: d.note } : {};
 }
 
 /** 本轮每个平台的槽：已投出 / 被驳回 / 待你确认 */

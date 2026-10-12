@@ -17,6 +17,7 @@ import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, type AttachmentOpen 
 import { createReadStream } from "node:fs";
 import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
+import { publishDesk } from "../modules/production/publish-desk.js";
 import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
@@ -88,6 +89,15 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       const id = url.searchParams.get("content_id") ?? "";
       if (!isContentId(id)) { send(res, 400, { ok: false, code: "bad_request", error: "content_id 不对" }); return true; }
       try { send(res, 200, await cardPanel(id, await deps.resolveDataDir())); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    // 发布台页面读模型（发布台 spec 吸收 8）：卡片 + 各平台行 + 进度栏一次给，本体启用的视频稿才有
+    if (p === "/api/board/desk" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const id = url.searchParams.get("content_id") ?? "";
+      if (!isContentId(id)) { send(res, 400, { ok: false, code: "bad_request", error: "content_id 不对" }); return true; }
+      try { send(res, 200, await publishDesk(id, await deps.resolveDataDir())); }
       catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }

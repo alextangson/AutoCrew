@@ -89,6 +89,14 @@ export function pickUpcoming(items: Array<{ c: Content; record: PublishRecord | 
   return cands.sort((a, b) => (a.time ?? "9999").localeCompare(b.time ?? "9999"))[0] ?? null;
 }
 
+/** 数据页的行（不含封面、列）：发布台的「比平时」也用这份，和数据页同一个定义（发布台 spec 吸收 1） */
+export async function dataRows(dataDir: string): Promise<DataRow[]> {
+  const [outcomes, contents, decisions] = await Promise.all([listOutcomes(dataDir), listContents(dataDir), readDecisions(dataDir)]);
+  const refs: ContentRef[] = [];
+  for (const c of contents) refs.push(contentRef(c, PUBLISH_STATUSES.has(c.status) ? await readPublishRecord(c.id, c.manualPublications, dataDir) : null));
+  return buildRows(buildWorks(outcomes.map((o) => ({ ...o, metrics: o.metrics as unknown as Record<string, number | null> }))), refs, decisions);
+}
+
 export async function dataPage(dataDir: string): Promise<DataPage> {
   const [outcomes, contents, decisions, profile] = await Promise.all([
     listOutcomes(dataDir), listContents(dataDir), readDecisions(dataDir), loadProfile(dataDir).catch(() => null),

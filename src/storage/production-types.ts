@@ -124,6 +124,7 @@ export type DecisionType =
   | "i_published"
   | "publish_confirm" // 创始人确认一条待核回执（模型说的「发了」）
   | "publish_correction"
+  | "publish_link" // 发布台「补作品链接」：只给本轮某平台槽补链接，不改状态 / 时间 / 把关
   | "sliver_waive" // 抽帧缝「这处是故意的」：绑 round + 成片 sha + 结果指纹 + 缝身份
   | "sliver_waive_all" // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
   | "auto_attach_undo" // 1b §4.1：撤销系统自动挂上的原片（挪回原处、解冻、回待录制）
