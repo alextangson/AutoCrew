@@ -90,7 +90,7 @@ export interface CardPanelData {
   /** 只有回执、没走认稿就发了 */
   no_script_approval?: boolean;
   /** 认领：AI 在做只在租约有效且最近写过时才说（吸收 15） */
-  claim?: { host: string; live: boolean; idle_hours: number | null } | null;
+  claim?: { host: string; live: boolean; lease_ok?: boolean; idle_hours: number | null } | null;
   /** 卡上的恢复动作：文件不见了 / 登记没写成 */
   recovery?: { kind: "files_missing" | "registration_failed"; reason: string } | null;
 }

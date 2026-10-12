@@ -2,7 +2,8 @@
  * 发布台页面读模型（spec 2026-10-12 发布台 吸收 8）：一次返回卡片面板 + 各平台行 + 以前的发布 + 封面 + 定稿标识 + 进度栏。
  * 只给本体启用的视频稿（吸收 7）；影子 / 被排除 / 文字稿返回 active:false，页面照旧用原来的。只读。
  */
-import { getContent, listContents } from "../../storage/local-store.js";
+import path from "node:path";
+import { getContent, listContents, type Content } from "../../storage/local-store.js";
 import { bodyHash, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { ProductionDoc } from "../../storage/production-types.js";
 import { readPublishRecord } from "../../storage/publish-record.js";
@@ -19,6 +20,13 @@ import { validCoverApproval } from "./derive.js";
 import { deskRow, type DeskRow } from "./desk-rows.js";
 import { railSteps } from "./desk-rail.js";
 import type { PublishTarget } from "./targets.js";
+
+/** 进度栏「交接详情」（补做 B）：与剪辑看板 HandoffDetails 读同一份 content.video.handoff；撤回过的算没有 */
+function handoffOf(content: Content): Record<string, unknown> | null {
+  const h = content.video?.handoff;
+  if (!h || content.video?.revoked?.includes(h.hash)) return null;
+  return { generation: h.generation, at: h.at, session: h.session ?? null, fingerprint: (h.hash ?? "").slice(0, 8), aroll: h.aroll_path ? path.basename(h.aroll_path) : null };
+}
 
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -81,6 +89,7 @@ export async function publishDesk(contentId: string, dataDir: string, now = Date
       headline: live.length ? `${live.length} 个平台已投出` : null, summary: summaryOf(rows),
       refresh_at: earliest(rows.map((r) => (r.times.scheduled_at && Date.parse(r.times.scheduled_at) > now ? r.times.scheduled_at : null))),
       cover: coverOf(doc, content.body, content.id), script: scriptOf(doc, content.body),
+      handoff: handoffOf(content),
       rail: { steps: rail, platforms: rows.map((r) => r.label), chars: countChars(content.body ?? ""), wpm },
     },
   };

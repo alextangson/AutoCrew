@@ -23,6 +23,7 @@ export interface Desk {
   round: number; rows: DeskRow[]; past: Array<{ round: number; platform: string; label: string; url: string | null; at: string }>;
   plan_error: string | null; headline: string | null; summary: string | null; refresh_at: string | null;
   cover: { fact_id: string; url: string } | null; script: { final: boolean; label: string };
+  handoff?: { generation: number; at: string; session: string | null; fingerprint: string; aroll: string | null } | null;
   rail: { steps: RailStep[]; platforms: string[]; chars: number; wpm: number | null };
 }
 export type DeskReply = { active: false; card: CardPanelData } | { active: true; card: CardPanelData; desk: Desk };

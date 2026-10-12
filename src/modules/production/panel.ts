@@ -125,13 +125,13 @@ function strayCovers(doc: ProductionDoc): { count: number } | null {
 const HOUR_MS = 3600_000;
 
 /** 「AI 在做」只在认领租约有效且最近有写入时才说（吸收 15）；否则说 AI 已 N 小时没动静 */
-function claimView(content: Content): { host: string; live: boolean; idle_hours: number | null } | null {
+export function claimView(content: Content): { host: string; live: boolean; lease_ok: boolean; idle_hours: number | null } | null {
   const c = content.claim;
   // 创始人自己（local-user）占着不是「AI 在做」
   if (!c || c.host === LOCAL_HOST) return null;
   const leaseOk = Date.parse(c.leaseUntil) > Date.now();
   const idle = Math.floor((Date.now() - Date.parse(c.lastWriteAt ?? content.updatedAt)) / HOUR_MS);
-  return { host: hostLabel(c.host), live: leaseOk && idle < 2, idle_hours: Number.isFinite(idle) ? idle : null };
+  return { host: hostLabel(c.host), live: leaseOk && idle < 2, lease_ok: leaseOk, idle_hours: Number.isFinite(idle) ? idle : null };
 }
 
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {

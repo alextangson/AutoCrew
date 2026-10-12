@@ -17,9 +17,16 @@
 .desk-rail-meta { margin-top: var(--s3); padding-top: var(--s4); border-top: 1px solid var(--border); }
 .desk-rail-meta p { margin: 0 0 var(--s2); }
 .desk-rail-line { display: none; margin: var(--s1) 0 0; font-size: var(--fs-xs); color: var(--muted); }
+.desk-rail-more { display: none; margin: var(--s1) 0 0; font-size: var(--fs-xs); }
+.desk-rail-more > summary { cursor: pointer; color: var(--muted); }
+.desk-reveal { margin: var(--s2) 0; }
+.desk-reveal .desk-error { margin: var(--s1) 0; }
+.desk-handoff > summary { cursor: pointer; }
+.desk-handoff .pb-facts { margin: var(--s2) 0; }
 @media (max-width: 1099px) {
   .desk-rail { display: none; }
   .desk-rail-line { display: block; }
+  .desk-rail-more { display: block; }
 }
 
 .desk { max-width: var(--w-draft); margin: var(--s4) auto var(--s6); padding: 0 var(--s4); box-sizing: border-box; width: 100%; }
