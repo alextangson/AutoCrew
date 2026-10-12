@@ -8,7 +8,7 @@ const invokes: Array<Record<string, unknown>> = [];
 const confirms: string[] = [];
 vi.mock("../transport", () => ({ invoke: async (channel: string, payload: Record<string, unknown>) => { invokes.push({ channel, ...payload }); return { ok: true }; } }));
 vi.mock("../ui", () => ({ toast: () => {}, confirmDialog: async (d: { title: string }) => { confirms.push(d.title); return true; }, openDialog: async () => null }));
-vi.mock("./board-api", () => ({ revealFact: async () => ({ ok: true, data: {} }) }));
+vi.mock("./board-api", () => ({ revealFact: async () => ({ ok: true, data: {} }), loadCard: async () => ({ ok: false, error: "测试里不读进度" }) }));
 const decided: Array<Record<string, unknown>> = [];
 vi.mock("./review/review-api", () => ({ decideItem: async (p: Record<string, unknown>) => { decided.push(p); return { ok: true, data: {} }; } }));
 
