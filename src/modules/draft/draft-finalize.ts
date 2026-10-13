@@ -104,7 +104,7 @@ export async function finalizeByFounder(contentId: string, input: { draftHash: s
   const moved = await transitionStatus(c.id, "approved", {
     force: true, expectedStatus: "draft_ready", expectedDraft: { title: c.title, body: c.body, platform: c.platform },
     decidedBy: "founder", host: LOCAL_HOST,
-    patch: { draftFinal: { draftHash: draftHash(c), finalizedAt: at, source: "founder-workbench", kept: kept.map((i) => i.id) } },
+    patch: { draftFinal: { draftHash: draftHash(c), finalizedAt: at, source: "founder-workbench", kept: kept.map((i) => i.id), ...(c.draftPath?.angle?.playbook ? { playbook: c.draftPath.angle.playbook } : {}) } },
   }, dataDir);
   if (!moved.ok) return fail("transition_failed", moved.error ?? "没能推进到等 A-roll");
   return { ok: true, status: "approved", kept: kept.length };

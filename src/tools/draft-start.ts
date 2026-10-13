@@ -6,7 +6,7 @@ import { isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { SCRIPT_FROZEN } from "../storage/production-store.js";
 import { firsthandContext, hitsContext, profileContext, seriesContext } from "../modules/draft/draft-context.js";
 import { loadChecklist } from "../modules/draft/draft-final.js";
-import { loadCraftMethod } from "../modules/craft/method.js";
+import { pinnedPlaybook, playbookIndex } from "../modules/playbook/read.js";
 import { draftHash } from "../storage/draft-hash.js";
 import { currentVersion, DRAFT_PLATFORM, draftNextNote, workbenchUrl } from "../modules/draft/draft-types.js";
 import type { DraftArgs } from "./draft-args.js";
@@ -33,12 +33,36 @@ export function stageRefusal(c: Content): Record<string, unknown> | null {
   return null;
 }
 
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** 立意时记下的那本手册那一版全文（续写一直用它）；没记 = 未归版本的旧立意，照常续写 */
+async function pinnedOf(c: Content, dataDir?: string): Promise<Record<string, unknown>> {
+  const pin = c.draftPath?.angle?.playbook;
+  if (!c.draftPath?.angle) return {};
+  if (!pin) return { playbook: null, playbook_note: "这篇的立意是手册上线前出的，未归版本：照常续写；重新出立意时要带 genre" };
+  try {
+    return { playbook: await pinnedPlaybook(pin, dataDir) };
+  } catch (e) {
+    return { playbook: { id: pin.id, version: pin.version }, playbook_error: `立意记下的手册读不了：${errText(e)}。如实告诉创始人` };
+  }
+}
+
+/** 5 本手册的索引（名称、什么时候选它、当前版本），不带全文；读不了照实报 */
+async function playbooksContext(dataDir?: string): Promise<Record<string, unknown>> {
+  try {
+    return { playbooks_index: await playbookIndex(dataDir) };
+  } catch (e) {
+    return { playbooks_index: [], playbooks_error: `体裁手册读不了：${errText(e)}。停下告诉创始人，别凭记忆写` };
+  }
+}
+
 async function progressOf(c: Content, dataDir?: string): Promise<Record<string, unknown>> {
   const real = await isRealDraft(c, dataDir);
   const checklist = await loadChecklist(c.id, dataDir);
   return {
     status: c.status,
     angle: c.draftPath?.angle ? { version: c.draftPath.angle.version, main_line: c.draftPath.angle.main_line } : null,
+    ...await pinnedOf(c, dataDir),
     needs_angle: !real && !c.draftPath?.angle,
     version: currentVersion(c),
     has_body: real,
@@ -93,12 +117,12 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
   if (!("id" in got)) return got;
   const content = got as Content;
   const topic = content.topicId ? await getTopic(content.topicId, a.dataDir) : null;
-  const [profile, hits, series, firsthand, progress, craft] = await Promise.all([
-    profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration ?? content.draftPath?.inspiration), progressOf(content, a.dataDir), loadCraftMethod(a.dataDir),
+  const [profile, hits, series, firsthand, progress, playbooks] = await Promise.all([
+    profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration ?? content.draftPath?.inspiration), progressOf(content, a.dataDir), playbooksContext(a.dataDir),
   ]);
   return {
     ok: true, content_id: content.id, topic_id: content.topicId ?? null, resumed: Boolean(a.contentId),
-    context: { profile, hits, series, firsthand, craft_method: craft.text, craft_method_note: craft.note, craft_method_error: craft.error }, progress,
+    context: { profile, hits, series, firsthand, ...playbooks }, progress,
     workbench_url: workbenchUrl(content.id),
     next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
   };

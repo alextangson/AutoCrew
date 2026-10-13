@@ -18,7 +18,7 @@ const PAGE = "研究显示，参与调查的 1200 名职场人里，有 37% 每�
 const SOURCED = "有份调查问了 1200 名职场人，37% 每天用 AI 写周报。";
 const UNSOURCED = "而且会议时间平均多了 25%。";
 const BODY = `你是不是也觉得用了 AI 以后反而更忙了？省下来的时间，被你自己又填满了。${SOURCED}可周报写得快了，会却变多了。所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历。`;
-const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个" };
+const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个", genre: "ganhuo" };
 const run = (action: string, args: Record<string, unknown> = {}) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 const finalize = (payload: Record<string, unknown>, authMethod?: "session" | "bearer") => buildIpcHandlers()["draft:finalize"]({ ...payload, _dataDir: dir }, authMethod ? { authMethod } : undefined);
 
@@ -97,7 +97,9 @@ describe("工作台「定了」", () => {
     const r = await finalize({ id, draft_hash: draftHash(before) }, "session");
     expect(r).toMatchObject({ ok: true, status: "approved" });
     const after = (await getContent(id, dir))!;
-    expect(after.draftFinal).toMatchObject({ draftHash: draftHash(before), source: "founder-workbench" });
+    // 定稿时记一份立意的手册版本：统计按它归属（spec 2026-10-13 §9.4）
+    expect(after.draftFinal).toMatchObject({ draftHash: draftHash(before), source: "founder-workbench", playbook: { id: "ganhuo", version: 1 } });
+    expect(after.draftPath?.angle?.playbook).toEqual({ id: "ganhuo", version: 1 });
     const approval = await readProductionDoc(id, dir);
     expect(acceptanceBlock(after, undefined, undefined, Boolean(approval && scriptApprovalFor(approval, after.body)))).toBeNull();
     const coverage = JSON.parse(await fs.readFile(contentFile(id, dir, "citations.json"), "utf8")) as CitationCoverage;

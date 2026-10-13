@@ -12,7 +12,7 @@ import { setQuoteFetch } from "../modules/draft/verify-quote.js";
 
 let dir: string;
 const PAD = "所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历，标成不许约会，坚持下去看看。别把它再还给别人的会议，也别还给刷不完的消息，那是你自己的时间。";
-const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "B" };
+const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "B", genre: "ganhuo" };
 const run = (action: string, args: Record<string, unknown>) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 async function written(body: string): Promise<string> {
   const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;

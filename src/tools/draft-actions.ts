@@ -8,7 +8,10 @@ import { ScriptFrozenError } from "../storage/production-store.js";
 import { recordFounderAngle } from "../modules/research/angle-gate.js";
 import { verifyQuote } from "../modules/draft/verify-quote.js";
 import { applyLessons, type DraftFeedbackInput, type DraftFeedbackRecord, type LessonResult } from "../modules/draft/draft-feedback.js";
-import { currentVersion, draftNextNote, workbenchUrl, type DraftReviewNote } from "../modules/draft/draft-types.js";
+import { currentVersion, draftNextNote, workbenchUrl, type DraftAngle, type DraftReviewNote } from "../modules/draft/draft-types.js";
+import { GENRE_HINT, pinnedPlaybook } from "../modules/playbook/read.js";
+import { loadManifest, entryOf } from "../modules/playbook/store.js";
+import { isPlaybookId, PLAYBOOK_IDS, type PlaybookId, type PlaybookPin } from "../modules/playbook/types.js";
 import { fail, withVersion } from "./draft-version.js";
 import { INVALID, normalizeChain, type DraftArgs } from "./draft-args.js";
 
@@ -29,18 +32,32 @@ async function topicFor(c: Content, tx: ContentTx, dataDir?: string) {
   return topic;
 }
 
+function angleRefusal(a: DraftArgs, chain: string[] | null): R | null {
+  const missing = [["main_line", a.mainLine], ["for_whom", a.forWhom], ["opening", a.opening], ["why_viral", a.whyViral], ["founder_words", a.founderWords], ["genre", a.genre]].filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) return fail("bad_param", `angle 缺：${missing.join("、")}。founder_words 照抄创始人选立意时的原话（说「你定」就记「你定」）；${GENRE_HINT}`, missing.includes("genre") ? { genres: [...PLAYBOOK_IDS] } : {});
+  if (!isPlaybookId(a.genre)) return fail("bad_genre", `不认识的体裁：${a.genre}。${GENRE_HINT}`, { genres: [...PLAYBOOK_IDS] });
+  if (!chain || chain.length < 4 || chain.length > 6) return fail("bad_param", `chain 要 4–6 行论证链，现在是 ${chain?.length ?? 0} 行`);
+  return null;
+}
+
 export async function draftAngle(a: DraftArgs): Promise<R> {
   const chain = normalizeChain(a.chain);
-  const missing = [["main_line", a.mainLine], ["for_whom", a.forWhom], ["opening", a.opening], ["why_viral", a.whyViral], ["founder_words", a.founderWords]].filter(([, v]) => !v).map(([k]) => k);
-  if (missing.length) return fail("bad_param", `angle 缺：${missing.join("、")}。founder_words 照抄创始人选立意时的原话（说「你定」就记「你定」）`);
-  if (!chain || chain.length < 4 || chain.length > 6) return fail("bad_param", `chain 要 4–6 行论证链，现在是 ${chain?.length ?? 0} 行`);
+  const refused = angleRefusal(a, chain);
+  if (refused) return refused;
+  const genre = a.genre as PlaybookId;
+  const latest = entryOf(await loadManifest(a.dataDir), genre).current;
   return withVersion(a, async (c, tx) => {
+    const prev = c.draftPath?.angle;
+    // 同一体裁重新出立意保留原来记下的版本；换了体裁（或旧立意没记版本）记当前版本（spec §9.4）
+    const playbook: PlaybookPin = prev?.playbook?.id === genre ? prev.playbook : { id: genre, version: latest };
+    const book = await pinnedPlaybook(playbook, a.dataDir);
     const topic = await topicFor(c, tx, a.dataDir);
     if (!await recordFounderAngle(topic, a.mainLine!, a.founderWords!, a.dataDir)) return fail("angle_failed", "立意没记上：选题记录写不进去");
-    const version = (c.draftPath?.angle?.version ?? 0) + 1;
-    const angle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain, founder_words: a.founderWords!, ...(a.chosenOption ? { chosen_option: a.chosenOption } : {}), at: new Date().toISOString() };
+    const version = (prev?.version ?? 0) + 1;
+    const angle: DraftAngle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain: chain!, founder_words: a.founderWords!, ...(a.chosenOption ? { chosen_option: a.chosenOption } : {}), playbook, at: new Date().toISOString() };
     await tx.write({ draftPath: { ...c.draftPath!, angle } });
-    return { ok: true, angle_version: version, version: currentVersion(c), workbench_url: workbenchUrl(c.id), next_action: { note: "按选定的立意和论证链写全文，再 save" } };
+    return { ok: true, angle_version: version, version: currentVersion(c), playbook: book, workbench_url: workbenchUrl(c.id),
+      next_action: { note: "按选定的立意、论证链和 playbook 手册全文写全文，再 save；Codex 审稿的 {{CRAFT}} 填这本手册全文" } };
   });
 }
 
@@ -75,7 +92,7 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   const version = currentVersion(saved);
   let notes = saved.draftPath?.reviewNotes ?? [];
   if (a.reviewNotes !== undefined) notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
-  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, a.dataDir) : null;
+  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, angle?.playbook, a.dataDir) : null;
   if (a.reviewNotes !== undefined || fb) {
     await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes, ...(fb ? { feedback: [...(saved.draftPath?.feedback ?? []), fb.record] } : {}) } });
   }
@@ -83,7 +100,7 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
 }
 
 /** 版本已存之后才记意见：档案写失败不回滚这一版，回执带原始错误（不静默） */
-async function learn(input: DraftFeedbackInput, contentId: string, version: number, dataDir?: string): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
+async function learn(input: DraftFeedbackInput, contentId: string, version: number, playbook: PlaybookPin | undefined, dataDir?: string): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
   const lessons: LessonResult[] = [];
   let error: string | undefined;
   try {
@@ -91,8 +108,9 @@ async function learn(input: DraftFeedbackInput, contentId: string, version: numb
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }
-  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, at: new Date().toISOString(), lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), outcome: l.outcome })) };
-  return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则没记进档案：${error}。如实告诉创始人` } : {}) } };
+  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, at: new Date().toISOString(), ...(playbook ? { playbook } : {}),
+    lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), ...(l.proposal_id ? { proposal_id: l.proposal_id } : {}), outcome: l.outcome })) };
+  return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则 / 手册提案没记上：${error}。如实告诉创始人` } : {}) } };
 }
 
 export async function draftSave(a: DraftArgs): Promise<R> {

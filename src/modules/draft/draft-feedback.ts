@@ -6,18 +6,24 @@
 import { maybeJson, UNPARSABLE } from "../publish/review-gate/plan.js";
 import { addWritingRule, appendRuleEvidence, activeRuleCount, RULE_CAP, ruleStatus } from "../profile/writing-rules.js";
 import { loadProfile, type CreatorProfile, type RuleScope, type WritingRule } from "../profile/creator-profile.js";
+import { proposeLesson } from "../playbook/changes.js";
+import { loadManifest } from "../playbook/store.js";
+import { PLAYBOOK_IDS, type PlaybookId, type PlaybookPin } from "../playbook/types.js";
 
 export type LessonRelation = "new" | "duplicate" | "conflict";
-export interface FeedbackLesson { rule: string; scope: RuleScope; relation: LessonRelation; relates_to?: string }
+/** playbook:<id> = 针对某种体裁的写法：不进档案，挂成那本手册的待批提案（spec 2026-10-13 §3、§9.5） */
+export type LessonScope = RuleScope | `playbook:${PlaybookId}`;
+export interface FeedbackLesson { rule: string; scope: LessonScope; relation: LessonRelation; relates_to?: string }
 export interface DraftFeedbackInput { founder_words: string; lessons: FeedbackLesson[] }
-export type LessonOutcome = "created_pending" | "already_exists" | "blocked_by_tombstone" | "evidence_added";
-export interface LessonResult { rule: string; outcome: LessonOutcome; rule_id?: string; note?: string }
-/** 稿上的意见记录：版本号、原话、每条概括的去向 */
-export interface DraftFeedbackRecord { version: number; founder_words: string; at: string; lessons: Array<{ rule_id?: string; outcome: LessonOutcome }> }
+export type LessonOutcome = "created_pending" | "already_exists" | "blocked_by_tombstone" | "evidence_added" | "playbook_proposed" | "playbook_duplicate" | "blocked_by_rejected";
+export interface LessonResult { rule: string; outcome: LessonOutcome; rule_id?: string; proposal_id?: string; note?: string }
+/** 稿上的意见记录：版本号、原话、每条概括的去向；playbook = 写入时立意记的手册版本（统计按它对，spec §9.4） */
+export interface DraftFeedbackRecord { version: number; founder_words: string; at: string; playbook?: PlaybookPin; lessons: Array<{ rule_id?: string; proposal_id?: string; outcome: LessonOutcome }> }
 
 const RULE_MAX = 200;
 const REJECTED_SHOWN = 30;
-const SCOPE = /^(voice_core|platform:[a-z0-9_]+)$/;
+const SCOPE = new RegExp(`^(voice_core|platform:[a-z0-9_]+|playbook:(${PLAYBOOK_IDS.join("|")}))$`);
+const isPlaybookScope = (scope: string): scope is `playbook:${PlaybookId}` => scope.startsWith("playbook:");
 const RELATIONS: readonly string[] = ["new", "duplicate", "conflict"];
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -30,7 +36,11 @@ function lessonOf(raw: unknown, i: number): FeedbackLesson | string {
   if (!rule) return `${at}.rule 是空的`;
   if (Array.from(rule).length > RULE_MAX) return `${at}.rule 超过 ${RULE_MAX} 字：概括成一条通用写法`;
   const scope = x.scope === undefined ? "voice_core" : x.scope;
-  if (typeof scope !== "string" || !SCOPE.test(scope)) return `${at}.scope 只能是 voice_core 或 platform:<平台>（如 platform:douyin）`;
+  if (typeof scope !== "string" || !SCOPE.test(scope)) return `${at}.scope 只能是 voice_core、platform:<平台>（如 platform:douyin）或 playbook:<${PLAYBOOK_IDS.join("|")}>`;
+  if (isPlaybookScope(scope)) {
+    if (x.relation === "conflict") return `${at} 是手册类意见：不支持 conflict，重复由服务端按原文判断（relation 传 new）`;
+    return { rule, scope, relation: "new" };
+  }
   if (typeof x.relation !== "string" || !RELATIONS.includes(x.relation)) return `${at}.relation 只能是 new / duplicate / conflict`;
   const relatesTo = typeof x.relates_to === "string" && x.relates_to.trim() ? x.relates_to.trim() : undefined;
   if (x.relation !== "new" && !relatesTo) return `${at} 是 ${x.relation}，要带 relates_to（已有规则的 id，见 start 回执的 rules_detail / pending_rules）`;
@@ -63,7 +73,7 @@ export function parseFeedback(raw: unknown): DraftFeedbackInput | string | undef
 const ruleIdOf = (p: CreatorProfile, text: string, scope: string) =>
   p.writingRules.find((r) => r.rule.trim() === text && (r.scope ?? "voice_core") === scope)?.id ?? p.writingRules.find((r) => r.rule.trim() === text)?.id;
 
-async function addLesson(l: FeedbackLesson, origin: NonNullable<WritingRule["origin"]>, evidence: string, dataDir?: string): Promise<LessonResult> {
+async function addLesson(l: FeedbackLesson & { scope: RuleScope }, origin: NonNullable<WritingRule["origin"]>, evidence: string, dataDir?: string): Promise<LessonResult> {
   const added = await addWritingRule({
     rule: l.rule, scope: l.scope, source: "user_explicit", confidence: 1, evidence: [evidence], origin,
     ...(l.relation === "conflict" && l.relates_to ? { conflictsWith: l.relates_to } : {}),
@@ -78,12 +88,17 @@ export async function applyLessons(input: DraftFeedbackInput, contentId: string,
   const evidence = `稿件 ${contentId} 第 ${version} 版 创始人原话：${input.founder_words}`;
   const origin = { content_id: contentId, version, founder_words: input.founder_words };
   for (const l of input.lessons) {
-    if (l.relation === "duplicate" && l.relates_to) {
-      if (await appendRuleEvidence(l.relates_to, evidence, dataDir) === "evidence_added") { out.push({ rule: l.rule, outcome: "evidence_added", rule_id: l.relates_to }); continue; }
-      out.push({ ...await addLesson({ ...l, relation: "new" }, origin, evidence, dataDir), note: `relates_to ${l.relates_to} 不存在或已否决，按新规则记成待批` });
+    if (isPlaybookScope(l.scope)) {
+      const r = await proposeLesson({ id: l.scope.slice("playbook:".length) as PlaybookId, lesson: l.rule, founder_words: input.founder_words, origin: { content_id: contentId, version } }, dataDir);
+      out.push({ rule: l.rule, outcome: r.outcome, proposal_id: r.proposal_id });
       continue;
     }
-    out.push(await addLesson(l, origin, evidence, dataDir));
+    if (l.relation === "duplicate" && l.relates_to) {
+      if (await appendRuleEvidence(l.relates_to, evidence, dataDir) === "evidence_added") { out.push({ rule: l.rule, outcome: "evidence_added", rule_id: l.relates_to }); continue; }
+      out.push({ ...await addLesson({ ...l, scope: l.scope as RuleScope, relation: "new" }, origin, evidence, dataDir), note: `relates_to ${l.relates_to} 不存在或已否决，按新规则记成待批` });
+      continue;
+    }
+    out.push(await addLesson(l as FeedbackLesson & { scope: RuleScope }, origin, evidence, dataDir));
   }
 }
 
@@ -109,21 +124,30 @@ export function ruleJudgeContext(profile: CreatorProfile, active: WritingRule[])
   };
 }
 
-/** prepare_final：这篇攒下的、仍待批的规则（编号、原话、冲突规则原文），以及「已有但没管住」的那几条 */
+/** 这篇产生的、还在待批的手册提案（prepare_final 一起列给创始人） */
+async function pendingPlaybookLessons(contentId: string, dataDir?: string): Promise<Array<Record<string, unknown>>> {
+  const m = await loadManifest(dataDir);
+  return m.playbooks.flatMap((e) => e.proposals.filter((p) => p.status === "pending" && p.origin?.content_id === contentId)
+    .map((p) => ({ kind: "playbook", proposal_id: p.id, playbook: e.id, playbook_name: e.name, rule: p.lesson ?? p.reason, scope: `playbook:${e.id}`, founder_words: p.founder_words })));
+}
+
+/** prepare_final：这篇攒下的、仍待批的规则与手册提案（编号、原话、冲突规则原文），以及「已有但没管住」的那几条 */
 export async function pendingLessons(contentId: string, feedback: DraftFeedbackRecord[] | undefined, dataDir?: string): Promise<Record<string, unknown>> {
   const profile = await loadProfile(dataDir);
-  if (!profile) return { pending_lessons: [], repeated_rules: [], active_rule_count: 0, rule_cap: RULE_CAP };
-  const byId = new Map(profile.writingRules.map((r) => [r.id, r]));
-  const pending = profile.writingRules.filter((r) => r.origin?.content_id === contentId && ruleStatus(r) === "pending");
+  const playbook = await pendingPlaybookLessons(contentId, dataDir);
+  const rules = profile?.writingRules ?? [];
+  const byId = new Map(rules.map((r) => [r.id, r]));
+  const pending = rules.filter((r) => r.origin?.content_id === contentId && ruleStatus(r) === "pending");
   const repeatedIds = [...new Set((feedback ?? []).flatMap((f) => f.lessons.filter((l) => l.outcome === "evidence_added" && l.rule_id).map((l) => l.rule_id!)))];
+  const ruleLessons = pending.map((r) => {
+    const c = r.conflictsWith ? byId.get(r.conflictsWith) : undefined;
+    return { kind: "rule", rule_id: r.id, rule: r.rule, scope: r.scope ?? "voice_core", founder_words: r.origin?.founder_words ?? null,
+      conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null };
+  });
   return {
-    pending_lessons: pending.map((r, i) => {
-      const c = r.conflictsWith ? byId.get(r.conflictsWith) : undefined;
-      return { number: i + 1, rule_id: r.id, rule: r.rule, scope: r.scope ?? "voice_core", founder_words: r.origin?.founder_words ?? null,
-        conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null };
-    }),
+    pending_lessons: [...ruleLessons, ...playbook].map((l, i) => ({ number: i + 1, ...l })),
     repeated_rules: repeatedIds.map((id) => byId.get(id)).filter((r): r is WritingRule => Boolean(r)).map((r) => ({ ...brief(r), status: ruleStatus(r) })),
-    active_rule_count: activeRuleCount(profile),
+    active_rule_count: profile ? activeRuleCount(profile) : 0,
     rule_cap: RULE_CAP,
   };
 }

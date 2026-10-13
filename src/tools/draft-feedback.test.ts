@@ -26,7 +26,7 @@ const BODY = "你是不是也觉得用了 AI 以后反而更忙了？我先说�
 const BODY2 = BODY.replace("我先说结论：", "") + "就这一件事。";
 const ANGLE = {
   main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "没有数字",
-  chain: ["更忙", "时间没消失", "被填满", "先占住"], founder_words: "就第二个",
+  chain: ["更忙", "时间没消失", "被填满", "先占住"], founder_words: "就第二个", genre: "ganhuo",
 };
 const run = (action: string, args: Record<string, unknown> = {}) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 

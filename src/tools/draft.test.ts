@@ -27,6 +27,7 @@ const ANGLE = {
   why_viral: "账号近 90 天播放第一的那条讲的就是「AI 让人更累」",
   chain: ["用了 AI 反而更忙", "省下的时间没消失", "被会议和杂事填满", "所以要把时间先占住"],
   founder_words: "就第二个",
+  genre: "ganhuo",
 };
 
 async function started(): Promise<{ id: string; version: number }> {

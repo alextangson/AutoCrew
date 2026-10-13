@@ -23,6 +23,8 @@ export interface DraftArgs {
   chain: unknown;
   founderWords?: string;
   chosenOption?: string;
+  /** angle：体裁（5 本手册的 id 之一） */
+  genre?: string;
   title?: string;
   body?: string;
   note?: string;
@@ -104,6 +106,7 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     chain: p.chain,
     founderWords: str(p.founder_words),
     chosenOption: str(p.chosen_option),
+    genre: str(p.genre)?.toLowerCase(),
     title: str(p.title),
     body: typeof p.body === "string" ? p.body : undefined,
     note: str(p.note),

@@ -3,6 +3,7 @@
  * 一个会话、一个 agent 写完一篇抖音口播；AutoCrew 只存东西、给数据、核事实。
  */
 import type { DraftFeedbackRecord } from "./draft-feedback.js";
+import type { PlaybookPin } from "../playbook/types.js";
 
 /** 创始人选定的立意（第 3 步）。主线另记进选题的 founderAngle，存盘入口守卫认的是那一条 */
 export interface DraftAngle {
@@ -15,6 +16,8 @@ export interface DraftAngle {
   founder_words: string;
   /** 创始人选中的选项当时展示的全文（他只回「B」也看得懂） */
   chosen_option?: string;
+  /** 选卡即选体裁：立意时记下的手册与版本（spec 2026-10-13 §2）。没有 = 未归版本的旧立意 */
+  playbook?: PlaybookPin;
   at: string;
 }
 
@@ -41,6 +44,8 @@ export interface DraftFinalRecord {
   finalizedAt: string;
   source: "founder-workbench";
   kept: string[];
+  /** 定稿时立意记的手册版本：统计按它归属（spec 2026-10-13 §9.4） */
+  playbook?: PlaybookPin;
 }
 
 export const DRAFT_PLATFORM = "douyin";

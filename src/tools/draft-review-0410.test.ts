@@ -12,7 +12,7 @@ import { finalizeByFounder } from "../modules/draft/draft-finalize.js";
 let dir: string;
 let page = "";
 const BODY = "你是不是也觉得用了 AI 以后反而更忙了？省下来的时间，被你自己又填满了。可周报写得快了，会却变多了。所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历，标成不许约会。";
-const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个" };
+const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个", genre: "ganhuo" };
 const run = (action: string, args: Record<string, unknown>) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 async function written(): Promise<string> {
   const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;
