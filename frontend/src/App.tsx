@@ -12,6 +12,7 @@ import { Settings } from "./views/Settings";
 import { ReportView } from "./views/Report";
 import { Library } from "./views/Library";
 import { Logs } from "./views/Logs";
+import { Playbooks } from "./views/Playbooks";
 import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
 import { OnboardingGate } from "./views/onboarding/OnboardingGate";
@@ -50,7 +51,7 @@ export function App() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const focus = useRevisionFocus();
-  const IN_SETTINGS = new Set(["inbox", "calibration", "logs", "library", "campaigns"]);
+  const IN_SETTINGS = new Set(["inbox", "calibration", "playbooks", "logs", "library", "campaigns"]);
   const active = route.view === "editor" || route.view === "topic" ? "board" : IN_SETTINGS.has(route.view) ? "settings" : route.view;
   const boardRoute = route.view === "board" || route.view === "topic";
 
@@ -162,6 +163,7 @@ export function App() {
           )}
           {route.view === "library" && <Library />}
           {route.view === "logs" && <Logs />}
+          {route.view === "playbooks" && <Playbooks />}
           {route.view === "campaigns" && <Campaigns onSelect={setCampaignId} />}
           {route.view === "inbox" && <Inbox nav={setRoute} />}
           {route.view === "settings" && (

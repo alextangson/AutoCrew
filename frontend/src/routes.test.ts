@@ -43,7 +43,7 @@ describe("页面导航兼容", () => {
     expect(parseRouteHash(hash)).toEqual({ view: "board" });
   });
 
-  it.each(["board", "calibration", "report", "library", "logs", "campaigns", "inbox"] as const)("前后退可还原 %s", (view) => {
+  it.each(["board", "calibration", "report", "library", "logs", "playbooks", "campaigns", "inbox"] as const)("前后退可还原 %s", (view) => {
     expect(parseRouteHash(routeHash({ view }))).toEqual({ view });
   });
 

@@ -9,11 +9,12 @@ export type Route =
   | { view: "report" }
   | { view: "library" }
   | { view: "logs" }
+  | { view: "playbooks" }
   | { view: "campaigns" }
   | { view: "inbox" }
   | { view: "settings"; tab?: "models" | "integrations" | "data" };
 
-const PAGES = new Set(["board", "calibration", "report", "library", "logs", "campaigns", "inbox"]);
+const PAGES = new Set(["board", "calibration", "report", "library", "logs", "playbooks", "campaigns", "inbox"]);
 const PANELS = new Set(["cover", "images", "video"]);
 
 export function parseRouteHash(hash: string): Route {

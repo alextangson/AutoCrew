@@ -32,9 +32,10 @@ const TABS: Array<{ id: SettingsTab; label: string }> = [
 ];
 
 /** 从主导航收进来的几页（看板规格 §27）：路由照旧，入口在这里 */
-const MORE_PAGES: Array<{ view: "inbox" | "calibration" | "logs" | "library"; label: string; note: string }> = [
+const MORE_PAGES: Array<{ view: "inbox" | "calibration" | "playbooks" | "logs" | "library"; label: string; note: string }> = [
   { view: "inbox", label: "灵感收件箱", note: "随手记、转发进来的碎片" },
   { view: "calibration", label: "品牌校准", note: "口吻、受众、写作规则" },
+  { view: "playbooks", label: "写作手册", note: "体裁手册与团队技能：AI 照着什么干活" },
   { view: "logs", label: "任务日志", note: "AI 做过的每一件事" },
   { view: "library", label: "素材库", note: "图片、视频、参考文件" },
 ];
