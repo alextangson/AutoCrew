@@ -13,7 +13,7 @@ import { writeJsonAtomic } from "./json-atomic.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { withFileOwnership } from "./file-ownership.js";
-import { copyProject, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
+import { copyProject, isProjectCache, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 import { KEPT_DIR } from "./nas-kept.js";
 import { publishedSet, type PublishedSet } from "./round-publish-time.js";
@@ -128,7 +128,7 @@ async function keepSmallFiles(projectRoot: string, c: Content, files: ArchivedFi
 async function deleteMedia(projectRoot: string, files: ArchivedFile[]): Promise<number> {
   let kept = 0;
   const verified = new Map(files.filter((f) => isMedia(f.rel)).map((f) => [f.rel, f]));
-  const { files: now } = await walkProject(projectRoot);
+  const { files: now } = await walkProject(projectRoot, isProjectCache);
   for (const f of now.filter((x) => isMedia(x.rel))) {
     const v = verified.get(f.rel);
     if (v && v.size === f.size && (await nasSha(path.join(projectRoot, f.rel)).catch(() => null)) === v.sha256) await fs.rm(path.join(projectRoot, f.rel), { force: true });
@@ -148,13 +148,14 @@ async function pruneEmpty(dir: string, keepSelf: boolean): Promise<void> {
 async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<ArchivedItem> {
   const projectRoot = resolveContentProject(c.id, ctx.data)!.project_root;
   const target = archiveTarget(archiveRoot, c, projectRoot);
-  const { files: listed } = await walkProject(projectRoot);
+  const { files: listed } = await walkProject(projectRoot, isProjectCache);
   const size = listed.reduce((n, f) => n + f.size, 0), free = await ctx.free(archiveRoot);
   if (free < size + ctx.margin) {
     throw new Error(`NAS 空间不够（要 ${formatBytes(size)} + 预留 ${formatBytes(ctx.margin)}，剩 ${formatBytes(free)}），这次跳过`);
   }
   // 逐文件核对 NAS（发布时已备份的，这里只是核对；缺或不一致先补拷），全部对上才删本机
-  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS);
+  // 缓存 99-cache 不删本机、可重建，不搬上 NAS
+  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS, { exclude: isProjectCache });
   if (errors.length) throw new Error(`复制或核对出错，本机一个文件都没删，下次重试：${errors.join("；")}`);
   await keepSmallFiles(projectRoot, c, files);
   await writeRecord(projectRoot, target, files, ctx.now);

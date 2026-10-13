@@ -260,6 +260,48 @@ describe("发布即备份 NAS", () => {
   });
 });
 
+describe("项目缓存 99-cache 不上 NAS", () => {
+  it("backup skips 99-cache (files and links), keeps NAS copies already there, and a cache change alone does not dirty an unmounted check", async () => {
+    const c = await published("稿", 1);
+    await put(c, "99-cache/remotion/node_modules/pkg/index.js", "module");
+    await fs.symlink("/nowhere", path.join(root(c), "99-cache/remotion/link"));
+    // 旧版本备份过的缓存副本留在 NAS 上，不删
+    await fs.mkdir(path.join(nasDir(c), "99-cache"), { recursive: true });
+    await fs.writeFile(path.join(nasDir(c), "99-cache/old.txt"), "old");
+    const copied: string[] = [];
+    const r = await backup({ copyImpl: async (s, d) => { copied.push(path.relative(root(c), s)); await fs.copyFile(s, d); } });
+    expect(r.errors).toEqual([]);
+    expect(r.backedUp).toEqual(["稿"]);
+    expect(copied.some((rel) => rel.startsWith("99-cache"))).toBe(false);
+    expect(copied).toContain("02-aroll/raw.mov");
+    expect(await exists(path.join(nasDir(c), "99-cache/remotion"))).toBe(false);
+    expect(await read(path.join(nasDir(c), "99-cache/old.txt"))).toBe("old");
+    const state = (await readBackupState(root(c)))!;
+    expect(state.status).toBe("backed_up");
+    // NAS 没挂上时只动了缓存：不算有新改动，状态保持已备份
+    await put(c, "99-cache/remotion/new.js", "x");
+    await fs.rename(nas, `${nas}-away`); // 同一挂载点暂时不在
+    await backup();
+    expect((await readBackupState(root(c)))!.status).toBe("backed_up");
+    await put(c, "02-aroll/raw.mov", "稿-raw-v2");
+    await backup();
+    expect((await readBackupState(root(c)))!.status).toBe("unmounted");
+  });
+
+  it("archive does not carry 99-cache to the NAS and leaves it on the machine", async () => {
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    const old = await published("旧稿", 8);
+    await put(old, "99-cache/audio/tmp.wav", "cache");
+    await backup();
+    const r = await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    expect(r.errors).toEqual([]);
+    expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
+    expect(await exists(path.join(nasDir(old), "99-cache"))).toBe(false);
+    expect(await read(path.join(root(old), "99-cache/audio/tmp.wav"))).toBe("cache");
+    expect(await fs.readdir(path.join(root(old), "02-aroll"))).toEqual([]);
+  });
+});
+
 describe("7 天腾空间前核对 NAS", () => {
   async function oldBackedUp(): Promise<Content> {
     for (let i = 1; i <= 5; i++) await published(`新${i}`, i);

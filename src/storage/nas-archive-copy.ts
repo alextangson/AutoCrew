@@ -20,7 +20,7 @@ export interface CopyProjectOptions {
   skipUnchanged?: boolean;
   /** 备份用：项目里的符号链接不在 NAS 上建，只登记（路径+指向）交调用方写进记录；其它特殊条目记为出错 */
   recordSymlinks?: boolean;
-  /** 不复制的文件（备份自己的记录和状态文件） */
+  /** 不复制的文件 / 目录（备份自己的记录和状态文件、项目缓存）；命中的目录不进去 */
   exclude?: (rel: string) => boolean;
 }
 export type CopyImpl = (source: string, dest: string) => Promise<void>;
@@ -37,12 +37,20 @@ async function hashOrNull(file: string): Promise<string | null> {
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
 }
 
-/** 列出项目里所有普通文件（相对路径）；符号链接等特殊条目单独返回，由调用方决定是否挡删除 */
-export async function walkProject(root: string): Promise<{ files: { rel: string; size: number; mtimeMs: number }[]; special: string[] }> {
+/** 项目缓存目录（渲染工程、node_modules、中间音频）：可重建，不上 NAS，备份 / 归档都不走进去 */
+export const PROJECT_CACHE_DIR = "99-cache";
+export const isProjectCache = (rel: string) => rel === PROJECT_CACHE_DIR || rel.startsWith(`${PROJECT_CACHE_DIR}/`);
+
+/**
+ * 列出项目里所有普通文件（相对路径）；符号链接等特殊条目单独返回，由调用方决定是否挡删除。
+ * skip 命中的目录 / 文件整个不看（目录不进去，省掉几万次 stat）。
+ */
+export async function walkProject(root: string, skip?: (rel: string) => boolean): Promise<{ files: { rel: string; size: number; mtimeMs: number }[]; special: string[] }> {
   const files: { rel: string; size: number; mtimeMs: number }[] = [], special: string[] = [];
   async function visit(rel: string): Promise<void> {
     for (const entry of await fs.readdir(path.join(root, rel), { withFileTypes: true })) {
       const child = rel ? `${rel}/${entry.name}` : entry.name;
+      if (skip?.(child)) continue;
       if (entry.isDirectory()) await visit(child);
       else if (entry.isFile()) {
         const st = await fs.stat(path.join(root, child));
@@ -125,7 +133,7 @@ async function recordSpecials(root: string, special: string[]): Promise<{ links:
 export async function copyProject(
   root: string, target: string, copy: CopyImpl, mediaDirs: readonly string[], opts: CopyProjectOptions = {},
 ): Promise<{ files: ArchivedFile[]; errors: string[]; links: ProjectLink[] }> {
-  const { files, special } = await walkProject(root);
+  const { files, special } = await walkProject(root, opts.exclude);
   // 要删的目录里有链接就不删（复制不了）；其它目录里的链接留在本机，不影响
   const blocking = special.filter((rel) => mediaDirs.some((d) => rel.startsWith(`${d}/`)));
   const out: ArchivedFile[] = [], errors = blocking.map((rel) => `${rel}：不是普通文件（链接等），没法归档`);

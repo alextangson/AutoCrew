@@ -13,7 +13,7 @@ import { writeErrorSection } from "./my-content-errors.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { publishedSet } from "./round-publish-time.js";
 import { VIEW_DIR } from "./my-content-view.js";
-import { copyProject, keptName, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
+import { copyProject, isProjectCache, keptName, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
 import { safeNasPath, assertInside } from "./nas-safe-path.js";
 import { archiveTarget, isReachable, DEFAULT_ARCHIVE_ROOT } from "./nas-archive.js";
 import {
@@ -26,6 +26,8 @@ interface Ctx { root: string; now: Date; copy: CopyImpl; reachable: boolean }
 
 /** 创始人定：平时增量跳过，每条稿每 7 天完整重读核对一次 NAS */
 export const FULL_VERIFY_EVERY_MS = 7 * 24 * 60 * 60_000;
+/** 不进 NAS 备份的：备份自己的记录 / 状态文件，和可重建的项目缓存 99-cache（NAS 上已有的旧副本不删） */
+const notBackedUp = (rel: string) => isBackupBookkeeping(rel) || isProjectCache(rel);
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** 已发布且公开时间已到点（定时稿到点才算）；不受「最近 5 条」和认领限制——备份只读不删 */
@@ -45,7 +47,7 @@ function sameFiles(a: ArchivedFile[], prev: Map<string, ArchivedFile>): boolean 
 
 /** 本机相对上次备份有没有变化（只比大小和修改时间，不读 NAS） */
 async function changedSinceBackup(projectRoot: string, prev: Map<string, ArchivedFile>): Promise<boolean> {
-  const files = (await walkProject(projectRoot)).files.filter((f) => !isBackupBookkeeping(f.rel));
+  const files = (await walkProject(projectRoot, notBackedUp)).files;
   return files.length !== prev.size || files.some((f) => {
     const p = prev.get(f.rel);
     return !p || p.size !== f.size || p.mtimeMs !== f.mtimeMs;
@@ -125,7 +127,7 @@ async function copyOnce(projectRoot: string, target: string, ctx: Ctx, full: boo
     throw new Error(`项目里有 ${NAS_META_DIR}，跟 NAS 备份的保留目录重名，请改名`);
   }
   const { files, errors, links } = await copyProject(projectRoot, target, ctx.copy, [], {
-    previous: prev, skipUnchanged: !full, exclude: isBackupBookkeeping, recordSymlinks: true,
+    previous: prev, skipUnchanged: !full, exclude: notBackedUp, recordSymlinks: true,
   });
   errors.push(...(await checkArchivedOnNas(projectRoot, full)));
   if (errors.length) throw new Error(`复制或核对出错：${errors.join("；")}`);
