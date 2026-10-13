@@ -11,6 +11,7 @@ import { createPlaybookHandler } from "../../../desktop/playbook-route.js";
 import { addWritingRule } from "../../profile/writing-rules.js";
 import { makeEnv, type Env } from "../testkit.js";
 import { boardLink } from "./view.js";
+import { pendingLessons } from "../../draft/draft-feedback.js";
 import type { InboxItem } from "../inbox.js";
 
 let env: Env;
@@ -34,6 +35,15 @@ describe("playbook_change 在对话里", () => {
     expect(it.brief).toContain("名字要早点出");
     const scoped = ((await tool({ action: "list", content_id: "c-777" })).items as Item[]).map((i) => i.type).sort();
     expect(scoped).toEqual(["playbook_change", "writing_rule"]);
+  });
+
+  it("两篇稿提了同一条手册意见：两篇的 list{content_id} 和定稿清单都看得到", async () => {
+    await proposeLesson({ id: "ganhuo", lesson: "开头先亮名字", founder_words: "x", origin: { content_id: "c-A", version: 2 } }, env.dir);
+    expect((await proposeLesson({ id: "ganhuo", lesson: "开头先亮名字", founder_words: "y", origin: { content_id: "c-B", version: 3 } }, env.dir)).outcome).toBe("playbook_duplicate");
+    for (const cid of ["c-A", "c-B"]) {
+      expect(((await tool({ action: "list", content_id: cid })).items as Item[]).map((i) => i.type)).toEqual(["playbook_change"]);
+      expect((await pendingLessons(cid, [], env.dir)).pending_lessons).toEqual([expect.objectContaining({ kind: "playbook", playbook: "ganhuo" })]);
+    }
   });
 
   it("批：生成新版本；同一 request 重试重放；同号换内容 → request_conflict；换号再批 → already_handled", async () => {

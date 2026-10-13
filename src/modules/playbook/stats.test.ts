@@ -1,6 +1,7 @@
 /** 每版统计（spec §4，§9.3/9.4/9.8）：只数带原话、版本对得上的轮次；没定稿的不进中位数；样本 < 3 标「样本不够」 */
 import { describe, expect, it } from "vitest";
 import type { Content } from "../../storage/local-store.js";
+import { draftHash } from "../../storage/draft-hash.js";
 import type { PerformanceOutcome } from "../flywheel/outcome-schema.js";
 import { computeStats, median, SAMPLE_LOW } from "./stats.js";
 import type { PlaybookManifest, PlaybookPin } from "./types.js";
@@ -12,9 +13,12 @@ const M = { schema: 1, events: [], playbooks: [
 
 const G1: PlaybookPin = { id: "ganhuo", version: 1 };
 const fb = (n: number, pin?: PlaybookPin) => Array.from({ length: n }, (_, i) => ({ version: i + 2, founder_words: `改${i}`, at: "", lessons: [], ...(pin ? { playbook: pin } : {}) }));
-function draft(id: string, opts: { angle?: PlaybookPin; final?: PlaybookPin; feedback?: unknown[]; status?: string }): Content {
-  return { id, title: id, status: opts.status ?? "drafting", draftFinal: opts.final ? { draftHash: "h", finalizedAt: "", source: "founder-workbench", kept: [], playbook: opts.final } : undefined,
+function draft(id: string, opts: { angle?: PlaybookPin; final?: PlaybookPin; feedback?: unknown[]; status?: string; editedAfterFinal?: boolean }): Content {
+  const c = { id, title: id, body: "正文", platform: "douyin", status: opts.status ?? "drafting",
     draftPath: { kind: "thin", startedAt: "", ...(opts.angle ? { angle: { playbook: opts.angle } } : { angle: {} }), feedback: opts.feedback ?? [] } } as unknown as Content;
+  if (opts.final) c.draftFinal = { draftHash: draftHash(c), finalizedAt: "", source: "founder-workbench", kept: [], playbook: opts.final };
+  if (opts.editedAfterFinal) c.body = "定了之后又改过的正文";
+  return c;
 }
 const v = (s: Record<string, unknown>, id: string, version: number) => (s.by_playbook as Record<string, Array<Record<string, unknown>>>)[id].find((x) => x.version === version)!;
 
@@ -41,6 +45,13 @@ describe("改稿轮数", () => {
   });
 });
 
+describe("有效定稿", () => {
+  it("定了之后正文又改过（指纹对不上）：不算已定稿，算进行中", () => {
+    const s = computeStats(M, [draft("a", { angle: G1, final: G1, feedback: fb(2, G1), editedAfterFinal: true })], []);
+    expect(v(s, "ganhuo", 1)).toMatchObject({ finalized: 0, in_progress: 1, rounds: { median: null } });
+  });
+});
+
 describe("发布数据", () => {
   const out = (contentId: string, metricDate: string, m: Record<string, number>): PerformanceOutcome =>
     ({ contentId, platform: "douyin", platformTitle: "t", publishedAt: "2026-10-01T10:00:00+08:00", metricDate, metrics: m, source: "auto", recordedAt: "", needsReview: false, reviewReasons: [] });
@@ -56,5 +67,12 @@ describe("发布数据", () => {
     expect(p.d3).toEqual({ count: 1, bounce2s: 40, shares_per_1k: 5, favorites_per_1k: 10 });
     expect(p.d7).toMatchObject({ count: 0, bounce2s: null });
     expect(p.label).toBe(SAMPLE_LOW);
+  });
+
+  it("D+n 按上海日期算：UTC 10-01 18:00 = 上海 10-02，D+3 是 10-05", () => {
+    const row = { ...out("a", "2026-10-05", { views: 1000, shares: 1, favorites: 2, bounce2s: 30 }), publishedAt: "2026-10-01T18:00:00Z" };
+    const wrong = { ...row, metricDate: "2026-10-04", metrics: { views: 1000, bounce2s: 99 } };
+    const s = computeStats(M, [draft("a", { angle: G1, final: G1 })], [wrong, row]);
+    expect((v(s, "ganhuo", 1).publish as Record<string, Record<string, unknown>>).d3).toMatchObject({ count: 1, bounce2s: 30 });
   });
 });

@@ -6,7 +6,8 @@
  * - 发布数据：抖音作品 D+3 / D+7 正好那天的快照，没有就留空，不拿别的天代替。
  */
 import { listOutcomes } from "../flywheel/outcome-store.js";
-import { normalizePlatform, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { normalizePlatform, shanghaiDate, type PerformanceOutcome } from "../flywheel/outcome-schema.js";
+import { draftHash } from "../../storage/draft-hash.js";
 import { listContents, type Content } from "../../storage/local-store.js";
 import type { PlaybookManifest, PlaybookPin } from "./types.js";
 
@@ -14,6 +15,9 @@ export const MIN_SAMPLE = 3;
 export const SAMPLE_LOW = "样本不够";
 
 const samePin = (a: PlaybookPin | undefined, b: PlaybookPin) => Boolean(a && a.id === b.id && a.version === b.version);
+/** 有效定稿：和工作台认的一样，定稿指纹对得上当前稿（之后改过正文就不算） */
+const finalPin = (c: Content): PlaybookPin | undefined => (c.draftFinal && c.draftFinal.draftHash === draftHash(c) ? c.draftFinal.playbook : undefined);
+const finalized = (c: Content) => Boolean(c.draftFinal && c.draftFinal.draftHash === draftHash(c));
 const live = (c: Content) => !c.deletedAt && c.status !== "archived";
 
 export function median(xs: number[]): number | null {
@@ -26,7 +30,8 @@ const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:
 
 /** 一条作品在 D+n 那天的快照指标；没有那天就 null */
 function snapshotOn(rows: PerformanceOutcome[], publishedAt: string, n: number): Record<string, number | null> | null {
-  const day = addDays(publishedAt.slice(0, 10), n);
+  // metricDate 是上海日期：先把发布时间换成上海日期再加天数
+  const day = addDays(shanghaiDate(publishedAt), n);
   const o = rows.find((r) => r.metricDate === day);
   if (!o) return null;
   const m = o.metrics, views = typeof m.views === "number" && m.views > 0 ? m.views : null;
@@ -50,10 +55,10 @@ function publishSignal(finals: Content[], outcomes: PerformanceOutcome[]): Recor
 }
 
 function versionStats(pin: PlaybookPin, contents: Content[], outcomes: PerformanceOutcome[]): Record<string, unknown> {
-  const finals = contents.filter((c) => samePin(c.draftFinal?.playbook, pin));
+  const finals = contents.filter((c) => samePin(finalPin(c), pin));
   const rounds = finals.map((c) => (c.draftPath?.feedback ?? []).filter((f) => f.founder_words && samePin(f.playbook, pin)).length);
   const preSwitch = finals.reduce((n, c) => n + (c.draftPath?.feedback ?? []).filter((f) => f.founder_words && f.playbook && !samePin(f.playbook, pin)).length, 0);
-  const inProgress = contents.filter((c) => !c.draftFinal && samePin(c.draftPath?.angle?.playbook, pin)).length;
+  const inProgress = contents.filter((c) => !finalized(c) && samePin(c.draftPath?.angle?.playbook, pin)).length;
   return {
     version: pin.version, finalized: finals.length, in_progress: inProgress,
     rounds: { median: median(rounds), min: rounds.length ? Math.min(...rounds) : null, max: rounds.length ? Math.max(...rounds) : null },
@@ -65,7 +70,7 @@ function versionStats(pin: PlaybookPin, contents: Content[], outcomes: Performan
 /** 纯计算：给定稿件与回流快照，算每本每版的统计 + 未归版本的稿数 */
 export function computeStats(m: PlaybookManifest, contents: Content[], outcomes: PerformanceOutcome[]): Record<string, unknown> {
   const drafts = contents.filter((c) => c.draftPath && live(c));
-  const unattributed = drafts.filter((c) => !c.draftPath?.angle?.playbook && !c.draftFinal?.playbook).length;
+  const unattributed = drafts.filter((c) => !c.draftPath?.angle?.playbook && !finalPin(c)).length;
   const by_playbook = Object.fromEntries(m.playbooks.map((e) => [e.id, e.versions.map((v) => versionStats({ id: e.id, version: v.version }, drafts, outcomes))]));
   return { by_playbook, unattributed, min_sample: MIN_SAMPLE };
 }

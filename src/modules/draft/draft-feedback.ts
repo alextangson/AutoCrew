@@ -6,7 +6,7 @@
 import { maybeJson, UNPARSABLE } from "../publish/review-gate/plan.js";
 import { addWritingRule, appendRuleEvidence, activeRuleCount, RULE_CAP, ruleStatus } from "../profile/writing-rules.js";
 import { loadProfile, type CreatorProfile, type RuleScope, type WritingRule } from "../profile/creator-profile.js";
-import { proposeLesson } from "../playbook/changes.js";
+import { proposalFrom, proposeLesson } from "../playbook/changes.js";
 import { loadManifest } from "../playbook/store.js";
 import { PLAYBOOK_IDS, type PlaybookId, type PlaybookPin } from "../playbook/types.js";
 
@@ -127,7 +127,7 @@ export function ruleJudgeContext(profile: CreatorProfile, active: WritingRule[])
 /** 这篇产生的、还在待批的手册提案（prepare_final 一起列给创始人） */
 async function pendingPlaybookLessons(contentId: string, dataDir?: string): Promise<Array<Record<string, unknown>>> {
   const m = await loadManifest(dataDir);
-  return m.playbooks.flatMap((e) => e.proposals.filter((p) => p.status === "pending" && p.origin?.content_id === contentId)
+  return m.playbooks.flatMap((e) => e.proposals.filter((p) => p.status === "pending" && proposalFrom(p, contentId))
     .map((p) => ({ kind: "playbook", proposal_id: p.id, playbook: e.id, playbook_name: e.name, rule: p.lesson ?? p.reason, scope: `playbook:${e.id}`, founder_words: p.founder_words })));
 }
 

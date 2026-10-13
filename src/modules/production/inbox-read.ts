@@ -120,7 +120,8 @@ async function playbookItem(e: PlaybookEntry, p: PlaybookProposal, dataDir: stri
   return { item_id, gen: p.gen, type: "playbook_change", content_id: p.origin?.content_id ?? null, title: `《${e.name}》手册改动提案`, summary: p.lesson ?? p.reason,
     waiting: null, agent_waiting: false, since: p.at, rank: 4, actions: [],
     detail: { where: "settings/playbooks", playbook: e.id, playbook_name: e.name, proposal_id: p.id, kind: p.kind, based_on: p.based_on, current: e.current,
-      reason: p.reason, founder_words: p.founder_words || null, quote: p.founder_words || null, diff } };
+      reason: p.reason, founder_words: p.founder_words || null, quote: p.founder_words || null, diff,
+      content_ids: [...new Set([p.origin?.content_id, ...(p.origins ?? []).map((o) => o.content_id)].filter(Boolean))] } };
 }
 
 /** 手册读不了：不悄悄当没有，列一件看得见的「其他」 */

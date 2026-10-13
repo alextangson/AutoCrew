@@ -97,7 +97,9 @@ export async function sweepDecided(dataDir: string, previewDir: string): Promise
 export async function listForChat(dataDir = getDataDir(), input: ListInput = {}): Promise<Result> {
   const warnings = input.preview_dir ? await sweepDecided(dataDir, input.preview_dir) : [];
   const all = (await readInbox(dataDir, { withDrafts: true })).items;
-  const items = all.filter((i) => (!input.content_id || i.content_id === input.content_id) && (!input.item_id || i.item_id === input.item_id));
+  // 库级条目可能来自多篇稿（同一条手册意见被几篇重复提）：detail.content_ids 里任一篇都算
+  const ofContent = (i: InboxItem) => i.content_id === input.content_id || ((i.detail.content_ids as string[] | undefined) ?? []).includes(input.content_id!);
+  const items = all.filter((i) => (!input.content_id || ofContent(i)) && (!input.item_id || i.item_id === input.item_id));
   const named = input.item_id ? items.find((i) => i.item_id === input.item_id) : undefined;
   const stale = named ? staleSelector(named, input) : null;
   if (named && stale) return { ok: false, code: "stale_selector", error: stale, item: await present(named, null, dataDir, { ...input, group_id: undefined, fact_id: undefined }), ...(warnings.length ? { warnings } : {}) };

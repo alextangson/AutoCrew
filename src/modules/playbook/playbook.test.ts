@@ -125,6 +125,20 @@ describe("幂等、过期、冲突", () => {
     expect(await proposeRevision({ id: "xinxicha", based_on: 1, text: v1 + "\n新段落\n", reason: "r", founder_words: "改一下" }, dir)).toMatchObject({ ok: true, based_on: 1 });
   });
 
+  it("崩在写完 v<N>.md、提交 manifest 之前：同字节的孤儿文件被重试复用；内容不同的孤儿跳过、不碰", async () => {
+    await proposeLesson({ id: "ganhuo", lesson: "甲", founder_words: "x" }, dir);
+    const [a] = await pending("ganhuo");
+    await fs.writeFile(versionPath("ganhuo", 2, dir), "上次没提交的别的提案");
+    expect(await approve("ganhuo", a.id, a.gen, "e-1")).toMatchObject({ ok: true, version: 3 });
+    expect(await fs.readFile(versionPath("ganhuo", 2, dir), "utf8")).toBe("上次没提交的别的提案");
+    expect((await loadManifest(dir)).playbooks.find((x) => x.id === "ganhuo")!.current).toBe(3);
+    await proposeLesson({ id: "shiyan", lesson: "乙", founder_words: "y" }, dir);
+    const [b] = await pending("shiyan");
+    await fs.mkdir(path.dirname(versionPath("shiyan", 2, dir)), { recursive: true });
+    await fs.writeFile(versionPath("shiyan", 2, dir), b.text);
+    expect(await approve("shiyan", b.id, b.gen, "e-2")).toMatchObject({ ok: true, version: 2 });
+  });
+
   it("版本文件只写一次：目标已在且内容不同 → 拒", async () => {
     await loadManifest(dir);
     expect(await err(writeVersionOnce("ganhuo", 1, "不一样", dir))).toMatchObject({ code: "version_exists" });

@@ -45,6 +45,8 @@ export interface PlaybookProposal {
   decided_at?: string;
   /** 从哪篇稿的哪一版意见来 */
   origin?: { content_id: string; version: number };
+  /** 之后又有别的稿提了同一条（duplicate）：也算来源 */
+  origins?: Array<{ content_id: string; version: number }>;
 }
 
 export interface PlaybookEntry {

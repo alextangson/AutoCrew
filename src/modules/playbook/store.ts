@@ -66,6 +66,21 @@ export async function writeVersionOnce(id: PlaybookId, version: number, text: st
   await writeTextAtomicMkdir(file, text);
 }
 
+/**
+ * 给新版本找号并写文件：从 start 起，槽位空 → 用；已有同字节文件（上次崩在提交前写下的）→ 复用；
+ * 已有不同内容的孤儿文件 → 跳过它（不碰），试下一个号。版本号允许有空缺。
+ */
+export async function writeNextVersion(id: PlaybookId, start: number, text: string, dataDir?: string): Promise<number> {
+  for (let n = start; ; n++) {
+    try {
+      await writeVersionOnce(id, n, text, dataDir);
+      return n;
+    } catch (e) {
+      if (!(e instanceof PlaybookError && e.code === "version_exists")) throw e;
+    }
+  }
+}
+
 export async function writeManifest(m: PlaybookManifest, dataDir?: string): Promise<void> {
   await writeJsonAtomicMkdir(manifestPath(dataDir), m);
 }

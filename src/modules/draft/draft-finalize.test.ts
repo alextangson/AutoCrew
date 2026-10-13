@@ -2,7 +2,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as localStore from "../../storage/local-store.js";
 import { executeDraft } from "../../tools/draft.js";
 import { setQuoteFetch } from "./verify-quote.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
@@ -106,6 +107,21 @@ describe("工作台「定了」", () => {
     expect(validateCoverage(after, coverage)).toEqual([]);
     const doc = await readProductionDoc(id, dir);
     expect(doc?.decisions.some((d) => d.type === "script_approval" && d.source === "founder")).toBe(true);
+  });
+
+  it("定了的同时别的会话换了体裁：draftFinal 记锁里那份立意的手册版本，不是读早了的旧版本", async () => {
+    const id = await written();
+    await run("prepare_final", { content_id: id, base_version: V, citations: MAPPING });
+    const before = (await getContent(id, dir))!;
+    const real = localStore.transitionStatus;
+    const spy = vi.spyOn(localStore, "transitionStatus").mockImplementation(async (...args) => {
+      const cur = (await getContent(id, dir))!;
+      await localStore.updateContent(id, { draftPath: { ...cur.draftPath!, angle: { ...cur.draftPath!.angle!, playbook: { id: "shiyan", version: 1 } } } }, dir);
+      spy.mockRestore();
+      return real(...args);
+    });
+    expect(await finalize({ id, draft_hash: draftHash(before) }, "session")).toMatchObject({ ok: true });
+    expect((await getContent(id, dir))!.draftFinal?.playbook).toEqual({ id: "shiyan", version: 1 });
   });
 
   it("没出处的项必须由创始人逐条保留；保留后写成显式的未核验引用", async () => {

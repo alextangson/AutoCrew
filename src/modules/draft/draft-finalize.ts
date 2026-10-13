@@ -104,7 +104,8 @@ export async function finalizeByFounder(contentId: string, input: { draftHash: s
   const moved = await transitionStatus(c.id, "approved", {
     force: true, expectedStatus: "draft_ready", expectedDraft: { title: c.title, body: c.body, platform: c.platform },
     decidedBy: "founder", host: LOCAL_HOST,
-    patch: { draftFinal: { draftHash: draftHash(c), finalizedAt: at, source: "founder-workbench", kept: kept.map((i) => i.id), ...(c.draftPath?.angle?.playbook ? { playbook: c.draftPath.angle.playbook } : {}) } },
+    // 手册版本取锁里的那份：期间别的会话换了体裁，记的就是换后的
+    patch: (cur: Content) => ({ draftFinal: { draftHash: draftHash(c), finalizedAt: at, source: "founder-workbench", kept: kept.map((i) => i.id), ...(cur.draftPath?.angle?.playbook ? { playbook: cur.draftPath.angle.playbook } : {}) } }),
   }, dataDir);
   if (!moved.ok) return fail("transition_failed", moved.error ?? "没能推进到等 A-roll");
   return { ok: true, status: "approved", kept: kept.length };

@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
-import { charCount, entryOf, manifestInQueue, readVersionText, serialize, shortHash, writeManifest, writeVersionOnce } from "./store.js";
+import { charCount, entryOf, manifestInQueue, readVersionText, serialize, shortHash, writeManifest, writeNextVersion } from "./store.js";
 import { PLAYBOOK_MAX_CHARS, PlaybookError, type PlaybookEntry, type PlaybookEvent, type PlaybookId, type PlaybookManifest, type PlaybookProposal } from "./types.js";
 
 type R = Record<string, unknown>;
@@ -24,6 +24,10 @@ function checkSize(text: string): void {
 function markStale(e: PlaybookEntry, at: string): void {
   for (const p of e.proposals) if (p.status === "pending" && p.based_on !== e.current) { p.status = "stale"; p.decided_at = at; }
 }
+
+/** 这份提案是不是从这篇稿来的（第一个来源或后来重复提的） */
+export const proposalFrom = (p: PlaybookProposal, contentId: string): boolean =>
+  p.origin?.content_id === contentId || Boolean(p.origins?.some((o) => o.content_id === contentId));
 
 /** 把一条意见追加进「## 创始人补充」一节（没有就新建在末尾）；不调模型，结果确定 */
 export function appendSupplement(text: string, lesson: string, founderWords: string): string {
@@ -51,7 +55,14 @@ export function proposeLesson(input: LessonProposalInput, dataDir?: string): Pro
     const rejected = e.proposals.find((p) => same(p) && p.status === "rejected");
     if (rejected) return { outcome: "blocked_by_rejected" as const, proposal_id: rejected.id };
     const pending = e.proposals.find((p) => same(p) && p.status === "pending");
-    if (pending) return { outcome: "playbook_duplicate" as const, proposal_id: pending.id };
+    if (pending) {
+      // 另一篇稿提了同一条：把这篇也记成来源，它的定稿清单和 list{content_id} 才看得到
+      if (input.origin && !proposalFrom(pending, input.origin.content_id)) {
+        pending.origins = [...(pending.origins ?? []), input.origin];
+        await writeManifest(m, dataDir);
+      }
+      return { outcome: "playbook_duplicate" as const, proposal_id: pending.id };
+    }
     const text = appendSupplement(await readVersionText(input.id, e.current, dataDir), input.lesson.trim(), input.founder_words);
     checkSize(text);
     const id = `pp-${randomUUID()}`;
@@ -141,8 +152,7 @@ export function decideProposal(input: ProposalDecision, dataDir?: string): Promi
       throw new PlaybookError("stale", `手册已经是第 ${e.current} 版，这份提案基于第 ${p.based_on} 版：要重新提案`);
     }
     assertDataDirWritable(dataDir);
-    const version = nextVersion(e);
-    await writeVersionOnce(input.id, version, p.text, dataDir);
+    const version = await writeNextVersion(input.id, nextVersion(e), p.text, dataDir);
     e.versions.push({ version, at, author: p.kind === "lesson" ? "founder" : "agent", kind: "edit", founder_words: p.founder_words, reason: p.reason, based_on: p.based_on, proposal_id: p.id });
     e.current = version;
     Object.assign(p, { status: "approved", decided_at: at });
@@ -169,9 +179,8 @@ export function rollbackPlaybook(input: RollbackInput, dataDir?: string): Promis
     if (!e.versions.some((v) => v.version === input.to_version)) throw new PlaybookError("not_found", `手册 ${input.id} 没有第 ${input.to_version} 版`);
     assertDataDirWritable(dataDir);
     const text = await readVersionText(input.id, input.to_version, dataDir);
-    const version = nextVersion(e);
     const at = new Date().toISOString();
-    await writeVersionOnce(input.id, version, text, dataDir);
+    const version = await writeNextVersion(input.id, nextVersion(e), text, dataDir);
     e.versions.push({ version, at, author: "founder", kind: "rollback", founder_words: input.founder_words, based_on: e.current, rolled_back_to: input.to_version });
     e.current = version;
     markStale(e, at);
