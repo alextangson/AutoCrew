@@ -33,7 +33,7 @@ import { isFrozen, isOntologyEnabled, readProductionDoc, ScriptFrozenError } fro
 import { executeMarkReady, executeRecord } from "../modules/production/record.js";
 import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
-import { reconcileContent } from "../modules/production/reconcile.js";
+import { reconcileContentForRead } from "../modules/production/reconcile.js";
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { sameVideoRefusal } from "./variant-guard.js";
 import { boardTrashRefusal } from "../modules/production/trash-guard.js";
@@ -278,8 +278,8 @@ export async function executeContentSave(
   if (action === "get") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required for get" };
-    // 本体 §4：get 前对这条做一次项目内快扫（只在启用后写）；扫失败照样给稿，但把原因带出来
-    const scanned = await reconcileContent(id, dataDir ?? getDataDir()).then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+    // 本体 §4：get 前对这条做一次项目内快扫（只在启用后写）；扫失败或锁被后台长任务占着就照样给稿，但把原因带出来
+    const scanned = await reconcileContentForRead(id, dataDir ?? getDataDir()).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     const content = await getContent(id, dataDir);
     if (!content) return { ok: false, error: `Content ${id} not found` };
     const { resolveContentProject } = await import("../storage/content-project.js");

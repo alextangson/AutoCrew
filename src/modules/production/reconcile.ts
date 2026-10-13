@@ -24,7 +24,7 @@ import { readArchiveLog } from "../../storage/nas-archive-log.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { triggerSliverCheck } from "./sliver/check.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
-import { withFileOwnership } from "./mutex.js";
+import { tryWithFileOwnership, withFileOwnership } from "./mutex.js";
 import { migrateCoverGroups } from "./cover-groups.js";
 import { validCoverApproval } from "./derive.js";
 
@@ -165,14 +165,36 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
   return report;
 }
 
-/** content get / record 后的本条快扫：只看项目内；只在启用后写 */
+/** record / 工作台决定前的本条快扫：只看项目内；只在启用后写。排队等文件归属锁，等多久都等 */
 export async function reconcileContent(contentId: string, dataDir: string): Promise<void> {
   if (!(await isOntologyActive(dataDir, contentId))) return;
   await ensureProductionReady(dataDir);
-  await withFileOwnership(async () => {
-    const c = await getContent(contentId, dataDir);
-    if (!c || c.deletedAt || isImportedHistory(c) || !isVideoPlatform(c.platform)) return;
-    const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
-    await reconcileOne(c, dataDir, { write: true, archived });
-  });
+  await withFileOwnership(() => reconcileOneLocked(contentId, dataDir));
+}
+
+/** 读稿时的快扫最多等这么久；正常的锁持有（record 落位、对账一条）远短于此 */
+export const READ_RECONCILE_WAIT_MS = 3000;
+
+/**
+ * content get 的本条快扫：限时。文件归属锁被后台长任务占着（NAS 每周完整核对、全库对账）就不扫，
+ * 返回原因让 get 照样给稿并带 reconcile_warning；扫完返回 null。
+ */
+export async function reconcileContentForRead(contentId: string, dataDir: string, waitMs = READ_RECONCILE_WAIT_MS): Promise<string | null> {
+  if (!(await isOntologyActive(dataDir, contentId))) return null;
+  const deadline = Date.now() + waitMs;
+  const busy = "后台任务（NAS 备份 / 全库对账）正占着文件，这次没核对项目里的文件，稍后刷新再看";
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), waitMs); });
+  // 首次就绪也排同一把锁：等不到同样算忙（就绪本身照常在后台跑完）
+  const ready = await Promise.race([ensureProductionReady(dataDir), late]).finally(() => clearTimeout(timer));
+  if (ready === "late") return busy;
+  const r = await tryWithFileOwnership(() => reconcileOneLocked(contentId, dataDir), Math.max(0, deadline - Date.now()));
+  return r.ran ? null : busy;
+}
+
+async function reconcileOneLocked(contentId: string, dataDir: string): Promise<void> {
+  const c = await getContent(contentId, dataDir);
+  if (!c || c.deletedAt || isImportedHistory(c) || !isVideoPlatform(c.platform)) return;
+  const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
+  await reconcileOne(c, dataDir, { write: true, archived });
 }

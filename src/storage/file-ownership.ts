@@ -22,6 +22,32 @@ export function withFileOwnership<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** 限时排队的结果：拿到锁跑完 → ran；等超时 → busy（fn 不会再跑） */
+export type TimedOwnership<T> = { ran: true; value: T } | { ran: false; busy: true };
+
+/**
+ * 只读路径用的限时版（打开稿件的本条快扫）：排队最多等 waitMs；等不到就退出队列、fn 永不执行，
+ * 由调用方把「没跑」报出来。后台长任务（NAS 每周完整核对能占锁二十多分钟）不该把读稿挂死。
+ */
+export function tryWithFileOwnership<T>(fn: () => Promise<T>, waitMs: number): Promise<TimedOwnership<T>> {
+  if (holdsFileOwnership()) return fn().then((value) => ({ ran: true as const, value }));
+  let state: "waiting" | "running" | "abandoned" = "waiting";
+  const queued = withFileOwnership(async (): Promise<TimedOwnership<T>> => {
+    if (state === "abandoned") return { ran: false, busy: true };
+    state = "running";
+    return { ran: true, value: await fn() };
+  });
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<TimedOwnership<T>>((resolve) => {
+    timer = setTimeout(() => {
+      if (state !== "waiting") return; // 已经拿到锁在跑：等它跑完，不半途丢下
+      state = "abandoned";
+      resolve({ ran: false, busy: true });
+    }, waitMs);
+  });
+  return Promise.race([queued, timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
  * 在归属锁之外起一段异步工作（1b §3-9）：后台比对工人必须在干净的异步上下文里跑，
  * 否则它从 record 的锁里继承 `owner` 标记，落结果时的 `withFileOwnership` 会当成重入、不排队。

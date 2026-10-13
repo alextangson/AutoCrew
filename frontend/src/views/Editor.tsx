@@ -160,6 +160,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       return;
     }
     setLoadError(null);
+    // 后端没核对完项目文件（锁被后台任务占着 / 扫失败）也照样给稿：把原因亮出来，不静默
+    const reconcileWarning = (r as { reconcile_warning?: unknown }).reconcile_warning;
+    if (!options.quiet && typeof reconcileWarning === "string") toast(reconcileWarning);
     const content = (r as unknown as { content: Content }).content;
     const previous = currentEditor.current;
     if (!previous.content) {
