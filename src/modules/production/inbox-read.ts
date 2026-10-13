@@ -24,6 +24,9 @@ import { arollOwnerElsewhere } from "./sha-index.js";
 import { approvedCoverShas } from "./service.js";
 import { draftHash } from "../../storage/draft-hash.js";
 import { FOUNDER_DECISION_SOURCES, readProjectJson, type ProjectDecisions } from "../video/handoff/project-evidence.js";
+import { loadManifest, readVersionText } from "../playbook/store.js";
+import { paragraphDiff } from "../playbook/diff.js";
+import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
 interface CheckRec { check_id?: string; content_id?: string; platform?: string; checked_at?: string; input_at?: string; verdict?: string; round?: number; items?: unknown[] }
@@ -110,11 +113,36 @@ function ruleItem(r: WritingRule, profile: CreatorProfile): InboxItem {
       evidence: r.evidence ?? [], conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null, active_rule_count: activeRuleCount(profile), rule_cap: RULE_CAP } };
 }
 
-/** 其他（默认收起）：写作规则提案、发布偏好提案 */
+/** 待批的手册改动（spec 2026-10-13 §3）：能在对话里定；从改稿意见来的挂那篇稿的 content_id。detail 带改前改后（只列改动段落） */
+async function playbookItem(e: PlaybookEntry, p: PlaybookProposal, dataDir: string): Promise<InboxItem> {
+  const item_id = `playbook:${p.id}`;
+  const diff = paragraphDiff(await readVersionText(e.id, p.based_on, dataDir), p.text);
+  return { item_id, gen: p.gen, type: "playbook_change", content_id: p.origin?.content_id ?? null, title: `《${e.name}》手册改动提案`, summary: p.lesson ?? p.reason,
+    waiting: null, agent_waiting: false, since: p.at, rank: 4, actions: [],
+    detail: { where: "settings/playbooks", playbook: e.id, playbook_name: e.name, proposal_id: p.id, kind: p.kind, based_on: p.based_on, current: e.current,
+      reason: p.reason, founder_words: p.founder_words || null, quote: p.founder_words || null, diff } };
+}
+
+/** 手册读不了：不悄悄当没有，列一件看得见的「其他」 */
+async function playbookItems(dataDir: string): Promise<InboxItem[]> {
+  try {
+    const m = await loadManifest(dataDir);
+    const out: InboxItem[] = [];
+    for (const e of m.playbooks) for (const p of e.proposals.filter((x) => x.status === "pending")) out.push(await playbookItem(e, p, dataDir));
+    return out;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return [{ item_id: "playbook:error", gen: genOf(["playbook:error", msg]), type: "other", content_id: null, title: "体裁手册读不了", summary: msg, waiting: null, agent_waiting: false,
+      since: new Date(0).toISOString(), rank: 4, actions: [], detail: { where: "settings/playbooks", error: msg } }];
+  }
+}
+
+/** 其他（默认收起）：写作规则提案、手册改动提案、发布偏好提案 */
 async function otherItems(dataDir: string): Promise<InboxItem[]> {
   const out: InboxItem[] = [];
   const profile = await loadProfile(dataDir).catch(() => null);
   for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) out.push(ruleItem(r, profile!));
+  out.push(...await playbookItems(dataDir));
   for (const p of await pendingProposals(dataDir).catch(() => [])) {
     const item_id = `pref:${p.id}`;
     out.push({ item_id, gen: genOf([item_id, p.at]), type: "other", content_id: null, title: "发布偏好提案", summary: Array.isArray(p.value) ? p.value.join(" / ") : p.value, waiting: null, agent_waiting: false,

@@ -65,7 +65,11 @@ async function toolsFor(host: string) {
  * 2026-10-11 AI 发布回执直接认：autocrew_content 加 pub_state / scheduled_at（定时也能报），autocrew_review_inbox 加 platform
  * （对话里「X 平台没发」纠正直接认的回执）；参数说明压到零，实测 32,421，上限随之从 32,400 提到 32,500。
  */
-export const BUDGET = { total: 32_500, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-13 体裁手册：新增 autocrew_playbook（list / get / propose / rollback，10 个参数，短说明压到一句），autocrew_draft 加 genre、
+ * autocrew_review_inbox 的 decision 加 approve_playbook / reject_playbook；实测 33,189，上限随之从 32,500 提到 33,200。
+ */
+export const BUDGET = { total: 33_200, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

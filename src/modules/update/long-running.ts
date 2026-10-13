@@ -138,7 +138,7 @@ export const TOOL_DEFAULT_ACTIONS: Readonly<Record<string, string>> = {
  */
 export const SHORT_TOOLS: ReadonlySet<string> = new Set([
   "autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_asset", "autocrew_pipeline", "autocrew_editorial",
-  "autocrew_memory", "autocrew_dashboard", "autocrew_pro_status", "autocrew_review_inbox",
+  "autocrew_memory", "autocrew_dashboard", "autocrew_pro_status", "autocrew_review_inbox", "autocrew_playbook",
 ]);
 
 export function effectiveAction(tool: string, action: unknown): unknown {

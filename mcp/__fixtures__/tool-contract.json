@@ -695,6 +695,9 @@
      "founder_words": {
       "type": "string"
      },
+     "genre": {
+      "type": "string"
+     },
      "inspiration": {
       "type": "string"
      },
@@ -725,6 +728,53 @@
      },
      "why_viral": {
       "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_playbook",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "list",
+       "get",
+       "propose",
+       "rollback"
+      ],
+      "type": "string"
+     },
+     "based_on": {
+      "type": "integer"
+     },
+     "expected_current_version": {
+      "type": "integer"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "request_id": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "to_version": {
+      "type": "integer"
+     },
+     "version": {
+      "type": "integer"
      }
     },
     "required": [
@@ -1341,6 +1391,8 @@
        "approve_rule",
        "reject_rule",
        "replace_rule",
+       "approve_playbook",
+       "reject_playbook",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
@@ -3628,6 +3680,9 @@
      "founder_words": {
       "type": "string"
      },
+     "genre": {
+      "type": "string"
+     },
      "inspiration": {
       "type": "string"
      },
@@ -3658,6 +3713,53 @@
      },
      "why_viral": {
       "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_playbook",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "list",
+       "get",
+       "propose",
+       "rollback"
+      ],
+      "type": "string"
+     },
+     "based_on": {
+      "type": "integer"
+     },
+     "expected_current_version": {
+      "type": "integer"
+     },
+     "founder_words": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "request_id": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "to_version": {
+      "type": "integer"
+     },
+     "version": {
+      "type": "integer"
      }
     },
     "required": [
@@ -4274,6 +4376,8 @@
        "approve_rule",
        "reject_rule",
        "replace_rule",
+       "approve_playbook",
+       "reject_playbook",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",

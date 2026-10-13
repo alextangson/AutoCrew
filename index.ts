@@ -33,6 +33,7 @@ import { deskSchema, executeDesk, DESK_DESCRIPTION } from "./src/tools/desk.js";
 import { reviewInboxSchema, executeReviewInbox, REVIEW_INBOX_DESCRIPTION } from "./src/tools/review-inbox.js";
 import { videoSchema, executeVideo, VIDEO_DESCRIPTION } from "./src/tools/video.js";
 import { draftSchema, executeDraft, DRAFT_DESCRIPTION } from "./src/tools/draft.js";
+import { playbookSchema, executePlaybook, PLAYBOOK_DESCRIPTION } from "./src/tools/playbook.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -90,6 +91,8 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({ name: "autocrew_scout", label: "AutoCrew Scout", description: SCOUT_DESCRIPTION, parameters: scoutSchema, execute: executeScout });
   // 灵感 → A-roll 薄路径（2026-10-04）：抖音口播新稿走它，旧的 workflow / writer 线留给其他平台
   runner.register({ name: "autocrew_draft", label: "AutoCrew Draft", description: DRAFT_DESCRIPTION, parameters: draftSchema, execute: executeDraft });
+  // 体裁手册（2026-10-13）：写稿按立意选的那本写；改动走提案 → 等你拍板
+  runner.register({ name: "autocrew_playbook", label: "AutoCrew Playbook", description: PLAYBOOK_DESCRIPTION, parameters: playbookSchema, execute: executePlaybook });
   runner.register({ name: "autocrew_review_desk", label: "AutoCrew Review Desk", description: REVIEW_DESK_DESCRIPTION, parameters: reviewDeskSchema, execute: executeReviewDesk });
 
   runner.register({

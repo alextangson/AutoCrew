@@ -17,12 +17,15 @@ export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   ask: ["answer_ask", "ask_resend"],
   publish_check: ["publish_check_confirm", "publish_check_revise", "publish_check_override"],
   publish_claim: ["confirm_receipt", "correct_publish"], published_ask: ["i_published"],
-  writing_rule: ["approve_rule", "reject_rule", "replace_rule"],
+  writing_rule: ["approve_rule", "reject_rule", "replace_rule"], playbook_change: ["approve_playbook", "reject_playbook"],
   sliver: ["waive_sliver_check", "waive_sliver", "reject_cut"], draft: ["approve_script", "revise_script"],
 };
 
-/** 能在对话里定：类型在表里，且挂在一条稿上——写作规则例外（不一定来自某篇稿，spec 2026-10-10 §C） */
-export const chatDecidable = (item: InboxItem): boolean => Boolean(CHAT_ACTIONS[item.type]) && (Boolean(item.content_id) || item.type === "writing_rule");
+/** 库级条目：不挂在某篇稿的制作文档上（写作规则 spec 2026-10-10 §C、手册改动 spec 2026-10-13 §3） */
+export const isLibraryItem = (item: InboxItem): boolean => item.type === "writing_rule" || item.type === "playbook_change";
+
+/** 能在对话里定：类型在表里，且挂在一条稿上——库级条目例外（不一定来自某篇稿） */
+export const chatDecidable = (item: InboxItem): boolean => Boolean(CHAT_ACTIONS[item.type]) && (Boolean(item.content_id) || isLibraryItem(item));
 
 /** 这件事此刻在对话里能做的决定：请示只给条目自己现在有的（附件变过 → 只有「让它重发」） */
 export function chatActionsOf(item: InboxItem): readonly string[] {
@@ -42,6 +45,7 @@ const ACTION_TEXT: Record<string, string> = {
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
   waive_sliver_check: "这条不查了（只在检查没跑成时有）", waive_sliver: "这处是故意的（带 sliver_key 点名哪一处）",
   approve_script: "稿子没问题", revise_script: "稿子还要改（note 写他要改的地方）",
+  approve_playbook: "这份手册改动批了（生成新版本）", reject_playbook: "这份手册改动不要（同一段以后不再提）",
   approve_rule: "这条规则要（以后写稿都照它）", reject_rule: "这条不要（以后不再提）", replace_rule: "要，替换掉他点名的那条旧规则（带 target_rule_id）",
 };
 
@@ -53,7 +57,8 @@ export const versionsOf = (item: InboxItem) => (item.detail.versions as Version[
 
 export function boardLink(item: InboxItem): string {
   const base = `http://127.0.0.1:${pullDeps().benchPort}/`;
-  if (item.type === "writing_rule") return `${base}#/inbox`;
+  if (item.type === "writing_rule") return `${base}#/calibration`;
+  if (item.type === "playbook_change" || item.item_id === "playbook:error") return `${base}#/playbooks`;
   return item.content_id ? `${base}#/board?inbox=${encodeURIComponent(item.content_id)}&types=${encodeURIComponent(item.type)}` : `${base}#/inbox`;
 }
 
@@ -71,6 +76,15 @@ const pathOf = (doc: ProductionDoc, contentId: string, factId: string, dataDir: 
 function ruleFacts(item: InboxItem): Record<string, unknown> {
   const d = item.detail;
   return { rule_id: d.rule_id, rule: d.rule, scope: d.scope, founder_words: d.founder_words, conflicts_with: d.conflicts_with, active_rule_count: d.active_rule_count, rule_cap: d.rule_cap };
+}
+
+function playbookFacts(item: InboxItem): Record<string, unknown> {
+  const d = item.detail;
+  return { playbook: d.playbook, playbook_name: d.playbook_name, proposal_id: d.proposal_id, based_on: d.based_on, current: d.current, reason: d.reason, founder_words: d.founder_words, diff: d.diff };
+}
+
+function libraryFacts(item: InboxItem): Record<string, unknown> {
+  return item.type === "writing_rule" ? ruleFacts(item) : playbookFacts(item);
 }
 
 function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record<string, unknown> {
@@ -101,10 +115,10 @@ function factsView(item: InboxItem, doc: ProductionDoc, dataDir: string): Record
 /** list 里每件事：能不能在对话里定、能做哪些决定、要给创始人看的事实、看板深链 */
 export async function chatItem(item: InboxItem, dataDir: string): Promise<Record<string, unknown>> {
   const decidable = chatDecidable(item);
-  const doc = decidable && item.type !== "writing_rule" ? await readProductionDocOrEmpty(item.content_id!, dataDir) : null;
+  const doc = decidable && !isLibraryItem(item) ? await readProductionDocOrEmpty(item.content_id!, dataDir) : null;
   const decisions = chatActionsOf(item).map((d) => ({ decision: d, label: ACTION_TEXT[d], ...(NOTE_ACTIONS.has(d) ? { note: "required" } : {}) }));
   return { item_id: item.item_id, gen: item.gen, type: item.type, content_id: item.content_id, title: item.title, summary: item.summary,
-    chat_decidable: decidable, ...(decidable ? { decisions, facts: item.type === "writing_rule" ? ruleFacts(item) : factsView(item, doc!, dataDir) } : {}), board_link: boardLink(item) };
+    chat_decidable: decidable, ...(decidable ? { decisions, facts: isLibraryItem(item) ? libraryFacts(item) : factsView(item, doc!, dataDir) } : {}), board_link: boardLink(item) };
 }
 
 export type Selection = { ok: true; params: Record<string, string>; factIds: string[]; label: string } | { ok: false; code: string; error: string };
@@ -117,6 +131,7 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
 export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string; target_rule_id?: string; sliver_key?: string }): Selection {
+  if (item.type === "playbook_change") return { ok: true, params: {}, factIds: [], label: String(item.detail.playbook_name ?? "") };
   if (item.type === "writing_rule") {
     if (decision !== "replace_rule") return { ok: true, params: {}, factIds: [], label: String(item.detail.rule ?? "") };
     if (!sel.target_rule_id) return bad("selector_required", "替换要说清换掉哪一条（带 target_rule_id，取生效规则的 id）；他没点名就先问他");

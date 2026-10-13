@@ -1,5 +1,6 @@
 import { createRuleApprovalHandler } from "../src/desktop/rule-approval.js";
 import { createPublishPrefsHandler } from "../src/desktop/publish-prefs-route.js";
+import { createPlaybookHandler } from "../src/desktop/playbook-route.js";
 import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
@@ -192,6 +193,7 @@ const uploadRoute = createUploadHandler({
 const projectReview = createProjectReviewHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+const playbooks = createPlaybookHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 // 上次更新被硬生生打断（进程被杀 / 机器重启）：启动时认出来，写一份「上次更新中断」结果给页面（第 12 轮 P1）
 try {
@@ -433,6 +435,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await connectRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
+  if (await playbooks(req, res, url)) return;
 
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {
