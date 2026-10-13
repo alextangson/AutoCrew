@@ -27,7 +27,7 @@ export type TimedOwnership<T> = { ran: true; value: T } | { ran: false; busy: tr
 
 /**
  * 只读路径用的限时版（打开稿件的本条快扫）：排队最多等 waitMs；等不到就退出队列、fn 永不执行，
- * 由调用方把「没跑」报出来。后台长任务（NAS 每周完整核对能占锁二十多分钟）不该把读稿挂死。
+ * 由调用方把「没跑」报出来。后台长任务（NAS 备份 / 归档大项目能占锁很久）不该把读稿挂死。
  */
 export function tryWithFileOwnership<T>(fn: () => Promise<T>, waitMs: number): Promise<TimedOwnership<T>> {
   if (holdsFileOwnership()) return fn().then((value) => ({ ran: true as const, value }));

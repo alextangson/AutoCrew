@@ -11,7 +11,7 @@ import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { columnDir, folderTitle } from "./my-content-plan.js";
 import { archivePublished } from "./nas-archive.js";
 import { backupPublished, type BackupOptions } from "./nas-backup.js";
-import { keptName, sha256File } from "./nas-archive-copy.js";
+import { keptName, nasHash, sha256File } from "./nas-archive-copy.js";
 import { readBackupState } from "./nas-backup-state.js";
 import { HUMAN_WRITE } from "./first-body-guard.js";
 
@@ -215,8 +215,8 @@ describe("发布即备份 NAS", () => {
     expect((await backup()).backedUp).toEqual(["稿"]);
     expect(await read(path.join(nasDir(c), "符号链接清单.json"))).toBe("创始人自己的文件");
     expect(await read(path.join(nasDir(c), "links.json"))).toBe("也是自己的");
-    const full = await backup({ now: new Date(NOW.getTime() + 8 * 86400_000) });
-    expect(full.backedUp).toEqual(["稿"]);
+    const again = await backup({ now: new Date(NOW.getTime() + 8 * 86400_000) });
+    expect(again.backedUp).toEqual(["稿"]);
     expect(await read(path.join(nasDir(c), "符号链接清单.json"))).toBe("创始人自己的文件");
   });
 
@@ -241,7 +241,7 @@ describe("发布即备份 NAS", () => {
 
   it("does not mark a mismatched copy as done, retries, and reports the reason after 3 failures", async () => {
     const c = await published("坏", 1);
-    const corrupt = async (s: string, d: string) => { await fs.copyFile(s, d); if (s.endsWith("raw.mov")) await fs.writeFile(d, "garbage"); };
+    const corrupt = async (s: string, d: string) => { await fs.copyFile(s, d); if (s.endsWith("raw.mov")) await fs.writeFile(d, "garbage!"); };
     for (let i = 1; i <= 3; i++) {
       const r = await backup({ copyImpl: corrupt });
       expect(r.backedUp).toEqual([]);
@@ -395,56 +395,45 @@ describe("7 天腾空间前核对 NAS", () => {
   });
 });
 
-describe("每周完整核对", () => {
-  const later = (d: number) => new Date(NOW.getTime() + d * 86400_000);
-  const WHOLE = new Date(2026, 8, 20, 10, 0, 0);
-  /** NAS 副本的修改时间先对齐到整秒并让备份记下（utimes 精度不到亚毫秒），之后才能「改回原修改时间」 */
-  async function pinMtime(file: string, now: Date): Promise<void> {
-    await fs.utimes(file, WHOLE, WHOLE);
-    await backup({ now });
-  }
-  /** 同样大小、改回原修改时间的静默损坏：平时的大小+修改时间检查看不出来 */
-  async function rot(file: string, text: string): Promise<void> {
-    await fs.writeFile(file, text);
-    await fs.utimes(file, WHOLE, WHOLE);
-  }
-
-  it("skips the full re-read within 7 days, then catches a same-size same-mtime corruption and recopies", async () => {
+describe("备份只核大小，不算哈希", () => {
+  it("backs up new files and skips an unchanged second run without computing any sha256", async () => {
     const c = await published("稿", 1);
-    await backup();
-    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(NOW.toISOString());
-    const dest = path.join(nasDir(c), "02-aroll/raw.mov");
-    await pinMtime(dest, later(1));
-    await rot(dest, "稿-rax");
-    expect((await backup({ now: later(3) })).backedUp).toEqual(["稿"]);
-    expect(await read(dest)).toBe("稿-rax");
-    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(NOW.toISOString());
-    expect((await backup({ now: later(7) })).backedUp).toEqual(["稿"]);
-    expect(await read(dest)).toBe("稿-raw");
-    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(later(7).toISOString());
-    await syncMyContentView(data, { now: later(7) });
-    expect(await read(path.join(itemDir(c), "NAS备份状态.txt"))).toContain("上次完整核对：");
+    const spy = vi.spyOn(nasHash, "file");
+    try {
+      expect((await backup()).backedUp).toEqual(["稿"]);
+      expect(await read(path.join(nasDir(c), "02-aroll/raw.mov"))).toBe("稿-raw");
+      const copy = vi.fn(async (s: string, d: string) => fs.copyFile(s, d));
+      expect((await backup({ copyImpl: copy })).backedUp).toEqual(["稿"]);
+      expect(copy).not.toHaveBeenCalled();
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
   });
 
-  it("fails with the path named when the full verify finds an archived NAS-only file corrupted", async () => {
-    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
-    const old = await published("旧稿", 8);
-    await backup();
-    await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
-    await rot(path.join(nasDir(old), "02-aroll/raw.mov"), "旧稿-rax");
-    expect((await backup({ now: later(1) })).backedUp).toContain("旧稿");
-    const r = await backup({ now: later(7) });
-    expect(r.backedUp).not.toContain("旧稿");
-    const state = (await readBackupState(root(old)))!;
+  it("does not mark a wrong-size copy as backed up, removes the partial, and records why", async () => {
+    const c = await published("短", 1);
+    const short = async (s: string, d: string) => { await fs.copyFile(s, d); if (s.endsWith("raw.mov")) await fs.truncate(d, 2); };
+    const r = await backup({ copyImpl: short });
+    expect(r.backedUp).toEqual([]);
+    expect(await exists(path.join(nasDir(c), "02-aroll/raw.mov"))).toBe(false);
+    const state = (await readBackupState(root(c)))!;
     expect(state.status).toBe("failed");
     expect(state.reason).toContain("02-aroll/raw.mov");
-    expect(state.reason).toContain("完整核对");
-    expect(state.lastFullVerifyAt).toBe(NOW.toISOString());
+    expect(state.reason).toContain("大小不对");
   });
 
-  it("says no full verify has run yet when there is none", async () => {
+  it("ignores lastFullVerifyAt left in an old state file and shows no full-verify wording", async () => {
     const { renderBackupStatus } = await import("./nas-backup-state.js");
-    expect(renderBackupStatus({ status: "unmounted", lastAttempt: NOW.toISOString(), failures: 0, target: "/x" })).toContain("还没做过完整核对");
+    const c = await published("旧状态", 1);
+    await fs.mkdir(path.join(root(c), "00-project/notes"), { recursive: true });
+    await fs.writeFile(path.join(root(c), "00-project/notes/backup-state.json"), JSON.stringify({
+      status: "failed", lastAttempt: NOW.toISOString(), failures: 1, target: "/x", lastFullVerifyAt: NOW.toISOString(),
+    }));
+    expect((await backup()).backedUp).toEqual(["旧状态"]);
+    const state = (await readBackupState(root(c)))!;
+    expect(state).not.toHaveProperty("lastFullVerifyAt");
+    for (const s of [state, { status: "unmounted" as const, lastAttempt: NOW.toISOString(), failures: 0, target: "/x" }]) {
+      expect(renderBackupStatus(s)).not.toContain("完整核对");
+    }
   });
 });
 
@@ -478,7 +467,7 @@ describe("已发布文件夹补三样", () => {
 
 describe("seg11 历史归档记录按版本核对", () => {
   const later = (d: number) => new Date(NOW.getTime() + d * 86400_000);
-  it("同一项目归档两次（封面换过版本）：完整核对按各自版本找留底，不报封面损坏", async () => {
+  it("同一项目归档两次（封面换过版本）：核对按各自版本找留底，不报封面损坏", async () => {
     for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
     const old = await published("旧稿", 8);
     await backup();

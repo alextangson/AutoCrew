@@ -1,6 +1,7 @@
 /**
- * 把项目目录逐文件复制到 NAS 并核对 sha256。SMB 上只用普通 copyFile，不用硬链接，不靠 rename 落位：
- * 目标已有的文件按哈希判断，对得上就跳过，对不上就重拷——中断后续跑安全。
+ * 把项目目录逐文件复制到 NAS。SMB 上只用普通 copyFile，不用硬链接，不靠 rename 落位——中断后续跑安全。
+ * 归档（随后删本机）逐文件核对 sha256；备份（sizeOnly）只是留一份副本，拷完只核大小，
+ * 只有要顶掉 NAS 上已有的那份时才算哈希（决定跳过还是改名留底）。
  */
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -9,7 +10,8 @@ import { createHash } from "node:crypto";
 import { safeNasPath, assertInside } from "./nas-safe-path.js";
 
 export interface ArchivedFile {
-  rel: string; sha256: string; size: number; mtimeMs?: number;
+  /** 归档记录必有；备份记录（只核大小）没有 */
+  rel: string; sha256?: string; size: number; mtimeMs?: number;
   /** 核对通过时 NAS 上那份的修改时间：增量跳过前用它确认 NAS 副本没被动过 */
   destMtimeMs?: number;
 }
@@ -22,6 +24,8 @@ export interface CopyProjectOptions {
   recordSymlinks?: boolean;
   /** 不复制的文件 / 目录（备份自己的记录和状态文件、项目缓存）；命中的目录不进去 */
   exclude?: (rel: string) => boolean;
+  /** 备份用：不算 sha256，拷完只核 NAS 副本大小；归档删本机前不开 */
+  sizeOnly?: boolean;
 }
 export type CopyImpl = (source: string, dest: string) => Promise<void>;
 
@@ -32,8 +36,11 @@ export function sha256File(file: string): Promise<string> {
   });
 }
 
+/** 内部哈希都走这里（测试据此确认备份常规路径一次都不算） */
+export const nasHash = { file: sha256File };
+
 async function hashOrNull(file: string): Promise<string | null> {
-  try { return await sha256File(file); }
+  try { return await nasHash.file(file); }
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
 }
 
@@ -75,7 +82,7 @@ export function keptName(dest: string, sha: string): string {
  * 这次自己拷坏的那份是确定的残件，核对失败时删掉，免得下一轮被当成旧版本留底。
  */
 async function copyVerified(source: string, dest: string, copy: CopyImpl): Promise<string> {
-  const want = await sha256File(source);
+  const want = await nasHash.file(source);
   const have = await hashOrNull(dest);
   if (have === want) return want;
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -99,7 +106,7 @@ async function keepAside(dest: string, have: string): Promise<void> {
     const name = i === 1 ? first : `${first.slice(0, first.length - ext.length)}-${i}${ext}`;
     const st = await lstatOrNull(name);
     if (st?.isSymbolicLink()) continue;
-    const kept = st ? await sha256File(name) : null;
+    const kept = st ? await nasHash.file(name) : null;
     if (kept === null) { await fs.rename(dest, name); return; }
     if (kept === have) { await fs.rm(dest, { force: true }); return; }
   }
@@ -107,6 +114,26 @@ async function keepAside(dest: string, have: string): Promise<void> {
 
 async function lstatOrNull(file: string) {
   try { return await fs.lstat(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+}
+
+/**
+ * 备份用：不算哈希，拷完核大小。目标已有一份时才哈希：同大小且同内容就不拷，否则旧那份改名留底再拷。
+ * 拷出来大小不对的是这次自己写的残件，当场删掉。
+ */
+async function copyBySize(source: string, dest: string, size: number, copy: CopyImpl): Promise<void> {
+  const st = await lstatOrNull(dest);
+  if (st) {
+    const have = await nasHash.file(dest);
+    if (st.size === size && have === (await nasHash.file(source))) return;
+    await keepAside(dest, have);
+  }
+  await fs.mkdir(path.dirname(dest), { recursive: true });
+  await copy(source, dest);
+  const got = (await lstatOrNull(dest))?.size;
+  if (got !== size) {
+    await fs.rm(dest, { force: true });
+    throw new Error(`复制后校验不一致：大小不对（本机 ${size}，NAS ${got ?? "缺失"}）`);
+  }
 }
 
 /** 本机没变，且 NAS 副本还在、大小和修改时间跟记录一致 */
@@ -145,9 +172,11 @@ export async function copyProject(
     try {
       const dest = await safeNasPath(target, f.rel);
       if (opts.skipUnchanged && (await unchangedBoth(f, prev, dest))) { out.push(prev!); continue; }
-      const sha256 = await copyVerified(path.join(root, f.rel), dest, copy);
+      const source = path.join(root, f.rel);
+      const sha256 = opts.sizeOnly ? undefined : await copyVerified(source, dest, copy);
+      if (opts.sizeOnly) await copyBySize(source, dest, f.size, copy);
       await assertInside(target, f.rel);
-      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, sha256, destMtimeMs: (await fs.lstat(dest)).mtimeMs });
+      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, ...(sha256 ? { sha256 } : {}), destMtimeMs: (await fs.lstat(dest)).mtimeMs });
     }
     catch (e) { errors.push(`${f.rel}：${e instanceof Error ? e.message : String(e)}`); }
   }
