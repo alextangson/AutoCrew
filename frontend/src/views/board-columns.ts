@@ -5,6 +5,7 @@
 import { VIDEO_PLATFORMS, platformLabel } from "../lib";
 import type { PublishTarget } from "./publish-targets";
 import { clockLabel, durationText, relativeLabel } from "../time-format";
+import { handoffLine, type HandoffView } from "./handoff-line";
 
 export const COLUMNS = ["选题", "写稿中", "待录制", "剪辑中", "待发布", "已发布"] as const;
 export type BoardColumn = (typeof COLUMNS)[number];
@@ -87,6 +88,8 @@ export interface BoardItem {
   draftRef?: { item_id: string; gen: string };
   /** 正在写（后台生成 / 写手认领还活着）：不许移入回收站 */
   writing?: boolean;
+  /** 「开始写」交给了谁、有没有 agent 接手、谁正认领着（spec 2026-10-15 §B5） */
+  handoff?: HandoffView;
   /** 视频稿各发布平台的状态与剩下的动作（一条视频一张卡）；文字稿为空 */
   targets?: PublishTarget[];
   /** 只有回执、没走认稿就发了：卡上一行提醒 */
@@ -355,7 +358,7 @@ export const LEGACY_REGISTERED = "按旧流程登记";
 export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date.now()): string {
   const parts: string[] = [];
   if (item.column === "写稿中" && item.status === "draft_ready") parts.push(`写完 ${relativeLabel(item.draftReadyAt ?? item.updatedAt, now)}`);
-  else if (item.column === "写稿中") parts.push(item.status === "needs_evidence" ? "缺证据" : item.status === "reviewing" ? "在审" : "在写", `更新 ${relativeLabel(item.updatedAt, now)}`);
+  else if (item.column === "写稿中") parts.push(item.status === "needs_evidence" ? "缺证据" : item.status === "reviewing" ? "在审" : (item.status === "drafting" && handoffLine(item.handoff, now)?.text) || "在写", `更新 ${relativeLabel(item.updatedAt, now)}`);
   if (item.column === "待录制") {
     const est = estimateText(item.chars, wpm);
     if (est) parts.push(est);

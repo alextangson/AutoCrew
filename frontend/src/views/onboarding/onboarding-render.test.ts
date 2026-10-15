@@ -250,17 +250,22 @@ describe("Codex 评审第 2 轮 P2-b：没核对上 / 只剩令牌也能断开",
 });
 
 describe("Codex 评审第 2 轮 P2-c：完成页提示按宿主权限", () => {
-  it("只接了 Codex：让它登记成片，并说写稿要接 Claude Code / WorkBuddy 或填钥匙", async () => {
-    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("claude"), H("workbuddy")], skipped: false };
+  it("只接了 Codex（能写稿）：完成页叫它写稿、记成默认写稿 AI，没有「写稿要接 Claude Code 或 WorkBuddy」那句（spec 2026-10-15 §B）", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: true }), H("claude"), H("workbuddy")], skipped: false };
     store.connect = (h) => ({ ok: true, host: h as "codex", registered: true, verified: true, message: "已接上" });
     await mount();
     await act(async () => card("codex").click()); await tick();
     await click("下一步");
     await click("一键接上");
     await click("好了，进去看看");
-    expect(el.textContent).toContain("去 Codex 里说「把这条视频的成片登记到 AutoCrew」");
-    expect(el.textContent).not.toContain("去 Codex 里说「帮我写一条");
-    expect(el.textContent).toContain("写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎");
+    expect(el.textContent).toContain("去 Codex 里说「帮我写一条……」就能开工");
+    expect(el.textContent).not.toContain("写稿要接 Claude Code 或 WorkBuddy");
+    expect(el.textContent).toContain("默认交给 Codex");
+  });
+  it("按限权表不能写稿的宿主：卡片不能选（选中的会存成默认写稿 AI）", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("claude"), H("workbuddy")], skipped: false };
+    await mount();
+    expect(card("codex").getAttribute("role")).toBeNull();
   });
   it("接了能写的 Claude Code：提示写稿，没有那句补充", async () => {
     store.view = { hosts: [H("claude", { found: true, detail: "找到了", canWrite: true }), H("codex"), H("workbuddy")], skipped: false };

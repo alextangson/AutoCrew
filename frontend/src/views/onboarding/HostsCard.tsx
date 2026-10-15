@@ -8,11 +8,11 @@ import { invoke } from "../../transport";
 import { confirmDialog, toast } from "../../ui";
 import { relativeTime } from "../engine-lib";
 import { hostLabel } from "../host-badge";
-import { asResult, connectHost, disconnectHost, loadConnect, type ConnectResult, type HostId, type HostStatus } from "./connect-api";
+import { asResult, connectHost, disconnectHost, loadConnect, setWritingHost, type ConnectResult, type HostId, type HostStatus } from "./connect-api";
 
 interface TokenView { host: string; createdAt: string; lastUsedAt?: string }
 
-function HostRow(props: { h: HostStatus; reload: () => void }) {
+function HostRow(props: { h: HostStatus; reload: () => void; isDefault: boolean; canDefault: boolean }) {
   const { h } = props;
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ConnectResult | null>(null);
@@ -33,6 +33,14 @@ function HostRow(props: { h: HostStatus; reload: () => void }) {
     setResult(r);
     props.reload();
   };
+  /** 「开始写」默认交给它（spec 2026-10-15 §B1）：只给接上了、能写稿的 */
+  const makeDefault = async () => {
+    setBusy(true);
+    const r = await setWritingHost(h.host);
+    setBusy(false);
+    toast(r.ok ? `以后「开始写」默认交给 ${h.label}` : `没设成：${r.error}`);
+    props.reload();
+  };
   const now = Date.now();
   const state = h.connected
     ? (h.lastUsedAt ? `已接上 · ${relativeTime(h.lastUsedAt, now)}用过` : "已接上 · 还没用过")
@@ -44,6 +52,8 @@ function HostRow(props: { h: HostStatus; reload: () => void }) {
       {!h.connected && h.found && <button disabled={busy || h.loggedIn === false} onClick={() => void act("connect")}>{busy ? "正在接…" : h.unverified ? "再试一次" : "接上"}</button>}
       {/* 有条目或有令牌就能断开，不看核对结果（Codex 评审第 2 轮 P2-b） */}
       {(h.connected || h.hasEntry || h.hasToken) && <button className="btn-ghost" disabled={busy} onClick={() => void act("disconnect")}>{busy ? "正在断开…" : "断开"}</button>}
+      {props.isDefault && <span className="chip">默认写稿</span>}
+      {!props.isDefault && props.canDefault && <button className="btn-ghost" disabled={busy} onClick={() => void makeDefault()}>设成默认写稿</button>}
       {result && <p className={result.ok && (result.verified || !result.registered) ? "set-test-ok" : "set-test-fail"}>{result.ok ? result.message : result.error ?? result.message}</p>}
     </div>
   );
@@ -51,11 +61,18 @@ function HostRow(props: { h: HostStatus; reload: () => void }) {
 
 export function HostsCard() {
   const [hosts, setHosts] = useState<HostStatus[] | null>(null);
+  const [writers, setWriters] = useState<HostId[]>([]);
+  const [writingHost, setWritingHostState] = useState<HostId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [others, setOthers] = useState<TokenView[]>([]);
   const load = async () => {
     const [c, t] = await Promise.all([loadConnect(), invoke("hosts:list")]);
-    if (c.ok) { setHosts(c.data.hosts); setError(null); } else setError(c.error);
+    if (c.ok) {
+      setHosts(c.data.hosts); setError(null);
+      const ws = c.data.writers ?? [];
+      setWriters(ws);
+      setWritingHostState(c.data.writingHost && ws.includes(c.data.writingHost) ? c.data.writingHost : ws[0] ?? null);
+    } else setError(c.error);
     // 所有令牌都列出来、都能撤销（包括三家宿主自己的），和原来的设置页一样
     if (t.ok) setOthers((t as unknown as { data?: { hosts?: TokenView[] } }).data?.hosts ?? []);
   };
@@ -75,7 +92,7 @@ export function HostsCard() {
       </div>
       <p className="muted int-line">让你电脑上的 AI 直接用 AutoCrew：写稿、审稿、剪辑、发布都能做；审片、认稿、选封面、「我发了」只有你在这里点。</p>
       {error && <p className="set-test-fail">没查到宿主状态：{error}</p>}
-      {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} />)}
+      {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} isDefault={h.host === writingHost} canDefault={writers.includes(h.host)} />)}
       {others.map((t) => (
         <div key={t.host} className="row">
           <span className="row-title">{hostLabel(t.host)}</span>

@@ -20,7 +20,8 @@ function HostCard(props: { h: HostStatus; picked: boolean; onPick: (on: boolean)
   const { h } = props;
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
-  const usable = h.found && h.loggedIn !== false;
+  // 能选的 = 找到了、没确认没登录、按限权表能写稿（选中的会存成默认写稿 AI，spec 2026-10-15 §B1）
+  const usable = h.found && h.loggedIn !== false && h.canWrite !== false;
   const check = async () => {
     setProbing(true);
     const r = await probeHost(h.host);

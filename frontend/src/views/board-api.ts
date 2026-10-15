@@ -3,6 +3,7 @@ import type { BoardData } from "./board-columns";
 import type { PublishTarget } from "./publish-targets";
 import { authedFetch, SESSION_EXPIRED } from "../transport";
 import type { DataPageData } from "./data-lib";
+import type { HandoffView } from "./handoff-line";
 
 type Json = Record<string, unknown>;
 /** 失败时 body 原样带回（code、改挂要的归属信息等），界面按 code 决定下一步 */
@@ -25,8 +26,14 @@ const post = <T>(url: string, payload: Json) => call<T>(url, { method: "POST", h
 
 export const loadBoard = () => call<BoardData>("/api/board");
 
-export interface StartReply { created: boolean; content_id: string; prompt?: string; opened?: boolean; open_error?: string; needs_angle?: boolean; code?: string }
-export const startWriting = (topicId: string, platform?: string) => post<StartReply>("/api/board/start-writing", { topic_id: topicId, ...(platform ? { platform } : {}) });
+/** 交给某个 AI 的结果（spec 2026-10-15 §B2）：paste = 指令要放进剪贴板让人粘贴（Codex / WorkBuddy / 没打开） */
+export interface Delivery { host: string; label: string; prompt: string; opened: boolean; paste: boolean; open_error?: string }
+export interface StartReply extends Partial<Delivery> { created: boolean; content_id: string; needs_angle?: boolean; code?: string }
+export const startWriting = (topicId: string, host?: string | null) => post<StartReply>("/api/board/start-writing", { topic_id: topicId, ...(host ? { host } : {}) });
+
+/** 已有稿件「交给 X 写 / 看」：host 不给 = 默认写稿 AI */
+export const handOffContent = (contentId: string, mode: "write" | "look", host?: string | null) =>
+  post<Delivery & { content_id: string }>("/api/board/hand-off", { content_id: contentId, mode, ...(host ? { host } : {}) });
 
 export const markPublished = (contentId: string, platform: string, url?: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}) });
@@ -91,6 +98,8 @@ export interface CardPanelData {
   no_script_approval?: boolean;
   /** 认领：AI 在做只在租约有效且最近写过时才说（吸收 15） */
   claim?: { host: string; live: boolean; lease_ok?: boolean; idle_hours: number | null } | null;
+  /** 「开始写」交给了谁、接没接手（spec 2026-10-15 §B5） */
+  handoff?: HandoffView;
   /** 卡上的恢复动作：文件不见了 / 登记没写成 */
   recovery?: { kind: "files_missing" | "registration_failed"; reason: string } | null;
 }

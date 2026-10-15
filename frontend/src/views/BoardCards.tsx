@@ -1,4 +1,7 @@
 /** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退 / 移入回收站）、发布行（我发了 / 撤销）。 */
+import { HandOffButton } from "./HandOffButton";
+import { handoffLine, WRITER_LABEL } from "./hand-off";
+import type { HostId } from "./onboarding/connect-api";
 import { PlatformChips } from "./PlatformChips";
 import { showChips } from "./publish-targets";
 import { Button } from "../components/Button";
@@ -47,7 +50,7 @@ async function runRevoke(item: BoardItem, reload: () => Promise<void>): Promise<
   try { toast(revokeText(await revokeHandoff(item.id, item.handoffHash))); } finally { await reload(); }
 }
 
-export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean; onStart: () => void; onOpen: () => void; onTrash: () => void }) {
+export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean; onStart: (host?: HostId) => void; others?: HostId[]; onOpen: () => void; onTrash: () => void }) {
   const t = props.topic;
   const meta = [topicSourceLabel(t.source), relativeLabel(t.renewedAt ?? t.createdAt)].join(" · ");
   return <article className="bcard" draggable={!props.busy} aria-busy={props.busy}
@@ -67,7 +70,13 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
     </div>
     <div className="bcard-meta">{t.inSlate && <span className="bcard-slate">本周片单</span>}{meta}</div>
     <div className="bcard-actions">
-      <Button size="sm" className="bcard-start" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</Button>
+      <Button size="sm" className="bcard-start" disabled={props.busy} onClick={() => props.onStart()}>{props.busy ? "正在开始…" : "开始写"}</Button>
+      {/* 只对这一次换一个 AI 写，不改默认（spec 2026-10-15 §B2） */}
+      {(props.others ?? []).length > 0 && <select className="bcard-other" aria-label="换一个 AI 写" value="" disabled={props.busy}
+        onChange={(e) => { const h = e.target.value as HostId; if (h) props.onStart(h); }}>
+        <option value="">换一个 AI 写</option>
+        {props.others!.map((h) => <option key={h} value={h}>{WRITER_LABEL[h]}</option>)}
+      </select>}
     </div>
   </article>;
 }
@@ -89,6 +98,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
           {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
         {cardArollBadges(item).map((b) => <span key={b} className="bcard-score bcard-badge">{b}</span>)}
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
+        <PickupNudge item={item} reload={props.reload} />
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
         {item.noScriptApproval && <span className="bcard-meta">没走认稿就发了</span>}
@@ -100,6 +110,16 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
     {publishing && <PublishRows item={item} reload={props.reload} />}
     {(item.status === "publish_ready" || item.status === "editing") && item.platform && VIDEO_PLATFORMS.has(item.platform) && <BoardCodexPublish item={item} />}
   </article>;
+}
+
+/** 交出去 30 分钟还没人接手：「重新交给」同一个，或换一个（认领中 / 已接手不出） */
+function PickupNudge({ item, reload }: { item: BoardItem; reload: () => Promise<void> }) {
+  const line = item.column === "写稿中" && item.status === "drafting" ? handoffLine(item.handoff) : null;
+  if (!line?.stale || !item.handoff) return null;
+  const host = item.handoff.host as HostId;
+  return <div className="bcard-actions">
+    <HandOffButton contentId={item.id} mode="write" primary={WRITER_LABEL[host] ? host : undefined} label={(who) => `重新交给 ${who}`} onDone={() => void reload()} />
+  </div>;
 }
 
 function BoardCodexPublish({ item }: { item: BoardItem }) {

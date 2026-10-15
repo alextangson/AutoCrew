@@ -22,7 +22,8 @@ import { type EditorView } from "@codemirror/view";
 import { invoke, subscribeEvents, type InvokeResult } from "../transport";
 import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
-import { copyForWorkbuddy } from "../chat/workbuddy";
+import { HandOffButton } from "./HandOffButton";
+import { WRITING_STATUSES } from "./hand-off";
 import { SelectionBar } from "./SelectionBar";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { EditorTools } from "./EditorTools";
@@ -471,7 +472,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <span className="ed-status-label">{derivedStage ?? VARIANT_STATUS[c.status] ?? c.status}</span>
           {workspace !== "draft" && <span className="muted">{WORKSPACE_LABEL[workspace]}</span>}
         </div>
-        <button className="ed-quiet-button" title="复制一句话，粘到 WorkBuddy 里让它通过 AutoCrew 打开这篇" onClick={() => void copyForWorkbuddy(c.title, props.id)}>复制给 WorkBuddy</button>
+        <HandOffButton className="ed-quiet-button" contentId={props.id} mode={WRITING_STATUSES.has(c.status) ? "write" : "look"} />
         {workspace === "draft" && <button
           className={"ed-quiet-button ed-tools-trigger" + (drawerOpen ? " is-open" : "")}
           aria-expanded={drawerOpen}
