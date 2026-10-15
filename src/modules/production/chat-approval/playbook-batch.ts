@@ -10,6 +10,7 @@ import { PlaybookError, type PlaybookId } from "../../playbook/types.js";
 import { readInbox } from "../inbox-read.js";
 import type { InboxItem } from "../inbox.js";
 import { mergeKeyOf } from "../lesson-view.js";
+import { staleProposal } from "./playbook-decide.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
@@ -52,6 +53,9 @@ async function pick(entries: BatchEntry[], dataDir: string): Promise<{ ok: true;
   const items: InboxItem[] = [];
   for (const e of entries) {
     const it = all.find((x) => x.item_id === e.item_id);
+    // 不在收件箱了：先看是不是手册在别处改过、这条过期了（整组说 stale），再说已在别处处理
+    const stale = it ? null : await staleProposal(e.item_id, dataDir);
+    if (stale) return { ok: false, result: fail("stale", "手册已经改过，这几条要按新版重提：整组告诉创始人", { item_id: e.item_id }) };
     if (!it || it.type !== "playbook_change") return { ok: false, result: fail("already_handled", `${e.item_id} 已在别处处理（或不是手册改动）：重新 list 看现在的样子`) };
     if (it.gen !== e.gen) return { ok: false, result: fail("stale", `${e.item_id} 刚变过：重新 list 给创始人看一遍再定`) };
     items.push(it);

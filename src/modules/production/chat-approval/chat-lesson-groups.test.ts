@@ -114,6 +114,17 @@ describe("同一手册的几条合并批", () => {
     expect((await loadManifest(env.dir)).playbooks.find((p) => p.id === "ganhuo")!.current).toBe(2);
   });
 
+  it("对话里合并批时这几条已因手册改过而过期（不在收件箱了）：回 stale 整组提示，不说「已在别处处理」", async () => {
+    await lessons("c-1", "开头先亮名字", "结尾留金句");
+    const items = (await list()).items;
+    await proposeLesson({ id: "ganhuo", lesson: "别处的意见", founder_words: "早点出名字", origin: { content_id: "c-2", version: 1 } }, env.dir);
+    const other = (await loadManifest(env.dir)).playbooks.find((p) => p.id === "ganhuo")!.proposals.find((p) => p.lesson === "别处的意见")!;
+    await decideProposal({ id: "ganhuo", proposal_id: other.id, gen: other.gen, decision: "approve", eventId: "ev-other-2", source: "workbench" }, env.dir);
+    const all = items.map((i) => ({ item_id: i.item_id, gen: i.gen, decision: "approve_playbook" }));
+    expect(await tool({ action: "decide", decision: "playbook_batch", items: all, founder_words: "都要", request_id: "rq-stale" }))
+      .toMatchObject({ ok: false, code: "stale", error: expect.stringContaining("按新版重提") });
+  });
+
   it("看板读到的条目带问题、原话、稿名与 merge_key（面板直接用）", async () => {
     await lessons("c-9", "开头先亮名字");
     const [it] = (await readInbox(env.dir)).items;
