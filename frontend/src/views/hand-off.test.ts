@@ -21,7 +21,9 @@ vi.mock("./board-api", () => ({
     return { ok: true, data: { content_id: id, host: host ?? "codex", label: host === "workbuddy" ? "WorkBuddy" : "Codex", prompt: "开工指令", opened: host !== "workbuddy", paste: true } };
   },
 }));
-vi.mock("./onboarding/connect-api", () => ({ loadConnect: async () => ({ ok: true, data: { hosts: [], skipped: false, writingHost: "codex", writers: ["codex", "workbuddy"] } }) }));
+const conn = { writers: ["codex", "workbuddy"] as string[], writingHost: "codex" as string | null, engine: false };
+vi.mock("./onboarding/connect-api", () => ({ loadConnect: async () => ({ ok: true, data: { hosts: [], skipped: false, writingHost: conn.writingHost, writers: conn.writers } }) }));
+vi.mock("../transport", () => ({ invoke: async () => ({ ok: true, data: { configured: conn.engine } }) }));
 
 const { announce, deliveryText, effectiveWriter, explainFailure, handoffLine, PICKUP_STALE_MS } = await import("./hand-off");
 const { HandOffButton } = await import("./HandOffButton");
@@ -34,6 +36,7 @@ beforeEach(() => {
   dialogs.length = 0; toasts.length = 0; handOffs.length = 0; confirmAnswer = true; clip = [];
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => { clip.push(t); } } });
   window.location.hash = "";
+  conn.writers = ["codex", "workbuddy"]; conn.writingHost = "codex"; conn.engine = false;
 });
 
 describe("交出去之后那一句", () => {
@@ -50,6 +53,17 @@ describe("交出去之后那一句", () => {
     expect(dialogs[0]).toMatchObject({ title: "没能写进剪贴板" });
     expect(dialogs[0].body).toContain("开工指令");
     expect(toasts).toHaveLength(0);
+  });
+
+  it("交给总编辑：不碰剪贴板，发事件把指令填进右侧对话框（不自动发送）", async () => {
+    const got: string[] = [];
+    const on = (e: Event) => got.push((e as CustomEvent<{ text: string }>).detail.text);
+    window.addEventListener("autocrew:chief-prefill", on);
+    await announce(D({ host: "chief", label: "总编辑", opened: false, paste: false }) as never, "write", "已建稿。");
+    window.removeEventListener("autocrew:chief-prefill", on);
+    expect(got).toEqual(["开工指令"]);
+    expect(clip).toEqual([]);
+    expect(toasts[0]).toContain("右边的总编辑里填好了指令");
   });
 
   it("写进剪贴板：指令原样进去，一句 toast", async () => {
@@ -123,5 +137,12 @@ describe("顶栏按钮", () => {
     await act(async () => root.render(createElement(HandOffButton, { contentId: "content-1-a", mode: "look" })));
     await tick();
     expect(el.querySelector("button")?.textContent).toBe("交给 Codex 看");
+  });
+
+  it("没接本机 AI、但配了模型钥匙：按钮叫「交给总编辑写」", async () => {
+    conn.writers = []; conn.writingHost = null; conn.engine = true;
+    await act(async () => root.render(createElement(HandOffButton, { contentId: "content-1-a", mode: "write" })));
+    await tick();
+    expect(el.querySelector("button")?.textContent).toBe("交给总编辑写");
   });
 });

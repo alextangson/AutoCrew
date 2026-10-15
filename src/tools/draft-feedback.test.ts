@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeDraft } from "./draft.js";
 import { setQuoteFetch } from "../modules/draft/verify-quote.js";
-import { getContent } from "../storage/local-store.js";
+import { getContent, updateContent } from "../storage/local-store.js";
 import { loadProfile, ruleStatus, updateProfile, decideWritingRule } from "../modules/profile/creator-profile.js";
 import { addWritingRule } from "../modules/profile/writing-rules.js";
 import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
@@ -122,6 +122,15 @@ describe("save feedback", () => {
     expect(p.rules_detail).toEqual([{ id: expect.any(String), scope: "voice_core", rule: "口语化" }]);
     expect(p.pending_rules).toEqual([{ id: expect.any(String), scope: "voice_core", rule: "少用术语" }]);
     expect(p.active_rule_count).toBe(1);
+  });
+
+  it("看板交出去的稿：没再调 start、直接存了一版也算接手，记下是谁（spec 2026-10-15 §B5）", async () => {
+    const s = await run("start", { inspiration: "x" });
+    const id = s.content_id as string, v = (s.progress as { version: number }).version;
+    await run("angle", { content_id: id, base_version: v, ...ANGLE });
+    await updateContent(id, { writingHandoff: { host: "codex", at: new Date().toISOString() } }, dir);
+    expect(await run("save", { content_id: id, base_version: v, body: BODY })).toMatchObject({ ok: true });
+    expect((await getContent(id, dir))!.writingHandoff).toMatchObject({ host: "codex", pickedUpBy: "claude-code", pickedUpAt: expect.any(String) });
   });
 
   it("第一版不收 feedback（bad_param），什么都没存", async () => {

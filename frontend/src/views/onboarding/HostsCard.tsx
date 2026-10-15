@@ -71,7 +71,8 @@ export function HostsCard() {
       setHosts(c.data.hosts); setError(null);
       const ws = c.data.writers ?? [];
       setWriters(ws);
-      setWritingHostState(c.data.writingHost && ws.includes(c.data.writingHost) ? c.data.writingHost : ws[0] ?? null);
+      // 存下的默认和「没存时顺位取的」分开：存下的那个断开了，别把别的标成默认、藏掉它的「设成默认写稿」（Codex 审 P2）
+      setWritingHostState(c.data.writingHost ?? ws[0] ?? null);
     } else setError(c.error);
     // 所有令牌都列出来、都能撤销（包括三家宿主自己的），和原来的设置页一样
     if (t.ok) setOthers((t as unknown as { data?: { hosts?: TokenView[] } }).data?.hosts ?? []);
@@ -92,7 +93,7 @@ export function HostsCard() {
       </div>
       <p className="muted int-line">让你电脑上的 AI 直接用 AutoCrew：写稿、审稿、剪辑、发布都能做；审片、认稿、选封面、「我发了」只有你在这里点。</p>
       {error && <p className="set-test-fail">没查到宿主状态：{error}</p>}
-      {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} isDefault={h.host === writingHost} canDefault={writers.includes(h.host)} />)}
+      {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} isDefault={h.host === writingHost && writers.includes(h.host)} canDefault={writers.includes(h.host)} />)}
       {others.map((t) => (
         <div key={t.host} className="row">
           <span className="row-title">{hostLabel(t.host)}</span>

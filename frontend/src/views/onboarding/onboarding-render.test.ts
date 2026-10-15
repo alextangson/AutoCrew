@@ -249,6 +249,22 @@ describe("Codex 评审第 2 轮 P2-b：没核对上 / 只剩令牌也能断开",
   });
 });
 
+describe("设置 · 宿主：默认写稿 AI（spec 2026-10-15 §B1）", () => {
+  it("存下的默认（WorkBuddy）断开了：不把 Codex 冒充成默认，Codex 那行给「设成默认写稿」", async () => {
+    store.view = { hosts: [H("codex", { found: true, connected: true, canWrite: true }), H("claude"), H("workbuddy", { found: true })], skipped: false, writingHost: "workbuddy", writers: ["codex"] };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("codex").querySelector(".chip")).toBeNull();
+    expect([...card("codex").querySelectorAll("button")].map((b) => b.textContent)).toContain("设成默认写稿");
+  });
+  it("没存过默认、只接了 Codex：Codex 就是默认", async () => {
+    store.view = { hosts: [H("codex", { found: true, connected: true, canWrite: true }), H("claude"), H("workbuddy")], skipped: false, writingHost: null, writers: ["codex"] };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("codex").textContent).toContain("默认写稿");
+  });
+});
+
 describe("Codex 评审第 2 轮 P2-c：完成页提示按宿主权限", () => {
   it("只接了 Codex（能写稿）：完成页叫它写稿、记成默认写稿 AI，没有「写稿要接 Claude Code 或 WorkBuddy」那句（spec 2026-10-15 §B）", async () => {
     store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: true }), H("claude"), H("workbuddy")], skipped: false };

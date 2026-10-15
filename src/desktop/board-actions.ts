@@ -20,7 +20,7 @@ import { anySubmitted, readPublishRecord } from "../storage/publish-record.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../storage/production-store.js";
 import { founderDecision } from "../modules/production/decisions.js";
 import { newDraftAngleRefusal, type AngleRefusal } from "../modules/research/angle-gate.js";
-import { deliver, pickFor, writePrompt, type Delivery, type HandOffDeps } from "./writing-handoff.js";
+import { deliver, resolveTarget, writePrompt, type Delivery, type HandOffDeps } from "./writing-handoff.js";
 import type { WriterPick } from "./host-connect/writing-host.js";
 
 export const PROGRAM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -65,7 +65,7 @@ async function startOnce(topicId: string, platform: string, dataDir: string, dep
   const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused && refused.code !== "needs_founder_angle") return refused;
   // 交给谁先定下来：一个都没接 / 默认的连不上了就不建稿，不假装开工
-  const pick = pickFor(deps, host);
+  const pick = await resolveTarget(deps, host, dataDir);
   if (!pick.ok) return pick;
   const content = await saveContent({ title: topic.title, body: "", platform, topicId, status: "drafting", tags: [] }, dataDir);
   const d = await deliver(pick.host, pick.label, writePrompt(topic.title, topicId, content.id, platform), deps);

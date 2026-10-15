@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatMarkdown } from "./markdown";
 import { HandOffButton } from "../views/HandOffButton";
-import { WRITING_STATUSES } from "../views/hand-off";
+import { CHIEF_PREFILL_EVENT, WRITING_STATUSES } from "../views/hand-off";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
@@ -186,14 +186,25 @@ export function ChatDock(props: {
       return;
     }
     let active = true;
-    void invoke("content:get", { id }).then((result) => {
+    const read = () => void invoke("content:get", { id }).then((result) => {
       if (!active) return;
       const content = (result as unknown as { content?: { title?: string; status?: string } }).content;
       setContextTitle(result.ok ? (content?.title ?? id) : id);
-      setContextWriting(Boolean(result.ok && content?.status && WRITING_STATUSES.has(content.status)));
+      // 稿子开着时阶段会变（认稿、交剪辑）：「交给 X 写 / 看」跟着变，不让人点到服务端拒的那一个
+      if (result.ok) setContextWriting(Boolean(content?.status && WRITING_STATUSES.has(content.status)));
     });
-    return () => { active = false; };
+    read();
+    const poll = window.setInterval(read, 10_000);
+    window.addEventListener("focus", read);
+    return () => { active = false; window.clearInterval(poll); window.removeEventListener("focus", read); };
   }, [props.contentContext?.contentId]);
+
+  // 「交给总编辑写」：指令填进输入框，不自动发送（spec 2026-10-15 §B 边界：只配了钥匙的人）
+  useEffect(() => {
+    const on = (e: Event) => setInput((e as CustomEvent<{ text: string }>).detail.text);
+    window.addEventListener(CHIEF_PREFILL_EVENT, on);
+    return () => window.removeEventListener(CHIEF_PREFILL_EVENT, on);
+  }, []);
 
   /** 失败回 null（不是空数组）——调用方据此保住现有列表，不把一次网络抖动渲染成"没有会话" */
   const listConversations = async (): Promise<ConversationSummary[] | null> => {

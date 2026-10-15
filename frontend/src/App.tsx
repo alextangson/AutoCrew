@@ -2,6 +2,7 @@
  * 双区壳(frontend-v2 A/B/C 期):主区 + 总编辑常驻右栏。
  * 原生视图:工作台/看板/编辑器/校准中心/数据回流/设置;素材库回 vanilla(D 期前迁)。
  */
+import { CHIEF_PREFILL_EVENT } from "./views/hand-off";
 import { useEffect, useRef, useState } from "react";
 import { Board } from "./views/Board";
 import { TopicPage } from "./views/TopicMatrix";
@@ -58,6 +59,13 @@ export function App() {
   useEffect(() => {
     if (focus) setDockOpen(true);
   }, [focus]);
+
+  // 「交给总编辑写」：打开右侧总编辑（输入框由 ChatDock 自己填）
+  useEffect(() => {
+    const on = () => setDockOpen(true);
+    window.addEventListener(CHIEF_PREFILL_EVENT, on);
+    return () => window.removeEventListener(CHIEF_PREFILL_EVENT, on);
+  }, []);
 
   // 剪辑看板默认收起总编辑（不改存下的偏好）；离开看板回到偏好
   useEffect(() => {

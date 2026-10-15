@@ -75,12 +75,28 @@ describe("按默认 AI 打开", () => {
   });
 
   it("一个 AI 都没接 / 默认的连不上了：不建稿、不开窗，原样回原因", async () => {
-    const none = { platform: "darwin" as const, spawnImpl, writer: () => ({ ok: false as const, code: "no_writer" as const, error: "先接一个 AI" }) };
+    const none = { platform: "darwin" as const, spawnImpl, writer: () => ({ ok: false as const, code: "no_writer" as const, error: "先接一个 AI" }), engineReady: async () => false };
     expect(await startWriting(topic.id, "douyin", dir, none)).toMatchObject({ ok: false, code: "no_writer" });
     const gone = { platform: "darwin" as const, spawnImpl, writer: () => ({ ok: false as const, code: "default_gone" as const, host: "codex" as const, label: "Codex", error: "默认的 Codex 连不上了", alternatives: [] }) };
     expect(await startWriting(topic.id, "douyin", dir, gone)).toMatchObject({ ok: false, code: "default_gone", label: "Codex" });
     expect((await listContents(dir)).filter((c) => c.topicId === topic.id)).toHaveLength(0);
     expect(spawnImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("只配了模型钥匙、没接本机 AI", () => {
+  const keyOnly = { platform: "darwin" as const, spawnImpl, writer: () => ({ ok: false as const, code: "no_writer" as const, error: "先接一个 AI" }), engineReady: async () => true };
+  it("开始写照样建稿，交给总编辑：不开窗、不进剪贴板，指令给前端填进右侧对话框", async () => {
+    const r = await startWriting(topic.id, "douyin", dir, keyOnly);
+    expect(r).toMatchObject({ ok: true, created: true, host: "chief", label: "总编辑", opened: false, paste: false });
+    if (!r.ok || !r.created) throw new Error();
+    expect(r.prompt).toContain(r.content_id);
+    expect(spawnImpl).not.toHaveBeenCalled();
+    expect(handoffView((await getContent(r.content_id, dir))!)).toMatchObject({ label: "总编辑", pickedUp: false });
+  });
+  it("默认的断开了不悄悄换成总编辑：照旧 default_gone", async () => {
+    const gone = { ...keyOnly, writer: () => ({ ok: false as const, code: "default_gone" as const, host: "codex" as const, label: "Codex", error: "默认的 Codex 连不上了", alternatives: [] }) };
+    expect(await startWriting(topic.id, "douyin", dir, gone)).toMatchObject({ ok: false, code: "default_gone" });
   });
 });
 
@@ -142,6 +158,14 @@ describe("交出去之后：等接手 / 在写 / 认领中", () => {
     const after = (await getContent(r.content_id, dir))!;
     expect(after.writingHandoff).toMatchObject({ pickedUpBy: "codex" });
     expect(handoffView(after)).toMatchObject({ pickedUp: true });
+  });
+
+  it("没调 start 直接存了正文也算接手；显示实际接手的那个，不是原来交给的", () => {
+    const at = new Date(Date.now() - 3600_000).toISOString();
+    const base = { status: "drafting", claim: undefined, body: "" };
+    expect(handoffView({ ...base, writingHandoff: { host: "codex", at } } as never)).toMatchObject({ pickedUp: false, label: "Codex" });
+    expect(handoffView({ ...base, body: "写了一段", writingHandoff: { host: "codex", at } } as never)).toMatchObject({ pickedUp: true });
+    expect(handoffView({ ...base, writingHandoff: { host: "codex", at, pickedUpAt: at, pickedUpBy: "claude-code" } } as never)).toMatchObject({ pickedUp: true, label: "Claude Code" });
   });
 
   it("别的会话认领着：照实说谁在写，「重新交给」被拒", async () => {

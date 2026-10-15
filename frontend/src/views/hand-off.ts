@@ -6,15 +6,20 @@ import { useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
 import type { ApiResult, Delivery } from "./board-api";
 import { loadConnect, type HostId } from "./onboarding/connect-api";
+import { invoke } from "../transport";
 
 export const WRITER_LABEL: Record<HostId, string> = { claude: "Claude Code", codex: "Codex", workbuddy: "WorkBuddy" };
 export const SETTINGS_HREF = "#/settings?tab=integrations";
+/** 交给总编辑（只配了模型钥匙、没接本机 AI）：App 打开右侧对话栏，ChatDock 把指令填进输入框 */
+export const CHIEF_PREFILL_EVENT = "autocrew:chief-prefill";
+export const CHIEF_LABEL = "总编辑";
 
 /** 写稿阶段（与服务端 writing-handoff 的 WRITING 同一组）：顶栏是「交给 X 写」；其余阶段「交给 X 看」 */
 export const WRITING_STATUSES: ReadonlySet<string> = new Set(["topic_saved", "drafting", "draft_ready", "reviewing", "revision", "needs_evidence"]);
 
 
-export interface Writers { writers: HostId[]; defaultHost: HostId | null; error?: string }
+/** chief：本机 AI 一个都没接、但配了模型钥匙 → 交给右侧的总编辑 */
+export interface Writers { writers: HostId[]; defaultHost: HostId | null; chief: boolean; error?: string }
 
 /** 默认写稿 AI：存下的默认还接着就是它，否则第一个接上的（与服务端 pickWriter 同一规则；最终以服务端为准） */
 export function effectiveWriter(writers: HostId[], saved: HostId | null | undefined): HostId | null {
@@ -25,11 +30,12 @@ export function useWriters(): Writers | null {
   const [w, setW] = useState<Writers | null>(null);
   useEffect(() => {
     let live = true;
-    void loadConnect().then((r) => {
+    void Promise.all([loadConnect(), invoke("settings:get")]).then(([r, e]) => {
       if (!live) return;
-      if (!r.ok) return setW({ writers: [], defaultHost: null, error: r.error });
+      const engine = Boolean(e.ok && (e.data as { configured?: boolean } | undefined)?.configured);
+      if (!r.ok) return setW({ writers: [], defaultHost: null, chief: false, error: r.error });
       const writers = r.data.writers ?? [];
-      setW({ writers, defaultHost: effectiveWriter(writers, r.data.writingHost) });
+      setW({ writers, defaultHost: effectiveWriter(writers, r.data.writingHost), chief: !writers.length && engine });
     });
     return () => { live = false; };
   }, []);
@@ -48,6 +54,10 @@ export function deliveryText(d: Delivery, mode: "write" | "look", copied: boolea
 
 /** 放剪贴板 + 说一句；剪贴板写不进去就把指令原文摆出来让人手动复制 */
 export async function announce(d: Delivery, mode: "write" | "look", prefix = ""): Promise<void> {
+  if (d.host === "chief") {
+    window.dispatchEvent(new CustomEvent(CHIEF_PREFILL_EVENT, { detail: { text: d.prompt } }));
+    return toast(`${prefix}右边的总编辑里填好了指令，看一眼按发送${mode === "write" ? "开始写" : ""}`);
+  }
   let copied = !d.paste;
   if (d.paste) {
     try { await navigator.clipboard.writeText(d.prompt); copied = true; } catch { copied = false; }

@@ -82,7 +82,10 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   const provenance = modelWrite(a.host, angle ? { direction: angle.main_line } : undefined);
   let saved: Content | null;
   try {
-    saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host }, _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
+    saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host },
+      // 看板交出去的稿没调 start 直接存了一版，也算接手（spec 2026-10-15 §B5）
+      ...(c.writingHandoff && !c.writingHandoff.pickedUpAt ? { writingHandoff: { ...c.writingHandoff, pickedUpAt: new Date().toISOString(), pickedUpBy: a.host } } : {}),
+      _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
   } catch (err) {
     if (err instanceof FirstBodyRefusedError) return fail("needs_angle", "还没记录创始人选定的立意：先出 3 个立意让创始人选，用 angle 记下再存稿", { detail: err.refusal.error, next_action: { tool: "autocrew_draft", params: { action: "angle", content_id: c.id } } });
     if (err instanceof ScriptFrozenError) return fail("script_frozen", err.message);

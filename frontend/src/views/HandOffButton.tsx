@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { handOffContent } from "./board-api";
-import { settle, useWriters, WRITER_LABEL } from "./hand-off";
+import { CHIEF_LABEL, settle, useWriters, WRITER_LABEL } from "./hand-off";
 import type { HostId } from "./onboarding/connect-api";
 
 export function HandOffButton(p: { contentId: string; mode: "write" | "look"; className?: string; label?: (who: string) => string; onDone?: () => void;
@@ -23,8 +23,10 @@ export function HandOffButton(p: { contentId: string; mode: "write" | "look"; cl
       p.onDone?.();
     } finally { setBusy(false); }
   };
-  const who = main ? WRITER_LABEL[main] : "AI";
-  const text = p.label ? p.label(who) : `交给 ${who} ${p.mode === "write" ? "写" : "看"}`;
+  const who = main ? WRITER_LABEL[main] : w?.chief ? CHIEF_LABEL : "AI";
+  const verb = p.mode === "write" ? "写" : "看";
+  // 英文名两边留空格，「总编辑」直接连写：交给 Codex 写 / 交给总编辑写
+  const text = p.label ? p.label(who) : /^[\x00-\x7f]/.test(who) ? `交给 ${who} ${verb}` : `交给${who}${verb}`;
   return <span className="handoff">
     <button className={p.className} disabled={busy} title={p.mode === "write" ? "把开工指令交给这个 AI，它接手接着写" : "让这个 AI 看看这篇到哪一步，先不改"} onClick={() => void run(p.primary ?? null)}>{busy ? "正在交…" : text}</button>
     {others.length > 0 && <select className="handoff-other" aria-label="换一个 AI" value="" disabled={busy} onChange={(e) => { const h = e.target.value as HostId; if (h) void run(h); }}>
