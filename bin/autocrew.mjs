@@ -39,6 +39,9 @@ function printHelp() {
   autocrew runs           查看最近任务事件
   autocrew call           调用任意内部能力（channel --payload JSON）
   autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
+  autocrew init           装好后一条命令：接上调用的 AI + 建资料库并当场生效（可重复跑）
+                          --host claude|codex|workbuddy  --library <路径>（默认 ~/AutoCrew资料库）
+                          --legacy migrate|keep（旧 ~/.autocrew 有稿时必须选）
   autocrew connect        一键接上宿主（claude|codex|workbuddy）；--list 看谁接上了、上次使用时间
   autocrew disconnect     断开宿主：删配置条目 + 撤销令牌
   autocrew host           接入宿主（codex|claude-code|dsh|workbuddy），打印接入步骤
@@ -615,6 +618,7 @@ switch (command) {
     process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
   }
+  case "init":
   case "connect":
   case "disconnect": {
     // 一键接入（onboarding-connect §3）：与引导页、设置页同一套实现
@@ -624,7 +628,10 @@ switch (command) {
       process.exitCode = 1;
       break;
     }
-    const args = [path.join(ROOT, "scripts", "host-connect.mts"), command, ...process.argv.slice(process.argv.indexOf(command) + 1)];
+    const rest = process.argv.slice(process.argv.indexOf(command) + 1);
+    const args = command === "init"
+      ? [path.join(ROOT, "scripts", "init.mts"), ...rest]
+      : [path.join(ROOT, "scripts", "host-connect.mts"), command, ...rest];
     const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
     process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
