@@ -18,7 +18,16 @@ export interface DraftFeedbackInput { founder_words: string; lessons: FeedbackLe
 export type LessonOutcome = "created_pending" | "already_exists" | "blocked_by_tombstone" | "evidence_added" | "playbook_proposed" | "playbook_duplicate" | "blocked_by_rejected";
 export interface LessonResult { rule: string; outcome: LessonOutcome; rule_id?: string; proposal_id?: string; note?: string }
 /** 稿上的意见记录：版本号、原话、每条概括的去向；playbook = 写入时立意记的手册版本（统计按它对，spec §9.4） */
-export interface DraftFeedbackRecord { version: number; founder_words: string; at: string; playbook?: PlaybookPin; lessons: Array<{ rule_id?: string; proposal_id?: string; outcome: LessonOutcome }> }
+export interface DraftFeedbackRecord {
+  version: number; founder_words: string; at: string; playbook?: PlaybookPin;
+  lessons: Array<{ rule_id?: string; proposal_id?: string; outcome: LessonOutcome }>;
+  /** 开头阶段（三选一时）的意见 / 正文阶段的意见；缺省 = 正文（旧记录） */
+  stage?: "opening" | "body";
+  /** 正文没改也记了意见（spec 2026-10-15 §15.6） */
+  body_changed?: boolean;
+  /** 旧会话照传的 lessons：不再即时生成规则或提案，原样留着，定稿时跨稿比对（§15.7） */
+  deferred_lessons?: FeedbackLesson[];
+}
 
 const RULE_MAX = 200;
 const REJECTED_SHOWN = 30;

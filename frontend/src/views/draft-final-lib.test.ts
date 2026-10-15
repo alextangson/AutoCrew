@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { finalizeBlock, type DraftPanelData } from "./draft-final-lib";
+import { finalizeBlock, testReadLabel, type DraftPanelData } from "./draft-final-lib";
 
 const base = (over: Partial<DraftPanelData> = {}): DraftPanelData => ({
   status: "draft_ready", draft_hash: "h", version: 2, review_notes: [],
@@ -53,5 +53,13 @@ describe("审稿意见形状不对时退回原文（不崩）", () => {
   ])("%o", (notes) => {
     const html = renderToStaticMarkup(createElement(ReviewNotes, { notes: [{ version: 1, at: "x", notes }], version: 1 }));
     expect(html).toContain("<pre");
+  });
+});
+
+describe("观众试读标签（spec 2026-10-15 §15.12）", () => {
+  it("读的是旧版就写明；失败 / 不支持不算已审", () => {
+    expect(testReadLabel({ version: 3, status: "ok", notes: "", at: "t", current: true })).toBe("读的是当前版（第 3 版）");
+    expect(testReadLabel({ version: 2, status: "failed", notes: "", at: "t", current: false })).toBe("这是修改前那版的试读（第 2 版） · 试读没跑成（不算已审）");
+    expect(testReadLabel({ version: 2, status: "unsupported", notes: "", at: "t", current: true })).toContain("不算已审");
   });
 });

@@ -631,10 +631,14 @@
      "action": {
       "enum": [
        "start",
+       "exemplars",
        "angle",
+       "opening",
        "save",
        "verify_quote",
-       "prepare_final"
+       "prepare_final",
+       "feedback_history",
+       "propose_promotion"
       ],
       "type": "string"
      },
@@ -643,6 +647,12 @@
      },
      "body": {
       "type": "string"
+     },
+     "candidates": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "chain": {
       "items": {
@@ -682,12 +692,17 @@
       },
       "type": "array"
      },
+     "cites": {},
      "claim": {
       "type": "string"
      },
      "content_id": {
       "type": "string"
      },
+     "exemplar_id": {
+      "type": "string"
+     },
+     "exemplars": {},
      "feedback": {},
      "for_whom": {
       "type": "string"
@@ -717,6 +732,13 @@
       "type": "string"
      },
      "review_notes": {},
+     "target": {
+      "type": "string"
+     },
+     "test_read": {},
+     "text": {
+      "type": "string"
+     },
      "title": {
       "type": "string"
      },
@@ -1393,6 +1415,8 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "approve_promotion",
+       "reject_promotion",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
@@ -3616,10 +3640,14 @@
      "action": {
       "enum": [
        "start",
+       "exemplars",
        "angle",
+       "opening",
        "save",
        "verify_quote",
-       "prepare_final"
+       "prepare_final",
+       "feedback_history",
+       "propose_promotion"
       ],
       "type": "string"
      },
@@ -3628,6 +3656,12 @@
      },
      "body": {
       "type": "string"
+     },
+     "candidates": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "chain": {
       "items": {
@@ -3667,12 +3701,17 @@
       },
       "type": "array"
      },
+     "cites": {},
      "claim": {
       "type": "string"
      },
      "content_id": {
       "type": "string"
      },
+     "exemplar_id": {
+      "type": "string"
+     },
+     "exemplars": {},
      "feedback": {},
      "for_whom": {
       "type": "string"
@@ -3702,6 +3741,13 @@
       "type": "string"
      },
      "review_notes": {},
+     "target": {
+      "type": "string"
+     },
+     "test_read": {},
+     "text": {
+      "type": "string"
+     },
      "title": {
       "type": "string"
      },
@@ -4378,6 +4424,8 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "approve_promotion",
+       "reject_promotion",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",

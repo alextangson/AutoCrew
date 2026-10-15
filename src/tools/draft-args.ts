@@ -2,6 +2,8 @@
 import { LOCAL_HOST } from "../storage/local-store.js";
 import { maybeJson, UNPARSABLE } from "../modules/publish/review-gate/plan.js";
 import { parseFeedback, type DraftFeedbackInput } from "../modules/draft/draft-feedback.js";
+import { parseCandidates, parseCites, parsePins, parseTestRead, type Cite, type TestReadInput } from "../modules/draft/draft-args-extra.js";
+import type { ExemplarPin } from "../modules/exemplar/types.js";
 
 export interface DraftArgs {
   action: string;
@@ -35,6 +37,17 @@ export interface DraftArgs {
   reviewNotes?: string | Record<string, unknown> | unknown[] | typeof INVALID;
   /** save：创始人这次的改稿意见；string = 解析不了的原因 */
   feedback?: DraftFeedbackInput | string;
+  /** angle：立意卡上实际引用的范文；string = 解析不了的原因 */
+  exemplars?: ExemplarPin[] | string;
+  /** opening：这一轮的候选开头 */
+  candidates?: string[] | string;
+  /** save：观众试读结果 */
+  testRead?: TestReadInput | string;
+  /** propose_promotion：升级到哪（playbook / exemplar / method）、引的两篇稿的意见、改后的文字 */
+  target?: string;
+  cites?: Cite[] | string;
+  text?: string;
+  exemplarId?: string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
@@ -114,6 +127,13 @@ export function draftArgs(p: Record<string, unknown>): DraftArgs {
     baseVersion: intOf(p.base_version),
     reviewNotes: notesOf(p.review_notes),
     feedback: parseFeedback(p.feedback),
+    exemplars: parsePins(p.exemplars),
+    candidates: parseCandidates(p.candidates),
+    testRead: parseTestRead(p.test_read),
+    target: str(p.target)?.toLowerCase(),
+    cites: parseCites(p.cites),
+    text: typeof p.text === "string" && p.text.trim() ? p.text : undefined,
+    exemplarId: str(p.exemplar_id),
   };
 }
 

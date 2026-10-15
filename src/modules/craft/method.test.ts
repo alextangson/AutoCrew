@@ -24,16 +24,15 @@ describe("start 不再带 craft_method", () => {
   });
 });
 
-describe("Codex 审稿提示词与技能", () => {
-  it("{{CRAFT}} 是选定的体裁手册，判据三项；技能不再提 craft_method", async () => {
-    const prompt = await fs.readFile(path.join(import.meta.dirname, "../../../skills/write-script/codex-review-prompt.md"), "utf8");
-    expect(prompt).toContain("{{CRAFT}}");
-    expect(prompt).toContain("体裁手册");
-    expect(prompt.match(/^\d\. /gm)).toHaveLength(3);
+describe("write-script 技能（spec 2026-10-15）", () => {
+  it("写法一节在标记里、在写全文之前；观众试读替代 Codex 审稿；不再每轮提规则；技能不再提 craft_method", async () => {
     const skill = await fs.readFile(path.join(import.meta.dirname, "../../../skills/write-script/SKILL.md"), "utf8");
-    expect(skill).toContain("{{CRAFT}}");
     expect(skill).not.toContain("craft_method");
-    expect(skill).toContain("playbook:<体裁 id>");
-    expect(skill).toContain("不要用 `verify_quote` 登记");
+    expect(skill).not.toContain("codex-review-prompt");
+    expect(skill).toContain("viewer-test-read-prompt.md");
+    expect(skill.indexOf("<!-- method:start -->")).toBeLessThan(skill.indexOf("## 5 写和观众试读"));
+    expect(skill).toContain("## 写法：怎么让人看下去");
+    expect(skill).not.toMatch(/feedback\.lessons|"lessons"|relation:/);
+    expect(skill).toContain("不用 `verify_quote` 登记");
   });
 });

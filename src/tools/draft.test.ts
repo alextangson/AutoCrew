@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { pickOpening } from "./draft-test-helpers.js";
 import { executeDraft } from "./draft.js";
 import { setQuoteFetch } from "../modules/draft/verify-quote.js";
 import { appendOutcomes } from "../modules/flywheel/outcome-store.js";
@@ -20,7 +21,7 @@ const BODY = "你是不是也觉得用了 AI 以后反而更忙了？我先说�
 const run = (action: string, args: Record<string, unknown> = {}, host = "claude-code") =>
   executeDraft({ action, ...args, _dataDir: dir, _host: host, _session: "s1" });
 
-const ANGLE = {
+const ANGLE = { exemplars: [] as unknown[],
   main_line: "AI 省下的时间会被你自己填满，要管的是日程不是工具",
   for_whom: "天天用 AI 写东西的职场人",
   opening: "你是不是也觉得用了 AI 以后反而更忙了？",
@@ -38,6 +39,7 @@ async function started(): Promise<{ id: string; version: number }> {
 async function angled(): Promise<{ id: string; version: number }> {
   const s = await started();
   expect((await run("angle", { content_id: s.id, base_version: s.version, ...ANGLE })).ok).toBe(true);
+  await pickOpening(run, s.id, s.version);
   return s;
 }
 
@@ -89,6 +91,7 @@ describe("start", () => {
     const bare = await saveContent({ title: "只有选题", body: "", platform: "douyin", topicId: topic.id, status: "topic_saved", tags: [], _provenance: HUMAN_WRITE }, dir);
     expect((await run("start", { content_id: bare.id })).progress).toMatchObject({ status: "drafting", needs_angle: true });
     await run("angle", { content_id: bare.id, base_version: 1, ...ANGLE });
+    await pickOpening(run, bare.id, 1);
     expect((await run("save", { content_id: bare.id, base_version: 1, body: BODY })).ok).toBe(true);
     expect(await run("prepare_final", { content_id: bare.id, base_version: 2, citations: [] })).toMatchObject({ ok: true, status: "draft_ready" });
   });
@@ -143,6 +146,7 @@ describe("angle", () => {
   it("chain 被序列化成字符串也能用；行数不对、缺原话都拒", async () => {
     const { id } = await started();
     expect(await run("angle", { content_id: id, base_version: 1, ...ANGLE, chain: JSON.stringify(ANGLE.chain) })).toMatchObject({ ok: true });
+    await pickOpening(run, id, 1);
     expect(await run("angle", { content_id: id, base_version: 1, ...ANGLE, chain: ["一", "二"] })).toMatchObject({ ok: false, code: "bad_param" });
     expect(await run("angle", { content_id: id, base_version: 1, ...ANGLE, founder_words: "" })).toMatchObject({ ok: false, code: "bad_param" });
   });
@@ -232,6 +236,7 @@ describe("验收 10-04 跟进", () => {
     const id = r.content_id as string;
     expect(r.workbench_url).toEqual(LINK(id));
     expect((await run("angle", { content_id: id, base_version: 1, ...ANGLE })).workbench_url).toEqual(LINK(id));
+    await pickOpening(run, id, 1);
     expect((await run("save", { content_id: id, base_version: 1, body: BODY })).workbench_url).toEqual(LINK(id));
     expect((await run("save", { content_id: id, base_version: 2, body: BODY, review_notes: "codex 超时" })).workbench_url).toEqual(LINK(id));
   });
@@ -261,17 +266,18 @@ describe("验收 10-04 跟进", () => {
     expect(titles).not.toContain("同题旧稿");
   });
 
-  it("next_action 随状态变：start 指 verify_quote；存正文后要审；附了审稿就按意见改；定稿后给链接", async () => {
+  it("next_action 随状态变：start 指 verify_quote；存正文后要试读；附了试读（或旧的审稿）就按意见改；定稿后给链接", async () => {
     const s = await run("start", { inspiration: "用了 AI 反而更忙" });
     const id = s.content_id as string;
     const note = (r: Record<string, unknown>) => (r.next_action as { note: string }).note;
     expect(note(s)).toContain("verify_quote");
     expect(note(s)).not.toContain("read / cite");
     await run("angle", { content_id: id, base_version: 1, ...ANGLE });
-    expect(note(await run("save", { content_id: id, base_version: 1, body: BODY }))).toContain("Codex");
-    const reviewed = note(await run("save", { content_id: id, base_version: 2, body: BODY, review_notes: "主线清楚" }));
+    await pickOpening(run, id, 1);
+    expect(note(await run("save", { content_id: id, base_version: 1, body: BODY }))).toContain("观众试读");
+    const reviewed = note(await run("save", { content_id: id, base_version: 2, body: BODY, test_read: { status: "unsupported", notes: "这个宿主没有子代理，也没装 codex" } }));
     expect(reviewed).toContain("只改他说的地方");
-    expect(reviewed).not.toContain("Codex");
+    expect(reviewed).not.toContain("观众试读");
     expect(note(await run("save", { content_id: id, base_version: 2, body: `${BODY}改一句。` }))).toContain("prepare_final");
     expect(note(await run("start", { content_id: id }))).toContain("只改他说的地方");
     await run("prepare_final", { content_id: id, base_version: 3, citations: [] });

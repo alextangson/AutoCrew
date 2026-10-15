@@ -37,6 +37,7 @@ export function rulesForPlatform(profile: CreatorProfile, platform: string | nul
   return profile.writingRules.filter((r) => {
     if (!isRuleActive(r)) return false;
     if (platform === null) return true;
+    if (r.skipPlatforms?.includes(platform)) return false;
     const scope = r.scope ?? "voice_core";
     return scope === "voice_core" || scope === `platform:${platform}`;
   });

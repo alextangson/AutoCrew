@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as localStore from "../../storage/local-store.js";
+import { pickOpening } from "../../tools/draft-test-helpers.js";
 import { executeDraft } from "../../tools/draft.js";
 import { setQuoteFetch } from "./verify-quote.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
@@ -19,7 +20,7 @@ const PAGE = "研究显示，参与调查的 1200 名职场人里，有 37% 每�
 const SOURCED = "有份调查问了 1200 名职场人，37% 每天用 AI 写周报。";
 const UNSOURCED = "而且会议时间平均多了 25%。";
 const BODY = `你是不是也觉得用了 AI 以后反而更忙了？省下来的时间，被你自己又填满了。${SOURCED}可周报写得快了，会却变多了。所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历。`;
-const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个", genre: "ganhuo" };
+const ANGLE = { exemplars: [] as unknown[], main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "就这个", genre: "ganhuo" };
 const run = (action: string, args: Record<string, unknown> = {}) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 const finalize = (payload: Record<string, unknown>, authMethod?: "session" | "bearer") => buildIpcHandlers()["draft:finalize"]({ ...payload, _dataDir: dir }, authMethod ? { authMethod } : undefined);
 
@@ -27,6 +28,7 @@ const V = 2;
 async function written(body = BODY): Promise<string> {
   const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;
   await run("angle", { content_id: id, base_version: 1, ...ANGLE });
+  await pickOpening(run, id, 1);
   expect((await run("save", { content_id: id, base_version: 1, body })).ok).toBe(true);
   expect((await run("verify_quote", { content_id: id, url: "https://example.com/r", quote: "有 37% 每天用 AI 写周报" })).ok).toBe(true);
   expect((await run("verify_quote", { content_id: id, url: "https://example.com/r", quote: "参与调查的 1200 名职场人" })).ok).toBe(true);

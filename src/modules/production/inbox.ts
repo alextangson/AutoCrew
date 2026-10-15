@@ -24,7 +24,7 @@ import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 export type InboxType =
   | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
-  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "writing_rule" | "playbook_change" | "other";
+  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "writing_rule" | "playbook_change" | "writing_promotion" | "other";
 
 /** 按钮：主（黑底，每件最多一个）/ 次（白底细边）/ 少用（灰字）；带 note 的动作就地展开输入框 */
 export interface InboxAction {

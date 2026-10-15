@@ -1,64 +1,28 @@
 /**
- * autocrew_draft 的写稿动作：verify_quote / angle / save。prepare_final 在 draft-prepare.ts。
- * angle / save 在 withVersion 里：版本比对与写入同一把单稿写锁（锁里不能再调 updateContent / transitionStatus）。
+ * autocrew_draft 的写稿动作：verify_quote / save。angle 在 draft-angle.ts，opening 在 draft-opening.ts，prepare_final 在 draft-prepare.ts。
+ * save 在 withVersion 里：版本比对与写入同一把单稿写锁（锁里不能再调 updateContent / transitionStatus）。
+ *
+ * 改稿意见（spec 2026-10-15 §6、§15.6、§15.7）：这条路上 save 不再即时生成档案规则或手册提案。
+ * 原话照存在稿上（正文没改也能记）；旧会话照传的 lessons 原样留着，回执写明「已改为定稿时跨稿比对」。
  */
-import { getContent, getTopic, saveTopic, transitionStatus, type Content, type ContentTx } from "../storage/local-store.js";
+import { getContent, transitionStatus, type Content, type ContentTx } from "../storage/local-store.js";
 import { FirstBodyRefusedError, isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { ScriptFrozenError } from "../storage/production-store.js";
-import { recordFounderAngle } from "../modules/research/angle-gate.js";
 import { verifyQuote } from "../modules/draft/verify-quote.js";
-import { applyLessons, type DraftFeedbackInput, type DraftFeedbackRecord, type LessonResult } from "../modules/draft/draft-feedback.js";
-import { currentVersion, draftNextNote, workbenchUrl, type DraftAngle, type DraftReviewNote } from "../modules/draft/draft-types.js";
-import { GENRE_HINT, pinnedPlaybook } from "../modules/playbook/read.js";
-import { loadManifest, entryOf } from "../modules/playbook/store.js";
-import { isPlaybookId, PLAYBOOK_IDS, type PlaybookId, type PlaybookPin } from "../modules/playbook/types.js";
+import type { DraftFeedbackInput, DraftFeedbackRecord } from "../modules/draft/draft-feedback.js";
+import { bodyHash, currentVersion, draftNextNote, needsOpening, workbenchUrl, type DraftReviewNote, type TestReadRecord } from "../modules/draft/draft-types.js";
+import type { TestReadInput } from "../modules/draft/draft-args-extra.js";
 import { fail, withVersion } from "./draft-version.js";
-import { INVALID, normalizeChain, type DraftArgs } from "./draft-args.js";
+import { INVALID, type DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
+export const LESSONS_DEFERRED = "这条已改为定稿时跨稿比对：lessons 原样记在这篇的意见里，不再即时生成规则或手册提案";
 
 export async function draftVerifyQuote(a: DraftArgs): Promise<R> {
   if (!a.contentId || !a.url || !a.quote?.trim()) return fail("bad_param", "verify_quote 要带 content_id、url 和 quote（原网页里逐字复制的一段）");
   const content = await getContent(a.contentId, a.dataDir);
   if (!content?.draftPath) return fail("not_started", "先用 start 建稿或接手，再核引文");
   return verifyQuote(content.id, a.url, a.quote, a.claim, a.dataDir);
-}
-
-async function topicFor(c: Content, tx: ContentTx, dataDir?: string) {
-  const existing = c.topicId ? await getTopic(c.topicId, dataDir) : null;
-  if (existing && !existing.deletedAt) return existing;
-  const topic = await saveTopic({ title: c.title, description: c.title, tags: [], source: "autocrew_draft" }, dataDir);
-  await tx.write({ topicId: topic.id });
-  return topic;
-}
-
-function angleRefusal(a: DraftArgs, chain: string[] | null): R | null {
-  const missing = [["main_line", a.mainLine], ["for_whom", a.forWhom], ["opening", a.opening], ["why_viral", a.whyViral], ["founder_words", a.founderWords], ["genre", a.genre]].filter(([, v]) => !v).map(([k]) => k);
-  if (missing.length) return fail("bad_param", `angle 缺：${missing.join("、")}。founder_words 照抄创始人选立意时的原话（说「你定」就记「你定」）；${GENRE_HINT}`, missing.includes("genre") ? { genres: [...PLAYBOOK_IDS] } : {});
-  if (!isPlaybookId(a.genre)) return fail("bad_genre", `不认识的体裁：${a.genre}。${GENRE_HINT}`, { genres: [...PLAYBOOK_IDS] });
-  if (!chain || chain.length < 4 || chain.length > 6) return fail("bad_param", `chain 要 4–6 行论证链，现在是 ${chain?.length ?? 0} 行`);
-  return null;
-}
-
-export async function draftAngle(a: DraftArgs): Promise<R> {
-  const chain = normalizeChain(a.chain);
-  const refused = angleRefusal(a, chain);
-  if (refused) return refused;
-  const genre = a.genre as PlaybookId;
-  const latest = entryOf(await loadManifest(a.dataDir), genre).current;
-  return withVersion(a, async (c, tx) => {
-    const prev = c.draftPath?.angle;
-    // 同一体裁重新出立意保留原来记下的版本；换了体裁（或旧立意没记版本）记当前版本（spec §9.4）
-    const playbook: PlaybookPin = prev?.playbook?.id === genre ? prev.playbook : { id: genre, version: latest };
-    const book = await pinnedPlaybook(playbook, a.dataDir);
-    const topic = await topicFor(c, tx, a.dataDir);
-    if (!await recordFounderAngle(topic, a.mainLine!, a.founderWords!, a.dataDir)) return fail("angle_failed", "立意没记上：选题记录写不进去");
-    const version = (prev?.version ?? 0) + 1;
-    const angle: DraftAngle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain: chain!, founder_words: a.founderWords!, ...(a.chosenOption ? { chosen_option: a.chosenOption } : {}), playbook, at: new Date().toISOString() };
-    await tx.write({ draftPath: { ...c.draftPath!, angle } });
-    return { ok: true, angle_version: version, version: currentVersion(c), playbook: book, workbench_url: workbenchUrl(c.id),
-      next_action: { note: "按选定的立意、论证链和 playbook 手册全文写全文，再 save；Codex 审稿的 {{CRAFT}} 填这本手册全文" } };
-  });
 }
 
 const TRUNCATED_TAIL = /(\.\.\.|…|（未完）?|\(truncated\)|未完待续)\s*$/;
@@ -75,57 +39,74 @@ function bodyRefusal(body: string | undefined): R | null {
   return null;
 }
 
-async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R> {
-  // 正文和标题都没变就不会出新版本：带意见的重放会把原话和出处重复记一遍
-  if (a.feedback && a.body === c.body && (!a.title || a.title === c.title)) return fail("no_change", "正文和标题都没变，不会出新版本，意见没记：按意见改完再带 feedback 存");
+function feedbackRecord(input: DraftFeedbackInput, version: number, c: Content, bodyChanged: boolean): DraftFeedbackRecord {
+  const playbook = c.draftPath?.angle?.playbook;
+  return { version, founder_words: input.founder_words, at: new Date().toISOString(), stage: "body", body_changed: bodyChanged, lessons: [],
+    ...(playbook ? { playbook } : {}), ...(input.lessons.length ? { deferred_lessons: input.lessons } : {}) };
+}
+
+function testReadRecord(t: TestReadInput, version: number, body: string): TestReadRecord {
+  return { kind: "viewer_test_read", version, status: t.status, body_hash: bodyHash(body), notes: t.notes, at: new Date().toISOString() };
+}
+
+async function saveBody(a: DraftArgs, c: Content, tx: ContentTx): Promise<Content | R> {
   const angle = c.draftPath?.angle;
   const provenance = modelWrite(a.host, angle ? { direction: angle.main_line } : undefined);
-  let saved: Content | null;
   try {
-    saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host }, _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
+    const saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host }, _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
+    return saved ?? fail("not_found", `稿件不存在：${c.id}`);
   } catch (err) {
     if (err instanceof FirstBodyRefusedError) return fail("needs_angle", "还没记录创始人选定的立意：先出 3 个立意让创始人选，用 angle 记下再存稿", { detail: err.refusal.error, next_action: { tool: "autocrew_draft", params: { action: "angle", content_id: c.id } } });
     if (err instanceof ScriptFrozenError) return fail("script_frozen", err.message);
     throw err;
   }
-  if (!saved) return fail("not_found", `稿件不存在：${c.id}`);
-  const version = currentVersion(saved);
-  let notes = saved.draftPath?.reviewNotes ?? [];
-  if (a.reviewNotes !== undefined) notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
-  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, angle?.playbook, a.dataDir) : null;
-  if (a.reviewNotes !== undefined || fb) {
-    await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes, ...(fb ? { feedback: [...(saved.draftPath?.feedback ?? []), fb.record] } : {}) } });
-  }
-  return { ok: true, version, status: saved.status, reviewed: notes.length > 0, format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg), ...(fb?.receipt ?? {}) };
 }
 
-/** 版本已存之后才记意见：档案写失败不回滚这一版，回执带原始错误（不静默） */
-async function learn(input: DraftFeedbackInput, contentId: string, version: number, playbook: PlaybookPin | undefined, dataDir?: string): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
-  const lessons: LessonResult[] = [];
-  let error: string | undefined;
-  try {
-    await applyLessons(input, contentId, version, dataDir, lessons);
-  } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
+/** 存一版（正文没变就不出新版本），再把审稿意见 / 试读 / 改稿意见挂到这一版上 */
+async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R> {
+  const bodyChanged = a.body !== c.body || Boolean(a.title && a.title !== c.title);
+  const saved = await saveBody(a, c, tx);
+  if (!("id" in saved)) return saved;
+  const s = saved as Content;
+  const version = currentVersion(s);
+  const at = new Date().toISOString();
+  const dp = s.draftPath!;
+  const notes: DraftReviewNote[] = a.reviewNotes !== undefined ? [...(dp.reviewNotes ?? []), { version, notes: a.reviewNotes as DraftReviewNote["notes"], at }] : dp.reviewNotes ?? [];
+  const reads = a.testRead ? [...(dp.testReads ?? []), testReadRecord(a.testRead as TestReadInput, version, s.body)] : dp.testReads ?? [];
+  const input = a.feedback && typeof a.feedback === "object" ? a.feedback : null;
+  // 同一版同一句原话重放（重试）不重复记
+  const replay = Boolean(input && dp.feedback?.some((f) => f.version === version && f.founder_words === input.founder_words));
+  const fb = input && !replay ? feedbackRecord(input, version, c, bodyChanged) : null;
+  if (a.reviewNotes !== undefined || a.testRead || fb) {
+    await tx.write({ draftPath: { ...dp, reviewNotes: notes, testReads: reads, ...(fb ? { feedback: [...(dp.feedback ?? []), fb] } : {}) } });
   }
-  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, at: new Date().toISOString(), ...(playbook ? { playbook } : {}),
-    lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), ...(l.proposal_id ? { proposal_id: l.proposal_id } : {}), outcome: l.outcome })) };
-  return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则 / 手册提案没记上：${error}。如实告诉创始人` } : {}) } };
+  return { ok: true, version, status: s.status, body_changed: bodyChanged, reviewed: notes.length > 0 || reads.length > 0,
+    format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg),
+    ...(fb ? { feedback_recorded: { index: (dp.feedback?.length ?? 0) + 1, version } } : {}),
+    ...(replay ? { feedback_replayed: true } : {}), ...(input?.lessons.length ? { lessons_note: LESSONS_DEFERRED } : {}) };
+}
+
+function argRefusal(a: DraftArgs): R | null {
+  if (a.reviewNotes === INVALID) return fail("bad_param", "review_notes 解析不了：传一段文字，或一个 JSON 对象 / 数组（不超过 2 万字）");
+  if (typeof a.feedback === "string") return fail("bad_param", a.feedback);
+  if (typeof a.testRead === "string") return fail("bad_param", a.testRead);
+  return bodyRefusal(a.body);
 }
 
 export async function draftSave(a: DraftArgs): Promise<R> {
-  if (a.reviewNotes === INVALID) return fail("bad_param", "review_notes 解析不了：传一段文字，或一个 JSON 对象 / 数组（不超过 2 万字）");
-  if (typeof a.feedback === "string") return fail("bad_param", a.feedback);
-  const bad = bodyRefusal(a.body);
+  const bad = argRefusal(a);
   if (bad) return bad;
   const r = await withVersion(a, async (c, tx) => {
+    const real = await isRealDraft(c, a.dataDir);
     // 第一版是按立意写的，没有意见可记
-    if (a.feedback && !await isRealDraft(c, a.dataDir)) return fail("bad_param", "feedback 只在已有一版正文之后收：第一版按立意写，不带 feedback");
+    if (a.feedback && !real) return fail("bad_param", "feedback 只在已有一版正文之后收：第一版按立意写，不带 feedback；开头阶段的意见用 opening 记");
+    if (!real && needsOpening(c.draftPath?.angle)) return fail("needs_opening", "还没选开头：先给创始人 3 个开头挑（opening{candidates}），他选了用 opening{opening, founder_words} 记下，再写全文", { next_action: { tool: "autocrew_draft", params: { action: "opening", content_id: c.id } } });
+    if (a.testRead && a.body !== c.body && real) return fail("bad_param", "test_read 要附在它读的那一版上：body 传试读时读的那一版正文原文（和当前版一样），改过的稿先 save 再试读");
     return writeVersion(a, c, tx);
   });
   // 已出过定稿清单的稿又改了：退回写作中（锁外推进，状态机照常校验）
-  if (r.ok && r.status === "draft_ready") await transitionStatus(a.contentId!, "drafting", { host: a.host }, a.dataDir);
+  if (r.ok && r.status === "draft_ready" && r.body_changed) await transitionStatus(a.contentId!, "drafting", { host: a.host }, a.dataDir);
   if (!r.ok) return r;
-  const note = draftNextNote({ id: a.contentId!, status: "drafting", needsAngle: false, hasBody: true, reviewed: r.reviewed as boolean, checklistCurrent: false });
+  const note = draftNextNote({ id: a.contentId!, status: r.status === "draft_ready" && !r.body_changed ? "draft_ready" : "drafting", needsAngle: false, hasBody: true, reviewed: r.reviewed as boolean, checklistCurrent: !r.body_changed });
   return { ...r, status: undefined, reviewed: undefined, workbench_url: workbenchUrl(a.contentId!), next_action: { note } };
 }

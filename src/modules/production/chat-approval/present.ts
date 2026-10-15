@@ -16,6 +16,7 @@ import { publishView } from "./publish-view.js";
 import { chatDecidable, chatItem } from "./view.js";
 import { ruleBrief } from "./rule-decide.js";
 import { playbookBrief } from "./playbook-decide.js";
+import { promotionBrief } from "./promotion-decide.js";
 
 type Result = Record<string, unknown>;
 export interface ListInput { preview_dir?: string; content_id?: string; item_id?: string; group_id?: string; fact_id?: string }
@@ -49,7 +50,7 @@ function previewFiles(item: InboxItem, doc: ProductionDoc, dataDir: string, sel:
 async function present(item: InboxItem, n: number | null, dataDir: string, input: ListInput): Promise<Result> {
   const base = await chatItem(item, dataDir);
   if (!decidable(item)) return base;
-  if (item.type === "writing_rule" || item.type === "playbook_change") { const b = item.type === "writing_rule" ? ruleBrief(item) : playbookBrief(item); return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${b}` : b, shown: {} }; }
+  if (item.type === "writing_rule" || item.type === "playbook_change" || item.type === "writing_promotion") { const b = item.type === "writing_rule" ? ruleBrief(item) : item.type === "writing_promotion" ? promotionBrief(item) : playbookBrief(item); return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${b}` : b, shown: {} }; }
   const doc = await readProductionDocOrEmpty(item.content_id!, dataDir);
   const sel = input.item_id === item.item_id ? input : {};
   const brief = await briefOf(item, doc, dataDir, sel);
@@ -71,6 +72,7 @@ const NEXT = [
   "发了没（publish_claim / published_ask）：他说「都发了」同样对这次列出来的每件各 decide 一次（同一句原话）；点了平台就只定那些；没列出来的不许顺带定。他给的作品链接原样放 url。",
   "写作规则（writing_rule）：他说哪几条要就 approve_rule，不要就 reject_rule，替换就 replace_rule 带 target_rule_id；只说「你定 / 都行」不算，问他要哪条。",
   "体裁手册改动（playbook_change）：brief 里的改前改后原样给他看；他说批就 approve_playbook，不要就 reject_playbook；只说「你定 / 都行」不算，问他。回 stale 说明手册之后改过，这份作废。",
+  "改稿意见升级（writing_promotion）：brief 原样给他看；批 = approve_promotion（只记成「已批、等人工改」，不会自动改范文或写法），不要 = reject_promotion；只说「你定 / 都行」不算。",
   "认稿（draft）：brief 里是稿子全文，原样贴给他，别缩写；他说没问题就 approve_script，要改就 revise_script 带 note。waiting_behind 有值时说清成片 / 封面在等这份稿。",
   "画面闪帧（sliver）：brief 原样转述。他说「不查了」= waive_sliver_check（只在 decisions 里有时）；「第 N 处是故意的」= waive_sliver 带 facts.points 里第 N 处的 sliver_key；「都是故意的」= 对 points 里每一处各 decide 一次 waive_sliver（同一句原话、各自的 request_id）；「去改：……」= reject_cut 带 note。",
   "他一句话同时管闪帧和成片（比如「不查了，用」）：先 decide 闪帧那件，再 list 一次拿成片那件新的 gen，用同一句原话 decide approve_cut。",

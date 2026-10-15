@@ -11,17 +11,24 @@ import { coverageProblems } from "../modules/draft/draft-finalize.js";
 import { currentVersion, workbenchUrl } from "../modules/draft/draft-types.js";
 import { pendingLessons } from "../modules/draft/draft-feedback.js";
 import { fail, withVersion } from "./draft-version.js";
+import { bodyHash } from "../modules/draft/draft-types.js";
 import type { DraftArgs } from "./draft-args.js";
 
 type R = Record<string, unknown>;
 
 /**
- * 最近一次 Codex 审稿（验收 10-04）：以前只认「审的就是当前版」，审完 v4 又改成 v5 就报没审过。
- * 现在总报最近一次，并标明审的是第几版、之后改没改过。
+ * 最近一次观众试读（spec 2026-10-15 §15.12）：带类型、状态和被读正文的 hash；对应的是旧版本就写明。
+ * 失败 / 不支持不算「已审」。旧稿只有 Codex 审稿的，照旧报最近一次。
  */
 export function reviewSummary(c: Content, version: number): Record<string, unknown> {
+  const read = c.draftPath?.testReads?.at(-1);
+  if (read) {
+    const current = read.body_hash === bodyHash(c.body ?? "");
+    return { version, kind: "viewer_test_read", status: read.status, reviewed: read.status === "ok", read_version: read.version, current,
+      ...(current ? {} : { note: "这是修改前那版的试读" }), ...(read.status === "ok" ? {} : { note_status: read.status === "failed" ? "试读失败，不算已审" : "这个宿主做不了试读，不算已审" }) };
+  }
   const last = c.draftPath?.reviewNotes?.at(-1);
-  if (!last) return { version, has_notes: false };
+  if (!last) return { version, has_notes: false, reviewed: false };
   return { version, has_notes: true, reviewed_version: last.version, current: last.version === version, ...(last.version === version ? {} : { note: `审的是第 ${last.version} 版，之后又改过` }) };
 }
 
@@ -70,7 +77,7 @@ export async function draftPrepareFinal(a: DraftArgs): Promise<R> {
     review: checklist.review,
     workbench_url: workbenchUrl(a.contentId!),
     next_action: {
-      note: `把链接给创始人，请他在工作台看清单后点「定了」。${(lessons.pending_lessons as unknown[]).length ? `同一条消息里把 pending_lessons 按编号列给他（有 conflicts_with 的两条并排），附现在生效 ${String(lessons.active_rule_count)} / ${String(lessons.rule_cap)} 条，请他回哪几条要 / 不要 / 替换第几条；他回了就逐条 autocrew_review_inbox decide，没回就不管。` : ""}${(lessons.repeated_rules as unknown[] | undefined)?.length ? "repeated_rules 里的规则早就有了，这次他又提：告诉他「这条已有，说明它没管住」。" : ""}${unsourced.length ? `有 ${unsourced.length} 处没出处：他可以保留，或让你补出处 / 删掉后重新 prepare_final。` : ""}之后再改正文，这份清单就作废，要重新 prepare_final。`,
+      note: `把链接给创始人，请他在工作台看清单后点「定了」。再用 feedback_history 把这篇的意见和别的稿比：同一个意思在另一篇不同的稿里也出现过，才 propose_promotion（只在这篇出现的不提）。${(lessons.pending_lessons as unknown[]).length ? `同一条消息里把 pending_lessons 按编号列给他（有 conflicts_with 的两条并排），附现在生效 ${String(lessons.active_rule_count)} / ${String(lessons.rule_cap)} 条，请他回哪几条要 / 不要 / 替换第几条；他回了就逐条 autocrew_review_inbox decide，没回就不管。` : ""}${(lessons.repeated_rules as unknown[] | undefined)?.length ? "repeated_rules 里的规则早就有了，这次他又提：告诉他「这条已有，说明它没管住」。" : ""}${unsourced.length ? `有 ${unsourced.length} 处没出处：他可以保留，或让你补出处 / 删掉后重新 prepare_final。` : ""}之后再改正文，这份清单就作废，要重新 prepare_final。`,
     },
   };
 }

@@ -26,6 +26,7 @@ import { draftHash } from "../../storage/draft-hash.js";
 import { FOUNDER_DECISION_SOURCES, readProjectJson, type ProjectDecisions } from "../video/handoff/project-evidence.js";
 import { loadManifest, readVersionText } from "../playbook/store.js";
 import { paragraphDiff } from "../playbook/diff.js";
+import { promotionItems } from "./chat-approval/promotion-decide.js";
 import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
@@ -144,6 +145,7 @@ async function otherItems(dataDir: string): Promise<InboxItem[]> {
   const profile = await loadProfile(dataDir).catch(() => null);
   for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) out.push(ruleItem(r, profile!));
   out.push(...await playbookItems(dataDir));
+  out.push(...await promotionItems(dataDir));
   for (const p of await pendingProposals(dataDir).catch(() => [])) {
     const item_id = `pref:${p.id}`;
     out.push({ item_id, gen: genOf([item_id, p.at]), type: "other", content_id: null, title: "发布偏好提案", summary: Array.isArray(p.value) ? p.value.join(" / ") : p.value, waiting: null, agent_waiting: false,

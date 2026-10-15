@@ -8,7 +8,8 @@ import { firsthandContext, hitsContext, profileContext, seriesContext } from "..
 import { loadChecklist } from "../modules/draft/draft-final.js";
 import { pinnedPlaybook, playbookIndex } from "../modules/playbook/read.js";
 import { draftHash } from "../storage/draft-hash.js";
-import { currentVersion, DRAFT_PLATFORM, draftNextNote, workbenchUrl } from "../modules/draft/draft-types.js";
+import { currentVersion, DRAFT_PLATFORM, draftNextNote, needsOpening, workbenchUrl } from "../modules/draft/draft-types.js";
+import { lockedContext, openingAndReads } from "./draft-locks.js";
 import type { DraftArgs } from "./draft-args.js";
 
 const FROZEN = new Set(["editing", "cover_pending", "publish_ready", "publishing"]);
@@ -63,10 +64,14 @@ async function progressOf(c: Content, dataDir?: string): Promise<Record<string, 
     status: c.status,
     angle: c.draftPath?.angle ? { version: c.draftPath.angle.version, main_line: c.draftPath.angle.main_line } : null,
     ...await pinnedOf(c, dataDir),
+    ...await lockedContext(c, dataDir),
+    ...openingAndReads(c),
     needs_angle: !real && !c.draftPath?.angle,
+    needs_opening: !real && needsOpening(c.draftPath?.angle),
     version: currentVersion(c),
     has_body: real,
     review_notes_for: (c.draftPath?.reviewNotes ?? []).map((n) => n.version),
+    test_reads_for: (c.draftPath?.testReads ?? []).map((n) => n.version),
     final: checklist ? { prepared_for_current: checklist.draft_hash === draftHash(c), workbench: workbenchUrl(c.id) } : null,
   };
 }
@@ -117,13 +122,13 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
   if (!("id" in got)) return got;
   const content = got as Content;
   const topic = content.topicId ? await getTopic(content.topicId, a.dataDir) : null;
-  const [profile, hits, series, firsthand, progress, playbooks] = await Promise.all([
+  const [profile, hits, series, own, progress, playbooks] = await Promise.all([
     profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration ?? content.draftPath?.inspiration), progressOf(content, a.dataDir), playbooksContext(a.dataDir),
   ]);
   return {
     ok: true, content_id: content.id, topic_id: content.topicId ?? null, resumed: Boolean(a.contentId),
-    context: { profile, hits, series, firsthand, ...playbooks }, progress,
+    context: { profile, hits, series, firsthand: own.firsthand, voice_refs: own.voice_refs, ...playbooks }, progress,
     workbench_url: workbenchUrl(content.id),
-    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
+    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, needsOpening: progress.needs_opening as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length + (progress.test_reads_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
   };
 }

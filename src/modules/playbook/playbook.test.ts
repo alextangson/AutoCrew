@@ -29,7 +29,7 @@ describe("种子与读取", () => {
     for (const s of seeds) expect(await readVersionText(s.id, 1, dir)).toBe(s.text);
     expect(seeds.find((s) => s.id === "xinxicha")!.name).toBe("信息差/产品");
     expect(seeds.every((s) => !s.text.includes("0.1-draft") && s.text.startsWith("# "))).toBe(true);
-    expect(whenToChoose(seeds[0].text)).toContain("观众天天在碰");
+    expect(whenToChoose(seeds[0].text)).toContain("观众天天碰到");
   });
 
   it("manifest 解析失败：报可见错误，不覆盖文件", async () => {

@@ -9,7 +9,7 @@ import { contentTransaction, getContent, getDataDir, LOCAL_HOST, transitionStatu
 import { restoreEvidenceLedger, type LedgerEntry } from "../research/evidence-ledger.js";
 import { CREATOR_EVIDENCE_ID, CREATOR_OPINION, KEPT_ENTRY_PREFIX, saveCoverage, validateCoverage, type Citation, type CitationCoverage } from "../video/handoff/project-evidence.js";
 import { factualSentences } from "../video/handoff/factual-sentences.js";
-import { currentVersion } from "./draft-types.js";
+import { bodyHash, currentVersion } from "./draft-types.js";
 import { loadChecklist, type ChecklistItem, type FinalChecklist } from "./draft-final.js";
 
 type R = Record<string, unknown>;
@@ -121,6 +121,8 @@ export async function finalPanel(contentId: string, dataDir?: string): Promise<R
     ok: true,
     data: {
       status: c.status, draft_hash: hash, version: currentVersion(c), review_notes: c.draftPath.reviewNotes ?? [],
+      // 观众试读：current = 读的就是现在这版正文（hash 对得上）；失败 / 不支持照实给，前端不当「已审」
+      test_reads: (c.draftPath.testReads ?? []).map((r) => ({ ...r, current: r.body_hash === bodyHash(c.body ?? "") })),
       checklist: checklist ? { ...checklist, current: checklist.draft_hash === hash } : null,
       finalized: c.draftFinal ? { at: c.draftFinal.finalizedAt, current: c.draftFinal.draftHash === hash } : null,
     },

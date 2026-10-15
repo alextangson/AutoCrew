@@ -3,8 +3,10 @@ export interface DraftItem { id: string; status: "sourced" | "unsourced" | "exem
 export interface DraftVerdict { verdict: "pass" | "fail"; reason: string; quotes?: string[] }
 export interface StructuredReview { main_line: DraftVerdict; payoff: DraftVerdict; opening: DraftVerdict; advisories?: Array<{ text: string; quote?: string }> }
 export interface DraftReviewNote { version: number; notes: unknown; at: string }
+/** 观众试读（spec 2026-10-15 §15.12）：current = 读的就是现在这版正文 */
+export interface DraftTestRead { version: number; status: "ok" | "failed" | "unsupported"; notes: string; at: string; current: boolean }
 export interface DraftPanelData {
-  status: string; draft_hash: string; version: number; review_notes: DraftReviewNote[];
+  status: string; draft_hash: string; version: number; review_notes: DraftReviewNote[]; test_reads?: DraftTestRead[];
   checklist: { draft_hash: string; items: DraftItem[]; current: boolean } | null;
   finalized: { at: string; current: boolean } | null;
 }
@@ -43,4 +45,11 @@ export function structuredReview(notes: unknown): StructuredReview | null {
   if (!n || typeof n !== "object" || !verdict(n.main_line) || !verdict(n.payoff) || !verdict(n.opening)) return null;
   if (n.advisories !== undefined && !(Array.isArray(n.advisories) && n.advisories.every(advice))) return null;
   return n as unknown as StructuredReview;
+}
+
+/** 观众试读的标签：失败 / 不支持照实说（不算已审）；读的是旧版就写明 */
+export function testReadLabel(r: DraftTestRead): string {
+  const status = r.status === "ok" ? "" : r.status === "failed" ? "试读没跑成（不算已审）" : "这个宿主做不了试读（不算已审）";
+  const which = r.current ? `读的是当前版（第 ${r.version} 版）` : `这是修改前那版的试读（第 ${r.version} 版）`;
+  return [which, status].filter(Boolean).join(" · ");
 }

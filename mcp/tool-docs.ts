@@ -16,7 +16,7 @@ export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_research: "找新选题（不是给写作需求做调研，那个用 autocrew_workflow prepare）。discover 发现并可存选题；session_status 查浏览器登录。",
   autocrew_content: "管理已有稿件。list / get / siblings / allowed_transitions 查询；summary 看进度、请示答复、创始人修改意见 rejections；update 改稿；transition 推进；create_variant 派生平台版；adoption 仅工作台；delete / restore；save 仅手动导入；record 报制作事实；check_slivers 自查抽帧缝；mark_ready 成片可以审了；ask / answer_ask / withdraw_ask 请示创始人（进「等你拍板」，别在聊天里问）。批准只归创始人。新 AI 稿走 workflow → writer。",
   autocrew_workflow: "创作统一入口。prepare 开选题会（可只给 inspiration）；select_angle 须带创始人原话 founder_words；新稿没定角度会回 needs_founder_angle；research 领调研任务；status 查进度；select_angle 选定角度（带 brief_revision）；write / draft 由 next_action 引导；doctor 自检。每步按返回的 next_action 走。",
-  autocrew_draft: "抖音口播新稿（write-script 技能）。start 建稿或接手，拿档案 / 爆款 / 系列 / 一手材料与 version；verify_quote 抓网页逐字核引文进证据台账；angle 记创始人选的立意与体裁 genre；save 存一版（可附 review_notes；按意见改的带 feedback 记原话与待批规则）；prepare_final 出出处清单推到等你认稿，「定了」只由创始人在工作台点。写入带 base_version，对不上回 version_conflict。",
+  autocrew_draft: "抖音口播新稿（write-script 技能）。start 建稿或接手；exemplars 按体裁预览范文；angle 记立意并锁手册、范文、写法版本；opening 先磨开头（选了才收第一版）；save 存一版（可附 test_read 观众试读、feedback 原话）；prepare_final 出出处清单，「定了」只由创始人点；feedback_history 跨稿读意见，propose_promotion 两篇稿都出现过才提升级。写入带 base_version。",
   autocrew_playbook: "体裁手册。list 版本与待批数；get 读全文与历史；propose 交整本修订待批；rollback 仅创始人说回滚时调。",
   autocrew_scout: "宿主执行的调研。prepare / pack 领任务；status 查进度；search 搜索（要搜索 key，没配就用你自己的搜索找网址）；read_page{perspective,url} 抓页；cite 登记逐字引文；claim_offline 登记未核验说法；perspective 交视角；synthesize 综合；angles 交角度候选。prepare 之后都带 topic_id + task_id。",
   autocrew_review_desk: "宿主审稿。pack 领审稿材料；submit 交审稿意见（带 review_pack_id、attempt、issues）。",

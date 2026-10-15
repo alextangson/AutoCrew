@@ -13,6 +13,8 @@ import { collectOwnMaterial } from "../research/own-material.js";
 import { loadLatestBrief } from "../research/brief-store.js";
 import { getDataDir, listContents, type Content, type Topic } from "../../storage/local-store.js";
 import { DRAFT_PLATFORM } from "./draft-types.js";
+import { founderTranscripts, type FounderTranscript } from "./transcripts.js";
+import { excerpt, VOICE_REF_LABEL, voiceRefs } from "./voice-refs.js";
 import { ruleJudgeContext } from "./draft-feedback.js";
 
 const HIT_WINDOW_DAYS = 90;
@@ -109,14 +111,34 @@ async function founderSaid(topic: Topic, dataDir?: string): Promise<Array<{ sour
     .map(([source, text]) => ({ source, text: text!.trim() }));
 }
 
-/** 一手材料：创始人的灵感原话、选题上他留过的话 + 他自己口播的转写片段（AI 起草的放行稿不算） */
-export async function firsthandContext(topic: Topic | null, dataDir?: string, inspiration?: string): Promise<Record<string, unknown>> {
-  if (!topic) return { founder_words: inspiration ?? null, founder_said: [], transcripts: [] };
-  const material = await collectOwnMaterial(getDataDir(dataDir), { id: topic.id, title: topic.title, description: topic.description }, { maxChars: 6000 });
+/** 本选题那几条稿的真实转写（作品绑定的项目里）：他亲口说过的，是一手材料 */
+function sameTopicTranscripts(all: FounderTranscript[], topicContentIds: Set<string>) {
+  return all.filter((t) => topicContentIds.has(t.content_id))
+    .map((t) => ({ id: `${t.content_id}:${t.source_type}`, title: t.label, text: excerpt(t.text, 6000).text, same_topic: true, source_type: t.source_type }));
+}
+
+/**
+ * 一手材料：创始人的灵感原话、选题上他留过的话 + 他自己口播的转写（AI 起草的放行稿不算）。
+ * 另给口吻参考 voice_refs：他念出来的转写（成片优先）和他认可过的 AI 稿，标明只学说话方式。
+ */
+export async function firsthandContext(topic: Topic | null, dataDir?: string, inspiration?: string): Promise<{ firsthand: Record<string, unknown>; voice_refs: Record<string, unknown> }> {
+  const contents = await listContents(dataDir);
+  const titles = new Map(contents.map((c) => [c.id, c.title]));
+  const founder = await founderTranscripts(dataDir).catch((e: unknown) => ({ items: [] as FounderTranscript[], errors: [`转写读不了：${e instanceof Error ? e.message : String(e)}`] }));
+  const material = topic ? await collectOwnMaterial(getDataDir(dataDir), { id: topic.id, title: topic.title, description: topic.description }, { maxChars: 6000 }) : null;
+  const voice = { label: VOICE_REF_LABEL, refs: voiceRefs(founder.items, material?.chunks ?? [], titles), ...(founder.errors.length ? { errors: founder.errors } : {}) };
+  if (!topic) return { firsthand: { founder_words: inspiration ?? null, founder_said: [], transcripts: [] }, voice_refs: voice };
+  const topicIds = new Set(contents.filter((c) => c.topicId === topic.id && !c.deletedAt).map((c) => c.id));
   return {
-    founder_words: inspiration || founderTopicText(topic) || null,
-    founder_said: await founderSaid(topic, dataDir),
-    transcripts: material.chunks.filter((c) => c.kind === "transcript").map((c) => ({ id: c.id, title: c.title, text: c.text, same_topic: c.sameTopic })),
-    rule: "亲历只能来自这里；没有就不写亲历",
+    firsthand: {
+      founder_words: inspiration || founderTopicText(topic) || null,
+      founder_said: await founderSaid(topic, dataDir),
+      transcripts: [
+        ...material!.chunks.filter((c) => c.kind === "transcript").map((c) => ({ id: c.id, title: c.title, text: c.text, same_topic: c.sameTopic })),
+        ...sameTopicTranscripts(founder.items, topicIds),
+      ],
+      rule: "亲历只能来自这里；没有就不写亲历。voice_refs 里的东西不能当亲历",
+    },
+    voice_refs: voice,
   };
 }

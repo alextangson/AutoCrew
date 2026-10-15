@@ -9,6 +9,7 @@ import { KIND_NAME } from "../plain-reason.js";
 import type { InboxItem } from "../inbox.js";
 import { pullDeps } from "../../video/handoff/pull-deps.js";
 import { factPath } from "./files.js";
+import { promotionFacts } from "./promotion-decide.js";
 import { draftFacts, sliverActions, sliverFacts, sliverSelection } from "./script-sliver-view.js";
 
 /** 对话里能定的事与决定；其余类型（登记卡住、其他提案…）只在看板定 */
@@ -17,12 +18,12 @@ export const CHAT_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   ask: ["answer_ask", "ask_resend"],
   publish_check: ["publish_check_confirm", "publish_check_revise", "publish_check_override"],
   publish_claim: ["confirm_receipt", "correct_publish"], published_ask: ["i_published"],
-  writing_rule: ["approve_rule", "reject_rule", "replace_rule"], playbook_change: ["approve_playbook", "reject_playbook"],
+  writing_rule: ["approve_rule", "reject_rule", "replace_rule"], playbook_change: ["approve_playbook", "reject_playbook"], writing_promotion: ["approve_promotion", "reject_promotion"],
   sliver: ["waive_sliver_check", "waive_sliver", "reject_cut"], draft: ["approve_script", "revise_script"],
 };
 
 /** 库级条目：不挂在某篇稿的制作文档上（写作规则 spec 2026-10-10 §C、手册改动 spec 2026-10-13 §3） */
-export const isLibraryItem = (item: InboxItem): boolean => item.type === "writing_rule" || item.type === "playbook_change";
+export const isLibraryItem = (item: InboxItem): boolean => item.type === "writing_rule" || item.type === "playbook_change" || item.type === "writing_promotion";
 
 /** 能在对话里定：类型在表里，且挂在一条稿上——库级条目例外（不一定来自某篇稿） */
 export const chatDecidable = (item: InboxItem): boolean => Boolean(CHAT_ACTIONS[item.type]) && (Boolean(item.content_id) || isLibraryItem(item));
@@ -45,6 +46,7 @@ const ACTION_TEXT: Record<string, string> = {
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
   waive_sliver_check: "这条不查了（只在检查没跑成时有）", waive_sliver: "这处是故意的（带 sliver_key 点名哪一处）",
   approve_script: "稿子没问题", revise_script: "稿子还要改（note 写他要改的地方）",
+  approve_promotion: "这条升级批了（记成「已批、等人工改」，不会自动改）", reject_promotion: "这条升级不要（同一段以后不再提）",
   approve_playbook: "这份手册改动批了（生成新版本）", reject_playbook: "这份手册改动不要（同一段以后不再提）",
   approve_rule: "这条规则要（以后写稿都照它）", reject_rule: "这条不要（以后不再提）", replace_rule: "要，替换掉他点名的那条旧规则（带 target_rule_id）",
 };
@@ -84,6 +86,7 @@ function playbookFacts(item: InboxItem): Record<string, unknown> {
 }
 
 function libraryFacts(item: InboxItem): Record<string, unknown> {
+  if (item.type === "writing_promotion") return promotionFacts(item);
   return item.type === "writing_rule" ? ruleFacts(item) : playbookFacts(item);
 }
 
@@ -132,6 +135,7 @@ function pickOne<T>(list: T[], key: (x: T) => string, wanted: string, what: stri
 /** 选中的对象（E5 选择器）：有多组 / 多版时必须点名，不替创始人挑 */
 export function selectionOf(item: InboxItem, decision: string, sel: { group_id?: string; fact_id?: string; option_id?: string; target_rule_id?: string; sliver_key?: string }): Selection {
   if (item.type === "playbook_change") return { ok: true, params: {}, factIds: [], label: String(item.detail.playbook_name ?? "") };
+  if (item.type === "writing_promotion") return { ok: true, params: {}, factIds: [], label: String(item.detail.reason ?? "") };
   if (item.type === "writing_rule") {
     if (decision !== "replace_rule") return { ok: true, params: {}, factIds: [], label: String(item.detail.rule ?? "") };
     if (!sel.target_rule_id) return bad("selector_required", "替换要说清换掉哪一条（带 target_rule_id，取生效规则的 id）；他没点名就先问他");

@@ -5,20 +5,26 @@
 import { Type } from "@sinclair/typebox";
 import { draftArgs } from "./draft-args.js";
 import { draftStart } from "./draft-start.js";
-import { draftAngle, draftSave, draftVerifyQuote } from "./draft-actions.js";
+import { draftSave, draftVerifyQuote } from "./draft-actions.js";
+import { draftAngle, draftExemplars } from "./draft-angle.js";
+import { draftOpening } from "./draft-opening.js";
+import { draftFeedbackHistory, draftProposePromotion } from "./draft-learn.js";
 import { draftPrepareFinal } from "./draft-prepare.js";
 
-const ACTIONS = ["start", "angle", "save", "verify_quote", "prepare_final"] as const;
+const ACTIONS = ["start", "exemplars", "angle", "opening", "save", "verify_quote", "prepare_final", "feedback_history", "propose_promotion"] as const;
 
 export const DRAFT_DESCRIPTION =
-  "抖音口播从灵感写到定稿（write-script 技能按 6 步调用）。start{inspiration,topic_id?} 建稿（topic_id 复用已有选题）或 start{content_id} 接手，返回档案、账号爆款、同系列主线、一手材料和当前 version；" +
-  "verify_quote{content_id,url,quote} 抓网页逐字核引文，过了进证据台账并回证据编号；" +
-  "angle{content_id,base_version,genre,main_line,for_whom,opening,why_viral,chain,founder_words,chosen_option?} 记创始人选定的立意与体裁（回执带那本手册全文；可重调即改立意）；" +
-  "save{content_id,base_version,body,title?,note?,review_notes?} 存一版（review_notes 附 Codex 审稿意见；按创始人意见改的带 feedback 记原话，能推广的概括成待批规则）；" +
-  "prepare_final{content_id,base_version,citations} 出出处清单并推到等你认稿，「定了」只由创始人在工作台点。base_version 对不上回 version_conflict 和最新正文差异。";
+  "抖音口播从灵感写到定稿（write-script 技能按步骤调用）。start{inspiration,topic_id?} 建稿或 start{content_id} 接手，返回档案、爆款、同系列、一手材料（firsthand）、口吻参考（voice_refs）、锁住的范文与写法和当前 version；" +
+  "verify_quote{content_id,url,quote} 抓网页逐字核引文进证据台账；" +
+  "exemplars{genre,content_id?} 出立意卡前按体裁预览范文全文（只读）；" +
+  "angle{content_id,base_version,genre,exemplars,main_line,for_whom,opening,why_viral,chain,founder_words,chosen_option?} 记立意与体裁，锁住手册、卡上引用的范文和写法版本；" +
+  "opening{content_id,base_version,candidates|opening+founder_words} 先磨开头：记一轮候选或他选中的开头，选了才收第一版全文；" +
+  "save{content_id,base_version,body,title?,note?,test_read?,feedback?} 存一版（test_read 附观众试读；feedback 记创始人原话，正文没改也能记）；" +
+  "prepare_final{content_id,base_version,citations} 出出处清单推到等你认稿，「定了」只由创始人在工作台点；" +
+  "feedback_history{genre?} 跨稿读意见；propose_promotion{content_id,target,cites,text,note,genre?|exemplar_id?} 两篇不同稿都出现过的意见才提升级。base_version 对不上回 version_conflict。";
 
 export const draftSchema = Type.Object({
-  action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "start / angle / save / verify_quote / prepare_final" }),
+  action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "按 write-script 技能的步骤调用" }),
   content_id: Type.Optional(Type.String({ description: "start 返回的稿件 id" })),
   topic_id: Type.Optional(Type.String({ description: "start：复用的已有选题 id" })),
   base_version: Type.Optional(Type.Integer({ description: "你最后读到的版本号；save / angle / prepare_final 必带" })),
@@ -29,17 +35,24 @@ export const draftSchema = Type.Object({
   claim: Type.Optional(Type.String({ description: "verify_quote：这段引文撑的是哪句话" })),
   main_line: Type.Optional(Type.String({ description: "angle：我们的判断，一句" })),
   for_whom: Type.Optional(Type.String({ description: "angle：给谁看" })),
-  opening: Type.Optional(Type.String({ description: "angle：开头 15 秒原话" })),
+  opening: Type.Optional(Type.String({ description: "angle：开头 15 秒原话；opening：他选中（或改过）的开头全文" })),
   why_viral: Type.Optional(Type.String({ description: "angle：为什么可能爆（引真实数字）" })),
   chain: Type.Optional(Type.Array(Type.String(), { description: "angle：4–6 行论证链" })),
-  founder_words: Type.Optional(Type.String({ description: "angle：创始人选立意时的原话，照抄" })),
+  founder_words: Type.Optional(Type.String({ description: "angle / opening：创始人的原话，照抄" })),
   chosen_option: Type.Optional(Type.String({ description: "angle：选中选项的展示全文" })),
-  genre: Type.Optional(Type.String({ description: "angle 必带：体裁（手册 id，见 start 的 playbooks_index）" })),
+  genre: Type.Optional(Type.String({ description: "exemplars / angle 必带：体裁（手册 id，见 start 的 playbooks_index）" })),
+  exemplars: Type.Optional(Type.Unknown({ description: "angle：立意卡上实际引用的范文 [{id, version}]（exemplars 预览给的）；本体裁无范文传 []" })),
+  candidates: Type.Optional(Type.Array(Type.String(), { description: "opening：这一轮 3 个不同写法的开头（前 15 秒原话）" })),
+  test_read: Type.Optional(Type.Unknown({ description: "save：观众试读 {status: ok|failed|unsupported, notes: 试读原文或失败原因}，body 传它读的那一版正文" })),
+  target: Type.Optional(Type.String({ description: "propose_promotion：playbook / exemplar / method" })),
+  cites: Type.Optional(Type.Unknown({ description: "propose_promotion：至少两篇不同稿的意见出处 [{content_id, index}]（feedback_history 给的）" })),
+  text: Type.Optional(Type.String({ description: "propose_promotion：改后的手册全文 / 范文批注 / 写法改动" })),
+  exemplar_id: Type.Optional(Type.String({ description: "propose_promotion target=exemplar：哪篇范文" })),
   title: Type.Optional(Type.String({ description: "save：标题" })),
   body: Type.Optional(Type.String({ description: "save：全文（纯朗读正文）" })),
-  note: Type.Optional(Type.String({ description: "save：这一版改了什么" })),
-  review_notes: Type.Optional(Type.Unknown({ description: "save：Codex 审稿结果原样（JSON 或文字），调不通就写原因" })),
-  feedback: Type.Optional(Type.Unknown({ description: "save：按创始人意见改完时带 {founder_words:他这次的原话逐字, lessons?:[{rule:概括成的通用写法≤200字, scope:voice_core|platform:douyin|playbook:<体裁 id>, relation:new|duplicate|conflict, relates_to?:已有规则 id}]}；只管这篇的意见不传 lessons。第一版不收" })),
+  note: Type.Optional(Type.String({ description: "save：这一版改了什么；propose_promotion：为什么升级" })),
+  review_notes: Type.Optional(Type.Unknown({ description: "save：旧版 Codex 审稿结果（已由观众试读替代，旧会话照收）" })),
+  feedback: Type.Optional(Type.Unknown({ description: "save：创始人这次的意见 {founder_words: 原话逐字}；第一版不收，开头阶段的意见用 opening 记" })),
   citations: Type.Optional(Type.Array(Type.Object({
     text: Type.String(),
     evidence_ids: Type.Array(Type.String()),
@@ -48,7 +61,8 @@ export const draftSchema = Type.Object({
 });
 
 const HANDLERS: Record<string, (a: ReturnType<typeof draftArgs>) => Promise<Record<string, unknown>>> = {
-  start: draftStart, angle: draftAngle, save: draftSave, verify_quote: draftVerifyQuote, prepare_final: draftPrepareFinal,
+  start: draftStart, exemplars: draftExemplars, angle: draftAngle, opening: draftOpening, save: draftSave, verify_quote: draftVerifyQuote,
+  prepare_final: draftPrepareFinal, feedback_history: draftFeedbackHistory, propose_promotion: draftProposePromotion,
 };
 
 export async function executeDraft(params: Record<string, unknown>): Promise<Record<string, unknown>> {

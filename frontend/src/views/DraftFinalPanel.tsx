@@ -1,12 +1,22 @@
 /**
- * 抖音口播薄路径（autocrew_draft）的定稿区：agent 附的 Codex 审稿意见（只是提示）+ 出处清单 + 「定了」。
+ * 抖音口播薄路径（autocrew_draft）的定稿区：观众试读（旧稿是 Codex 审稿意见，只是提示）+ 出处清单 + 「定了」。
  * 「定了」只有创始人在这里点得到（服务端只认浏览器会话），点下去进「等 A-roll」。
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
-import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote } from "./draft-final-lib";
+import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, testReadLabel, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote, type DraftTestRead } from "./draft-final-lib";
+
+/** 观众试读：小林只拿正文读一遍，标出会划走 / 没听懂 / 会转发的地方；结果原文照摆 */
+export function TestRead(p: { reads: DraftTestRead[] }) {
+  const last = p.reads.at(-1);
+  if (!last) return null;
+  return <div className="draft-final-review">
+    <strong>观众试读</strong> <span className="muted">{testReadLabel(last)}</span>
+    <pre className="draft-final-notes">{last.notes}</pre>
+  </div>;
+}
 
 /** agent 附的 Codex 审稿意见：认得出三项结论就分项摆，否则原文照摆（调不通时就是原因） */
 export function ReviewNotes(p: { notes: DraftReviewNote[]; version: number }) {
@@ -70,7 +80,7 @@ export function DraftFinalPanel(p: { contentId: string; refreshKey: string; dirt
   const groups = d.checklist ? splitChecklist(d.checklist.items) : null;
   const toggle = (id: string) => setKeep((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return <section className="draft-final card" aria-label="定稿">
-    <ReviewNotes notes={d.review_notes} version={d.version} />
+    {d.test_reads?.length ? <TestRead reads={d.test_reads} /> : <ReviewNotes notes={d.review_notes} version={d.version} />}
     {d.status === "draft_ready" && d.checklist && <div className="draft-final-checklist">
       <strong>出处清单</strong>
       <ul>{groups!.listed.map((i) => <ChecklistRow key={i.id} item={i} kept={keep.has(i.id)} toggle={() => toggle(i.id)} />)}</ul>

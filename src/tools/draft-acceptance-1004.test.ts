@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { pickOpening } from "./draft-test-helpers.js";
 import { executeDraft } from "./draft.js";
 import { getContent } from "../storage/local-store.js";
 import { finalizeByFounder } from "../modules/draft/draft-finalize.js";
@@ -12,11 +13,12 @@ import { setQuoteFetch } from "../modules/draft/verify-quote.js";
 
 let dir: string;
 const PAD = "所以真正要管的不是工具，是你的日程。今天就试一件事：把省下来的那段时间写进日历，标成不许约会，坚持下去看看。别把它再还给别人的会议，也别还给刷不完的消息，那是你自己的时间。";
-const ANGLE = { main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "B", genre: "ganhuo" };
+const ANGLE = { exemplars: [] as unknown[], main_line: "AI 省下的时间会被你自己填满", for_whom: "职场人", opening: "你是不是也觉得更忙了？", why_viral: "同题材播放第一", chain: ["一", "二", "三", "四"], founder_words: "B", genre: "ganhuo" };
 const run = (action: string, args: Record<string, unknown>) => executeDraft({ action, ...args, _dataDir: dir, _host: "claude-code", _session: "s1" });
 async function written(body: string): Promise<string> {
   const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;
   await run("angle", { content_id: id, base_version: 1, ...ANGLE });
+  await pickOpening(run, id, 1);
   expect((await run("save", { content_id: id, base_version: 1, body })).ok).toBe(true);
   return id;
 }
@@ -77,16 +79,19 @@ describe("立意选项原文", () => {
     const id = (await run("start", { inspiration: "AI 越用越忙" })).content_id as string;
     const full = "B：AI 省下的时间会被你自己填满——给职场人，开头「你是不是也觉得更忙了？」";
     expect((await run("angle", { content_id: id, base_version: 1, ...ANGLE, chosen_option: full })).ok).toBe(true);
+    await pickOpening(run, id, 1);
     expect((await getContent(id, dir))!.draftPath?.angle).toMatchObject({ founder_words: "B", chosen_option: full });
   });
 });
 
-describe("Codex 审稿提示词", () => {
-  it("不再写死外部资料处数；创始人点名要讲的材料不算抢主线；仍只有三项判据", async () => {
-    const prompt = await fs.readFile(path.join(import.meta.dirname, "../../skills/write-script/codex-review-prompt.md"), "utf8");
-    expect(prompt).not.toMatch(/最多(两|2)\s*处/);
-    expect(prompt).toContain("创始人明确要求");
-    expect(prompt.match(/^\d\. /gm)).toHaveLength(3);
+describe("观众试读提示词（替代 Codex 审稿，spec 2026-10-15 §7）", () => {
+  it("只给小林画像和正文：不带规则、手册、立意；标划走 / 没听懂 / 会转发", async () => {
+    const prompt = await fs.readFile(path.join(import.meta.dirname, "../../skills/write-script/viewer-test-read-prompt.md"), "utf8");
+    expect(prompt).toContain("小林");
+    expect(prompt).toContain("{{BODY}}");
+    for (const k of ["划走", "没听懂", "会转发"]) expect(prompt).toContain(k);
+    for (const k of ["{{RULES}}", "{{CRAFT}}", "{{ANGLE}}"]) expect(prompt).not.toContain(k);
+    await expect(fs.access(path.join(import.meta.dirname, "../../skills/write-script/codex-review-prompt.md"))).rejects.toThrow();
   });
 });
 

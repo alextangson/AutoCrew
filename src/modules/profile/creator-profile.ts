@@ -51,6 +51,8 @@ export interface WritingRule {
   /** 0-1, higher = more confident */
   confidence: number;
   scope?: RuleScope;
+  /** 这些平台不用这条（spec 2026-10-15 §15.4：抖音那条路已并进写法 / 手册，其他平台照旧） */
+  skipPlatforms?: string[];
   /** true = 用户停用，生成时跳过（个性化中心可切换） */
   disabled?: boolean;
   createdAt: string;

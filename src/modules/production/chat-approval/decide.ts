@@ -20,6 +20,7 @@ import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, re
 import { boardLink, CHAT_ACTIONS, chatActionsOf, chatDecidable, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
 import { isDelegation, recoverRuleDecision, RULE_DECISIONS, ruleCommit } from "./rule-decide.js";
 import { PLAYBOOK_DECISIONS, playbookCommit, recoverPlaybookDecision, staleProposal } from "./playbook-decide.js";
+import { PROMOTION_DECISIONS, promotionCommit } from "./promotion-decide.js";
 
 type Result = Record<string, unknown>;
 type Picked = Extract<Selection, { ok: true }>;
@@ -75,7 +76,7 @@ function validInput(input: ChatDecideInput): Result | null {
   if (!str(input.founder_words)) return fail("founder_words_required", "带上创始人在对话里的原话（founder_words），一字不改照抄");
   if (!str(input.item_id) || !str(input.gen) || !str(input.decision)) return fail("invalid_params", "要带 item_id、gen 和 decision（list 里给的）");
   if (NOTE_ACTIONS.has(str(input.decision)) && !str(input.note)) return fail("note_required", "写一句要改哪里（note），给做的人看");
-  if ((RULE_DECISIONS.has(str(input.decision)) || PLAYBOOK_DECISIONS.has(str(input.decision))) && isDelegation(str(input.founder_words))) {
+  if ((RULE_DECISIONS.has(str(input.decision)) || PLAYBOOK_DECISIONS.has(str(input.decision)) || PROMOTION_DECISIONS.has(str(input.decision))) && isDelegation(str(input.founder_words))) {
     return fail("founder_words_not_approval", "「你定 / 你看着办 / 都行」这类话对写作规则 / 手册改动不算批准：请创始人明确说哪条要、哪条不要（或替换哪条）");
   }
   return null;
@@ -165,6 +166,7 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   if (item.type === "playbook_change") {
     return playbookCommit(item, { decision: input.decision, founder_words: str(input.founder_words), request_id: str(input.request_id), requester }, dataDir);
   }
+  if (item.type === "writing_promotion") return promotionCommit(item, input.decision, str(input.founder_words), dataDir);
   if (item.type === "writing_rule") {
     return ruleCommit(item, { decision: input.decision, founder_words: str(input.founder_words), request_id: str(input.request_id), requester, target_rule_id: selection.params.target_rule_id }, dataDir);
   }
