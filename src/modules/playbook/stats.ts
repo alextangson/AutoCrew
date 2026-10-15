@@ -69,7 +69,7 @@ function versionStats(pin: PlaybookPin, contents: Content[], outcomes: Performan
 
 /** 纯计算：给定稿件与回流快照，算每本每版的统计 + 未归版本的稿数 */
 export function computeStats(m: PlaybookManifest, contents: Content[], outcomes: PerformanceOutcome[]): Record<string, unknown> {
-  const drafts = contents.filter((c) => c.draftPath && live(c));
+  const drafts = contents.filter((c) => c.draftPath && live(c) && !c.example); // O20：示例稿不进手册统计
   const unattributed = drafts.filter((c) => !c.draftPath?.angle?.playbook && !finalPin(c)).length;
   const by_playbook = Object.fromEntries(m.playbooks.map((e) => [e.id, e.versions.map((v) => versionStats({ id: e.id, version: v.version }, drafts, outcomes))]));
   return { by_playbook, unattributed, min_sample: MIN_SAMPLE };

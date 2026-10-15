@@ -61,6 +61,17 @@ describe("save feedback", () => {
     expect(c!.draftPath!.feedback).toEqual([expect.objectContaining({ version: version + 1, founder_words: "开头别先说结论", lessons: [{ rule_id: rule.id, outcome: "created_pending" }] })]);
   });
 
+  it("O20：示例稿的意见记在稿上，但不建规则、不提手册提案", async () => {
+    const { id, version } = await firstVersion();
+    await updateContent(id, { example: true }, dir);
+    const before = (await rules()).length;
+    const r = await run("save", { content_id: id, base_version: version, body: BODY2, feedback: { founder_words: "开头别先说结论", lessons: [{ rule: "开头不先抛结论", scope: "platform:douyin", relation: "new" }] } });
+    expect(r).toMatchObject({ ok: true, lessons: [] });
+    expect(r.lessons_skipped).toContain("示例稿");
+    expect((await rules()).length).toBe(before);
+    expect((await getContent(id, dir))!.draftPath!.feedback?.[0]).toMatchObject({ founder_words: "开头别先说结论", lessons: [] });
+  });
+
   it("边界 1：只针对这篇的意见 → 只记 draftPath.feedback，不建规则", async () => {
     const { id, version } = await firstVersion();
     const before = (await rules()).length;

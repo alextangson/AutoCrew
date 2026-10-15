@@ -252,7 +252,7 @@ export async function matchDraft(
   const targetPlatform = normalizePlatform(platform);
   const candidates: DraftCandidate[] = [];
   for (const c of await listContents(dataDir)) {
-    if (c.status !== "published") continue;
+    if (c.status !== "published" || c.example) continue; // O20：示例稿不进数据回流
     const platforms = await draftPlatforms(c, dataDir);
     const titles = platforms.get(targetPlatform);
     if (titles) candidates.push({ content: c, titles: [c.title, ...titles] });

@@ -103,6 +103,11 @@ export const CHANNEL_EVENT_MAP: Partial<Record<IpcChannel, Mapper>> = {
     return { role: "system", kind: "trash", label: `你把选题「${t?.title ?? ""}」移入了回收站` };
   },
 
+  "topic:delete_example": ({ result }) => {
+    if (result.ok !== true) return null;
+    return { role: "system", kind: "trash", label: "你把试跑的示例选题和稿移入了回收站" };
+  },
+
   "topic:restore": ({ result }) => {
     if (result.ok !== true) return null;
     const t = result.topic as { title?: string } | undefined;

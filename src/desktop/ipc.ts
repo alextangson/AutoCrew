@@ -1,4 +1,5 @@
 import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelStorageSettings } from "./settings-storage.js";
+import { deleteExampleTopic } from "../tools/topic-create.js";
 /**
  * IPC contract + handler registry for the Electron desktop shell.
  *
@@ -1361,6 +1362,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "topic:create": topicCreateHandler,
     "topic:update": topicUpdateHandler,
     "topic:delete": topicDeleteHandler,
+    "topic:delete_example": (p) => deleteExampleTopic(String(p.id ?? ""), (p._dataDir as string) || undefined),
     "topic:restore": topicRestoreHandler,
     "topic:select_angle": topicSelectAngleHandler,
     ...DRAFT_IPC_HANDLERS,

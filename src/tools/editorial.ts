@@ -113,11 +113,12 @@ async function capture(a: Args, dir: string, host: string): Promise<Record<strin
       ...(scope === "draft" ? { writingFeedback: latest.writingFeedback?.some(f => f.at === receipt.at && f.instruction === a.feedback!.trim())
         ? latest.writingFeedback
         : appendWritingFeedback(latest.writingFeedback, a.feedback!, a.selection ? "selection" : "whole", { at: receipt.at, selection: a.selection }) } : {}),
-      ...(a.verdict ? { adoption: { verdict: a.verdict, recordedAt: receipt.at, draftHash: a.draft_hash } } : {}),
+      ...(a.verdict && !content.example ? { adoption: { verdict: a.verdict, recordedAt: receipt.at, draftHash: a.draft_hash } } : {}),
     }), dir);
     if (!applied.ok) return { ok: false, status: "stale_draft", error: "保存反馈前正文已变化，反馈未套到新稿；先inspect核对版本", ...gate.grant };
     let ruleOutcome: string | undefined;
-    if (scope !== "draft") {
+    if (scope !== "draft" && content.example) ruleOutcome = "skipped_example"; // O20：示例稿不参与写作规则学习
+    else if (scope !== "draft") {
       const ruleScope = scope === "voice" ? "voice_core" : `platform:${a.platform}` as const;
       const written = await addWritingRule({ rule: a.feedback!, scope: ruleScope, source: "user_explicit", confidence: 1,
         evidence: [`稿件 ${content.id}（draft_hash ${a.draft_hash.slice(0, 12)}）用户反馈：${a.feedback}`] }, dir, { promote: false });
@@ -127,7 +128,7 @@ async function capture(a: Args, dir: string, host: string): Promise<Record<strin
     await writeReceipt(file, receipt);
     return withTokenInNextAction({
       ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir), ...gate.grant,
-      ...(scope !== "draft" ? { long_term_rule: { status: ruleOutcome === "blocked_by_tombstone" ? "blocked_by_tombstone" : "pending",
+      ...(ruleOutcome === "skipped_example" ? { long_term_rule: { status: "skipped_example", note: "这是示例稿，意见不进长期写作规则" } } : scope !== "draft" ? { long_term_rule: { status: ruleOutcome === "blocked_by_tombstone" ? "blocked_by_tombstone" : "pending",
         note: "长期规则只记为待批，user_confirmed 不算批准；请提醒创始人去工作台「校准」页批准，批准前不进写作要求" } } : {}),
     });
   });

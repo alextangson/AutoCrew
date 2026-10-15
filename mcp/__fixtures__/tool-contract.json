@@ -10,12 +10,16 @@
        "list",
        "radar_pool",
        "radar_score",
-       "delete"
+       "delete",
+       "delete_example"
       ],
       "type": "string"
      },
      "description": {
       "type": "string"
+     },
+     "example": {
+      "type": "boolean"
      },
      "id": {
       "type": "string"
@@ -2997,12 +3001,16 @@
        "list",
        "radar_pool",
        "radar_score",
-       "delete"
+       "delete",
+       "delete_example"
       ],
       "type": "string"
      },
      "description": {
       "type": "string"
+     },
+     "example": {
+      "type": "boolean"
      },
      "id": {
       "type": "string"

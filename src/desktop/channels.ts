@@ -147,6 +147,8 @@ export const IPC_CHANNELS = [
   "topic:create",
   "topic:update",
   "topic:delete",
+  // 一键删示例（onboarding-connect O20）：示例选题连同其下的稿一起进回收站
+  "topic:delete_example",
   "topic:restore",
   // 角度点选（角度卡 spec §1.4）：点选 = 只带 angle_id；改写 = 额外带改写后的 card
   "topic:select_angle",

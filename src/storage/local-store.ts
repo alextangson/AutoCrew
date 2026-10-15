@@ -89,6 +89,8 @@ export interface Topic {
   deletedAt?: string | null;
   /** 选题会片单位（选题会 spec §4）：选中≠开工，只是进本周片单；会议记录在 meetings/<meetingDate>.json */
   meetingSlot?: { meetingDate: string; slotId: string };
+  /** 装好后试跑建的示例选题（onboarding-connect O20）：其下稿件继承，不进数据回流和写作学习，可一键删 */
+  example?: boolean;
 }
 
 /**
@@ -320,6 +322,8 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  /** 示例稿（O20）：建稿时从选题继承；不进数据回流、不参与写作规则 / 手册学习，可一键删 */
+  example?: boolean;
   /**
    * 系统建稿时垫的占位正文（create_variant 不带正文）：选题会卡口只认与它一字不差的正文为占位，
    * 前缀长得像的正文不算。只由系统写，content update 不开放这个字段。
@@ -787,9 +791,12 @@ export async function saveContent(
 
   const id = `content-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date().toISOString();
+  // O20：示例选题下建的稿一律是示例稿——所有建稿路径都经过这里，不靠各入口各自记得
+  const example = content.example ?? (content.topicId ? (await getTopic(content.topicId, dataDir))?.example : undefined);
 
   const full: Content = {
     ...content,
+    ...(example ? { example: true } : {}),
     id,
     siblings: content.siblings ?? [],
     hashtags: content.hashtags ?? [],

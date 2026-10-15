@@ -95,7 +95,7 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   const version = currentVersion(saved);
   let notes = saved.draftPath?.reviewNotes ?? [];
   if (a.reviewNotes !== undefined) notes = [...notes, { version, notes: a.reviewNotes as DraftReviewNote["notes"], at: new Date().toISOString() }];
-  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, angle?.playbook, a.dataDir) : null;
+  const fb = a.feedback && typeof a.feedback === "object" ? await learn(a.feedback, c.id, version, angle?.playbook, a.dataDir, c.example) : null;
   if (a.reviewNotes !== undefined || fb) {
     await tx.write({ draftPath: { ...saved.draftPath!, reviewNotes: notes, ...(fb ? { feedback: [...(saved.draftPath?.feedback ?? []), fb.record] } : {}) } });
   }
@@ -103,17 +103,18 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
 }
 
 /** 版本已存之后才记意见：档案写失败不回滚这一版，回执带原始错误（不静默） */
-async function learn(input: DraftFeedbackInput, contentId: string, version: number, playbook: PlaybookPin | undefined, dataDir?: string): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
+async function learn(input: DraftFeedbackInput, contentId: string, version: number, playbook: PlaybookPin | undefined, dataDir?: string, example?: boolean): Promise<{ record: DraftFeedbackRecord; receipt: R }> {
   const lessons: LessonResult[] = [];
   let error: string | undefined;
   try {
-    await applyLessons(input, contentId, version, dataDir, lessons);
+    // O20：示例稿的意见照记在稿上，但不进写作规则 / 手册提案
+    if (!example) await applyLessons(input, contentId, version, dataDir, lessons);
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }
   const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}), at: new Date().toISOString(), ...(playbook ? { playbook } : {}),
     lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), ...(l.proposal_id ? { proposal_id: l.proposal_id } : {}), outcome: l.outcome })) };
-  return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则 / 手册提案没记上：${error}。如实告诉创始人` } : {}) } };
+  return { record, receipt: { lessons, ...(example ? { lessons_skipped: "这是示例稿：意见记在稿上，不进写作规则和手册学习" } : {}), ...(error ? { lessons_error: `这一版已存，但规则 / 手册提案没记上：${error}。如实告诉创始人` } : {}) } };
 }
 
 export async function draftSave(a: DraftArgs): Promise<R> {

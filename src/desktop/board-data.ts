@@ -38,6 +38,8 @@ export interface BoardItem {
   platform: string | null;
   status: string;
   topicId: string | null;
+  /** 试跑示例稿（O20）：卡上标「示例」并给一键删 */
+  example?: boolean;
   column: Exclude<BoardColumn, "选题">;
   createdAt: string;
   updatedAt: string;
@@ -92,6 +94,8 @@ export interface BoardTopic {
   renewedAt: string | null;
   /** 在本周片单里（选题会 spec §0.3）：会议位指向最近一次会议 → 选题列置顶 + 标签；选中≠开工 */
   inSlate: boolean;
+  /** 试跑示例（O20）：卡上标「示例」并给一键删 */
+  example?: boolean;
 }
 
 export interface BoardData {
@@ -156,7 +160,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
   return {
     targets: publishTargets(current, doc, publish, active), noScriptApproval: exp.no_script_approval === true, round: active ? doc?.round ?? 1 : null,
     id: current.id, title: current.title, platform: current.platform ?? null, status: current.status,
-    topicId: current.topicId ?? null, column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
+    topicId: current.topicId ?? null, ...(current.example ? { example: true } : {}), column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
     draftReadyAt: current.draftReadyAt ?? null, chars: countChars(current.body ?? ""),
     finalDurationMs: current.video?.final?.duration_ms ?? null,
     handoffHash: current.video?.handoff?.hash ?? null,
@@ -173,7 +177,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
 
 function topicOf(t: Topic, latestMeeting: string | null): BoardTopic {
   return { id: t.id, title: t.title, source: t.source ?? null, link: t.link ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null,
-    inSlate: inCurrentSlate(t, latestMeeting) };
+    inSlate: inCurrentSlate(t, latestMeeting), ...(t.example ? { example: true } : {}) };
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {
