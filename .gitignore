@@ -46,3 +46,6 @@ dist.prev-*/
 
 # 对话拍板时放进会话文件夹的预览文件（spec 2026-10-06 proactive-chat-review）
 review-preview/
+
+# 对标范文全文：版权，只在本机看，不进仓库
+docs/exemplars-draft/*/bench-*.md
