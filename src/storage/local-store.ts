@@ -440,6 +440,11 @@ export interface Content {
   writingSource?: { kind: "manual_import"; importedAt: string; reason: string };
   /** 走灵感 → A-roll 薄路径（autocrew_draft）的稿：立意与审稿意见。只由该工具写，content update 不开放 */
   draftPath?: DraftPathRecord;
+  /**
+   * 「开始写 / 交给 X 写」交出去的那一刻（spec 2026-10-15 §B5）：交给谁、什么时候；agent 用 autocrew_draft start 接手时记 pickedUpAt。
+   * 只由看板的交出动作和 draft start 写；看板据此说「已交给 X，等它接手」还是「X 在写」。
+   */
+  writingHandoff?: { host: string; at: string; pickedUpAt?: string; pickedUpBy?: string };
   /** 创始人在工作台点「定了」（绑定稿件指纹）。只由工作台会话写，交接据此认定稿 */
   draftFinal?: DraftFinalRecord;
   /** 补录的历史作品记录（imported-history.ts）：没有正文，不进任何生产流程 */

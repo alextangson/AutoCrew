@@ -7,6 +7,7 @@
  *   POST /api/connect/connect     {host}  一键接上
  *   POST /api/connect/disconnect  {host}  断开
  *   POST /api/connect/skip        {skipped}  「先不配」
+ *   POST /api/connect/writing-host {host}   默认写稿 AI（只认接上了、能写稿的）
  */
 import type http from "node:http";
 import { connectHost, disconnectHost } from "./host-connect/connect.js";
@@ -14,6 +15,7 @@ import { detectHosts, parseConnectHost, type ConnectHost } from "./host-connect/
 import { defaultHostEnv, type HostEnv } from "./host-connect/env.js";
 import { readOnboardingSkipped, writeOnboardingSkipped } from "./host-connect/onboarding-state.js";
 import { probeHost } from "./host-connect/probe.js";
+import { connectedWriters, readWritingHost, writeWritingHost } from "./host-connect/writing-host.js";
 
 export interface ConnectRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -50,7 +52,7 @@ export function createConnectHandler(deps: ConnectRouteDeps) {
     if (isGet ? !session(req) : !(session(req) && deps.originAllowed(req) && req.method === "POST")) { res.writeHead(403).end(); return true; }
     try {
       const e = env();
-      if (isGet) return send(res, 200, { ok: true, data: { hosts: await detectHosts(e), skipped: readOnboardingSkipped(e.dataDir) } }), true;
+      if (isGet) return send(res, 200, { ok: true, data: { hosts: await detectHosts(e), skipped: readOnboardingSkipped(e.dataDir), writingHost: readWritingHost(e.dataDir), writers: connectedWriters(e) } }), true;
       const b = await body(req);
       if (p === "/api/connect/skip") {
         writeOnboardingSkipped(b.skipped !== false, e.dataDir);
@@ -58,6 +60,11 @@ export function createConnectHandler(deps: ConnectRouteDeps) {
       }
       const host = parseConnectHost(typeof b.host === "string" ? b.host : "");
       if (!host) return send(res, 400, { ok: false, error: "不认识这个宿主（只能是 claude / codex / workbuddy）" }), true;
+      if (p === "/api/connect/writing-host") {
+        if (!connectedWriters(e).includes(host)) return send(res, 400, { ok: false, code: "not_connected", error: "这个 AI 还没接上（或接上了但没核对通），接上了才能设成默认写稿" }), true;
+        writeWritingHost(host, e.dataDir);
+        return send(res, 200, { ok: true, data: { writingHost: host } }), true;
+      }
       if (p === "/api/connect/probe") return send(res, 200, await probeHost(host, e)), true;
       if (p === "/api/connect/connect") return send(res, 200, await exclusive(host, () => connectHost(host, e))), true;
       if (p === "/api/connect/disconnect") return send(res, 200, await exclusive(host, () => disconnectHost(host, e))), true;

@@ -1,6 +1,7 @@
 /**
  * 看板上的两类写操作（看板规格 §B、§D.22）：
- * - 「开始写」：选题 → 建稿件（写稿中）+ 打开 Claude 桌面版新会话并预填指令（只预填，不发送）。
+ * - 「开始写」：选题 → 建稿件（写稿中）+ 交给默认写稿 AI（writing-handoff：Claude 深链预填 / Codex 打开 + 剪贴板 / WorkBuddy 剪贴板）。
+ *   没接上能写稿的 AI、或默认的那个连不上了：先说清楚，不建稿（spec 2026-10-15 §B 边界）。
  *   同一选题已有稿件就直接回那篇，不建第二篇（§11）；同一进程里的并发点击合并成一次。
  * - 「我发了」：按平台记一条手动发布，可撤销；任一平台已发出去就同步为已发布。
  * spawn 可注入，测试不真开窗。
@@ -19,29 +20,27 @@ import { anySubmitted, readPublishRecord } from "../storage/publish-record.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../storage/production-store.js";
 import { founderDecision } from "../modules/production/decisions.js";
 import { newDraftAngleRefusal, type AngleRefusal } from "../modules/research/angle-gate.js";
+import { deliver, pickFor, writePrompt, type Delivery, type HandOffDeps } from "./writing-handoff.js";
+import type { WriterPick } from "./host-connect/writing-host.js";
 
 export const PROGRAM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export interface OpenDeps { spawnImpl?: typeof spawn; platform?: NodeJS.Platform; programDir?: string }
 
 export type StartResult =
-  | { ok: true; created: boolean; content_id: string; prompt?: string; link?: string; opened?: boolean; open_error?: string; needs_angle?: true }
+  | ({ ok: true; created: true; content_id: string; needs_angle?: true } & Delivery)
+  | { ok: true; created: false; content_id: string }
   | { ok: false; code: "bad_request" | "topic_gone"; error: string }
+  | Exclude<WriterPick, { ok: true }>
   | AngleRefusal;
-
-/** 预填给 Claude 的指令：video-session 技能的触发说法 + 标题 + id，保持简短（App 对 q 有长度上限） */
-export function startPrompt(title: string, topicId: string, contentId: string, platform: string): string {
-  const short = Array.from(title).slice(0, 60).join("");
-  return `这条视频开工：「${short}」（topic_id ${topicId}，稿件 ${contentId}，平台 ${platform}）`;
-}
 
 export function claudeLink(prompt: string, folder: string): string {
   return `claude://code/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(folder)}`;
 }
 
-/** darwin 用 `open`；其他平台或打不开都回原因，由前端退回剪贴板 */
-export async function openLink(link: string, deps: OpenDeps = {}): Promise<{ opened: boolean; error?: string }> {
-  if ((deps.platform ?? process.platform) !== "darwin") return { opened: false, error: "这台机器不是 macOS，打不开 Claude 桌面版" };
+/** darwin 用 `open`；其他平台或打不开都回原因（说清是哪个 App），由前端退回剪贴板 */
+export async function openLink(link: string, deps: OpenDeps = {}, app = "Claude 桌面版"): Promise<{ opened: boolean; error?: string }> {
+  if ((deps.platform ?? process.platform) !== "darwin") return { opened: false, error: `这台机器不是 macOS，打不开 ${app}` };
   const code = await new Promise<number | string>((resolve) => {
     try {
       const child = (deps.spawnImpl ?? spawn)("open", [link], { stdio: "ignore" });
@@ -50,14 +49,14 @@ export async function openLink(link: string, deps: OpenDeps = {}): Promise<{ ope
     } catch (e) { resolve(e instanceof Error ? e.message : String(e)); }
   });
   if (code === 0) return { opened: true };
-  return { opened: false, error: typeof code === "number" ? `open 退出码 ${code}，可能没装 Claude 桌面版` : code };
+  return { opened: false, error: typeof code === "number" ? `open 退出码 ${code}，可能没装 ${app}` : code };
 }
 
 function existingDraft(contents: Content[], topicId: string): Content | undefined {
   return contents.find((c) => c.topicId === topicId && c.status !== "archived");
 }
 
-async function startOnce(topicId: string, platform: string, dataDir: string, deps: OpenDeps): Promise<StartResult> {
+async function startOnce(topicId: string, platform: string, dataDir: string, deps: HandOffDeps, host?: string | null): Promise<StartResult> {
   const existing = existingDraft(await listContents(dataDir), topicId);
   if (existing) return { ok: true, created: false, content_id: existing.id };
   const topic = await getTopic(topicId, dataDir);
@@ -65,21 +64,23 @@ async function startOnce(topicId: string, platform: string, dataDir: string, dep
   // 没定立意不拦：照建占位、照开 Claude，由 video-session 在会话里先调研选卡；写稿/存稿闸仍挡没立意的正文
   const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused && refused.code !== "needs_founder_angle") return refused;
+  // 交给谁先定下来：一个都没接 / 默认的连不上了就不建稿，不假装开工
+  const pick = pickFor(deps, host);
+  if (!pick.ok) return pick;
   const content = await saveContent({ title: topic.title, body: "", platform, topicId, status: "drafting", tags: [] }, dataDir);
-  const prompt = startPrompt(topic.title, topicId, content.id, platform);
-  const link = claudeLink(prompt, deps.programDir ?? PROGRAM_DIR);
-  const opened = await openLink(link, deps);
-  return { ok: true, created: true, content_id: content.id, prompt, link, opened: opened.opened, ...(opened.error ? { open_error: opened.error } : {}), ...(refused ? { needs_angle: true as const } : {}) };
+  const d = await deliver(pick.host, pick.label, writePrompt(topic.title, topicId, content.id, platform), deps);
+  await updateContent(content.id, { writingHandoff: { host: pick.host, at: new Date().toISOString() } }, dataDir);
+  return { ok: true, created: true, content_id: content.id, ...d, ...(refused ? { needs_angle: true as const } : {}) };
 }
 
 const inflight = new Map<string, Promise<StartResult>>();
 
-export function startWriting(topicId: string, platform: string | undefined, dataDir: string, deps: OpenDeps = {}): Promise<StartResult> {
+export function startWriting(topicId: string, platform: string | undefined, dataDir: string, deps: HandOffDeps = {}, host?: string | null): Promise<StartResult> {
   if (!isTopicId(topicId)) return Promise.resolve({ ok: false, code: "bad_request", error: "参数不对" });
   const target = platform && isVideoPlatform(platform) ? platform : "douyin";
   const running = inflight.get(topicId);
   if (running) return running.then((r) => (r.ok && r.created ? { ok: true, created: false, content_id: r.content_id } : r));
-  const job = startOnce(topicId, target, dataDir, deps).finally(() => inflight.delete(topicId));
+  const job = startOnce(topicId, target, dataDir, deps, host).finally(() => inflight.delete(topicId));
   inflight.set(topicId, job);
   return job;
 }

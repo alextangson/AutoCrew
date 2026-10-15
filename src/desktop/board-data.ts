@@ -22,6 +22,8 @@ import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-s
 import { editorLabel } from "../modules/production/workbench.js";
 import { draftRef } from "../modules/production/inbox.js";
 import { isBeingWritten } from "../modules/production/trash-guard.js";
+import { activeClaim } from "../storage/claims.js";
+import { holderLabel } from "./host-label.js";
 import { publishTargets, type PublishTarget } from "../modules/production/targets.js";
 
 export { isBeingWritten };
@@ -76,6 +78,23 @@ export interface BoardItem {
   noScriptApproval: boolean;
   /** 本轮轮次（按平台动作要带它）；不按本体走 = null */
   round: number | null;
+  /** 「开始写」交给了谁、有没有 agent 接手、谁正认领着（spec 2026-10-15 §B5）；没交过 = 不带 */
+  handoff?: HandoffView;
+}
+
+export interface HandoffView { host: string; label: string; at: string; pickedUp: boolean; holder: string | null }
+
+/**
+ * 接手的信号：agent 用 autocrew_draft start 接了这篇（pickedUpAt），或交出之后有人认领过它，或稿子已经往后走了。
+ * 有活着的认领 → holder（谁在写），看板不给「重新交给」。
+ */
+export function handoffView(c: Content, now = Date.now()): HandoffView | undefined {
+  const h = c.writingHandoff;
+  if (!h) return undefined;
+  const claim = activeClaim(c, now);
+  const claimedAfter = Boolean(c.claim && Date.parse(c.claim.at) >= Date.parse(h.at));
+  const pickedUp = Boolean(h.pickedUpAt) || claimedAfter || c.status !== "drafting";
+  return { host: h.host, label: holderLabel(h.host), at: h.at, pickedUp, holder: claim ? holderLabel(claim.host) : null };
 }
 
 export interface BoardTopic {
@@ -159,7 +178,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
-    active, writing: isBeingWritten(current),
+    active, writing: isBeingWritten(current), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
     ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
     // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）
