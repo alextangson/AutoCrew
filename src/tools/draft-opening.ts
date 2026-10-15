@@ -43,7 +43,8 @@ export async function draftOpening(a: DraftArgs): Promise<R> {
     if (a.founderWords && a.candidates) feedback = openingFeedback(c, angle!, a.founderWords, version);
     if (a.candidates) {
       if (exhausted(prev)) {
-        if (feedback) await tx.write({ draftPath: { ...c.draftPath!, feedback } });
+        // 记下「回立意」的状态：断线重连时 progress / next_action 指向重选立意，不再「等你选开头」
+        await tx.write({ draftPath: { ...c.draftPath!, angle: { ...angle!, opening_pick: { ...prev!, exhausted: true, at: new Date().toISOString() } }, ...(feedback ? { feedback } : {}) } });
         return fail("back_to_angle", "连着两轮开头他都不满意：不出第三轮，回到第 3 步重出立意（angle），他这次的原话已记下", { round: prev!.round });
       }
       const pick: OpeningPick = { round: (prev?.round ?? 0) + 1, candidates: a.candidates as string[], at: new Date().toISOString() };
@@ -51,6 +52,7 @@ export async function draftOpening(a: DraftArgs): Promise<R> {
       await tx.write({ draftPath: { ...c.draftPath!, angle: { ...angle!, opening_pick: pick }, ...(feedback ? { feedback } : {}) } });
       return { ok: true, version, round: pick.round, waiting: "等创始人选开头", workbench_url: workbenchUrl(c.id), next_action: { note } };
     }
+    if (prev?.exhausted) return fail("back_to_angle", "连着两轮开头都没选中：先回到立意重选（angle），再磨开头");
     if (!prev?.candidates.length) return fail("no_candidates", "还没记这一轮的候选开头：先 opening{candidates}，给他挑了再记选中的");
     const pick: OpeningPick = { ...prev, chosen: a.opening!, founder_words: a.founderWords, at: new Date().toISOString() };
     await tx.write({ draftPath: { ...c.draftPath!, angle: { ...angle!, opening: a.opening!, opening_pick: pick } } });

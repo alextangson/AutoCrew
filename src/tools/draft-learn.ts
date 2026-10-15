@@ -19,6 +19,12 @@ import type { DraftArgs } from "./draft-args.js";
 type R = Record<string, unknown>;
 const HISTORY_MAX = 300;
 const TARGETS = ["playbook", "exemplar", "method"];
+/** 回执按实际去向说：进了 / 已在待批 / 他否决过——没进就不说「已进等你拍板」 */
+const OUTCOME_NOTE = {
+  proposed: () => "已进「等你拍板」（writing_promotion）。批了范文出新版本、写法出补丁（显示「已批，等发布」）",
+  duplicate: (id: string) => `同样的升级已经在「等你拍板」里待批（${id}），没有再提一份：告诉创始人那一件还在等他`,
+  blocked_by_rejected: (id: string) => `这条升级创始人之前否决过（${id}），没有再提：如实告诉他，别换个说法再提`,
+} as const;
 
 const douyinDrafts = async (dataDir?: string): Promise<Content[]> =>
   (await listContents(dataDir)).filter((c) => !c.deletedAt && !c.example && c.platform === DRAFT_PLATFORM && c.draftPath?.feedback?.length);
@@ -62,7 +68,8 @@ async function toPlaybook(a: DraftArgs, cites: PromotionCite[]): Promise<R> {
   const words = cites.map((c) => `「${c.founder_words}」`).join(" / ");
   try {
     const r = await proposeRevision({ id: a.genre, based_on: current, text: a.text!, reason: `${a.note}（出处：${cites.map((c) => `${c.content_id}#${c.index}`).join("、")}）`, founder_words: words }, a.dataDir);
-    return { ...r, target: "playbook", next_action: { note: "已进「等你拍板」：定稿时告诉创始人有一份手册改动等他批（autocrew_review_inbox list 里 playbook_change）" } };
+    const note = r.duplicate ? `同样的手册改动已经在「等你拍板」里待批（${String(r.proposal_id)}），没有再提一份` : "已进「等你拍板」：定稿时告诉创始人有一份手册改动等他批（autocrew_review_inbox list 里 playbook_change）";
+    return { ...r, target: "playbook", outcome: r.duplicate ? "duplicate" : "proposed", next_action: { note } };
   } catch (e) {
     if (e instanceof PlaybookError) return fail(e.code, e.message, e.extra);
     throw e;
@@ -80,5 +87,5 @@ export async function draftProposePromotion(a: DraftArgs): Promise<R> {
     if (!(await readExemplarManifest(a.dataDir)).exemplars.some((e) => e.id === a.exemplarId)) return fail("not_found", `范文库里没有 ${a.exemplarId}`);
   }
   const r = await proposePromotion({ target: a.target as "exemplar" | "method", ...(a.exemplarId ? { exemplar_id: a.exemplarId } : {}), text: a.text!, reason: a.note!, cites }, a.dataDir);
-  return { ok: true, target: a.target, ...r, next_action: { note: "已进「等你拍板」（writing_promotion）。批了范文出新版本、写法出补丁（显示「已批，等发布」）" } };
+  return { ok: true, target: a.target, ...r, next_action: { note: OUTCOME_NOTE[r.outcome](r.id) } };
 }

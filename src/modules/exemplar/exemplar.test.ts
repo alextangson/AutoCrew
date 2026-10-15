@@ -23,10 +23,10 @@ describe("存储与导入", () => {
       await fs.writeFile(path.join(src, d, f), t);
     }
     const r = await importExemplarDir(src, dir);
-    expect(r.filter((x) => x.outcome === "created").map((x) => x.id).sort()).toEqual(["bench-a", "bench-b", "bench-card"]);
+    expect(r.filter((x) => x.outcome === "created").map((x) => x.id).sort()).toEqual(["bench-a", "bench-b", "bench-card", "voice-deep"]);
     expect(r.find((x) => x.file === "weird")?.error).toContain("不是体裁 id");
     const m = await readExemplarManifest(dir);
-    expect(m.exemplars.map((e) => [e.id, e.genre, e.kind])).toEqual(expect.arrayContaining([["bench-a", "ganhuo", "exemplar"], ["bench-card", "ganhuo", "structure_card"], ["bench-b", "any", "technique_card"]]));
+    expect(m.exemplars.map((e) => [e.id, e.genre, e.kind])).toEqual(expect.arrayContaining([["bench-a", "ganhuo", "exemplar"], ["bench-card", "ganhuo", "structure_card"], ["bench-b", "any", "technique_card"], ["voice-deep", "any", "voice_ref"]]));
     expect((await importExemplarDir(src, dir)).filter((x) => x.outcome).every((x) => x.outcome === "unchanged")).toBe(true);
   });
 

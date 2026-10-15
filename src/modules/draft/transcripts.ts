@@ -10,7 +10,8 @@ import path from "node:path";
 import { contentIds, contentRoot } from "../../storage/content-project.js";
 
 export type TranscriptSource = "final" | "raw";
-export interface FounderTranscript { content_id: string; source_type: TranscriptSource; label: string; text: string; file: string; at: number }
+/** key：转写目录在项目 99-cache 下的相对路径，同一作品几份转写也唯一、稳定 */
+export interface FounderTranscript { content_id: string; key: string; source_type: TranscriptSource; label: string; text: string; file: string; at: number }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const CJK = "\\u4e00-\\u9fff，。！？、；：「」";
@@ -52,7 +53,7 @@ async function manifests(root: string, errors: string[]): Promise<string[]> {
 }
 
 /** 只有词级结果、没有整段 full.json 的清单（如 A/B 对比）：不是坏文件，跳过；读坏了才报错 */
-async function readOne(contentId: string, manifestFile: string): Promise<FounderTranscript | { error: string } | null> {
+async function readOne(contentId: string, root: string, manifestFile: string): Promise<FounderTranscript | { error: string } | null> {
   const full = path.join(path.dirname(manifestFile), "full.json");
   let stat: import("node:fs").Stats;
   try { stat = await fs.stat(full); } catch (e) { return absent(e) ? null : { error: `${full} 读不了：${msg(e)}` }; }
@@ -61,7 +62,7 @@ async function readOne(contentId: string, manifestFile: string): Promise<Founder
     const text = parseTranscriptText(JSON.parse(await fs.readFile(full, "utf8")));
     if (!text) return { error: `${full} 不是认得出的转写格式` };
     const type = sourceTypeOf(typeof m.source === "string" ? m.source : "");
-    return { content_id: contentId, source_type: type, label: LABEL[type], text, file: full, at: stat.mtimeMs };
+    return { content_id: contentId, key: path.relative(path.join(root, "99-cache"), path.dirname(manifestFile)).split(path.sep).join("/"), source_type: type, label: LABEL[type], text, file: full, at: stat.mtimeMs };
   } catch (e) {
     return { error: `${manifestFile}：${(e as Error).message}` };
   }
@@ -77,7 +78,7 @@ export async function founderTranscripts(dataDir?: string): Promise<{ items: Fou
     let root: string;
     try { root = contentRoot(id, dataDir); } catch (e) { errors.push(`稿件 ${id} 的项目文件夹找不到 / 绑定不对：${msg(e)}`); continue; }
     for (const f of await manifests(root, errors)) {
-      const r = await readOne(id, f);
+      const r = await readOne(id, root, f);
       if (r && "error" in r) errors.push(r.error); else if (r) items.push(r);
     }
   }

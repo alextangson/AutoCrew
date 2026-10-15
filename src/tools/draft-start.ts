@@ -8,7 +8,7 @@ import { firsthandContext, hitsContext, profileContext, seriesContext } from "..
 import { loadChecklist } from "../modules/draft/draft-final.js";
 import { pinnedPlaybook, playbookIndex } from "../modules/playbook/read.js";
 import { draftHash } from "../storage/draft-hash.js";
-import { currentVersion, DRAFT_PLATFORM, draftNextNote, needsOpening, workbenchUrl } from "../modules/draft/draft-types.js";
+import { currentVersion, DRAFT_PLATFORM, draftNextNote, needsOpening, openingState, workbenchUrl } from "../modules/draft/draft-types.js";
 import { lockedContext, openingAndReads } from "./draft-locks.js";
 import type { DraftArgs } from "./draft-args.js";
 
@@ -132,6 +132,6 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
     ok: true, content_id: content.id, topic_id: content.topicId ?? null, resumed: Boolean(a.contentId),
     context: { profile, hits, series, firsthand: own.firsthand, voice_refs: own.voice_refs, ...playbooks }, progress,
     workbench_url: workbenchUrl(content.id),
-    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, needsOpening: progress.needs_opening as boolean, hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length + (progress.test_reads_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
+    next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, needsOpening: progress.needs_opening as boolean, opening: openingState(content.draftPath?.angle), hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length + (progress.test_reads_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
   };
 }

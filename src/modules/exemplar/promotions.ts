@@ -69,7 +69,7 @@ export interface PromotionInput { target: PromotionTarget; exemplar_id?: string;
 export function proposePromotion(x: PromotionInput, dataDir?: string): Promise<{ outcome: "proposed" | "duplicate" | "blocked_by_rejected"; id: string }> {
   return serializeExemplars(dataDir, async () => {
     const items = await readPromotions(dataDir);
-    const same = items.find((p) => p.target === x.target && p.exemplar_id === x.exemplar_id && p.text.trim() === x.text.trim() && p.status === "pending" || p.status === "rejected");
+    const same = items.find((p) => p.target === x.target && p.exemplar_id === x.exemplar_id && p.text.trim() === x.text.trim() && (p.status === "pending" || p.status === "rejected"));
     if (same?.status === "rejected") return { outcome: "blocked_by_rejected" as const, id: same.id };
     if (same) return { outcome: "duplicate" as const, id: same.id };
     const id = `wp-${randomUUID()}`;

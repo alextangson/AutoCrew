@@ -5,8 +5,11 @@
  */
 import { PLAYBOOK_IDS, type PlaybookId } from "../playbook/types.js";
 
-/** exemplar = 完整逐字稿；structure_card = 只拆结构的长片；technique_card = 只学一个手法 */
-export const EXEMPLAR_KINDS = ["exemplar", "structure_card", "technique_card"] as const;
+/**
+ * exemplar = 完整逐字稿；structure_card = 只拆结构的长片；technique_card = 只学一个手法；
+ * voice_ref = 创始人自己发布成片的转写，只当口吻参考（§16）：不进范文预览、不能被锁成范文、不进 firsthand
+ */
+export const EXEMPLAR_KINDS = ["exemplar", "structure_card", "technique_card", "voice_ref"] as const;
 export type ExemplarKind = (typeof EXEMPLAR_KINDS)[number];
 
 /** 体裁：5 本手册之一，或 any（跨体裁的手法卡） */

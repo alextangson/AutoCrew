@@ -7,6 +7,7 @@
  * 重出立意会清掉开头的选择：主线变了，开头要重新磨。
  */
 import { getTopic, saveTopic, type Content, type ContentTx } from "../storage/local-store.js";
+import { isRealDraft } from "../storage/first-body-guard.js";
 import { recordFounderAngle } from "../modules/research/angle-gate.js";
 import { currentVersion, workbenchUrl, type DraftAngle } from "../modules/draft/draft-types.js";
 import { GENRE_HINT, pinnedPlaybook } from "../modules/playbook/read.js";
@@ -85,7 +86,8 @@ export async function draftAngle(a: DraftArgs): Promise<R> {
     const { note, ...pinned } = locks;
     const angle: DraftAngle = { version, main_line: a.mainLine!, for_whom: a.forWhom!, opening: a.opening!, why_viral: a.whyViral!, chain: chain!, founder_words: a.founderWords!, ...(a.chosenOption ? { chosen_option: a.chosenOption } : {}), playbook, ...pinned, at: new Date().toISOString() };
     await tx.write({ draftPath: { ...c.draftPath!, angle } });
-    const next = angle.method ? "先磨开头：给创始人 3 个不同写法的前 15 秒，用 opening{candidates} 记下，他选了再写全文" : "按选定的立意、论证链和手册全文写全文，再 save";
+    const hasBody = await isRealDraft(c, a.dataDir);
+    const next = hasBody ? "已经有正文：按新立意改正文再 save（开头三选一只在第一版之前做）" : angle.method ? "先磨开头：给创始人 3 个不同写法的前 15 秒，用 opening{candidates} 记下，他选了再写全文" : "按选定的立意、论证链和手册全文写全文，再 save";
     return { ok: true, angle_version: version, version: currentVersion(c), ...receipt, exemplars: angle.exemplars ?? null, method_version: angle.method?.version ?? null,
       ...(note ? { lock_note: note } : {}), workbench_url: workbenchUrl(c.id), next_action: { note: next } };
   });

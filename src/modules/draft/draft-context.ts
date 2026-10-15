@@ -14,7 +14,7 @@ import { loadLatestBrief } from "../research/brief-store.js";
 import { getDataDir, listContents, type Content, type Topic } from "../../storage/local-store.js";
 import { DRAFT_PLATFORM } from "./draft-types.js";
 import { founderTranscripts, type FounderTranscript } from "./transcripts.js";
-import { excerpt, VOICE_REF_LABEL, voiceRefs } from "./voice-refs.js";
+import { excerpt, voiceContext } from "./voice-refs.js";
 import { ruleJudgeContext } from "./draft-feedback.js";
 
 const HIT_WINDOW_DAYS = 90;
@@ -114,7 +114,7 @@ async function founderSaid(topic: Topic, dataDir?: string): Promise<Array<{ sour
 /** 本选题那几条稿的真实转写（作品绑定的项目里）：他亲口说过的，是一手材料 */
 function sameTopicTranscripts(all: FounderTranscript[], topicContentIds: Set<string>) {
   return all.filter((t) => topicContentIds.has(t.content_id))
-    .map((t) => ({ id: `${t.content_id}:${t.source_type}`, title: t.label, text: excerpt(t.text, 6000).text, same_topic: true, source_type: t.source_type }));
+    .map((t) => ({ id: `${t.content_id}:${t.source_type}:${t.key}`, title: t.label, text: excerpt(t.text, 6000).text, same_topic: true, source_type: t.source_type }));
 }
 
 /**
@@ -126,7 +126,7 @@ export async function firsthandContext(topic: Topic | null, dataDir?: string, in
   const titles = new Map(contents.map((c) => [c.id, c.title]));
   const founder = await founderTranscripts(dataDir).catch((e: unknown) => ({ items: [] as FounderTranscript[], errors: [`转写读不了：${e instanceof Error ? e.message : String(e)}`] }));
   const material = topic ? await collectOwnMaterial(getDataDir(dataDir), { id: topic.id, title: topic.title, description: topic.description }, { maxChars: 6000 }) : null;
-  const voice = { label: VOICE_REF_LABEL, refs: voiceRefs(founder.items, material?.chunks ?? [], titles), ...(founder.errors.length ? { errors: founder.errors } : {}) };
+  const voice = await voiceContext(topic?.id ?? inspiration ?? "", founder, material?.chunks ?? [], titles, dataDir);
   if (!topic) return { firsthand: { founder_words: inspiration ?? null, founder_said: [], transcripts: [] }, voice_refs: voice };
   const topicIds = new Set(contents.filter((c) => c.topicId === topic.id && !c.deletedAt).map((c) => c.id));
   return {

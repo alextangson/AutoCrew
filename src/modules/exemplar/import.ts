@@ -1,12 +1,13 @@
 /**
  * 把 `<目录>/<体裁>/bench-*.md`（docs/exemplars-draft 的形状）导进范文库。按内容 hash 幂等：
- * 没变的不出新版本。体裁目录是 5 本手册 id 之一；手法卡目录（shoufa / any）记成 any；别的目录跳过并报出来。
+ * 没变的不出新版本。`voice/` 子目录里的是创始人成片转写，按口吻参考（voice_ref）入库。体裁目录是 5 本手册 id 之一；手法卡目录（shoufa / any）记成 any；别的目录跳过并报出来。
  * 一篇解析或入库失败不挡其他篇，结果里逐篇写明。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isPlaybookId } from "../playbook/types.js";
 import { putExemplar, type ImportOutcome } from "./store.js";
+import { importVoiceFiles } from "./voice.js";
 import type { ExemplarGenre, ExemplarKind } from "./types.js";
 
 const ANY_DIRS = new Set(["any", "shoufa"]);
@@ -68,6 +69,7 @@ export async function importExemplarDir(root: string, dataDir?: string): Promise
   const out: ImportResult[] = [];
   const dirs = (await fs.readdir(root, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
   for (const dir of dirs) {
+    if (dir === "voice") { out.push(...await importVoiceFiles([path.join(root, dir)], dataDir)); continue; }
     const names = (await fs.readdir(path.join(root, dir))).filter((n) => /^bench-.+\.md$/.test(n)).sort();
     if (!names.length) continue;
     const genre = genreOfDir(dir);

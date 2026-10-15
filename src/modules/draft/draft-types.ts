@@ -15,6 +15,8 @@ export interface OpeningPick {
   founder_words?: string;
   /** 选中的开头全文；没有 = 还在等他选 */
   chosen?: string;
+  /** 连着两轮都没选中（回过 back_to_angle）：该回立意重选，不再出候选 */
+  exhausted?: boolean;
   at: string;
 }
 
@@ -94,6 +96,8 @@ export interface DraftState {
   id: string; status: string; needsAngle: boolean; hasBody: boolean;
   /** 新流程立意、还没选定开头 */
   needsOpening?: boolean;
+  /** 这一轮候选已记下、等创始人选 / 两轮都没中该回立意 */
+  opening?: "waiting" | "exhausted";
   /** 这篇已附过观众试读（任何状态）或旧的 Codex 审稿：之后按创始人意见改不再催 */
   reviewed: boolean;
   checklistCurrent: boolean;
@@ -107,13 +111,21 @@ export function draftNextNote(s: DraftState): string {
   if (s.status === "draft_ready" && !s.checklistCurrent) return "稿在「等你认稿」但出处清单缺失或已过期（正文改过）：调 prepare_final 重新出清单";
   if (s.status === "draft_ready") return `稿在「等你认稿」：把工作台链接 ${workbenchUrl(s.id)} 给创始人，请他看清单后点「定了」`;
   if (s.needsAngle) return "按 write-script 技能走：衍生 → 调研（verify_quote）→ 立意（exemplars 预览范文 → angle）→ 先磨开头（opening）→ 写（save）";
+  if (!s.hasBody && s.needsOpening && s.opening === "exhausted") return "连着两轮开头都没选中：回到立意重选（第 3 步重出立意卡，创始人选了再 angle），不要再出开头候选";
+  if (!s.hasBody && s.needsOpening && s.opening === "waiting") return "这一轮候选开头已经记下（progress.opening_pick.candidates）：原样编号列给创始人，等他选；他选了（或改了一句）用 opening{opening, founder_words} 记，不要重出候选";
   if (!s.hasBody && s.needsOpening) return "等创始人选开头：给 3 个不同写法的前 15 秒，用 opening{candidates} 记下；他选了（或改了一句）用 opening{opening, founder_words} 记，之后才写全文";
   if (!s.hasBody) return "按选定的立意、开头和论证链写全文，再 save";
-  if (!s.reviewed) return "这篇还没附观众试读：按技能第 4 步起一个只拿正文的小林试读，用 save{同一版正文, test_read} 附上（失败 / 不支持也如实附上）";
+  if (!s.reviewed) return "这篇还没附观众试读：按技能第 5 步起一个只拿正文的小林试读，用 save{同一版正文, test_read} 附上（失败 / 不支持也如实附上）";
   return "按创始人意见改、只改他说的地方；他说「定了」就调 prepare_final";
 }
 
 /** 新流程的立意（锁了写法版本）还没选定开头：第一版全文先不收。旧立意（没有 method）不受这条管 */
+export function openingState(angle: DraftAngle | undefined): "waiting" | "exhausted" | undefined {
+  const p = angle?.opening_pick;
+  if (!p || p.chosen) return undefined;
+  return p.exhausted ? "exhausted" : "waiting";
+}
+
 export function needsOpening(angle: DraftAngle | undefined): boolean {
   return Boolean(angle?.method) && !angle?.opening_pick?.chosen;
 }

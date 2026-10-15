@@ -48,6 +48,13 @@ describe("按作品找转写", () => {
     expect(r.errors).toEqual([expect.stringContaining("content-1790000000003-cccccc")]);
   });
 
+  it("同一作品两份原片转写：key 各不相同且稳定", async () => {
+    await project("content-1790000000006-ffffff", "aroll-a", "/lib/02-aroll/a.mov", whisper(["一。"]));
+    await project("content-1790000000006-ffffff", "aroll-b", "/lib/02-aroll/b.mov", whisper(["二。"]));
+    const keys = (await founderTranscripts(dir)).items.map((t) => t.key).sort();
+    expect(keys).toEqual(["aroll-a/transcription", "aroll-b/transcription"]);
+  });
+
   it("权限错误不当成没有材料：记进 errors（Codex 复审 #11）", async () => {
     await project("content-1790000000005-eeeeee", "run", "/lib/02-aroll/x.mov", whisper(["说的话。"]));
     const cache = path.join(dir, "contents", "content-1790000000005-eeeeee", "99-cache");
@@ -62,9 +69,9 @@ describe("按作品找转写", () => {
   it("voice_refs 最多两篇转写 + 一篇认可过的 AI 稿（标明 AI 起草）；长转写整句节选", () => {
     const long = "这是一句话。".repeat(1000);
     const refs = voiceRefs([
-      { content_id: "c1", source_type: "final", label: "成片转写（发布版）", text: long, file: "f", at: 2 },
-      { content_id: "c2", source_type: "raw", label: "原片转写，非发布版", text: "短。", file: "f", at: 1 },
-      { content_id: "c3", source_type: "raw", label: "原片转写，非发布版", text: "第三篇。", file: "f", at: 0 },
+      { content_id: "c1", key: "a", source_type: "final", label: "成片转写（发布版）", text: long, file: "f", at: 2 },
+      { content_id: "c2", key: "a", source_type: "raw", label: "原片转写，非发布版", text: "短。", file: "f", at: 1 },
+      { content_id: "c3", key: "a", source_type: "raw", label: "原片转写，非发布版", text: "第三篇。", file: "f", at: 0 },
     ], [{ kind: "approved_draft", contentId: "c9", title: "认过的稿", text: "AI 写的", id: "x", sourceRevision: 1, chunkIndex: 0, score: 1, sameTopic: false, excerptHash: "h" }], new Map([["c1", "一号"]]));
     expect(refs.map((r) => [r.kind, r.content_id])).toEqual([["transcript", "c1"], ["transcript", "c2"], ["approved_ai_draft", "c9"]]);
     expect(refs[0]).toMatchObject({ title: "一号", excerpted: true });
@@ -77,7 +84,7 @@ describe("按作品找转写", () => {
     await project("content-1790000000002-bbbbbb", "final-1", "/lib/07-delivery/final.mp4", whisper(["别的稿成片。"]));
     const s = await executeDraft({ action: "start", inspiration: "用了 AI 反而更忙", _dataDir: dir, _host: "claude-code", _session: "s1" }) as { context: Record<string, any> };
     if (!s.context) throw new Error(JSON.stringify(s));
-    expect(s.context.voice_refs.label).toContain("口吻参考，不是范文");
+    expect(s.context.voice_refs).toMatchObject({ source: "raw_fallback", label: expect.stringContaining("口吻参考，不是范文") });
     expect(s.context.voice_refs.refs).toEqual([expect.objectContaining({ kind: "transcript", text: "别的稿成片。" })]);
     expect(JSON.stringify(s.context.firsthand)).not.toContain("别的稿成片");
   });

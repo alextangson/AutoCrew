@@ -1,16 +1,20 @@
 /**
  * 把 `<目录>/<体裁>/bench-*.md` 导进资料库范文库（spec 2026-10-15 §2、§16）。按内容 hash 幂等，改过的出新版本，旧版本不动。
  * 用法：npm run exemplars:import -- <目录> [--data-dir=<数据目录>]
+ *       npm run exemplars:import -- --voice <文件或目录…> [--data-dir=<数据目录>]   创始人成片转写，按口吻参考入库（不当范文）
  * 有任何一篇失败：照样导完其他篇，最后以非 0 退出，逐篇列原因。
  */
 import path from "node:path";
 import { importExemplarDir } from "../src/modules/exemplar/import.js";
+import { importVoiceFiles } from "../src/modules/exemplar/voice.js";
 import { getDataDir } from "../src/storage/local-store.js";
 import { isWithin, readLibraryLocation } from "../src/storage/storage-roots.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 
 const args = process.argv.slice(2);
-const dir = args.find((a) => !a.startsWith("--"));
+const voice = args.includes("--voice");
+const paths = args.filter((a) => !a.startsWith("--"));
+const dir = paths[0];
 const dataDir = args.find((a) => a.startsWith("--data-dir="))?.slice("--data-dir=".length);
 if (!dir) {
   console.error("用法：npm run exemplars:import -- <目录> [--data-dir=<数据目录>]");
@@ -28,7 +32,7 @@ try {
 }
 let results: Awaited<ReturnType<typeof importExemplarDir>>;
 try {
-  results = await importExemplarDir(path.resolve(dir), target);
+  results = voice ? await importVoiceFiles(paths.map((p) => path.resolve(p)), target) : await importExemplarDir(path.resolve(dir), target);
 } finally {
   release();
 }

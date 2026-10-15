@@ -94,7 +94,7 @@ describe("先磨开头", () => {
     expect(await run("opening", { content_id: id, base_version: v, candidates: JSON.stringify(OPENINGS) })).toMatchObject({ ok: true, round: 1, waiting: "等创始人选开头" });
     const s = await run("start", { content_id: id }) as { progress: Record<string, any>; next_action: { note: string } };
     expect(s.progress.opening_pick).toMatchObject({ round: 1, waiting: "等你选开头" });
-    expect(s.next_action.note).toContain("等创始人选开头");
+    expect(s.next_action.note).toContain("原样编号列给创始人");
     expect(await run("opening", { content_id: id, base_version: v, opening: OPENINGS[1] })).toMatchObject({ ok: false, code: "bad_param" });
     expect(await run("opening", { content_id: id, base_version: v, opening: OPENINGS[1], founder_words: "第二个，改一句" })).toMatchObject({ ok: true, chosen: OPENINGS[1] });
     expect((await getContent(id, dir))!.draftPath!.angle!.opening).toBe(OPENINGS[1]);

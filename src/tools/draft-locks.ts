@@ -41,7 +41,7 @@ export function openingAndReads(c: Content): R {
   const last = reads.at(-1);
   const current = last ? last.body_hash === bodyHash(c.body ?? "") : false;
   return {
-    opening_pick: pick ? { round: pick.round, candidates: pick.candidates, chosen: pick.chosen ?? null, waiting: pick.chosen ? null : "等你选开头" } : null,
+    opening_pick: pick ? { round: pick.round, candidates: pick.candidates, chosen: pick.chosen ?? null, waiting: pick.chosen ? null : pick.exhausted ? "两轮都没选中：回到立意重选" : "等你选开头" } : null,
     test_read: last ? { version: last.version, status: last.status, current, ...(current ? {} : { note: "这是修改前那版的试读" }) } : null,
   };
 }
