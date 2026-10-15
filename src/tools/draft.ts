@@ -39,7 +39,7 @@ export const draftSchema = Type.Object({
   body: Type.Optional(Type.String({ description: "save：全文（纯朗读正文）" })),
   note: Type.Optional(Type.String({ description: "save：这一版改了什么" })),
   review_notes: Type.Optional(Type.Unknown({ description: "save：Codex 审稿结果原样（JSON 或文字），调不通就写原因" })),
-  feedback: Type.Optional(Type.Unknown({ description: "save：按创始人意见改完时带 {founder_words:他这次的原话逐字, lessons?:[{rule:概括成的通用写法≤200字, scope:voice_core|platform:douyin|playbook:<体裁 id>, relation:new|duplicate|conflict, relates_to?:已有规则 id}]}；只管这篇的意见不传 lessons。第一版不收" })),
+  feedback: Type.Optional(Type.Unknown({ description: "save：按创始人意见改完时带 {founder_words:他这次的原话逐字, chosen_option?:原话只是选项代号时带选项全文, lessons?:[{rule:概括成的通用写法≤200字, scope:voice_core|platform:douyin|playbook:<体裁 id>, relation:new|duplicate|conflict, relates_to?:已有规则 id}]}；只管这篇的意见不传 lessons。第一版不收" })),
   citations: Type.Optional(Type.Array(Type.Object({
     text: Type.String(),
     evidence_ids: Type.Array(Type.String()),

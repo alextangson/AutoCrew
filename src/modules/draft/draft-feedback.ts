@@ -9,16 +9,18 @@ import { loadProfile, type CreatorProfile, type RuleScope, type WritingRule } fr
 import { proposalFrom, proposeLesson } from "../playbook/changes.js";
 import { loadManifest } from "../playbook/store.js";
 import { PLAYBOOK_IDS, type PlaybookId, type PlaybookPin } from "../playbook/types.js";
+import { isOptionCode } from "../production/lesson-view.js";
 
 export type LessonRelation = "new" | "duplicate" | "conflict";
 /** playbook:<id> = 针对某种体裁的写法：不进档案，挂成那本手册的待批提案（spec 2026-10-13 §3、§9.5） */
 export type LessonScope = RuleScope | `playbook:${PlaybookId}`;
 export interface FeedbackLesson { rule: string; scope: LessonScope; relation: LessonRelation; relates_to?: string }
-export interface DraftFeedbackInput { founder_words: string; lessons: FeedbackLesson[] }
+/** chosen_option：founder_words 只是选项代号（「A」「2」「第 3 个」）时，那个选项的全文（spec 2026-10-15 §A3） */
+export interface DraftFeedbackInput { founder_words: string; chosen_option?: string; lessons: FeedbackLesson[] }
 export type LessonOutcome = "created_pending" | "already_exists" | "blocked_by_tombstone" | "evidence_added" | "playbook_proposed" | "playbook_duplicate" | "blocked_by_rejected";
 export interface LessonResult { rule: string; outcome: LessonOutcome; rule_id?: string; proposal_id?: string; note?: string }
 /** 稿上的意见记录：版本号、原话、每条概括的去向；playbook = 写入时立意记的手册版本（统计按它对，spec §9.4） */
-export interface DraftFeedbackRecord { version: number; founder_words: string; at: string; playbook?: PlaybookPin; lessons: Array<{ rule_id?: string; proposal_id?: string; outcome: LessonOutcome }> }
+export interface DraftFeedbackRecord { version: number; founder_words: string; chosen_option?: string; at: string; playbook?: PlaybookPin; lessons: Array<{ rule_id?: string; proposal_id?: string; outcome: LessonOutcome }> }
 
 const RULE_MAX = 200;
 const REJECTED_SHOWN = 30;
@@ -58,6 +60,8 @@ export function parseFeedback(raw: unknown): DraftFeedbackInput | string | undef
   if (!isObj(v)) return "feedback 要是对象 {founder_words, lessons?}";
   const words = typeof v.founder_words === "string" ? v.founder_words.trim() : "";
   if (!words) return "feedback.founder_words 必填：创始人这次的原话，逐字";
+  const chosen = typeof v.chosen_option === "string" ? v.chosen_option.trim() : "";
+  if (isOptionCode(words) && !chosen) return `feedback.founder_words「${words}」只是选项代号：再带上 feedback.chosen_option（他选的那个选项的全文），不然以后没人看得懂这句`;
   const rawLessons = v.lessons === undefined || v.lessons === null || v.lessons === "" ? [] : maybeJson(v.lessons);
   if (rawLessons === UNPARSABLE) return "feedback.lessons 看着是 JSON，但修过引号也解析不了";
   if (!Array.isArray(rawLessons)) return "feedback.lessons 要是数组（只管这篇就不传或传 []）";
@@ -67,7 +71,7 @@ export function parseFeedback(raw: unknown): DraftFeedbackInput | string | undef
     if (typeof got === "string") return got;
     lessons.push(got);
   }
-  return { founder_words: words, lessons };
+  return { founder_words: words, ...(chosen ? { chosen_option: chosen } : {}), lessons };
 }
 
 const ruleIdOf = (p: CreatorProfile, text: string, scope: string) =>
@@ -85,11 +89,12 @@ async function addLesson(l: FeedbackLesson & { scope: RuleScope }, origin: NonNu
 
 /** 逐条落档案，结果写进 out；任何一次档案写失败就抛（out 里留着已落的），调用方把原始错误放进回执（这一版已存，不回滚） */
 export async function applyLessons(input: DraftFeedbackInput, contentId: string, version: number, dataDir: string | undefined, out: LessonResult[]): Promise<void> {
-  const evidence = `稿件 ${contentId} 第 ${version} 版 创始人原话：${input.founder_words}`;
-  const origin = { content_id: contentId, version, founder_words: input.founder_words };
+  const said = input.chosen_option ? `${input.founder_words}（选的是：${input.chosen_option}）` : input.founder_words;
+  const evidence = `稿件 ${contentId} 第 ${version} 版 创始人原话：${said}`;
+  const origin = { content_id: contentId, version, founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}) };
   for (const l of input.lessons) {
     if (isPlaybookScope(l.scope)) {
-      const r = await proposeLesson({ id: l.scope.slice("playbook:".length) as PlaybookId, lesson: l.rule, founder_words: input.founder_words, origin: { content_id: contentId, version } }, dataDir);
+      const r = await proposeLesson({ id: l.scope.slice("playbook:".length) as PlaybookId, lesson: l.rule, founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}), origin: { content_id: contentId, version } }, dataDir);
       out.push({ rule: l.rule, outcome: r.outcome, proposal_id: r.proposal_id });
       continue;
     }

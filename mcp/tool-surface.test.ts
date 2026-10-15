@@ -69,7 +69,11 @@ async function toolsFor(host: string) {
  * 2026-10-13 体裁手册：新增 autocrew_playbook（list / get / propose / rollback，10 个参数，短说明压到一句），autocrew_draft 加 genre、
  * autocrew_review_inbox 的 decision 加 approve_playbook / reject_playbook；实测 33,189，上限随之从 32,500 提到 33,200。
  */
-export const BUDGET = { total: 33_200, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-15 等你拍板合并批：autocrew_review_inbox 的 decision 加 playbook_batch、加 items（同一份手册改动一次定完）；
+ * 实测 33,217，上限随之从 33,200 提到 33,300。
+ */
+export const BUDGET = { total: 33_300, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

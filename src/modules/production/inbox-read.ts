@@ -28,6 +28,11 @@ import { loadManifest, readVersionText } from "../playbook/store.js";
 import { paragraphDiff } from "../playbook/diff.js";
 import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
+import { DELETED_CONTENT, lessonQuestion, mergeKeyOf, wordsLine } from "./lesson-view.js";
+
+/** 稿件 id → 稿名（删了的也算，取得到就显示）；取不到 =「已删的稿」 */
+type Titles = Map<string, string>;
+const titleOf = (titles: Titles, id: string | null | undefined) => (id ? titles.get(id) ?? DELETED_CONTENT : null);
 
 interface CheckRec { check_id?: string; content_id?: string; platform?: string; checked_at?: string; input_at?: string; verdict?: string; round?: number; items?: unknown[] }
 
@@ -103,33 +108,38 @@ async function confirmedCoverText(c: Content, dataDir: string): Promise<string> 
  * 待批写作规则（spec 2026-10-10 §C）：能在对话里定（writing_rule）；从改稿意见来的挂那篇稿的 content_id。
  * detail 带规则原文、作用域、出处原话、冲突规则原文、现在生效数与上限。
  */
-function ruleItem(r: WritingRule, profile: CreatorProfile): InboxItem {
+function ruleItem(r: WritingRule, profile: CreatorProfile, titles: Titles): InboxItem {
   const item_id = `rule:${r.id ?? genOf(r.rule)}`;
   const c = r.conflictsWith ? profile.writingRules.find((x) => x.id === r.conflictsWith) : undefined;
   const words = r.origin?.founder_words ?? null;
+  const active = profile.writingRules.filter((x) => ruleStatus(x) === "active").map((x) => ({ id: x.id ?? null, rule: x.rule }));
   return { item_id, gen: genOf([item_id, r.revision ?? 0]), type: "writing_rule", content_id: r.origin?.content_id ?? null, title: "写作规则提案", summary: r.rule, waiting: null, agent_waiting: false,
     since: r.createdAt ?? new Date(0).toISOString(), rank: 4, actions: [],
     detail: { where: "settings/writing-rules", rule_id: r.id ?? null, revision: r.revision ?? 1, rule: r.rule, scope: r.scope ?? "voice_core", founder_words: words, quote: words,
-      evidence: r.evidence ?? [], conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null, active_rule_count: activeRuleCount(profile), rule_cap: RULE_CAP } };
+      evidence: r.evidence ?? [], conflicts_with: c ? { id: c.id, rule: c.rule, status: ruleStatus(c) } : null, active_rule_count: activeRuleCount(profile), rule_cap: RULE_CAP,
+      active_rules: active, chosen_option: r.origin?.chosen_option ?? null, words_text: wordsLine(words, r.origin?.chosen_option), question: lessonQuestion("writing_rule"),
+      content_title: titleOf(titles, r.origin?.content_id) } };
 }
 
 /** 待批的手册改动（spec 2026-10-13 §3）：能在对话里定；从改稿意见来的挂那篇稿的 content_id。detail 带改前改后（只列改动段落） */
-async function playbookItem(e: PlaybookEntry, p: PlaybookProposal, dataDir: string): Promise<InboxItem> {
+async function playbookItem(e: PlaybookEntry, p: PlaybookProposal, dataDir: string, titles: Titles): Promise<InboxItem> {
   const item_id = `playbook:${p.id}`;
   const diff = paragraphDiff(await readVersionText(e.id, p.based_on, dataDir), p.text);
   return { item_id, gen: p.gen, type: "playbook_change", content_id: p.origin?.content_id ?? null, title: `《${e.name}》手册改动提案`, summary: p.lesson ?? p.reason,
     waiting: null, agent_waiting: false, since: p.at, rank: 4, actions: [],
     detail: { where: "settings/playbooks", playbook: e.id, playbook_name: e.name, proposal_id: p.id, kind: p.kind, based_on: p.based_on, current: e.current,
       reason: p.reason, founder_words: p.founder_words || null, quote: p.founder_words || null, diff,
-      content_ids: [...new Set([p.origin?.content_id, ...(p.origins ?? []).map((o) => o.content_id)].filter(Boolean))] } };
+      content_ids: [...new Set([p.origin?.content_id, ...(p.origins ?? []).map((o) => o.content_id)].filter(Boolean))],
+      lesson: p.lesson ?? null, gen: p.gen, chosen_option: p.chosen_option ?? null, words_text: wordsLine(p.founder_words, p.chosen_option), question: lessonQuestion("playbook_change", e.name),
+      content_title: titleOf(titles, p.origin?.content_id), merge_key: mergeKeyOf({ kind: p.kind, playbook: e.id, based_on: p.based_on }) } };
 }
 
 /** 手册读不了：不悄悄当没有，列一件看得见的「其他」 */
-async function playbookItems(dataDir: string): Promise<InboxItem[]> {
+async function playbookItems(dataDir: string, titles: Titles): Promise<InboxItem[]> {
   try {
     const m = await loadManifest(dataDir);
     const out: InboxItem[] = [];
-    for (const e of m.playbooks) for (const p of e.proposals.filter((x) => x.status === "pending")) out.push(await playbookItem(e, p, dataDir));
+    for (const e of m.playbooks) for (const p of e.proposals.filter((x) => x.status === "pending")) out.push(await playbookItem(e, p, dataDir, titles));
     return out;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -139,11 +149,11 @@ async function playbookItems(dataDir: string): Promise<InboxItem[]> {
 }
 
 /** 其他（默认收起）：写作规则提案、手册改动提案、发布偏好提案 */
-async function otherItems(dataDir: string): Promise<InboxItem[]> {
+async function otherItems(dataDir: string, titles: Titles): Promise<InboxItem[]> {
   const out: InboxItem[] = [];
   const profile = await loadProfile(dataDir).catch(() => null);
-  for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) out.push(ruleItem(r, profile!));
-  out.push(...await playbookItems(dataDir));
+  for (const r of (profile?.writingRules ?? []).filter((x) => ruleStatus(x) === "pending")) out.push(ruleItem(r, profile!, titles));
+  out.push(...await playbookItems(dataDir, titles));
   for (const p of await pendingProposals(dataDir).catch(() => [])) {
     const item_id = `pref:${p.id}`;
     out.push({ item_id, gen: genOf([item_id, p.at]), type: "other", content_id: null, title: "发布偏好提案", summary: Array.isArray(p.value) ? p.value.join(" / ") : p.value, waiting: null, agent_waiting: false,
@@ -160,14 +170,15 @@ export async function readInbox(dataDir: string, opts: { contentId?: string; now
   await loadHashCache(dataDir);
   const ctx = await explainContext(dataDir);
   // 历史作品记录不进「等你拍板」
-  const all = (await listContents(dataDir)).filter((c) => !isImportedHistory(c));
+  const listed = await listContents(dataDir);
+  const all = listed.filter((c) => !isImportedHistory(c));
   const contents = opts.contentId ? all.filter((c) => c.id === opts.contentId) : all;
   const items: InboxItem[] = [];
   for (const c of contents) {
     if (c.deletedAt || c.status === "archived" || isImportedHistory(c)) continue;
     items.push(...contentItems(await contentInput(c, dataDir, ctx), opts.now));
   }
-  if (!opts.contentId) items.push(...(await otherItems(dataDir)));
+  if (!opts.contentId) items.push(...(await otherItems(dataDir, new Map(listed.map((c) => [c.id, c.title])))));
   const sorted = sortItems(opts.withDrafts ? items : items.filter((i) => i.type !== "draft"));
   return { ok: true, items: sorted, count: sorted.length, agent_waiting: sorted.filter((i) => i.agent_waiting).length, generated_at: new Date().toISOString() };
 }

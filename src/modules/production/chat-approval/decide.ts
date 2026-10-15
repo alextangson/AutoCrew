@@ -20,6 +20,7 @@ import { claimRequest, isRequestId, payloadHash, readRequest, recoverRequest, re
 import { boardLink, CHAT_ACTIONS, chatActionsOf, chatDecidable, chatItem, NOTE_ACTIONS, requesterOf, selectionOf, type Selection } from "./view.js";
 import { isDelegation, recoverRuleDecision, RULE_DECISIONS, ruleCommit } from "./rule-decide.js";
 import { PLAYBOOK_DECISIONS, playbookCommit, recoverPlaybookDecision, staleProposal } from "./playbook-decide.js";
+import { batchRequired, parseBatchItems, playbookBatchCommit } from "./playbook-batch.js";
 
 type Result = Record<string, unknown>;
 type Picked = Extract<Selection, { ok: true }>;
@@ -39,6 +40,8 @@ export interface ChatDecideInput {
   target_rule_id?: string;
   /** waive_sliver：哪一处（list 里 points 的 sliver_key） */
   sliver_key?: string;
+  /** playbook_batch：同一份手册改动的每一条 [{item_id, gen, decision}]（可能是 JSON 字符串） */
+  items?: unknown;
 }
 
 /** 现在的样子：和 list 一样带 brief 与预览（改了什么、文件都能直接再给他看） */
@@ -113,10 +116,23 @@ export async function once(requestId: string, hash: string, dataDir: string, run
 
 /** decide：按创始人原话记一个决定（E5–E8、E13、E15） */
 export async function chatDecide(input: ChatDecideInput, dataDir = getDataDir()): Promise<Result> {
+  if (str(input.decision) === "playbook_batch") return chatBatch(input, dataDir);
   const bad = validInput(input);
   if (bad) return bad;
   const requester = requesterOf(input.host, input.session);
   return once(str(input.request_id), hashOf(input, requester), dataDir, (bind) => commit(input, requester, dataDir, bind));
+}
+
+/** 合并批同一份手册改动（spec 2026-10-15 §A4）：不绑单条 item_id / gen，绑 items 全体 */
+async function chatBatch(input: ChatDecideInput, dataDir: string): Promise<Result> {
+  if (!isRequestId(str(input.request_id))) return fail("invalid_params", "要带 request_id（1–100 位字母、数字、-、_），重试用同一个");
+  if (!str(input.founder_words)) return fail("founder_words_required", "带上创始人在对话里的原话（founder_words），一字不改照抄");
+  if (isDelegation(str(input.founder_words))) return fail("founder_words_not_approval", "「你定 / 都行」这类话对手册改动不算批准：请创始人明确说哪条要、哪条不要");
+  const entries = parseBatchItems(input.items);
+  if (typeof entries === "string") return fail("invalid_params", entries);
+  const requester = requesterOf(input.host, input.session);
+  const hash = payloadHash({ batch: entries, founder_words: str(input.founder_words), requester });
+  return once(str(input.request_id), hash, dataDir, () => playbookBatchCommit({ entries, founder_words: str(input.founder_words), request_id: str(input.request_id), requester }, dataDir));
 }
 
 /** 锁后 decideItem 的失败换成对话的口径：代次变了 → stale + 新样子；没了 / 定过别的 → already_handled */
@@ -163,6 +179,8 @@ async function commit(input: ChatDecideInput, requester: string, dataDir: string
   if (!found.ok) return (found.result.code === "already_handled" && PLAYBOOK_DECISIONS.has(input.decision) ? await staleProposal(input.item_id, dataDir) : null) ?? found.result;
   const { item, selection } = found;
   if (item.type === "playbook_change") {
+    const batch = batchRequired(item, (await readInbox(dataDir, { withDrafts: true })).items, input.decision);
+    if (batch) return batch;
     return playbookCommit(item, { decision: input.decision, founder_words: str(input.founder_words), request_id: str(input.request_id), requester }, dataDir);
   }
   if (item.type === "writing_rule") {

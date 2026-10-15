@@ -8,6 +8,7 @@ import { loadManifest } from "../../playbook/store.js";
 import { diffText, type DiffHunk } from "../../playbook/diff.js";
 import { PlaybookError, type PlaybookId } from "../../playbook/types.js";
 import type { InboxItem } from "../inbox.js";
+import { lessonQuestion } from "../lesson-view.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
@@ -38,9 +39,9 @@ export function playbookBrief(item: InboxItem): string {
   return [
     `体裁手册改动提案：《${String(d.playbook_name)}》第 ${String(d.based_on)} 版 → 新版本`,
     ...(d.reason ? [`为什么改：${String(d.reason)}`] : []),
-    ...(d.founder_words ? [`你当时的原话：「${String(d.founder_words)}」`] : []),
+    ...(d.words_text ? [`你当时的原话：${String(d.words_text)}`] : []),
     diffText((d.diff as DiffHunk[] | undefined) ?? []),
-    "要你判断：以后这种体裁的稿都照改后的写，行不行？",
+    `要你判断：${String(d.question ?? lessonQuestion("playbook_change", String(d.playbook_name ?? "")))}`,
     "回我「批」/「不要」",
   ].join("\n");
 }

@@ -5,10 +5,12 @@
  * - GET  /api/playbooks                         → 5 本：当前全文、版本历史、待批提案（含改前改后）、每版统计
  * - GET  /api/playbooks/version?id=&version=    → 某一版全文 + 它对当前版本的对比
  * - POST /api/playbooks {op:"approve"|"reject", id, proposal_id, gen, event_id}
+ * - POST /api/playbooks {op:"batch", id, based_on, items:[{proposal_id, gen, decision:"approve"|"reject"}], event_id}（同一份改动合并批）
  * - POST /api/playbooks {op:"rollback", id, to_version, expected_current_version, request_id, founder_words?}
  */
 import type http from "node:http";
 import { decideProposal, rollbackPlaybook } from "../modules/playbook/changes.js";
+import { decideLessonBatch, type BatchItem } from "../modules/playbook/batch.js";
 import { paragraphDiff } from "../modules/playbook/diff.js";
 import { entryOf, loadManifest, readVersionText } from "../modules/playbook/store.js";
 import { playbookStats } from "../modules/playbook/stats.js";
@@ -52,13 +54,19 @@ async function applyOp(a: Body, dataDir: string): Promise<Body> {
     if (typeof a.proposal_id !== "string" || typeof a.gen !== "string" || typeof a.event_id !== "string" || !EVENT_RE.test(a.event_id)) throw new PlaybookError("bad_param", "要带 proposal_id、gen、event_id");
     return decideProposal({ id, proposal_id: a.proposal_id, gen: a.gen, decision: a.op, eventId: `web-${a.event_id}`, source: "workbench" }, dataDir);
   }
+  if (a.op === "batch") {
+    const items = Array.isArray(a.items) ? (a.items as Body[]) : null;
+    const good = items?.every((i) => typeof i.proposal_id === "string" && typeof i.gen === "string" && (i.decision === "approve" || i.decision === "reject"));
+    if (!items || !good || !posInt(a.based_on) || typeof a.event_id !== "string" || !EVENT_RE.test(a.event_id)) throw new PlaybookError("bad_param", "要带 based_on、items[{proposal_id, gen, decision}]、event_id");
+    return decideLessonBatch({ id, based_on: a.based_on as number, items: items as unknown as BatchItem[], eventId: `web-${a.event_id}`, source: "workbench" }, dataDir);
+  }
   if (a.op === "rollback") {
     const to = posInt(a.to_version), expected = posInt(a.expected_current_version);
     if (!to || !expected || typeof a.request_id !== "string" || !EVENT_RE.test(a.request_id)) throw new PlaybookError("bad_param", "要带 to_version、expected_current_version、request_id");
     const words = typeof a.founder_words === "string" && a.founder_words.trim() ? a.founder_words.trim() : `工作台点了「回滚到第 ${to} 版」`;
     return rollbackPlaybook({ id, to_version: to, expected_current_version: expected, request_id: a.request_id, founder_words: words, source: "workbench" }, dataDir);
   }
-  throw new PlaybookError("bad_param", "op 只能是 approve / reject / rollback");
+  throw new PlaybookError("bad_param", "op 只能是 approve / reject / batch / rollback");
 }
 
 export function createPlaybookHandler(deps: PlaybookRouteDeps) {

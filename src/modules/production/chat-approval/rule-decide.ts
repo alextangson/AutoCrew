@@ -6,6 +6,7 @@
 import { decideWritingRule, RuleDecisionError, type RuleDecision } from "../../profile/writing-rules.js";
 import type { InboxItem } from "../inbox.js";
 import { loadProfile } from "../../profile/creator-profile.js";
+import { lessonQuestion } from "../lesson-view.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
@@ -45,10 +46,10 @@ export function ruleBrief(item: InboxItem): string {
   return [
     `写作规则提案：${String(d.rule ?? item.summary)}`,
     `适用：${SCOPE_TEXT(d.scope)}`,
-    ...(d.founder_words ? [`你当时的原话：「${String(d.founder_words)}」`] : []),
+    ...(d.words_text ? [`你当时的原话：${String(d.words_text)}`] : []),
     ...(conflict ? [`和这条已有规则矛盾：「${conflict.rule}」（${conflict.id}）——替换它 / 两条都留 / 这条不要`] : []),
     `现在生效 ${count} / ${cap} 条${count >= cap ? "，已满：要这条就得替换掉一条" : ""}`,
-    "要你判断：这是以后每篇都该照着写的，还是只管那一篇？",
+    `要你判断：${String(d.question ?? lessonQuestion("writing_rule"))}`,
     "回我「要」/「不要」/「要，替换第 X 条」",
   ].join("\n");
 }

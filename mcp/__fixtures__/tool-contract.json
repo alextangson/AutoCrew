@@ -1393,6 +1393,7 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "playbook_batch",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
@@ -1421,6 +1422,7 @@
      "item_id": {
       "type": "string"
      },
+     "items": {},
      "note": {
       "type": "string"
      },
@@ -4378,6 +4380,7 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "playbook_batch",
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
@@ -4406,6 +4409,7 @@
      "item_id": {
       "type": "string"
      },
+     "items": {},
      "note": {
       "type": "string"
      },

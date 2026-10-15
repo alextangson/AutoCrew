@@ -108,7 +108,7 @@ async function learn(input: DraftFeedbackInput, contentId: string, version: numb
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }
-  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, at: new Date().toISOString(), ...(playbook ? { playbook } : {}),
+  const record: DraftFeedbackRecord = { version, founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}), at: new Date().toISOString(), ...(playbook ? { playbook } : {}),
     lessons: lessons.map((l) => ({ ...(l.rule_id ? { rule_id: l.rule_id } : {}), ...(l.proposal_id ? { proposal_id: l.proposal_id } : {}), outcome: l.outcome })) };
   return { record, receipt: { lessons, ...(error ? { lessons_error: `这一版已存，但规则 / 手册提案没记上：${error}。如实告诉创始人` } : {}) } };
 }

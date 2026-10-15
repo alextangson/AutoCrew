@@ -86,7 +86,7 @@ describe("save feedback", () => {
 
   it("边界 2 附：duplicate 的 relates_to 不存在 → 按 new 记，回执说明", async () => {
     const { id, version } = await firstVersion();
-    const r = await run("save", { content_id: id, base_version: version, body: BODY2, feedback: { founder_words: "x", lessons: [{ rule: "结尾给一个能照做的动作", scope: "voice_core", relation: "duplicate", relates_to: "nope" }] } });
+    const r = await run("save", { content_id: id, base_version: version, body: BODY2, feedback: { founder_words: "改一下", lessons: [{ rule: "结尾给一个能照做的动作", scope: "voice_core", relation: "duplicate", relates_to: "nope" }] } });
     expect(r).toMatchObject({ ok: true, lessons: [{ outcome: "created_pending", note: expect.stringContaining("nope") }] });
   });
 
@@ -128,7 +128,7 @@ describe("save feedback", () => {
     const s = await run("start", { inspiration: "x" });
     const id = s.content_id as string, v = (s.progress as { version: number }).version;
     await run("angle", { content_id: id, base_version: v, ...ANGLE });
-    const r = await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "x" } });
+    const r = await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "改一下" } });
     expect(r).toMatchObject({ ok: false, code: "bad_param" });
     expect((await getContent(id, dir))!.body).toBe("");
   });
@@ -150,8 +150,8 @@ describe("save feedback", () => {
     expect(ok).toMatchObject({ ok: true, lessons: [{ outcome: "created_pending" }] });
     const v = ok.version as number;
     expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: "{founder_words: ???" })).toMatchObject({ ok: false, code: "bad_param" });
-    expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "x", lessons: { rule: "a" } } })).toMatchObject({ ok: false, code: "bad_param", error: expect.stringContaining("数组") });
-    expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "x", lessons: [{ rule: "a", relation: "conflict" }] } })).toMatchObject({ ok: false, code: "bad_param", error: expect.stringContaining("relates_to") });
+    expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "改一下", lessons: { rule: "a" } } })).toMatchObject({ ok: false, code: "bad_param", error: expect.stringContaining("数组") });
+    expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "改一下", lessons: [{ rule: "a", relation: "conflict" }] } })).toMatchObject({ ok: false, code: "bad_param", error: expect.stringContaining("relates_to") });
     expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { lessons: [] } })).toMatchObject({ ok: false, code: "bad_param" });
     expect((await getContent(id, dir))!.body).toBe(BODY2);
   });

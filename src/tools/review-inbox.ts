@@ -13,7 +13,7 @@ import { attachInbox, listInbox } from "../modules/production/intake.js";
 import { runSweep, sweepHealth } from "../modules/production/sweep.js";
 
 const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync"] as const;
-const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule", "approve_playbook", "reject_playbook", "waive_sliver_check", "waive_sliver", "approve_script", "revise_script"] as const;
+const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule", "approve_playbook", "reject_playbook", "playbook_batch", "waive_sliver_check", "waive_sliver", "approve_script", "revise_script"] as const;
 
 export const reviewInboxSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke | inbox_list | inbox_attach | sync" }),
@@ -34,6 +34,7 @@ export const reviewInboxSchema = Type.Object({
   platform: Type.Optional(Type.String({ description: "revoke：他说没发的平台" })),
   target_rule_id: Type.Optional(Type.String({ description: "replace_rule：要换掉的那条生效规则 id" })),
   sliver_key: Type.Optional(Type.String({ description: "waive_sliver：哪一处（facts.points 里的 sliver_key）" })),
+  items: Type.Optional(Type.Unknown({ description: "playbook_batch 的各条" })),
   file: Type.Optional(Type.String({ description: "inbox_attach：inbox_list 给的文件名" })),
   sha256: Type.Optional(Type.String({ description: "inbox_attach：inbox_list 给的 sha256（列出之后文件换过就拒）" })),
   confirm_other: Type.Optional(Type.Boolean({ description: "inbox_attach：文件名更像别条、创始人确认还挂这条时带 true" })),
@@ -48,6 +49,7 @@ export const REVIEW_INBOX_DESCRIPTION = [
   "发之前再看一眼（publish_check）：没问题 = publish_check_confirm（被拦时不给）；还要改 = publish_check_revise + note；破例 = publish_check_override（只在被拦时，他的原话放 founder_words 原样记）。他说「都没问题」：对这次 list 里列出来给他看过的每件 publish_check 各 decide 一次（同一句原话，各自的 item_id、gen、request_id）；他点了哪些平台就只定那些；没在这次列表里给他看过的绝不顺带定。",
   "发了没：publish_claim（有人说发了但核不了、或报的定时过了一天还没核到公开）= confirm_receipt「对，发了」/ correct_publish「没发」；带本平台链接或报了定时的 AI 回执直接算已投出、不进列表，他说某个平台其实没发就 revoke{content_id, platform}；published_ask（发了吗）= i_published，他给了作品链接就原样放 url，链接域名对不上平台会被拒，照原因问他。他说「都发了」：和发前检查同一规则——只对这次列表里给他看过的每件各定一次，点了平台就只定那些。",
   "写作规则（writing_rule，改稿时攒下的待批规则）：要 = approve_rule；不要 = reject_rule（留墓碑，以后同一句不再提）；替换 = replace_rule + target_rule_id（新规则生效、旧规则停用）。生效规则满 12 条时只能替换（回 rule_cap_reached 带 active，问他换哪条）。他只说「你定 / 都行」不算批准（founder_words_not_approval），问他要哪条。",
+  "改稿攒下的经验按稿分组（groups），编号「组-条」。同组 merge_key 相同的手册意见是同一份改动：decide{decision:\"playbook_batch\", items:[{item_id,gen,decision}]} 一次定完、每条都列上；stale = 手册改过，整组按新版重提。",
   "体裁手册改动（playbook_change）：brief 有改前改后，原样给他看；批 = approve_playbook（生成新版本），不要 = reject_playbook（同一段以后不再提）；只说「你定 / 都行」不算批准。回 stale = 手册之后改过，这份作废。",
   "认稿（draft）：brief 里有稿子全文，原样贴给他；没问题 = approve_script，还要改 = revise_script + note。认完再 list 一次：成片 / 封面审阅这时才出现，马上给他看。稿子在 list 之后改过会回 stale 带新 brief，重新给他看。",
   "画面闪帧（sliver）：不查了 = waive_sliver_check（只在检查没跑成、decisions 里有时）；第 N 处是故意的 = waive_sliver + sliver_key（facts.points 里第 N 处的）；都是故意的 = 每一处各 decide 一次；去改 = reject_cut + note。不止一处没点名会回 selector_required，问他。他一句话连成片一起定（「不查了，用」）：先定闪帧，再 list 拿成片新的 gen，用同一句原话 decide approve_cut。",
@@ -65,7 +67,7 @@ function inputOf(params: Record<string, unknown>): ChatDecideInput {
     item_id: str(params.item_id)?.trim() ?? "", gen: str(params.gen)?.trim() ?? "", decision: str(params.decision)?.trim() ?? "",
     group_id: str(params.group_id), fact_id: str(params.fact_id), option_id: str(params.option_id), cover_text: str(params.cover_text), note: str(params.note),
     content_id: str(params.content_id), decision_id: str(params.decision_id), platform: str(params.platform),
-    target_rule_id: str(params.target_rule_id), sliver_key: str(params.sliver_key), founder_words: str(params.founder_words) ?? "", request_id: str(params.request_id), host: params._host, session: params._session,
+    target_rule_id: str(params.target_rule_id), sliver_key: str(params.sliver_key), items: params.items, founder_words: str(params.founder_words) ?? "", request_id: str(params.request_id), host: params._host, session: params._session,
   };
 }
 
