@@ -34,20 +34,45 @@ export async function readExemplarManifest(dataDir?: string): Promise<ExemplarMa
   try {
     const m = JSON.parse(raw) as ExemplarManifest;
     if (m?.schema !== 1 || !Array.isArray(m.exemplars)) throw new Error("结构不对");
+    m.exemplars.forEach(checkEntry);
     return m;
   } catch (e) {
     throw new ExemplarError("manifest_corrupt", `范文库清单 ${manifestPath(dataDir)} 解析失败（${(e as Error).message}）：没有覆盖它，请修复或从备份恢复`);
   }
 }
 
-/** 读某篇某一版全文；版本文件丢了 / 读不了都报可见错误 */
-export async function readExemplarText(id: string, version: number, dataDir?: string): Promise<string> {
-  if (!EXEMPLAR_ID.test(id)) throw new ExemplarError("bad_id", `范文 id 不合法：${id}`);
+/** 每条记录：id 合法、版本列表非空、版本号是不重复的正整数、current 是登记过的版本、hash 在。不对就整份报错，不写 */
+function checkEntry(e: ExemplarEntry, i: number): void {
+  const at = `exemplars[${i}]`;
+  if (!e || typeof e.id !== "string" || !EXEMPLAR_ID.test(e.id)) throw new Error(`${at}.id 不合法`);
+  if (!Array.isArray(e.versions) || !e.versions.length) throw new Error(`${e.id} 没有版本`);
+  const nums = e.versions.map((v) => v?.version);
+  if (!nums.every((n) => Number.isInteger(n) && n > 0) || new Set(nums).size !== nums.length) throw new Error(`${e.id} 的版本号不是不重复的正整数`);
+  if (!nums.includes(e.current)) throw new Error(`${e.id} 的 current=${String(e.current)} 不在已登记版本里`);
+  if (!e.versions.every((v) => typeof v.hash === "string" && v.hash)) throw new Error(`${e.id} 有版本缺 hash`);
+}
+
+async function readRaw(id: string, version: number, dataDir?: string): Promise<string> {
   try {
     return await fs.readFile(exemplarVersionPath(id, version, dataDir), "utf8");
   } catch (e) {
     throw new ExemplarError("version_unreadable", `范文 ${id} 第 ${version} 版读不了：${(e as Error).message}`);
   }
+}
+
+/** 文件实际内容要和登记的 hash 对得上：被截短 / 改过就报损坏，不当成锁住的那版返回 */
+function verified(id: string, version: number, text: string, m: ExemplarManifest): string {
+  const v = m.exemplars.find((e) => e.id === id)?.versions.find((x) => x.version === version);
+  if (!v) throw new ExemplarError("version_missing", `范文库里没有登记 ${id} 第 ${version} 版`);
+  if (contentHash(text) !== v.hash) throw new ExemplarError("version_corrupt", `范文 ${id} 第 ${version} 版的文件和登记的指纹对不上（被改过或损坏）：不使用，请从备份恢复或重新导入`);
+  return text;
+}
+
+/** 读某篇某一版全文并核指纹；文件丢了 / 读不了 / 损坏都报可见错误 */
+export async function readExemplarText(id: string, version: number, dataDir?: string, manifest?: ExemplarManifest): Promise<string> {
+  if (!EXEMPLAR_ID.test(id)) throw new ExemplarError("bad_id", `范文 id 不合法：${id}`);
+  const m = manifest ?? await readExemplarManifest(dataDir);
+  return verified(id, version, await readRaw(id, version, dataDir), m);
 }
 
 const chains = new Map<string, Promise<unknown>>();
@@ -85,21 +110,27 @@ function checkInput(x: ExemplarInput): void {
 /** 入库一篇：内容和当前版一样 → unchanged；否则写成新版本（旧版本文件原样留着） */
 export function putExemplar(x: ExemplarInput, dataDir?: string): Promise<{ id: string; outcome: ImportOutcome; version: number }> {
   checkInput(x);
-  return serializeExemplars(dataDir, async () => {
-    const m = await readExemplarManifest(dataDir);
-    const hash = contentHash(x.text);
-    const e = m.exemplars.find((y) => y.id === x.id);
-    const cur = e?.versions.find((v) => v.version === e.current);
-    if (e && cur?.hash === hash && e.genre === x.genre && e.kind === x.kind) return { id: x.id, outcome: "unchanged" as const, version: e.current };
-    assertDataDirWritable(dataDir);
-    const at = new Date().toISOString();
-    const start = e ? Math.max(...e.versions.map((v) => v.version)) + 1 : 1;
-    const version = cur?.hash === hash ? e!.current : await writeNextVersion(x.id, start, x.text, dataDir);
-    const entry: ExemplarEntry = e ?? { id: x.id, genre: x.genre, kind: x.kind, title: x.title, current: version, versions: [] };
-    Object.assign(entry, { genre: x.genre, kind: x.kind, title: x.title, current: version });
-    if (!entry.versions.some((v) => v.version === version)) entry.versions.push({ version, at, hash, chars: chars(x.text), title: x.title });
-    if (!e) m.exemplars.push(entry);
-    await writeJsonAtomicMkdir(manifestPath(dataDir), m);
-    return { id: x.id, outcome: e ? "new_version" as const : "created" as const, version };
-  });
+  return serializeExemplars(dataDir, () => putInQueue(x, dataDir));
+}
+
+/** 已在队列里时用（升级提案批准时和提案状态一起提交） */
+export async function putInQueue(x: ExemplarInput, dataDir?: string): Promise<{ id: string; outcome: ImportOutcome; version: number }> {
+  checkInput(x);
+  const m = await readExemplarManifest(dataDir);
+  const hash = contentHash(x.text);
+  const e = m.exemplars.find((y) => y.id === x.id);
+  const cur = e?.versions.find((v) => v.version === e.current);
+  // 当前版的文件先核一遍：损坏了不说「没变」，报出来
+  if (e) verified(e.id, e.current, await readRaw(e.id, e.current, dataDir), m);
+  if (e && cur?.hash === hash && e.genre === x.genre && e.kind === x.kind) return { id: x.id, outcome: "unchanged" as const, version: e.current };
+  assertDataDirWritable(dataDir);
+  const at = new Date().toISOString();
+  const start = e ? Math.max(...e.versions.map((v) => v.version)) + 1 : 1;
+  const version = cur?.hash === hash ? e!.current : await writeNextVersion(x.id, start, x.text, dataDir);
+  const entry: ExemplarEntry = e ?? { id: x.id, genre: x.genre, kind: x.kind, title: x.title, current: version, versions: [] };
+  Object.assign(entry, { genre: x.genre, kind: x.kind, title: x.title, current: version });
+  if (!entry.versions.some((v) => v.version === version)) entry.versions.push({ version, at, hash, chars: chars(x.text), title: x.title });
+  if (!e) m.exemplars.push(entry);
+  await writeJsonAtomicMkdir(manifestPath(dataDir), m);
+  return { id: x.id, outcome: e ? "new_version" as const : "created" as const, version };
 }

@@ -92,15 +92,26 @@ export function renderTable(before: Record<string, string[]>, after: Record<stri
   }).join("\n");
 }
 
-export interface PlaybookPublish { id: string; from: number; changed: boolean }
+export const MIGRATION_ID = "20261015";
+/** 首次迁移前真实资料库里各本手册的当前版本（2026-10-15 核过）：对不上说明之后有人改过，中止不覆盖 */
+export const BASELINE: Record<string, number> = { ganhuo: 1, shiyan: 1, fanchangshi: 1, xinxicha: 2, renwu: 2 };
 
-/** 手册：压缩版和当前版不同就记一版（author agent，kind edit）；返回计划，apply=false 时不写 */
+export type PublishState = "publish" | "already_migrated" | "already_compressed";
+export interface PlaybookPublish { id: string; from: number; state: PublishState }
+
+/**
+ * 手册：已有本次迁移标记的版本 → 已完成，永不重发（之后批准的新版本不会被回退）；
+ * 当前正文已是压缩版（新库直接种的）→ 不动；否则当前版本必须等于基线才发布，不等就整次中止。
+ */
 export async function publishPlaybooks(m: PlaybookManifest, seeds: Array<{ id: string; text: string }>, readCurrent: (id: string, v: number) => Promise<string>): Promise<PlaybookPublish[]> {
   const out: PlaybookPublish[] = [];
   for (const s of seeds) {
     const e = m.playbooks.find((x) => x.id === s.id);
     if (!e) throw new MigrationError(`手册清单里没有 ${s.id}`);
-    out.push({ id: s.id, from: e.current, changed: (await readCurrent(s.id, e.current)) !== s.text });
+    if (e.versions.some((v) => v.migration === MIGRATION_ID)) { out.push({ id: s.id, from: e.current, state: "already_migrated" }); continue; }
+    if ((await readCurrent(s.id, e.current)) === s.text) { out.push({ id: s.id, from: e.current, state: "already_compressed" }); continue; }
+    if (e.current !== BASELINE[s.id]) throw new MigrationError(`手册 ${s.id} 现在是第 ${e.current} 版，预期迁移前是第 ${BASELINE[s.id]} 版：之后有人改过，不覆盖，整次中止`);
+    out.push({ id: s.id, from: e.current, state: "publish" });
   }
   return out;
 }

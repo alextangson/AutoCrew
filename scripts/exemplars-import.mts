@@ -5,6 +5,9 @@
  */
 import path from "node:path";
 import { importExemplarDir } from "../src/modules/exemplar/import.js";
+import { getDataDir } from "../src/storage/local-store.js";
+import { isWithin, readLibraryLocation } from "../src/storage/storage-roots.js";
+import { acquireLibraryLock } from "../src/storage/library-lock.js";
 
 const args = process.argv.slice(2);
 const dir = args.find((a) => !a.startsWith("--"));
@@ -13,7 +16,22 @@ if (!dir) {
   console.error("用法：npm run exemplars:import -- <目录> [--data-dir=<数据目录>]");
   process.exit(2);
 }
-const results = await importExemplarDir(path.resolve(dir), dataDir);
+// 写资料库前先领写入锁：服务在跑（它占着锁）就明确拒绝，不半截写
+const target = getDataDir(dataDir);
+const location = readLibraryLocation();
+let release: () => void = () => {};
+try {
+  if (location && isWithin(location.root, path.resolve(target))) release = acquireLibraryLock();
+} catch (e) {
+  console.error(`领不到资料库写入锁，什么都没导：${e instanceof Error ? e.message : String(e)}\n先停掉 AutoCrew 服务（npm run stop）再导。`);
+  process.exit(1);
+}
+let results: Awaited<ReturnType<typeof importExemplarDir>>;
+try {
+  results = await importExemplarDir(path.resolve(dir), target);
+} finally {
+  release();
+}
 for (const r of results) console.log(r.error ? `✗ ${r.file}：${r.error}` : `${r.outcome === "unchanged" ? "=" : "✓"} ${r.file} → ${r.id} v${r.version}（${r.outcome}）`);
 const failed = results.filter((r) => r.error).length;
 console.log(`共 ${results.length} 篇，失败 ${failed} 篇`);

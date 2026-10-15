@@ -1,7 +1,7 @@
 /**
  * autocrew_draft opening：先磨开头再写全文（spec 2026-10-15 §7、§10、§15.13）。断点可续：
- * - opening{candidates, founder_words?}：记一轮 3 个候选开头。带 founder_words = 他对上一轮的原话（都不满意时说的），记成开头阶段的意见。
- * - opening{opening, founder_words}：记他选中（或改了一句）的开头全文和原话。选了才能存第一版全文。
+ * - opening{candidates, founder_words?}：记一轮 3 个候选开头。带 founder_words = 他对上一轮的原话（都不满意时说的），记成开头阶段的修改意见。
+ * - opening{opening, founder_words}：记他选中（或改了一句）的开头全文和原话。这是选择不是意见，只记在 opening_pick 上。选了才能存第一版全文。
  * 连着两轮都不满意：回执提示回到立意重选。只管新流程的立意（锁了写法版本的）；旧稿不走这一步。
  */
 import { isRealDraft } from "../storage/first-body-guard.js";
@@ -39,7 +39,8 @@ export async function draftOpening(a: DraftArgs): Promise<R> {
     const prev = angle!.opening_pick;
     const version = currentVersion(c);
     let feedback = c.draftPath?.feedback;
-    if (a.founderWords) feedback = openingFeedback(c, angle!, a.founderWords, version);
+    // 只有「都不满意、重出」时他说的话是修改意见；选中时的话是选择，只记在 opening_pick 上（§15.18）
+    if (a.founderWords && a.candidates) feedback = openingFeedback(c, angle!, a.founderWords, version);
     if (a.candidates) {
       if (exhausted(prev)) {
         if (feedback) await tx.write({ draftPath: { ...c.draftPath!, feedback } });
@@ -52,7 +53,7 @@ export async function draftOpening(a: DraftArgs): Promise<R> {
     }
     if (!prev?.candidates.length) return fail("no_candidates", "还没记这一轮的候选开头：先 opening{candidates}，给他挑了再记选中的");
     const pick: OpeningPick = { ...prev, chosen: a.opening!, founder_words: a.founderWords, at: new Date().toISOString() };
-    await tx.write({ draftPath: { ...c.draftPath!, angle: { ...angle!, opening: a.opening!, opening_pick: pick }, feedback } });
+    await tx.write({ draftPath: { ...c.draftPath!, angle: { ...angle!, opening: a.opening!, opening_pick: pick } } });
     return { ok: true, version, round: pick.round, chosen: pick.chosen, workbench_url: workbenchUrl(c.id), next_action: { note: "按选中的开头、立意、手册和锁住的范文写全文，再 save" } };
   });
 }

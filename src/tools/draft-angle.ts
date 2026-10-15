@@ -46,7 +46,8 @@ async function locksFor(prev: DraftAngle | undefined, genre: PlaybookId, a: Draf
     const changed = a.exemplars !== undefined && JSON.stringify(a.exemplars) !== JSON.stringify(prev.exemplars);
     return { exemplars: prev.exemplars, exemplars_at: prev.exemplars_at, method: prev.method, ...(changed ? { note: "同一体裁重出立意：范文沿用之前锁的那几篇，没换成这次传的" } : {}) };
   }
-  if (sameGenre && prev && !prev.exemplars && a.exemplars === undefined) return { note: "这篇的立意是范文库上线前出的：照旧方式续写，不补塞范文" };
+  // 兼容路径看这篇已有的锁，不看这次传没传 exemplars：同体裁的旧稿一律照旧流程，不补锁范文和写法（§15.5）
+  if (sameGenre && prev && !prev.exemplars) return { note: "这篇的立意是范文库上线前出的：照旧方式续写，不补塞范文" };
   const pins = a.exemplars as ExemplarPin[] | undefined;
   if (pins === undefined) return `angle 要带 exemplars：先 exemplars{genre:"${genre}"} 预览范文，把立意卡上实际引用的 {id, version} 列表带上；本体裁无范文就传 []`;
   const bad = await validatePins(pins, genre, a.dataDir);

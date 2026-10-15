@@ -2,7 +2,7 @@
  * 改稿意见怎么学（spec 2026-10-15 §6、§15.6–15.8）：
  * - feedback_history：跨稿读意见（抖音这条路上所有稿存下的创始人原话，带 content_id 和第几条），只读。
  * - propose_promotion：同一个意思在至少两篇不同的稿里出现过才提升级。出处由服务端逐条核对（稿在、第几条存在）。
- *   升级到手册骨架 → 走现有手册提案与版本机制；升级成范文批注 / 写法 → 进「等你拍板」，批了只标「等人工改」。
+ *   升级到手册骨架 → 走现有手册提案与版本机制；升级成范文批注 / 写法 → 进「等你拍板」，批了范文出新版本、写法出补丁等发布。
  *   不再生成档案规则。
  */
 import { listContents, type Content } from "../storage/local-store.js";
@@ -80,5 +80,5 @@ export async function draftProposePromotion(a: DraftArgs): Promise<R> {
     if (!(await readExemplarManifest(a.dataDir)).exemplars.some((e) => e.id === a.exemplarId)) return fail("not_found", `范文库里没有 ${a.exemplarId}`);
   }
   const r = await proposePromotion({ target: a.target as "exemplar" | "method", ...(a.exemplarId ? { exemplar_id: a.exemplarId } : {}), text: a.text!, reason: a.note!, cites }, a.dataDir);
-  return { ok: true, target: a.target, ...r, next_action: { note: "已进「等你拍板」（writing_promotion）。创始人批了也只是标成「等人工改」：范文 / 写法不会自动改，告诉他这一点" } };
+  return { ok: true, target: a.target, ...r, next_action: { note: "已进「等你拍板」（writing_promotion）。批了范文出新版本、写法出补丁（显示「已批，等发布」）" } };
 }

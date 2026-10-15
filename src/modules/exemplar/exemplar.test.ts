@@ -49,6 +49,35 @@ describe("存储与导入", () => {
   });
 });
 
+describe("清单、指纹与入库核对（Codex 复审 #8 #9 #10）", () => {
+  const writeManifest = async (m: unknown) => { await fs.mkdir(path.join(dir, "exemplars"), { recursive: true }); await fs.writeFile(path.join(dir, "exemplars", "manifest.json"), JSON.stringify(m)); };
+  it("记录结构不对（空版本、重复 / 非正整数版本号、current 不在版本里）→ 可见错误，不写", async () => {
+    const v = (version: unknown) => ({ version, at: "t", hash: "h", chars: 1, title: "A" });
+    for (const bad of [{ versions: [], current: 1 }, { versions: [v(1), v(1)], current: 1 }, { versions: [v(0)], current: 0 }, { versions: [v(1)], current: 2 }]) {
+      await writeManifest({ schema: 1, exemplars: [{ id: "bench-a", genre: "ganhuo", kind: "exemplar", title: "A", ...bad }] });
+      await expect(readExemplarManifest(dir)).rejects.toThrow("解析失败");
+      await expect(putExemplar({ id: "bench-a", genre: "ganhuo", kind: "exemplar", title: "A", text: "x" }, dir)).rejects.toThrow("解析失败");
+    }
+    expect(await fs.readdir(path.join(dir, "exemplars"))).toEqual(["manifest.json"]);
+  });
+
+  it("版本文件被改过：读、预览、锁版都报损坏，不返回坏内容；重导原文也不说「没变」", async () => {
+    await putExemplar({ id: "bench-a", genre: "ganhuo", kind: "exemplar", title: "A", text: "# A\n原文" }, dir);
+    await fs.writeFile(exemplarVersionPath("bench-a", 1, dir), "# A\n被截");
+    await expect(readExemplarText("bench-a", 1, dir)).rejects.toThrow("指纹对不上");
+    expect((await previewExemplars("ganhuo", undefined, dir)).errors[0].error).toContain("指纹对不上");
+    await expect(putExemplar({ id: "bench-a", genre: "ganhuo", kind: "exemplar", title: "A", text: "# A\n原文" }, dir)).rejects.toThrow("指纹对不上");
+  });
+
+  it("完整范文要有全文；批注引的原句（按 …… / → 切段、忽略标点）要在全文里；卡片不查", () => {
+    const ok = `# T\n\n## 全文\n\n**[00:00]** 你想用一个苹果手机的钱，买五个苹果手机。漏洞是死的，可人是活的。\n\n## 批注\n\n1. **[00:00]「你想用一个苹果手机的钱买五个苹果手机」**：好\n2. **「漏洞是死的……人是活的」→「可人是活的」**：好\n`;
+    expect(parseExemplarFile(ok).kind).toBe("exemplar");
+    expect(() => parseExemplarFile(ok.replace("五个苹果手机」**", "十个苹果手机」**"))).toThrow("找不到：「你想用一个苹果手机的钱买十个苹果手机」");
+    expect(() => parseExemplarFile("# T\n\n## 批注\n\n1. x\n")).toThrow("全文");
+    expect(parseExemplarFile("# T\n- **用途：结构卡，不是范文。**\n\n## 批注\n\n1. **「全文里没有」**\n").kind).toBe("structure_card");
+  });
+});
+
 describe("按体裁预览", () => {
   const put = (id: string, genre: "ganhuo" | "renwu" | "any", kind: "exemplar" | "structure_card" | "technique_card", size = 100) =>
     putExemplar({ id, genre, kind, title: id, text: `# ${id}\n${"字".repeat(size)}` }, dir);

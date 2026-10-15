@@ -37,7 +37,7 @@ export async function loadSeeds(dir = SEED_DIR): Promise<Seed[]> {
 }
 
 /** 读 manifest：null = 不存在；读坏了抛可见错误 */
-async function readManifestRaw(dataDir?: string): Promise<PlaybookManifest | null> {
+export async function readManifestRaw(dataDir?: string): Promise<PlaybookManifest | null> {
   let raw: string;
   try {
     raw = await fs.readFile(manifestPath(dataDir), "utf8");

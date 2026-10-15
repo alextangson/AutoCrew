@@ -23,6 +23,8 @@ export interface PlaybookVersion {
   based_on?: number;
   rolled_back_to?: number;
   proposal_id?: string;
+  /** 一次性迁移发布的版本（如 "20261015"）：重跑迁移据此认出已完成，不再发布 */
+  migration?: string;
 }
 
 export type ProposalStatus = "pending" | "approved" | "rejected" | "stale";

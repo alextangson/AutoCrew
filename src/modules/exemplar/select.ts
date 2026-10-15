@@ -52,7 +52,7 @@ export async function previewExemplars(genre: ExemplarGenre, contentId: string |
     const n = used.get(e.id) ?? 0;
     if (out.entries.length >= PREVIEW_MAX) { out.skipped.push({ id: e.id, reason: n >= OVERUSE_COUNT ? `近 30 天已用 ${n} 次，有替补` : "已够 3 篇" }); continue; }
     let text: string;
-    try { text = await readExemplarText(e.id, e.current, dataDir); } catch (err) { out.errors.push({ id: e.id, error: (err as Error).message }); continue; }
+    try { text = await readExemplarText(e.id, e.current, dataDir, m); } catch (err) { out.errors.push({ id: e.id, error: (err as Error).message }); continue; }
     const size = Array.from(text).length;
     if (spent + size > PREVIEW_BUDGET_CHARS) { out.skipped.push({ id: e.id, reason: `全文 ${size} 字，放进来会超过 ${PREVIEW_BUDGET_CHARS} 字预算（不截半篇）` }); continue; }
     spent += size;
@@ -70,7 +70,7 @@ export async function lockedExemplars(pins: ExemplarPin[], dataDir?: string): Pr
   for (const p of pins) {
     const e = m.exemplars.find((x) => x.id === p.id);
     try {
-      const text = await readExemplarText(p.id, p.version, dataDir);
+      const text = await readExemplarText(p.id, p.version, dataDir, m);
       entries.push({ id: p.id, version: p.version, title: e?.title ?? p.id, kind: e?.kind ?? "exemplar", genre: e?.genre ?? "any", chars: Array.from(text).length, used_30d: 0, text });
     } catch (err) {
       errors.push({ id: p.id, error: (err as Error).message });

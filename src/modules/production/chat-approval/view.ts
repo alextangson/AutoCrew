@@ -46,7 +46,7 @@ const ACTION_TEXT: Record<string, string> = {
   answer_ask: "按他选的那个选项回答（带 option_id，多说的话放 note）", ask_resend: "附件变过，让它重发请示",
   waive_sliver_check: "这条不查了（只在检查没跑成时有）", waive_sliver: "这处是故意的（带 sliver_key 点名哪一处）",
   approve_script: "稿子没问题", revise_script: "稿子还要改（note 写他要改的地方）",
-  approve_promotion: "这条升级批了（记成「已批、等人工改」，不会自动改）", reject_promotion: "这条升级不要（同一段以后不再提）",
+  approve_promotion: "这条升级批了（范文出新版本；写法出补丁、等发布）", reject_promotion: "这条升级不要（同一段以后不再提）",
   approve_playbook: "这份手册改动批了（生成新版本）", reject_playbook: "这份手册改动不要（同一段以后不再提）",
   approve_rule: "这条规则要（以后写稿都照它）", reject_rule: "这条不要（以后不再提）", replace_rule: "要，替换掉他点名的那条旧规则（带 target_rule_id）",
 };

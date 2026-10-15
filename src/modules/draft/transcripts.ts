@@ -33,12 +33,15 @@ export function sourceTypeOf(source: string): TranscriptSource {
 
 const LABEL: Record<TranscriptSource, string> = { final: "成片转写（发布版）", raw: "原片，非发布版" };
 
-/** 99-cache 下三层以内的转写清单 */
-async function manifests(root: string): Promise<string[]> {
+const absent = (e: unknown) => ["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "");
+const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** 99-cache 下三层以内的转写清单。目录不存在 = 没有材料；权限 / IO 错误记进 errors，不当成没有 */
+async function manifests(root: string, errors: string[]): Promise<string[]> {
   const out: string[] = [];
   const walk = async (dir: string, depth: number): Promise<void> => {
     let entries: import("node:fs").Dirent[];
-    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch (e) { if (!absent(e)) errors.push(`${dir} 读不了：${msg(e)}`); return; }
     for (const e of entries) {
       if (e.isFile() && e.name === "transcription-manifest.json") out.push(path.join(dir, e.name));
       else if (e.isDirectory() && depth < 3 && !/^coverage-chunks$/.test(e.name)) await walk(path.join(dir, e.name), depth + 1);
@@ -51,8 +54,8 @@ async function manifests(root: string): Promise<string[]> {
 /** 只有词级结果、没有整段 full.json 的清单（如 A/B 对比）：不是坏文件，跳过；读坏了才报错 */
 async function readOne(contentId: string, manifestFile: string): Promise<FounderTranscript | { error: string } | null> {
   const full = path.join(path.dirname(manifestFile), "full.json");
-  const stat = await fs.stat(full).catch(() => null);
-  if (!stat) return null;
+  let stat: import("node:fs").Stats;
+  try { stat = await fs.stat(full); } catch (e) { return absent(e) ? null : { error: `${full} 读不了：${msg(e)}` }; }
   try {
     const m = JSON.parse(await fs.readFile(manifestFile, "utf8")) as Record<string, unknown>;
     const text = parseTranscriptText(JSON.parse(await fs.readFile(full, "utf8")));
@@ -68,10 +71,12 @@ async function readOne(contentId: string, manifestFile: string): Promise<Founder
 export async function founderTranscripts(dataDir?: string): Promise<{ items: FounderTranscript[]; errors: string[] }> {
   const items: FounderTranscript[] = [];
   const errors: string[] = [];
-  for (const id of await contentIds(dataDir)) {
+  let ids: string[];
+  try { ids = await contentIds(dataDir); } catch (e) { return { items, errors: [`项目清单读不了：${msg(e)}`] }; }
+  for (const id of ids) {
     let root: string;
-    try { root = contentRoot(id, dataDir); } catch { continue; }
-    for (const f of await manifests(root)) {
+    try { root = contentRoot(id, dataDir); } catch (e) { errors.push(`稿件 ${id} 的项目文件夹找不到 / 绑定不对：${msg(e)}`); continue; }
+    for (const f of await manifests(root, errors)) {
       const r = await readOne(id, f);
       if (r && "error" in r) errors.push(r.error); else if (r) items.push(r);
     }

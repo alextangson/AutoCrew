@@ -16,12 +16,37 @@ export function genreOfDir(dir: string): ExemplarGenre | null {
   return ANY_DIRS.has(dir) ? "any" : null;
 }
 
-/** 头部「用途：结构卡 / 手法卡」决定类型；没写就是完整范文 */
+/** 一节正文：`## 名字` 到下一个 `## ` */
+function section(text: string, name: string): string | null {
+  const m = text.match(new RegExp(`^##\\s*${name}\\s*$`, "m"));
+  if (!m || m.index === undefined) return null;
+  const rest = text.slice(m.index + m[0].length);
+  const end = rest.search(/^## /m);
+  return (end < 0 ? rest : rest.slice(0, end)).trim();
+}
+
+/** 去掉时间戳、标点、空白，只比字 */
+const bare = (t: string) => t.replace(/\*\*\[\d{2}:\d{2}\]\*\*/g, "").replace(/[\s\p{P}\p{S}]/gu, "");
+
+/** 批注每一条标题里引的「原句」都要在全文里找得到（按 …… / → 切段，忽略标点空白）；找不到的列出来 */
+export function missingQuotes(full: string, notes: string): string[] {
+  const body = bare(full);
+  const heads = notes.split("\n").filter((l) => /^\d+\.\s/.test(l)).map((l) => l.match(/\*\*(.+?)\*\*/)?.[1] ?? "");
+  const quotes = heads.flatMap((h) => [...h.matchAll(/「([^「」]*(?:「[^」]*」[^「」]*)*)」/g)].map((m) => m[1]));
+  return quotes.filter((q) => q.split(/……|…|→/).map(bare).filter(Boolean).some((frag) => !body.includes(frag)));
+}
+
+/** 头部「用途：结构卡 / 手法卡」决定类型；没写就是完整范文。完整范文要有「全文」一节，批注引的原句要在全文里（§10） */
 export function parseExemplarFile(text: string): { title: string; kind: ExemplarKind } {
   const title = text.match(/^#\s+(.+)$/m)?.[1].trim();
   if (!title) throw new Error("缺一级标题（# 标题）");
   const head = text.split(/\n## /)[0];
   const kind: ExemplarKind = /用途[：:]\s*结构卡/.test(head) ? "structure_card" : /用途[：:]\s*手法卡/.test(head) ? "technique_card" : "exemplar";
+  if (kind !== "exemplar") return { title, kind };
+  const full = section(text, "全文");
+  if (!full) throw new Error("完整范文缺「## 全文」一节或它是空的");
+  const missing = missingQuotes(full, section(text, "批注") ?? "");
+  if (missing.length) throw new Error(`批注引的原句在全文里找不到：${missing.map((q) => `「${q}」`).join("、")}`);
   return { title, kind };
 }
 

@@ -77,6 +77,8 @@ describe("预览与立意锁版", () => {
     const { exemplars: _e, method: _m, exemplars_at: _t, ...legacy } = c.draftPath!.angle!;
     await updateContent(id, { draftPath: { ...c.draftPath!, angle: legacy } }, dir);
     expect(await run("angle", { content_id: id, base_version: v, ...ANGLE, founder_words: "再来" })).toMatchObject({ ok: true, lock_note: expect.stringContaining("照旧方式") });
+    // 技能现在总传 exemplars：传 [] 也不能把旧稿拉进新流程（Codex 复审 #7）
+    expect(await run("angle", { content_id: id, base_version: v, ...ANGLE, founder_words: "又来", exemplars: [] })).toMatchObject({ ok: true, exemplars: null, method_version: null });
     expect((await run("save", { content_id: id, base_version: v, body: BODY })).ok).toBe(true);
     expect((await run("start", { content_id: id }) as { progress: Record<string, unknown> }).progress.exemplars_note).toContain("早于范文库");
   });

@@ -1,7 +1,7 @@
 /**
  * 改稿意见怎么学（docs/2026-10-15-writing-exemplars-spec.md §6、§15.6–15.8）：
  * save 不再即时造规则 / 提案；意见原话照存（正文没改也记、开头阶段也记）；跨稿读意见；
- * 升级提案要两篇不同稿的出处、服务端核；手册走提案与版本，范文批注 / 写法进「等你拍板」，批了只标等人工改。
+ * 升级提案要两篇不同稿的出处、服务端核；手册走提案与版本，范文批注 / 写法进「等你拍板」，批了范文出新版本、写法出补丁等发布。
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -13,7 +13,7 @@ import { setQuoteFetch } from "../modules/draft/verify-quote.js";
 import { getContent } from "../storage/local-store.js";
 import { loadProfile, updateProfile } from "../modules/profile/creator-profile.js";
 import { loadManifest } from "../modules/playbook/store.js";
-import { putExemplar } from "../modules/exemplar/store.js";
+import { putExemplar, readExemplarText } from "../modules/exemplar/store.js";
 import { readPromotions } from "../modules/exemplar/promotions.js";
 import { listForChat } from "../modules/production/chat-approval/present.js";
 import { chatDecide } from "../modules/production/chat-approval/decide.js";
@@ -84,6 +84,10 @@ describe("save feedback：只记原话，不即时造规则", () => {
     expect(await run("save", { content_id: id, base_version: v, body: BODY, feedback: { founder_words: "x" } })).toMatchObject({ ok: false, code: "bad_param" });
     const fb = (await getContent(id, dir))!.draftPath!.feedback!;
     expect(fb).toEqual([expect.objectContaining({ stage: "opening", founder_words: "三个都太像广告" })]);
+    await run("opening", { content_id: id, base_version: v, opening: "丁丁丁", founder_words: "选 1" });
+    const after = (await getContent(id, dir))!.draftPath!;
+    expect(after.feedback).toHaveLength(1);
+    expect(after.angle!.opening_pick).toMatchObject({ chosen: "丁丁丁", founder_words: "选 1" });
   });
 });
 
@@ -113,21 +117,28 @@ describe("跨稿读意见与升级提案", () => {
     expect(await run("propose_promotion", { ...base, target: "rule", cites: [] })).toMatchObject({ ok: false, code: "bad_param" });
   });
 
-  it("手册目标走现有提案；范文 / 写法进「等你拍板」，批了只标「等人工改」，不改范文", async () => {
+  it("手册目标走现有提案；范文批注批了出范文新版本（旧版不动）；写法批了出补丁、一直显示「已批，等发布」", async () => {
     const { a, b, ca, cb } = await twoDrafts();
     const cites = JSON.stringify([{ content_id: a, index: ca.index }, { content_id: b, index: cb.index }]);
     const book = (await loadManifest(dir)).playbooks.find((e) => e.id === "ganhuo")!;
     const pb = await run("propose_promotion", { content_id: a, target: "playbook", genre: "ganhuo", text: `# 干货方法\n\n## 什么时候选它\n\n- 新骨架 v${book.current}\n`, note: "两篇都说要反转", cites });
     expect(pb).toMatchObject({ ok: true, target: "playbook", proposal_id: expect.stringMatching(/^pp-/) });
     await putExemplar({ id: "bench-toctou", genre: "ganhuo", kind: "exemplar", title: "TOCTOU", text: "# TOCTOU\n全文" }, dir);
-    const ex = await run("propose_promotion", { content_id: a, target: "exemplar", exemplar_id: "bench-toctou", text: "[00:46] 改前 → 改后", note: "两篇都说要反转", cites });
-    expect(ex).toMatchObject({ ok: true, outcome: "proposed" });
-    const list = await listForChat(dir, {}) as { items: Array<{ item_id: string; gen: string; type: string; brief?: string }> };
-    const item = list.items.find((i) => i.type === "writing_promotion")!;
-    expect(item.brief).toContain("故事要有反转");
-    expect(await chatDecide({ item_id: item.item_id, gen: item.gen, decision: "approve_promotion", founder_words: "你定", request_id: "r-1" }, dir)).toMatchObject({ ok: false, code: "founder_words_not_approval" });
-    expect(await chatDecide({ item_id: item.item_id, gen: item.gen, decision: "approve_promotion", founder_words: "批", request_id: "r-2" }, dir)).toMatchObject({ ok: true, status: "approved_pending_manual_apply" });
-    expect((await readPromotions(dir))[0]).toMatchObject({ status: "approved_pending_manual_apply", founder_words: "批" });
+    expect(await run("propose_promotion", { content_id: a, target: "exemplar", exemplar_id: "bench-toctou", text: "[00:46] 改前 → 改后", note: "范文批注", cites })).toMatchObject({ ok: true, outcome: "proposed" });
+    expect(await run("propose_promotion", { content_id: a, target: "method", text: "中段每一关都要有真碰到的坑", note: "写法", cites })).toMatchObject({ ok: true, outcome: "proposed" });
+    const list = async () => (await listForChat(dir, {}) as { items: Array<{ item_id: string; gen: string; type: string; title: string; brief?: string; summary: string }> }).items;
+    const ex = (await list()).find((i) => i.type === "writing_promotion" && i.summary === "范文批注")!;
+    expect(ex.brief).toContain("故事要有反转");
+    expect(await chatDecide({ item_id: ex.item_id, gen: ex.gen, decision: "approve_promotion", founder_words: "你定", request_id: "r-1" }, dir)).toMatchObject({ ok: false, code: "founder_words_not_approval" });
+    expect(await chatDecide({ item_id: ex.item_id, gen: ex.gen, decision: "approve_promotion", founder_words: "批", request_id: "r-2" }, dir)).toMatchObject({ ok: true, status: "applied", exemplar_version: 2 });
     expect(await fs.readFile(path.join(dir, "exemplars", "bench-toctou", "v1.md"), "utf8")).toBe("# TOCTOU\n全文");
+    expect(await readExemplarText("bench-toctou", 2, dir)).toMatch(/全文[\s\S]*追加批注[\s\S]*\[00:46\] 改前 → 改后/);
+    const me = (await list()).find((i) => i.type === "writing_promotion" && i.summary === "写法")!;
+    const r = await chatDecide({ item_id: me.item_id, gen: me.gen, decision: "approve_promotion", founder_words: "批这条", request_id: "r-3" }, dir);
+    expect(r).toMatchObject({ ok: true, status: "approved_pending_release", patch_file: expect.stringContaining("method-patches") });
+    expect(await fs.readFile(path.join(dir, String(r.patch_file)), "utf8")).toContain("中段每一关都要有真碰到的坑");
+    expect((await list()).find((i) => i.title === "写法改动已批，等发布")).toBeTruthy();
+    expect((await readPromotions(dir)).map((p) => p.status).sort()).toEqual(["applied", "approved_pending_release"]);
   });
+
 });

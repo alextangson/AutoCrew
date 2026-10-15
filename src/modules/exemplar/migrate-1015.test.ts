@@ -1,6 +1,6 @@
 /** 2026-10-15 迁移（spec §4、§15.3、§15.4）：只认固定 id、只改仍 pending 的、原文对不上就中止、只允许抖音那一列变 */
 import { describe, expect, it } from "vitest";
-import { assertOnlyDouyinChanged, effectiveTable, FLOOR_ID, migrateProposals, migrateRules, PENDING_RULES, SKIP_DOUYIN, STALE_PROPOSALS } from "./migrate-1015.js";
+import { BASELINE, MIGRATION_ID, publishPlaybooks, assertOnlyDouyinChanged, effectiveTable, FLOOR_ID, migrateProposals, migrateRules, PENDING_RULES, SKIP_DOUYIN, STALE_PROPOSALS } from "./migrate-1015.js";
 import { rulesForPlatform, type CreatorProfile, type WritingRule } from "../profile/creator-profile.js";
 import type { PlaybookManifest } from "../playbook/types.js";
 
@@ -62,5 +62,26 @@ describe("手册提案迁移", () => {
     migrateProposals(m, "t");
     expect(m.playbooks[0].proposals.map((p) => p.status)).toEqual(["stale", "rejected", "pending"]);
     expect(m.playbooks[0].proposals[0]).toMatchObject({ stale_reason: "2026-10-15 并入写法与范文" });
+  });
+});
+
+describe("手册发布（Codex 复审 #3）", () => {
+  const entry = (id: string, current: number, migrated = false) => ({ id, name: id, current, proposals: [],
+    versions: Array.from({ length: current }, (_, i) => ({ version: i + 1, at: "t", author: "agent", kind: "edit", ...(migrated && i + 1 === current - 1 ? { migration: MIGRATION_ID } : {}) })) });
+  const seeds = Object.keys(BASELINE).map((id) => ({ id, text: `压缩 ${id}` }));
+  const read = async (id: string, v: number) => `${id} 第 ${v} 版`;
+
+  it("基线对得上才发布；对不上整次中止", async () => {
+    const m = { schema: 1, events: [], playbooks: Object.entries(BASELINE).map(([id, v]) => entry(id, v)) } as unknown as PlaybookManifest;
+    expect((await publishPlaybooks(m, seeds, read)).every((b) => b.state === "publish")).toBe(true);
+    m.playbooks[0].current = 5;
+    await expect(publishPlaybooks(m, seeds, read)).rejects.toThrow("之后有人改过");
+  });
+
+  it("已有迁移标记：之后创始人批准了新版本，重跑也不再发布（不回退）；已是压缩版的不动", async () => {
+    const m = { schema: 1, events: [], playbooks: Object.entries(BASELINE).map(([id, v]) => entry(id, v + 2, true)) } as unknown as PlaybookManifest;
+    expect((await publishPlaybooks(m, seeds, read)).every((b) => b.state === "already_migrated")).toBe(true);
+    const fresh = { schema: 1, events: [], playbooks: Object.keys(BASELINE).map((id) => entry(id, 1)) } as unknown as PlaybookManifest;
+    expect((await publishPlaybooks(fresh, seeds, async (id) => `压缩 ${id}`)).every((b) => b.state === "already_compressed")).toBe(true);
   });
 });

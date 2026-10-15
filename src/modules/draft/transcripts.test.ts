@@ -48,6 +48,17 @@ describe("按作品找转写", () => {
     expect(r.errors).toEqual([expect.stringContaining("content-1790000000003-cccccc")]);
   });
 
+  it("权限错误不当成没有材料：记进 errors（Codex 复审 #11）", async () => {
+    await project("content-1790000000005-eeeeee", "run", "/lib/02-aroll/x.mov", whisper(["说的话。"]));
+    const cache = path.join(dir, "contents", "content-1790000000005-eeeeee", "99-cache");
+    await fs.chmod(cache, 0o000);
+    try {
+      const r = await founderTranscripts(dir);
+      expect(r.items).toEqual([]);
+      expect(r.errors).toEqual([expect.stringContaining("读不了")]);
+    } finally { await fs.chmod(cache, 0o755); }
+  });
+
   it("voice_refs 最多两篇转写 + 一篇认可过的 AI 稿（标明 AI 起草）；长转写整句节选", () => {
     const long = "这是一句话。".repeat(1000);
     const refs = voiceRefs([
