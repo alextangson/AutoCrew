@@ -42,15 +42,20 @@ async function connectStep(opts: InitOptions, deps: InitDeps): Promise<InitStep>
     next: `照上面的原因处理后重跑 autocrew init --host ${host}；也可以单独跑 autocrew connect ${host} 看详细结果` };
 }
 
+const later = (r: SetupResult) => {
+  const list = (r as { afterRestart?: string[] }).afterRestart;
+  return list?.length ? `；注意：${list.join("；")}` : "";
+};
+
 function libraryStep(r: SetupResult, target: string): InitStep {
   switch (r.status) {
-    case "already": return { step: "library", state: "skipped", message: `资料库已经建好（${r.root}），跳过` };
-    case "created": return { step: "library", state: "done", message: `资料库建好了：${r.root}，已经生效` };
-    case "opened": return { step: "library", state: "done", message: `${r.root} 本来就是 AutoCrew 资料库，已经接上用` };
+    case "already": return { step: "library", state: "skipped", message: `资料库已经建好（${r.root}），跳过${later(r)}` };
+    case "created": return { step: "library", state: "done", message: `资料库建好了：${r.root}，已经生效${later(r)}` };
+    case "opened": return { step: "library", state: "done", message: `${r.root} 本来就是 AutoCrew 资料库，已经接上用${later(r)}` };
     case "migrated": return { step: "library", state: "done", message: `资料库建好了：${r.root}，旧稿已搬进去（搬前备份在 ${r.backup}）` };
     case "queued_restart": return { step: "library", state: "needs_answer", message: `旧稿已备份到 ${r.backup}；搬家要重启一次服务才执行，现在还没生效`,
       next: "先确认没有正在写的稿（GET /api/update/busy），再 npm run restart；重启后重跑 autocrew init 确认" };
-    case "needs_legacy_choice": return { step: "library", state: "needs_answer", message: `你在旧位置（~/.autocrew）已有 ${r.drafts} 篇稿，要搬进新资料库吗？`,
+    case "needs_legacy_choice": return { step: "library", state: "needs_answer", message: `你在旧位置（~/.autocrew）已有 ${r.drafts} 篇稿（共 ${r.files} 个资料文件），要搬进新资料库吗？`,
       next: `问用户后重跑：搬 → autocrew init --library "${target}" --legacy migrate（搬前会先备份）；不搬 → --legacy keep（旧稿留在原处）` };
     case "refused": return { step: "library", state: "failed", message: "资料库没建", error: r.error,
       next: r.suggestion ? `换一个位置重跑，比如 autocrew init --library "${r.suggestion}"` : "换一个位置重跑 autocrew init --library <路径>" };

@@ -35,7 +35,7 @@ export interface StorageRequest { action: Operation; target: string }
 export interface StoragePlan extends StorageRequest {
   source: string; sourceId: string | null; files: number; bytes: number; retained: string[]; externalReferences: number;
 }
-interface CopyItem { source: string; relative: string; size: number; config?: boolean }
+export interface CopyItem { source: string; relative: string; size: number; config?: boolean }
 
 export async function digestFile(file: string): Promise<string> {
   const hash = createHash("sha256");
@@ -57,7 +57,7 @@ async function walk(source: string, relative: string, items: CopyItem[], config 
   else throw new Error(`不支持迁移的文件类型：${source}`);
 }
 
-async function inventory(): Promise<{ items: CopyItem[]; retained: string[] }> {
+export async function inventory(): Promise<{ items: CopyItem[]; retained: string[] }> {
   const root = getLibraryRoot();
   const items: CopyItem[] = [], retained: string[] = [];
   if (readLibraryLocation()) {

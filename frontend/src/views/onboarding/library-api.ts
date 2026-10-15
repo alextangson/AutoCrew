@@ -3,9 +3,9 @@ import { authedFetch, SESSION_EXPIRED } from "../../transport";
 
 export interface LibraryStatus { configured: boolean; root: string | null; defaultPath: string; legacyDrafts: number }
 export type SetupResult =
-  | { status: "already" | "created" | "opened" | "migrated"; root: string; backup?: string }
+  | { status: "already" | "created" | "opened" | "migrated"; root: string; backup?: string; afterRestart?: string[] }
   | { status: "queued_restart"; root: string; backup: string }
-  | { status: "needs_legacy_choice"; root: string; drafts: number }
+  | { status: "needs_legacy_choice"; root: string; drafts: number; files?: number }
   | { status: "refused"; code: string; error: string; root?: string; suggestion?: string };
 export type LibReply<T> = { ok: true; data: T } | { ok: false; error: string };
 

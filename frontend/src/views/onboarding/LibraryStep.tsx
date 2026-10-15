@@ -7,6 +7,12 @@ import { useEffect, useState } from "react";
 import { loadLibrary, setupLibrary, type LibraryStatus, type SetupResult } from "./library-api";
 
 function okMessage(r: SetupResult): string | null {
+  const base = okBase(r);
+  const later = "afterRestart" in r && r.afterRestart?.length ? ` 注意：${r.afterRestart.join("；")}。` : "";
+  return base ? base + later : null;
+}
+
+function okBase(r: SetupResult): string | null {
   if (r.status === "created") return `建好了：${r.root}。你自己看的稿在里面的「我的内容」文件夹。`;
   if (r.status === "opened") return `${r.root} 本来就是 AutoCrew 资料库，已经接上用。`;
   if (r.status === "already") return `资料库已经在 ${r.root}。`;
@@ -15,10 +21,10 @@ function okMessage(r: SetupResult): string | null {
   return null;
 }
 
-function LegacyChoice(p: { drafts: number; busy: boolean; onPick: (c: "migrate" | "keep") => void }) {
+function LegacyChoice(p: { drafts: number; files?: number; busy: boolean; onPick: (c: "migrate" | "keep") => void }) {
   return (
     <div className="ob-note">
-      <p>你在原来的位置已经有 {p.drafts} 篇稿。要搬进新资料库吗？搬之前会先整份备份。</p>
+      <p>你在原来的位置已经有 {p.drafts} 篇稿{p.files ? `（共 ${p.files} 个资料文件）` : ""}。要搬进新资料库吗？搬之前会先整份备份。</p>
       <div className="ob-actions ob-top">
         <button className="primary" disabled={p.busy} onClick={() => p.onPick("migrate")}>{p.busy ? "正在处理…" : "搬进去"}</button>
         <button disabled={p.busy} onClick={() => p.onPick("keep")}>不搬，旧稿留在原处</button>
@@ -67,7 +73,7 @@ export function LibraryStep(props: { onNext: () => void }) {
           {result.suggestion && <button className="btn-ghost ob-inline" onClick={() => { setPath(result.suggestion!); setResult(null); }}>改用 {result.suggestion}</button>}
         </p>
       )}
-      {result?.status === "needs_legacy_choice" && <LegacyChoice drafts={result.drafts} busy={busy} onPick={(c) => void run(c)} />}
+      {result?.status === "needs_legacy_choice" && <LegacyChoice drafts={result.drafts} {...(result.files ? { files: result.files } : {})} busy={busy} onPick={(c) => void run(c)} />}
       {done && <p className="ob-ok">{done}</p>}
       {error && <p className="ob-fail">没建成：{error}</p>}
       {!done && <p className="ob-hint">以后也能在 设置 → 模型 → 用户资料库 里建；不建就先存在本机的旧位置。</p>}

@@ -68,6 +68,7 @@ it("unknown caller → asks for --host", async () => {
 
 it("O15: legacy drafts → exit 2 with the question; nothing created until answered", async () => {
   await fs.mkdir(path.join(home, ".autocrew", "contents", "c1"), { recursive: true });
+  await fs.writeFile(path.join(home, ".autocrew", "contents", "c1", "meta.json"), "{}");
   const r = await runInit({ host: "claude" }, deps({ connected: true }));
   expect(r).toMatchObject({ ok: false, exitCode: 2 });
   expect(r.steps[1].message).toContain("1 篇稿");

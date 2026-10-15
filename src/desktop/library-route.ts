@@ -8,21 +8,28 @@
  *   POST /api/library/setup {target, legacy?}   建 / 打开；legacy = migrate | keep（O15）
  */
 import type http from "node:http";
-import { checkLibraryTarget, defaultLibraryPath, legacyDraftCount, setupLibrary, type LegacyChoice } from "../storage/library-setup.js";
+import { checkLibraryTarget, defaultLibraryPath, legacyData, setupLibrary, type LegacyChoice } from "../storage/library-setup.js";
 import { readLibraryLocation } from "../storage/storage-roots.js";
 
 export interface LibraryRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
   originAllowed: (req: http.IncomingMessage) => boolean;
   readBody: (req: http.IncomingMessage) => Promise<string>;
+  /**
+   * 当场切库后，把启动时绑死了旧目录的后台服务换到新库（视频服务）。返回还要重启才切过去的部分（人话），
+   * 照实放进回执，不报「全部已生效」。
+   */
+  onActivated?: () => Promise<string[]>;
 }
+
+const ACTIVATED = new Set(["created", "opened", "already"]);
 
 const send = (res: http.ServerResponse, status: number, body: unknown) =>
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }).end(JSON.stringify(body));
 
 export async function libraryStatus(): Promise<Record<string, unknown>> {
   const location = readLibraryLocation();
-  return { configured: Boolean(location), root: location?.root ?? null, defaultPath: defaultLibraryPath(), legacyDrafts: await legacyDraftCount() };
+  return { configured: Boolean(location), root: location?.root ?? null, defaultPath: defaultLibraryPath(), legacyDrafts: (await legacyData()).drafts };
 }
 
 export function createLibraryHandler(deps: LibraryRouteDeps) {
@@ -48,11 +55,19 @@ export function createLibraryHandler(deps: LibraryRouteDeps) {
       busy = true;
       try {
         const r = await setupLibrary({ target: b.target, live: true, ...(legacy ? { legacy } : {}) });
-        return send(res, r.status === "refused" ? 400 : 200, r.status === "refused" ? { ok: false, ...r } : { ok: true, data: r }), true;
+        if (r.status === "refused") return send(res, 400, { ok: false, ...r }), true;
+        const pending = ACTIVATED.has(r.status) && deps.onActivated ? await rebind(deps.onActivated) : [];
+        return send(res, 200, { ok: true, data: { ...r, ...(pending.length ? { afterRestart: pending } : {}) } }), true;
       } finally { busy = false; }
     } catch (err) {
       send(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
     }
     return true;
   };
+}
+
+/** 换绑失败不吞：资料库已经切好了，失败的那部分照实说要重启 */
+async function rebind(fn: () => Promise<string[]>): Promise<string[]> {
+  try { return await fn(); }
+  catch (err) { return [`后台服务没能换到新资料库（${err instanceof Error ? err.message : String(err)}），重启 AutoCrew 后生效`]; }
 }

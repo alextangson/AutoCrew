@@ -56,3 +56,19 @@ it("double click: only one setup runs", async () => {
   const replies = [await a.json(), await b.json()];
   expect(replies.filter((x) => x.ok && x.data.status === "created")).toHaveLength(1);
 });
+
+it("live activation rebinds startup-bound services; parts that still need a restart are reported, not hidden", async () => {
+  const calls: string[] = [];
+  const route = createLibraryHandler({
+    authorize: () => "bearer", originAllowed: () => true,
+    readBody: async (req) => { let b = ""; for await (const c of req) b += c; return b; },
+    onActivated: async () => { calls.push("rebind"); return ["每日摘要重启 AutoCrew 后才用新资料库"]; },
+  });
+  const s2 = http.createServer((req, res) => void route(req, res, new URL(req.url!, "http://x")).then((h) => { if (!h) res.writeHead(404).end(); }));
+  await new Promise<void>((r) => s2.listen(0, "127.0.0.1", () => r()));
+  const url = `http://127.0.0.1:${(s2.address() as import("node:net").AddressInfo).port}`;
+  const r = await (await fetch(`${url}/api/library/setup`, { method: "POST", body: JSON.stringify({ target: "~/AutoCrew资料库" }) })).json();
+  expect(calls).toEqual(["rebind"]);
+  expect(r.data).toMatchObject({ status: "created", afterRestart: ["每日摘要重启 AutoCrew 后才用新资料库"] });
+  await new Promise((res) => s2.close(res));
+});

@@ -8,9 +8,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { CONFIG_FILES, DATA_DIRS, DATA_FILES, applyPendingStorage, queueStorage, type StoragePlan } from "./library-manager.js";
-import { holdProcessLibraryLock } from "./library-lock.js";
-import { LIBRARY_MARKER, assertLibraryAvailable, getConfigDir, getMachineDir, readLibraryLocation } from "./storage-roots.js";
+import { CONFIG_FILES, applyPendingStorage, inventory, queueStorage, type StoragePlan } from "./library-manager.js";
+import { assertLibraryWriter, holdProcessLibraryLock } from "./library-lock.js";
+import { LIBRARY_MARKER, assertLibraryAvailable, canonicalTarget, getConfigDir, getMachineDir, readLibraryLocation } from "./storage-roots.js";
 
 export const DEFAULT_LIBRARY_NAME = "AutoCrew资料库";
 export function defaultLibraryPath(home = process.env.HOME || os.homedir()): string {
@@ -68,26 +68,32 @@ export async function checkLibraryTarget(input: string, opts: { home?: string; p
     error: `${target} 里已经有别的东西（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}），不往里面写。换一个空文件夹，或用它下面的子文件夹 ${sub}` };
 }
 
-/** 旧 ~/.autocrew 里有几篇稿（O15 问之前先数） */
-export async function legacyDraftCount(): Promise<number> {
-  if (readLibraryLocation()) return 0;
-  try {
-    const entries = await fs.readdir(path.join(getMachineDir(), "contents"), { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).length;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw err;
+export interface LegacyData { drafts: number; files: number }
+
+/**
+ * 旧位置（没建库时的 ~/.autocrew）有什么资料（O15 问之前先数）：和迁移用同一份清单——
+ * 默认工作区、注册过的 ws-* 工作区、稿件的目录版和平铺 JSON 版都算；钥匙配置不算资料。
+ */
+export async function legacyData(): Promise<LegacyData> {
+  if (readLibraryLocation()) return { drafts: 0, files: 0 };
+  const items = (await inventory()).items.filter((i) => !i.config);
+  const drafts = new Set<string>();
+  for (const i of items) {
+    const m = i.relative.split(path.sep);
+    const at = m.indexOf("contents");
+    if (m[0] === "workspaces" && at === 2 && m[3]) drafts.add(`${m[1]}/${m[3].replace(/\.json$/, "")}`);
   }
+  return { drafts: drafts.size, files: items.length };
 }
 
-/** 搬之前把旧资料整份复制一份到 ~/.autocrew-backup-<时间>（只复制资料，不复制钥匙和本机状态） */
+/** 搬之前把旧资料整份复制一份到 ~/.autocrew-backup-<时间>：迁移清单里的每个资料文件都备份（钥匙和本机状态不复制） */
 export async function backupLegacyData(now = new Date()): Promise<string> {
-  const machine = getMachineDir();
-  const dest = `${machine}-backup-${now.toISOString().replace(/[:.]/g, "-")}`;
+  const dest = `${getMachineDir()}-backup-${now.toISOString().replace(/[:.]/g, "-")}`;
   await fs.mkdir(dest, { recursive: false, mode: 0o700 });
-  for (const name of await fs.readdir(machine)) {
-    if (!DATA_DIRS.has(name) && !DATA_FILES.has(name)) continue;
-    await fs.cp(path.join(machine, name), path.join(dest, name), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+  for (const item of (await inventory()).items.filter((i) => !i.config)) {
+    const to = path.join(dest, item.relative);
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.copyFile(item.source, to, fs.constants.COPYFILE_EXCL);
   }
   return dest;
 }
@@ -112,7 +118,7 @@ export type SetupResult =
   | { status: "already"; root: string }
   | { status: "created" | "opened" | "migrated"; root: string; backup?: string; plan: StoragePlan }
   | { status: "queued_restart"; root: string; backup: string }
-  | { status: "needs_legacy_choice"; root: string; drafts: number }
+  | { status: "needs_legacy_choice"; root: string; drafts: number; files: number }
   | { status: "refused"; code: string; error: string; root?: string; suggestion?: string };
 
 export interface SetupOptions {
@@ -124,33 +130,43 @@ export interface SetupOptions {
   platform?: NodeJS.Platform;
 }
 
-function alreadyConfigured(target: string): SetupResult | null {
+/** 激活后的收尾（钥匙配置复制 + 服务占写入权）：幂等，`already` 时也再跑一遍，中途失败的上一次能在重试时补完（O16） */
+async function finishActivation(live: boolean): Promise<void> {
+  const root = readLibraryLocation()!.root;
+  if (live) {
+    try { assertLibraryWriter(root); } catch { holdProcessLibraryLock(); }
+  }
+  await carryConfigs(getMachineDir());
+}
+
+async function alreadyConfigured(target: string, live: boolean): Promise<SetupResult | null> {
   const location = readLibraryLocation();
   if (!location) return null;
   assertLibraryAvailable(location);
-  if (path.resolve(location.root) === path.resolve(target)) return { status: "already", root: location.root };
-  return { status: "refused", code: "other_library", root: location.root,
-    error: `这台电脑已经在用 ${location.root} 这个资料库。要换位置，去 设置 → 模型 → 用户资料库 里迁移。` };
+  if (canonicalTarget(location.root) !== canonicalTarget(target)) {
+    return { status: "refused", code: "other_library", root: location.root,
+      error: `这台电脑已经在用 ${location.root} 这个资料库。要换位置，去 设置 → 模型 → 用户资料库 里迁移。` };
+  }
+  await finishActivation(live);
+  return { status: "already", root: location.root };
 }
 
 export async function setupLibrary(opts: SetupOptions): Promise<SetupResult> {
   const check = await checkLibraryTarget(opts.target, opts);
   if (check.kind === "refused") return { status: "refused", code: check.code, error: check.error, root: check.target, ...(check.suggestion ? { suggestion: check.suggestion } : {}) };
-  const done = alreadyConfigured(check.target);
+  const done = await alreadyConfigured(check.target, Boolean(opts.live));
   if (done) return done;
-  const drafts = check.kind === "library" ? 0 : await legacyDraftCount();
-  if (drafts > 0 && !opts.legacy) return { status: "needs_legacy_choice", root: check.target, drafts };
-  const migrate = drafts > 0 && opts.legacy === "migrate";
+  const legacy = check.kind === "library" ? { drafts: 0, files: 0 } : await legacyData();
+  if (legacy.files > 0 && !opts.legacy) return { status: "needs_legacy_choice", root: check.target, ...legacy };
+  const migrate = legacy.files > 0 && opts.legacy === "migrate";
   const backup = migrate ? await backupLegacyData() : undefined;
   const action = check.kind === "library" ? "open" : migrate ? "migrate" : "create";
-  const legacyConfig = getConfigDir();
   await queueStorage({ action, target: check.target });
   if (migrate && opts.live) return { status: "queued_restart", root: check.target, backup: backup! };
   const plan = await applyPendingStorage(undefined, { live: Boolean(opts.live) });
   if (!plan) throw new Error("资料库切换没有执行（待切换记录不见了），请重试");
-  if (action !== "migrate") await carryConfigs(legacyConfig);
-  // 运行中的服务切过去后由它自己占住新库的写入权（和启动时一样），否则后续写入全被拒
-  if (opts.live) holdProcessLibraryLock();
+  // 迁移时钥匙配置已随清单搬到新库；新建 / 打开时从旧位置复制，并让运行中的服务占住新库写入权
+  if (action !== "migrate") await finishActivation(Boolean(opts.live));
   const status = action === "open" ? "opened" : action === "migrate" ? "migrated" : "created";
   return { status, root: check.target, plan, ...(backup ? { backup } : {}) };
 }

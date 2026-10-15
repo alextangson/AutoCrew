@@ -71,7 +71,7 @@ describe("setupLibrary", () => {
     await put(path.join(machine, "contents", "c1", "meta.json"), "{}");
     await put(path.join(machine, "contents", "c2", "meta.json"), "{}");
     const target = defaultLibraryPath(home);
-    expect(await setupLibrary({ target, home })).toEqual({ status: "needs_legacy_choice", root: target, drafts: 2 });
+    expect(await setupLibrary({ target, home })).toEqual({ status: "needs_legacy_choice", root: target, drafts: 2, files: 2 });
     expect(readLibraryLocation()).toBeNull();
     const kept = await setupLibrary({ target, home, legacy: "keep" });
     expect(kept.status).toBe("created");
@@ -83,7 +83,7 @@ describe("setupLibrary", () => {
     const r = await setupLibrary({ target: defaultLibraryPath(home), home, legacy: "migrate", live: true });
     expect(r.status).toBe("queued_restart");
     const backup = (r as { backup: string }).backup;
-    expect(await fs.readFile(path.join(backup, "contents", "c1", "meta.json"), "utf8")).toBe("{}");
+    expect(await fs.readFile(path.join(backup, "workspaces", "default", "contents", "c1", "meta.json"), "utf8")).toBe("{}");
     expect(readLibraryLocation()).toBeNull();
   });
 
@@ -94,5 +94,43 @@ describe("setupLibrary", () => {
     const r = await setupLibrary({ target, home });
     expect(r.status).toBe("opened");
     expect(readLibraryLocation()?.root).toBe(target);
+  });
+});
+
+describe("codex review fixes", () => {
+  it("O15: drafts in a non-default workspace or as flat JSON count, and get backed up with the registry", async () => {
+    await put(path.join(machine, "contents", "c-flat.json"), "{}");
+    await put(path.join(machine, "workspaces.json"), '{"active":"default","workspaces":[]}');
+    await put(path.join(machine, "workspaces", "ws-abc", "contents", "c2", "meta.json"), "{}");
+    await put(path.join(machine, "engine.json"), '{"k":1}');
+    const target = defaultLibraryPath(home);
+    expect(await setupLibrary({ target, home })).toMatchObject({ status: "needs_legacy_choice", drafts: 2 });
+    const r = await setupLibrary({ target, home, legacy: "migrate", live: true });
+    const backup = (r as { backup: string }).backup;
+    expect(await fs.readFile(path.join(backup, "workspaces", "default", "contents", "c-flat.json"), "utf8")).toBe("{}");
+    expect(await fs.readFile(path.join(backup, "workspaces", "ws-abc", "contents", "c2", "meta.json"), "utf8")).toBe("{}");
+    expect(await fs.readFile(path.join(backup, "workspaces.json"), "utf8")).toContain("active");
+    await expect(fs.access(path.join(backup, "workspaces", "default", "engine.json"))).rejects.toThrow();
+  });
+
+  it("O16: a config-copy failure after activation is finished on retry (configs + writer lock), not reported as already-done-but-broken", async () => {
+    await put(path.join(machine, "engine.json"), '{"provider":"deepseek"}');
+    await fs.chmod(path.join(machine, "engine.json"), 0o000);
+    const target = defaultLibraryPath(home);
+    await expect(setupLibrary({ target, home, live: true })).rejects.toThrow();
+    await fs.chmod(path.join(machine, "engine.json"), 0o600);
+    releaseProcessLibraryLocks();
+    expect(await setupLibrary({ target, home, live: true })).toMatchObject({ status: "already" });
+    expect(await fs.readFile(path.join(getConfigDir(), "engine.json"), "utf8")).toContain("deepseek");
+    const { assertLibraryWriter } = await import("./library-lock.js");
+    expect(() => assertLibraryWriter(target)).not.toThrow();
+  });
+
+  it("O16: rerun through a symlinked path is still the same library", async () => {
+    const real = path.join(home, "real"); await fs.mkdir(real);
+    const link = path.join(home, "link"); await fs.symlink(real, link);
+    await setupLibrary({ target: path.join(link, "lib"), home });
+    expect(await setupLibrary({ target: path.join(link, "lib"), home })).toMatchObject({ status: "already" });
+    expect(await setupLibrary({ target: path.join(real, "lib"), home })).toMatchObject({ status: "already" });
   });
 });
