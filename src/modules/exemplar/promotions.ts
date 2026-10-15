@@ -99,8 +99,11 @@ async function land(p: Promotion, words: string, at: string, dataDir?: string): 
     const m = await readExemplarManifest(dataDir);
     const e = m.exemplars.find((x) => x.id === p.exemplar_id);
     if (!e) throw new ExemplarError("not_found", `范文库里已经没有 ${String(p.exemplar_id)}：批不了，告诉创始人`);
+    // 上次已经生成了版本、只是没来得及记提案状态：只补状态，不再追加一遍批注
+    const done = e.versions.find((v) => v.promotion_id === p.id);
+    if (done) return { status: "applied", exemplar_version: done.version };
     const text = await readExemplarText(e.id, e.current, dataDir, m);
-    const r = await putInQueue({ id: e.id, genre: e.genre, kind: e.kind, title: e.title, text: annotated(text, p, words, at) }, dataDir);
+    const r = await putInQueue({ id: e.id, genre: e.genre, kind: e.kind, title: e.title, text: annotated(text, p, words, at), promotion_id: p.id }, dataDir);
     return { status: "applied", exemplar_version: r.version };
   }
   assertDataDirWritable(dataDir);

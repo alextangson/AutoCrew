@@ -11,7 +11,7 @@ import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 import { writeJsonAtomicMkdir, writeTextAtomicMkdir } from "../../storage/json-atomic.js";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
-import { EXEMPLAR_ID, ExemplarError, isExemplarGenre, type ExemplarEntry, type ExemplarGenre, type ExemplarKind, type ExemplarManifest } from "./types.js";
+import { EXEMPLAR_ID, GENRE_CAP, ExemplarError, isExemplarGenre, type ExemplarEntry, type ExemplarGenre, type ExemplarKind, type ExemplarManifest } from "./types.js";
 
 export const exemplarsDir = (dataDir?: string) => path.join(getDataDir(dataDir), "exemplars");
 const manifestPath = (dataDir?: string) => path.join(exemplarsDir(dataDir), "manifest.json");
@@ -98,7 +98,7 @@ async function writeNextVersion(id: string, start: number, text: string, dataDir
   }
 }
 
-export interface ExemplarInput { id: string; genre: ExemplarGenre; kind: ExemplarKind; title: string; text: string }
+export interface ExemplarInput { id: string; genre: ExemplarGenre; kind: ExemplarKind; title: string; text: string; promotion_id?: string; source?: string; replaces?: string }
 export type ImportOutcome = "created" | "new_version" | "unchanged";
 
 function checkInput(x: ExemplarInput): void {
@@ -113,6 +113,16 @@ export function putExemplar(x: ExemplarInput, dataDir?: string): Promise<{ id: s
   return serializeExemplars(dataDir, () => putInQueue(x, dataDir));
 }
 
+/** 新进一篇完整范文时查体裁名额：满了要指定换掉哪篇（replaces），否则拒并列出现有的；换下的只标 retired，不删 */
+function checkCap(m: ExemplarManifest, x: ExemplarInput, e: ExemplarEntry | undefined): void {
+  if (x.kind !== "exemplar" || x.genre === "any" || (e && e.kind === "exemplar" && e.genre === x.genre && !e.retired)) return;
+  const live = m.exemplars.filter((y) => y.kind === "exemplar" && y.genre === x.genre && !y.retired && y.id !== x.id);
+  if (live.length < GENRE_CAP) return;
+  const out = x.replaces ? live.find((y) => y.id === x.replaces) : undefined;
+  if (!out) throw new ExemplarError("genre_full", `${x.genre} 已有 ${live.length} 篇完整范文（上限 ${GENRE_CAP}）：要入库 ${x.id} 请指定换掉哪篇（--replace=<id>）。现有：${live.map((y) => y.id).join("、")}`);
+  out.retired = { at: new Date().toISOString(), replaced_by: x.id };
+}
+
 /** 已在队列里时用（升级提案批准时和提案状态一起提交） */
 export async function putInQueue(x: ExemplarInput, dataDir?: string): Promise<{ id: string; outcome: ImportOutcome; version: number }> {
   checkInput(x);
@@ -120,6 +130,8 @@ export async function putInQueue(x: ExemplarInput, dataDir?: string): Promise<{ 
   const hash = contentHash(x.text);
   const e = m.exemplars.find((y) => y.id === x.id);
   const cur = e?.versions.find((v) => v.version === e.current);
+  if (e && x.source && e.source && e.source !== x.source) throw new ExemplarError("id_collision", `${x.id} 已经从另一个来源导入过（${e.source}），这次是 ${x.source}：两篇撞了 id，没有覆盖，请人工核对是不是同一条视频`);
+  checkCap(m, x, e);
   // 当前版的文件先核一遍：损坏了不说「没变」，报出来
   if (e) verified(e.id, e.current, await readRaw(e.id, e.current, dataDir), m);
   if (e && cur?.hash === hash && e.genre === x.genre && e.kind === x.kind) return { id: x.id, outcome: "unchanged" as const, version: e.current };
@@ -127,9 +139,9 @@ export async function putInQueue(x: ExemplarInput, dataDir?: string): Promise<{ 
   const at = new Date().toISOString();
   const start = e ? Math.max(...e.versions.map((v) => v.version)) + 1 : 1;
   const version = cur?.hash === hash ? e!.current : await writeNextVersion(x.id, start, x.text, dataDir);
-  const entry: ExemplarEntry = e ?? { id: x.id, genre: x.genre, kind: x.kind, title: x.title, current: version, versions: [] };
+  const entry: ExemplarEntry = e ?? { id: x.id, genre: x.genre, kind: x.kind, title: x.title, current: version, versions: [], ...(x.source ? { source: x.source } : {}) };
   Object.assign(entry, { genre: x.genre, kind: x.kind, title: x.title, current: version });
-  if (!entry.versions.some((v) => v.version === version)) entry.versions.push({ version, at, hash, chars: chars(x.text), title: x.title });
+  if (!entry.versions.some((v) => v.version === version)) entry.versions.push({ version, at, hash, chars: chars(x.text), title: x.title, ...(x.promotion_id ? { promotion_id: x.promotion_id } : {}) });
   if (!e) m.exemplars.push(entry);
   await writeJsonAtomicMkdir(manifestPath(dataDir), m);
   return { id: x.id, outcome: e ? "new_version" as const : "created" as const, version };

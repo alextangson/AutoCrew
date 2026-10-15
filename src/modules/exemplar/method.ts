@@ -47,9 +47,12 @@ export async function pinMethod(dataDir?: string, skillFile = SKILL_FILE): Promi
 /** 续写：按锁住的版本取全文；快照丢了就报错，不悄悄换成当前版 */
 export async function lockedMethod(version: string, dataDir?: string): Promise<string> {
   if (!/^[0-9a-f]{16}$/.test(version)) throw new ExemplarError("bad_method_version", `写法版本号不对：${version}`);
+  let text: string;
   try {
-    return await fs.readFile(snapshotPath(version, dataDir), "utf8");
+    text = await fs.readFile(snapshotPath(version, dataDir), "utf8");
   } catch (e) {
     throw new ExemplarError("method_snapshot_missing", `这篇锁住的写法第 ${version} 版读不了：${(e as Error).message}`);
   }
+  if (contentHash(text) !== version) throw new ExemplarError("method_snapshot_corrupt", `这篇锁住的写法第 ${version} 版快照和指纹对不上（被改过或损坏）：不使用，如实告诉创始人`);
+  return text;
 }

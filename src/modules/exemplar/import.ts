@@ -53,19 +53,19 @@ export function parseExemplarFile(text: string): { title: string; kind: Exemplar
 
 export interface ImportResult { file: string; id?: string; outcome?: ImportOutcome; version?: number; error?: string }
 
-async function importOne(root: string, dir: string, name: string, genre: ExemplarGenre, dataDir?: string): Promise<ImportResult> {
+async function importOne(root: string, dir: string, name: string, genre: ExemplarGenre, dataDir?: string, replaces?: string): Promise<ImportResult> {
   const file = path.join(dir, name);
   try {
     const text = await fs.readFile(path.join(root, file), "utf8");
     const { title, kind } = parseExemplarFile(text);
-    const r = await putExemplar({ id: name.replace(/\.md$/, ""), genre, kind, title, text }, dataDir);
+    const r = await putExemplar({ id: name.replace(/\.md$/, ""), genre, kind, title, text, ...(replaces ? { replaces } : {}) }, dataDir);
     return { file, ...r };
   } catch (e) {
     return { file, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
-export async function importExemplarDir(root: string, dataDir?: string): Promise<ImportResult[]> {
+export async function importExemplarDir(root: string, dataDir?: string, replaces?: string): Promise<ImportResult[]> {
   const out: ImportResult[] = [];
   const dirs = (await fs.readdir(root, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
   for (const dir of dirs) {
@@ -74,7 +74,7 @@ export async function importExemplarDir(root: string, dataDir?: string): Promise
     if (!names.length) continue;
     const genre = genreOfDir(dir);
     if (!genre) { out.push({ file: dir, error: `目录 ${dir} 不是体裁 id（${["ganhuo", "shiyan", "fanchangshi", "xinxicha", "renwu", "any"].join(" / ")}），跳过` }); continue; }
-    for (const name of names) out.push(await importOne(root, dir, name, genre, dataDir));
+    for (const name of names) out.push(await importOne(root, dir, name, genre, dataDir, replaces));
   }
   return out;
 }

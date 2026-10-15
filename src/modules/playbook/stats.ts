@@ -3,6 +3,8 @@
  * - 归属只看记下的版本：定稿时 draftFinal.playbook；没记 = 未归版本（不按日期判断）。
  * - 已定稿 = 创始人在工作台点了有效的「定了」（draftFinal 在）；没定的算「进行中」，不进轮数、不判放弃。
  * - 轮数 = feedback 里带原话、且记的版本和定稿那一版对得上的条数；换体裁前的单独计。
+ * - 整篇轮数（验收用，spec 2026-10-15 §15.18）= 这篇所有带原话的修改意见，含开头阶段和换体裁前的；
+ *   选卡、选开头是选择，不在 feedback 里，所以不算。
  * - 发布数据：抖音作品 D+3 / D+7 正好那天的快照，没有就留空，不拿别的天代替。
  */
 import { listOutcomes } from "../flywheel/outcome-store.js";
@@ -57,11 +59,13 @@ function publishSignal(finals: Content[], outcomes: PerformanceOutcome[]): Recor
 function versionStats(pin: PlaybookPin, contents: Content[], outcomes: PerformanceOutcome[]): Record<string, unknown> {
   const finals = contents.filter((c) => samePin(finalPin(c), pin));
   const rounds = finals.map((c) => (c.draftPath?.feedback ?? []).filter((f) => f.founder_words && samePin(f.playbook, pin)).length);
+  const whole = finals.map((c) => (c.draftPath?.feedback ?? []).filter((f) => f.founder_words).length);
   const preSwitch = finals.reduce((n, c) => n + (c.draftPath?.feedback ?? []).filter((f) => f.founder_words && f.playbook && !samePin(f.playbook, pin)).length, 0);
   const inProgress = contents.filter((c) => !finalized(c) && samePin(c.draftPath?.angle?.playbook, pin)).length;
   return {
     version: pin.version, finalized: finals.length, in_progress: inProgress,
     rounds: { median: median(rounds), min: rounds.length ? Math.min(...rounds) : null, max: rounds.length ? Math.max(...rounds) : null },
+    draft_rounds: { median: median(whole), min: whole.length ? Math.min(...whole) : null, max: whole.length ? Math.max(...whole) : null },
     pre_switch_rounds: preSwitch, label: finals.length < MIN_SAMPLE ? SAMPLE_LOW : null,
     publish: publishSignal(finals, outcomes),
   };

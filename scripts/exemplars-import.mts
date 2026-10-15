@@ -1,6 +1,7 @@
 /**
  * 把 `<目录>/<体裁>/bench-*.md` 导进资料库范文库（spec 2026-10-15 §2、§16）。按内容 hash 幂等，改过的出新版本，旧版本不动。
  * 用法：npm run exemplars:import -- <目录> [--data-dir=<数据目录>]
+ *       npm run exemplars:import -- <目录> --replace=<旧范文 id>   体裁满 6 篇完整范文时，指定换掉哪篇（旧版本照留）
  *       npm run exemplars:import -- --voice <文件或目录…> [--data-dir=<数据目录>]   创始人成片转写，按口吻参考入库（不当范文）
  * 有任何一篇失败：照样导完其他篇，最后以非 0 退出，逐篇列原因。
  */
@@ -13,6 +14,7 @@ import { acquireLibraryLock } from "../src/storage/library-lock.js";
 
 const args = process.argv.slice(2);
 const voice = args.includes("--voice");
+const replace = args.find((a) => a.startsWith("--replace="))?.slice("--replace=".length);
 const paths = args.filter((a) => !a.startsWith("--"));
 const dir = paths[0];
 const dataDir = args.find((a) => a.startsWith("--data-dir="))?.slice("--data-dir=".length);
@@ -32,7 +34,7 @@ try {
 }
 let results: Awaited<ReturnType<typeof importExemplarDir>>;
 try {
-  results = voice ? await importVoiceFiles(paths.map((p) => path.resolve(p)), target) : await importExemplarDir(path.resolve(dir), target);
+  results = voice ? await importVoiceFiles(paths.map((p) => path.resolve(p)), target) : await importExemplarDir(path.resolve(dir), target, replace);
 } finally {
   release();
 }

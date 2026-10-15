@@ -142,7 +142,10 @@ describe("跨稿读意见与升级提案", () => {
     const { a, b, ca, cb } = await twoDrafts();
     const cites = JSON.stringify([{ content_id: a, index: ca.index }, { content_id: b, index: cb.index }]);
     const book = (await loadManifest(dir)).playbooks.find((e) => e.id === "ganhuo")!;
-    const pb = await run("propose_promotion", { content_id: a, target: "playbook", genre: "ganhuo", text: `# 干货方法\n\n## 什么时候选它\n\n- 新骨架 v${book.current}\n`, note: "两篇都说要反转", cites });
+    const pbArgs = { content_id: a, target: "playbook", genre: "ganhuo", text: `# 干货方法\n\n## 什么时候选它\n\n- 新骨架 v${book.current}\n`, note: "两篇都说要反转", cites };
+    expect(await run("propose_promotion", pbArgs)).toMatchObject({ ok: false, code: "bad_param" });
+    expect(await run("propose_promotion", { ...pbArgs, base_version: book.current + 1 })).toMatchObject({ ok: false, code: "stale", current: book.current });
+    const pb = await run("propose_promotion", { ...pbArgs, base_version: book.current });
     expect(pb).toMatchObject({ ok: true, target: "playbook", proposal_id: expect.stringMatching(/^pp-/) });
     await putExemplar({ id: "bench-toctou", genre: "ganhuo", kind: "exemplar", title: "TOCTOU", text: "# TOCTOU\n全文" }, dir);
     expect(await run("propose_promotion", { content_id: a, target: "exemplar", exemplar_id: "bench-toctou", text: "[00:46] 改前 → 改后", note: "范文批注", cites })).toMatchObject({ ok: true, outcome: "proposed" });
@@ -153,6 +156,9 @@ describe("跨稿读意见与升级提案", () => {
     expect(await chatDecide({ item_id: ex.item_id, gen: ex.gen, decision: "approve_promotion", founder_words: "你定", request_id: "r-1" }, dir)).toMatchObject({ ok: false, code: "founder_words_not_approval" });
     expect(await chatDecide({ item_id: ex.item_id, gen: ex.gen, decision: "approve_promotion", founder_words: "批", request_id: "r-2" }, dir)).toMatchObject({ ok: true, status: "applied", exemplar_version: 2 });
     expect(await fs.readFile(path.join(dir, "exemplars", "bench-toctou", "v1.md"), "utf8")).toBe("# TOCTOU\n全文");
+    // 范文版本上记着是哪份提案：重试只补状态，不再追加（Codex 复审 #2）
+    const { readExemplarManifest } = await import("../modules/exemplar/store.js");
+    expect((await readExemplarManifest(dir)).exemplars[0].versions.at(-1)).toMatchObject({ version: 2, promotion_id: expect.stringMatching(/^wp-/) });
     expect(await readExemplarText("bench-toctou", 2, dir)).toMatch(/全文[\s\S]*追加批注[\s\S]*\[00:46\] 改前 → 改后/);
     const me = (await list()).find((i) => i.type === "writing_promotion" && i.summary === "写法")!;
     const r = await chatDecide({ item_id: me.item_id, gen: me.gen, decision: "approve_promotion", founder_words: "批这条", request_id: "r-3" }, dir);

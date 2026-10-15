@@ -23,10 +23,10 @@ describe("存储与导入", () => {
       await fs.writeFile(path.join(src, d, f), t);
     }
     const r = await importExemplarDir(src, dir);
-    expect(r.filter((x) => x.outcome === "created").map((x) => x.id).sort()).toEqual(["bench-a", "bench-b", "bench-card", "voice-deep"]);
+    expect(r.filter((x) => x.outcome === "created").map((x) => x.id).sort()).toEqual(["bench-a", "bench-b", "bench-card", expect.stringMatching(/^voice-deep-[0-9a-f]{8}$/)]);
     expect(r.find((x) => x.file === "weird")?.error).toContain("不是体裁 id");
     const m = await readExemplarManifest(dir);
-    expect(m.exemplars.map((e) => [e.id, e.genre, e.kind])).toEqual(expect.arrayContaining([["bench-a", "ganhuo", "exemplar"], ["bench-card", "ganhuo", "structure_card"], ["bench-b", "any", "technique_card"], ["voice-deep", "any", "voice_ref"]]));
+    expect(m.exemplars.map((e) => [e.id, e.genre, e.kind])).toEqual(expect.arrayContaining([["bench-a", "ganhuo", "exemplar"], ["bench-card", "ganhuo", "structure_card"], ["bench-b", "any", "technique_card"], [expect.stringMatching(/^voice-deep-/), "any", "voice_ref"]]));
     expect((await importExemplarDir(src, dir)).filter((x) => x.outcome).every((x) => x.outcome === "unchanged")).toBe(true);
   });
 
@@ -145,6 +145,20 @@ describe("按体裁预览", () => {
   });
 });
 
+describe("每体裁 6 篇完整范文上限（Codex 复审 #6）", () => {
+  it("第 7 篇拒并列出现有的；指定换掉一篇才入库，被换下的不再预览也不能新锁，旧版本照读；卡片不占名额", async () => {
+    for (let i = 1; i <= 6; i++) await putExemplar({ id: `bench-${i}`, genre: "ganhuo", kind: "exemplar", title: `${i}`, text: `# ${i}` }, dir);
+    await putExemplar({ id: "bench-card", genre: "ganhuo", kind: "structure_card", title: "卡", text: "# 卡" }, dir);
+    await expect(putExemplar({ id: "bench-7", genre: "ganhuo", kind: "exemplar", title: "7", text: "# 7" }, dir)).rejects.toThrow(/上限 6[\s\S]*bench-1/);
+    await expect(putExemplar({ id: "bench-7", genre: "ganhuo", kind: "exemplar", title: "7", text: "# 7", replaces: "bench-x" }, dir)).rejects.toThrow("上限");
+    expect(await putExemplar({ id: "bench-7", genre: "ganhuo", kind: "exemplar", title: "7", text: "# 7", replaces: "bench-1" }, dir)).toMatchObject({ outcome: "created" });
+    expect((await readExemplarManifest(dir)).exemplars.find((e) => e.id === "bench-1")?.retired).toMatchObject({ replaced_by: "bench-7" });
+    expect(await validatePins([{ id: "bench-1", version: 1 }], "ganhuo", dir)).toContain("换下");
+    expect(await readExemplarText("bench-1", 1, dir)).toBe("# 1");
+    expect(await putExemplar({ id: "bench-2", genre: "ganhuo", kind: "exemplar", title: "2", text: "# 2 改" }, dir)).toMatchObject({ outcome: "new_version" });
+  });
+});
+
 describe("写法一节锁版", () => {
   it("技能里有写法一节；立意时存快照，技能改了续写仍按锁住的那一版取", async () => {
     expect((await currentMethod()).text).toContain("怎么让人看下去");
@@ -157,5 +171,7 @@ describe("写法一节锁版", () => {
     expect(await lockedMethod(v1.version, dir)).toBe("写法一");
     expect(() => methodSection("没有标记")).toThrow("method:start");
     await expect(lockedMethod("0123456789abcdef", dir)).rejects.toThrow("读不了");
+    await fs.writeFile(path.join(dir, "exemplars", "method", `${v1.version}.md`), "写法一被改");
+    await expect(lockedMethod(v1.version, dir)).rejects.toThrow("指纹对不上");
   });
 });

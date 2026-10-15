@@ -32,7 +32,7 @@ export async function exemplarUsage(excludeContentId: string | undefined, dataDi
 function ordered(entries: ExemplarEntry[], genre: ExemplarGenre, used: Map<string, number>): ExemplarEntry[] {
   const over = (e: ExemplarEntry) => ((used.get(e.id) ?? 0) >= OVERUSE_COUNT ? 1 : 0);
   const rank = (e: ExemplarEntry) => (e.genre === genre ? 0 : 1) * 10 + KIND_RANK[e.kind];
-  return entries.filter((e) => e.kind !== "voice_ref" && (e.genre === genre || e.genre === "any"))
+  return entries.filter((e) => e.kind !== "voice_ref" && !e.retired && (e.genre === genre || e.genre === "any"))
     // 本体裁永远排在跨体裁手法卡前面；用过多次的只让给本体裁的替补（不让 any 卡把它挤掉）
     .sort((a, b) => (a.genre === genre ? 0 : 1) - (b.genre === genre ? 0 : 1) || over(a) - over(b) || rank(a) - rank(b) || a.id.localeCompare(b.id));
 }
@@ -90,6 +90,7 @@ export async function validatePins(pins: ExemplarPin[], genre: ExemplarGenre, da
   const m = await readExemplarManifest(dataDir);
   for (const p of pins) {
     const e = m.exemplars.find((x) => x.id === p.id);
+    if (e?.retired) return `范文 ${p.id} 已被 ${e.retired.replaced_by} 换下：只能锁 exemplars 预览里给过的`;
     if (!e || e.kind === "voice_ref") return `范文库里没有 ${p.id}：只能锁 exemplars 预览里给过的`;
     if (!e.versions.some((v) => v.version === p.version)) return `范文 ${p.id} 没有第 ${p.version} 版`;
     if (e.genre !== genre && e.genre !== "any") return `范文 ${p.id} 是 ${e.genre} 体裁的，不能给 ${genre} 凑数`;

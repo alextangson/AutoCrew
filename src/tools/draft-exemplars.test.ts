@@ -105,9 +105,16 @@ describe("先磨开头", () => {
   it("连着两轮都没选中：不出第三轮，回到立意；重出立意后重新开始", async () => {
     const { id, v } = await started();
     await run("angle", { content_id: id, base_version: v, ...ANGLE, exemplars: [] });
-    await run("opening", { content_id: id, base_version: v, candidates: OPENINGS });
-    expect(await run("opening", { content_id: id, base_version: v, candidates: OPENINGS, founder_words: "都不行" })).toMatchObject({ ok: true, round: 2 });
-    expect(await run("opening", { content_id: id, base_version: v, candidates: OPENINGS, founder_words: "还是不行" })).toMatchObject({ ok: false, code: "back_to_angle" });
+    const batch = (tag: string) => OPENINGS.map((x) => `${x}${tag}`);
+    await run("opening", { content_id: id, base_version: v, candidates: batch("1") });
+    // 回执丢了重发同一批：回已记那一轮，不加轮次、不重复记意见
+    expect(await run("opening", { content_id: id, base_version: v, candidates: batch("1") })).toMatchObject({ ok: true, round: 1, replayed: true });
+    expect(await run("opening", { content_id: id, base_version: v, candidates: batch("2"), founder_words: "都不行" })).toMatchObject({ ok: true, round: 2 });
+    expect(await run("opening", { content_id: id, base_version: v, candidates: batch("2"), founder_words: "都不行" })).toMatchObject({ ok: true, round: 2, replayed: true });
+    expect((await getContent(id, dir))!.draftPath!.feedback).toHaveLength(1);
+    expect(await run("opening", { content_id: id, base_version: v, candidates: batch("3"), founder_words: "还是不行" })).toMatchObject({ ok: false, code: "back_to_angle" });
+    expect(await run("opening", { content_id: id, base_version: v, candidates: batch("3"), founder_words: "还是不行" })).toMatchObject({ ok: false, code: "back_to_angle" });
+    expect((await getContent(id, dir))!.draftPath!.feedback).toHaveLength(2);
     await run("angle", { content_id: id, base_version: v, ...ANGLE, main_line: "换个立意", exemplars: [] });
     expect(await run("opening", { content_id: id, base_version: v, candidates: OPENINGS })).toMatchObject({ ok: true, round: 1 });
   });

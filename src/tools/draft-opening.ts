@@ -38,6 +38,11 @@ export async function draftOpening(a: DraftArgs): Promise<R> {
     if (await isRealDraft(c, a.dataDir)) return fail("has_body", "已经有正文了：开头三选一只在写第一版之前做；现在按意见改正文");
     const prev = angle!.opening_pick;
     const version = currentVersion(c);
+    // 重放（回执丢了重发同一请求）：同一批候选 → 回已记的那一轮，不加轮次、不重复记意见；已回立意的同理
+    if (a.candidates && prev && !prev.chosen) {
+      if (prev.exhausted) return fail("back_to_angle", "连着两轮开头他都不满意：已经记下要回立意，先重出立意（angle）", { round: prev.round });
+      if (JSON.stringify(prev.candidates) === JSON.stringify(a.candidates)) return { ok: true, version, round: prev.round, replayed: true, waiting: "等创始人选开头", workbench_url: workbenchUrl(c.id), next_action: { note: "这一批候选已经记过了：原样编号列给创始人，等他选" } };
+    }
     let feedback = c.draftPath?.feedback;
     // 只有「都不满意、重出」时他说的话是修改意见；选中时的话是选择，只记在 opening_pick 上（§15.18）
     if (a.founderWords && a.candidates) feedback = openingFeedback(c, angle!, a.founderWords, version);

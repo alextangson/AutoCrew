@@ -24,9 +24,16 @@ export function voiceBody(text: string): string | null {
   return null;
 }
 
-export function voiceId(file: string): string {
-  const slug = path.basename(file, ".md").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `voice-${slug || createHash("sha256").update(file).digest("hex").slice(0, 8)}`;
+/**
+ * 稳定 id：头部有抖音作品链接就用作品 id（同一条视频不同文件会撞上，入库时拒）；
+ * 没有就用文件名里的 ASCII 部分 + 完整路径的短 hash（中文名被去掉也不会两篇撞成一个）。
+ */
+export function voiceId(file: string, text: string): string {
+  const work = text.match(/douyin\.com\/video\/(\d+)/)?.[1];
+  if (work) return `voice-dy-${work}`;
+  const slug = path.basename(file, ".md").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const h = createHash("sha256").update(path.resolve(file)).digest("hex").slice(0, 8);
+  return `voice-${slug ? `${slug}-` : ""}${h}`;
 }
 
 export interface VoiceImportResult { file: string; id?: string; outcome?: ImportOutcome; version?: number; error?: string }
@@ -46,7 +53,7 @@ export async function importVoiceFiles(paths: string[], dataDir?: string): Promi
       const title = text.match(/^#\s+(.+)$/m)?.[1].trim();
       if (!title) throw new Error("缺一级标题（# 标题）");
       if (!voiceBody(text)) throw new Error("缺「## Transcript」或「## 全文」一节，或它是空的");
-      out.push({ file: path.basename(f), ...await putExemplar({ id: voiceId(f), genre: "any", kind: "voice_ref", title, text }, dataDir) });
+      out.push({ file: path.basename(f), ...await putExemplar({ id: voiceId(f, text), genre: "any", kind: "voice_ref", title, text, source: path.resolve(f) }, dataDir) });
     } catch (e) {
       out.push({ file: path.basename(f), error: e instanceof Error ? e.message : String(e) });
     }

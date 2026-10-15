@@ -21,13 +21,13 @@ export const DRAFT_DESCRIPTION =
   "opening{content_id,base_version,candidates|opening+founder_words} 先磨开头：记一轮候选或他选中的开头，选了才收第一版全文；" +
   "save{content_id,base_version,body,title?,note?,test_read?,feedback?} 存一版（test_read 附观众试读；feedback 记创始人原话，正文没改也能记）；" +
   "prepare_final{content_id,base_version,citations} 出出处清单推到等你认稿，「定了」只由创始人在工作台点；" +
-  "feedback_history{genre?} 跨稿读意见；propose_promotion{content_id,target,cites,text,note,genre?|exemplar_id?} 两篇不同稿都出现过的意见才提升级。base_version 对不上回 version_conflict。";
+  "feedback_history{genre?} 跨稿读意见；propose_promotion{content_id,target,cites,text,note,genre+base_version(手册版本)?|exemplar_id?} 两篇不同稿都出现过的意见才提升级。base_version 对不上回 version_conflict。";
 
 export const draftSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "按 write-script 技能的步骤调用" }),
   content_id: Type.Optional(Type.String({ description: "start 返回的稿件 id" })),
   topic_id: Type.Optional(Type.String({ description: "start：复用的已有选题 id" })),
-  base_version: Type.Optional(Type.Integer({ description: "你最后读到的版本号；save / angle / prepare_final 必带" })),
+  base_version: Type.Optional(Type.Integer({ description: "你最后读到的版本号；save / angle / prepare_final 必带；propose_promotion target=playbook 时是你改的那份手册的版本号" })),
   inspiration: Type.Optional(Type.String({ description: "start：创始人的一句灵感原话" })),
   platform: Type.Optional(Type.String({ description: "只支持 douyin；别的平台走 autocrew_workflow" })),
   url: Type.Optional(Type.String({ description: "verify_quote：引文所在网页" })),

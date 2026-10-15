@@ -8,11 +8,12 @@ import { exemplarVersionPath, putExemplar } from "./store.js";
 import { previewExemplars, validatePins } from "./select.js";
 import { executeDraft } from "../../tools/draft.js";
 
+const HARNESS = Array.from("Harness").map((ch) => ch.codePointAt(0)).join("");
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "voice-")); });
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
-const asr = (title: string, segs: string[]) => `# ${title}\n\n- Author: 哈姆雷鹿\n- URL: https://www.douyin.com/video/1\n\n## Transcript\n\n${segs.map((s, i) => `**[00:${String(i * 15).padStart(2, "0")}]** ${s}`).join("\n\n")}\n`;
+const asr = (title: string, segs: string[]) => `# ${title}\n\n- Author: 哈姆雷鹿\n- URL: https://www.douyin.com/video/${Array.from(title).map((ch) => ch.codePointAt(0)).join("")}\n\n## Transcript\n\n${segs.map((s, i) => `**[00:${String(i * 15).padStart(2, "0")}]** ${s}`).join("\n\n")}\n`;
 
 async function files(): Promise<string[]> {
   const src = path.join(dir, "src");
@@ -26,6 +27,21 @@ async function files(): Promise<string[]> {
 }
 
 describe("口吻参考入库", () => {
+  it("中文文件名不再撞 id；有作品链接用作品 id，同一条视频来自另一个文件 → 拒（Codex 复审 #3）", async () => {
+    const src = path.join(dir, "zh");
+    await fs.mkdir(src, { recursive: true });
+    const body = "\n\n## 全文\n\n**[00:00]** 说的话。\n";
+    await fs.writeFile(path.join(src, "2026-10-15-咖啡.md"), `# 咖啡${body}`);
+    await fs.writeFile(path.join(src, "2026-10-15-家具.md"), `# 家具${body}`);
+    await fs.writeFile(path.join(src, "a.md"), `# A\n- 链接：https://www.douyin.com/video/123${body}`);
+    await fs.writeFile(path.join(src, "b.md"), `# B\n- URL: https://www.douyin.com/video/123${body}`);
+    const r = await importVoiceFiles([src], dir);
+    const ok = r.filter((x) => x.outcome === "created").map((x) => x.id);
+    expect(new Set(ok).size).toBe(3);
+    expect(ok).toContain("voice-dy-123");
+    expect(r.find((x) => x.file === "b.md")?.error).toContain("撞了 id");
+  });
+
   it("目录导入：跳过 index.md；缺正文的拒；按内容幂等；kind=voice_ref", async () => {
     const [, , , ] = await files();
     const r = await importVoiceFiles([path.join(dir, "src")], dir);
@@ -37,7 +53,7 @@ describe("口吻参考入库", () => {
     await files();
     await importVoiceFiles([path.join(dir, "src")], dir);
     expect((await previewExemplars("ganhuo", undefined, dir)).entries).toEqual([]);
-    expect(await validatePins([{ id: "voice-b-1-agent-harness", version: 1 }], "ganhuo", dir)).toContain("没有");
+    expect(await validatePins([{ id: `voice-dy-${HARNESS}`, version: 1 }], "ganhuo", dir)).toContain("没有");
   });
 
   it("按时间戳整段节选；指纹不对的报进 errors；同一个 seed 每次取同样两篇", async () => {

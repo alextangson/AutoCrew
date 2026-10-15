@@ -64,7 +64,10 @@ function promotionRefusal(a: DraftArgs): R | null {
 
 async function toPlaybook(a: DraftArgs, cites: PromotionCite[]): Promise<R> {
   if (!isPlaybookId(a.genre)) return fail("bad_genre", "升级到手册要带 genre：哪本手册");
+  // 全文是按哪一版改的就记哪一版：调用方必须说清；和当前版对不上就拒，不把旧版改出的全文冒充成基于最新版
+  if (a.baseVersion === undefined) return fail("bad_param", "升级到手册要带 base_version：你改的那份全文是基于手册第几版（playbook 回执或 autocrew_playbook get 给的版本号）");
   const current = entryOf(await loadManifest(a.dataDir), a.genre).current;
+  if (a.baseVersion !== current) return fail("stale", `你基于手册第 ${a.baseVersion} 版改的，现在是第 ${current} 版：先 autocrew_playbook get 读最新版，把改动合进去再提`, { current });
   const words = cites.map((c) => `「${c.founder_words}」`).join(" / ");
   try {
     const r = await proposeRevision({ id: a.genre, based_on: current, text: a.text!, reason: `${a.note}（出处：${cites.map((c) => `${c.content_id}#${c.index}`).join("、")}）`, founder_words: words }, a.dataDir);

@@ -24,6 +24,8 @@ export interface ExemplarVersion {
   hash: string;
   chars: number;
   title: string;
+  /** 这一版是哪份升级提案批准后生成的：重试时据此认出「已经加过」，不重复追加批注 */
+  promotion_id?: string;
 }
 
 export interface ExemplarEntry {
@@ -33,7 +35,14 @@ export interface ExemplarEntry {
   title: string;
   current: number;
   versions: ExemplarVersion[];
+  /** 来源（口吻参考记导入文件的绝对路径）：同一个 id 来自不同来源 = 撞 id，拒 */
+  source?: string;
+  /** 被换下（库满时创始人指定换掉）：不再给新稿预览和锁，旧版本文件照留，已锁它的在途稿照读 */
+  retired?: { at: string; replaced_by: string };
 }
+
+/** 每个体裁最多几篇完整范文（spec §2.3、§15.15）；结构卡 / 手法卡 / 口吻参考不占名额 */
+export const GENRE_CAP = 6;
 
 export interface ExemplarManifest {
   schema: 1;

@@ -33,6 +33,8 @@ describe("改稿轮数", () => {
     ];
     const s = computeStats(M, contents, []);
     expect(v(s, "ganhuo", 1)).toMatchObject({ finalized: 3, in_progress: 1, rounds: { median: 2, min: 1, max: 4 }, pre_switch_rounds: 3, label: null });
+    // 整篇轮数（验收用）：换体裁前和没记版本的意见也算——b 是 3+4，c 是 1+5
+    expect(v(s, "ganhuo", 1)).toMatchObject({ draft_rounds: { median: 6, min: 2, max: 7 } });
     expect(v(s, "ganhuo", 2)).toMatchObject({ finalized: 0, in_progress: 0, label: SAMPLE_LOW });
     expect(v(s, "shiyan", 1)).toMatchObject({ finalized: 0 });
     expect(s.unattributed).toBe(1);
