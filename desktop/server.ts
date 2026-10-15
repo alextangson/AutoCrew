@@ -8,6 +8,7 @@ import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { detectInterrupted, protectedStamps } from "../src/modules/update/interrupted.js";
 import { createConnectHandler } from "../src/desktop/connect-route.js";
+import { createLibraryHandler } from "../src/desktop/library-route.js";
 import { sweepOrphanPrev, sweepTrash } from "../src/modules/update/deps-swap.js";
 import { lockHeld } from "../src/modules/update/preflight.js";
 import { asrWarmupCount } from "../src/modules/video/asr.js";
@@ -17,7 +18,7 @@ import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { launchedByLauncher, launchVia } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
-import { acquireLibraryLock } from "../src/storage/library-lock.js";
+import { holdProcessLibraryLock, releaseProcessLibraryLocks } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
 import { archivePublished } from "../src/storage/nas-archive.js";
 import { backupPublished } from "../src/storage/nas-backup.js";
@@ -78,7 +79,8 @@ import { reconcileDue } from "../src/modules/calibration/reconcile.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
 
-const releaseLibraryLock = acquireLibraryLock();
+holdProcessLibraryLock();
+const releaseLibraryLock = releaseProcessLibraryLocks;
 process.once("exit", releaseLibraryLock);
 process.once("SIGTERM", () => { releaseLibraryLock(); process.exit(0); });
 process.once("SIGINT", () => { releaseLibraryLock(); process.exit(0); });
@@ -229,6 +231,8 @@ const updateRoute = createUpdateHandler({
 
 // 一键接入宿主（onboarding-connect §3）：写宿主用户配置，只认同源浏览器会话
 const connectRoute = createConnectHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody });
+// 「资料放哪」（onboarding-connect §7.3）：当场建库；浏览器会话或本机命令行（autocrew init）
+const libraryRoute = createLibraryHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -433,6 +437,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await board(req, res, url)) return;
   if (await updateRoute(req, res, url)) return;
   if (await connectRoute(req, res, url)) return;
+  if (await libraryRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
   if (await playbooks(req, res, url)) return;

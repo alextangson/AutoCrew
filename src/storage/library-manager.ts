@@ -17,10 +17,10 @@ const LOCAL_FILES = new Set(["inbox.json", "mcp.json", "server-token", "server.l
   "engine-health.json", STORAGE_CONFIG, PENDING_STORAGE]);
 const LOCAL_DIRS = new Set(["tokens", "bridge", "libraries", "cache", "migrations"]);
 // Unknown files stay at the source and are reported; a newly added secret can never silently go to NAS.
-const DATA_DIRS = new Set(["assets", "brand-intros", "campaigns", "competitors", "contents", "conversations", "covers",
+export const DATA_DIRS = new Set(["assets", "brand-intros", "campaigns", "competitors", "contents", "conversations", "covers",
   "editorial-feedback", "exports", "inbox", "learnings", "library", "logs", "memory", "patterns", "pipeline", "pipelines",
   "reports", "research", "sensitive-words", "topics", "video", "workflows", "projects", "imports", ".obsidian", "meetings"]);
-const DATA_FILES = new Set(["STYLE.md", "cover-style.json", "creator-profile.json", "digest-state.json", "editorial-experiments.json",
+export const DATA_FILES = new Set(["STYLE.md", "cover-style.json", "creator-profile.json", "digest-state.json", "editorial-experiments.json",
   "events.jsonl", "hypotheses.jsonl", "outcomes.jsonl", "radar-rejects.json", "radar-sources.json", "recent-actions.json",
   "recent-turns.json", "topic-radar.json", "platform-items.json", "work-claims.json", "hooks.json"]);
 
@@ -166,12 +166,18 @@ function relocate(value: unknown, source: string, target: string, legacy: boolea
   return value;
 }
 
-/** Called only with the daemon stopped. Publish the manifest and pointer last. */
-export async function applyPendingStorage(onProgress?: (copied: number, total: number) => void): Promise<StoragePlan | null> {
+/**
+ * Called with the daemon stopped, or `live` for create/open (no source copy: the running service only
+ * switches roots). Publish the manifest and pointer last.
+ */
+export async function applyPendingStorage(onProgress?: (copied: number, total: number) => void, opts: { live?: boolean } = {}): Promise<StoragePlan | null> {
   const pendingFile = path.join(getMachineDir(), PENDING_STORAGE);
   if (!await exists(pendingFile)) return null;
   const pidFile = path.join(getMachineDir(), "autocrew.pid");
-  if (await exists(pidFile)) {
+  if (opts.live) {
+    const queued = JSON.parse(await fs.readFile(pendingFile, "utf8")) as StoragePlan;
+    if (queued.action === "migrate") throw new Error("搬旧资料要先停 AutoCrew 服务，不能在运行中搬");
+  } else if (await exists(pidFile)) {
     const pid = Number((await fs.readFile(pidFile, "utf8")).trim());
     if (!Number.isInteger(pid) || pid <= 0) throw new Error("服务进程记录无效，请先检查运行状态");
     let alive = true;

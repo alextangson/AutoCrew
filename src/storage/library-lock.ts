@@ -48,3 +48,12 @@ export function acquireLibraryLock(root?: string): () => void {
     } catch { /* An unavailable NAS must never cause a replacement lock to be removed. */ }
   };
 }
+
+/** 服务进程占着的资料库写入权：启动时占一次；引导里当场建库后再占新库的（§7.3 建库立即生效）。退出时一起放。 */
+const processReleases: Array<() => void> = [];
+export function holdProcessLibraryLock(): void {
+  processReleases.push(acquireLibraryLock());
+}
+export function releaseProcessLibraryLocks(): void {
+  while (processReleases.length) processReleases.pop()!();
+}
