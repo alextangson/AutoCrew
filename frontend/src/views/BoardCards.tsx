@@ -1,5 +1,6 @@
 /** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退 / 移入回收站）、发布行（我发了 / 撤销）。 */
 import { HandOffButton } from "./HandOffButton";
+import { ExampleTag } from "./ExampleTag";
 import { handoffLine, WRITER_LABEL } from "./hand-off";
 import type { HostId } from "./onboarding/connect-api";
 import { PlatformChips } from "./PlatformChips";
@@ -50,7 +51,7 @@ async function runRevoke(item: BoardItem, reload: () => Promise<void>): Promise<
   try { toast(revokeText(await revokeHandoff(item.id, item.handoffHash))); } finally { await reload(); }
 }
 
-export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean; onStart: (host?: HostId) => void; others?: HostId[]; onOpen: () => void; onTrash: () => void }) {
+export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean; onStart: (host?: HostId) => void; others?: HostId[]; onOpen: () => void; onTrash: () => void; reload?: () => Promise<void> }) {
   const t = props.topic;
   const meta = [topicSourceLabel(t.source), relativeLabel(t.renewedAt ?? t.createdAt)].join(" · ");
   return <article className="bcard" draggable={!props.busy} aria-busy={props.busy}
@@ -68,7 +69,7 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
         </div>
       </details>
     </div>
-    <div className="bcard-meta">{t.inSlate && <span className="bcard-slate">本周片单</span>}{meta}</div>
+    <div className="bcard-meta">{t.example && props.reload && <ExampleTag topicId={t.id} reload={props.reload} />}{t.inSlate && <span className="bcard-slate">本周片单</span>}{meta}</div>
     <div className="bcard-actions">
       <Button size="sm" className="bcard-start" disabled={props.busy} onClick={() => props.onStart()}>{props.busy ? "正在开始…" : "开始写"}</Button>
       {/* 只对这一次换一个 AI 写，不改默认（spec 2026-10-15 §B2） */}
@@ -96,6 +97,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
       <div className="bcard-text">
         <button className="bcard-title" title={item.title} onClick={props.onOpen}>
           {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
+        {item.example && <ExampleTag topicId={item.topicId} reload={props.reload} />}
         {cardArollBadges(item).map((b) => <span key={b} className="bcard-score bcard-badge">{b}</span>)}
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         <PickupNudge item={item} reload={props.reload} />

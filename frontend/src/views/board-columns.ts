@@ -56,6 +56,8 @@ export type PublishRecord =
 
 export interface BoardItem {
   id: string;
+  /** 试跑示例稿（O20） */
+  example?: boolean;
   title: string;
   platform: string | null;
   status: string;
@@ -105,6 +107,8 @@ export const WRITING_REFUSAL = "这篇正在写，先停掉再弃用";
 
 export interface BoardTopic {
   id: string;
+  /** 试跑示例选题（O20） */
+  example?: boolean;
   title: string;
   source: string | null;
   link?: string | null;

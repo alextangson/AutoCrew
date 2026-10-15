@@ -18,6 +18,7 @@ import { UpdateBanner } from "./update/UpdateBanner";
 import { decideItem } from "./review/review-api";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
+import { PersonaReminder } from "./PersonaReminder";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
 import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
@@ -124,6 +125,7 @@ export function Board(props: Nav) {
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
     <UpdateBanner />
+    <PersonaReminder />
     <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} {...(props.inboxTypes ? { focusTypes: props.inboxTypes } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
@@ -175,7 +177,7 @@ function ColumnBody(p: {
   return <div className="bcol-body">
     {shown.map((c) => c.kind === "topic"
       ? <TopicCard key={c.topic.id} {...drag} topic={c.topic} busy={p.starting === c.topic.id}
-        onStart={(host) => void p.start(c.topic.id, host)} others={p.others} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} />
+        onStart={(host) => void p.start(c.topic.id, host)} others={p.others} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} reload={p.reload} />
       : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => p.nav.openEditor(c.item.id)} onMenu={p.pause} reload={p.reload}
         siblings={sameTopicCards(p.data.items, c.item)} openOther={(id) => p.nav.openEditor(id)} />)}
     {hidden > 0 && <button className="bcol-more" onClick={p.onExpand}>还有 {hidden} 条 ▾</button>}

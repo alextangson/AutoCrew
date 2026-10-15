@@ -92,3 +92,6 @@
 .card-panel-head::-webkit-details-marker { display: none; }
 .card-panel-head::before { content: ""; flex: 0 0 auto; align-self: center; width: 7px; height: 7px; margin: 0 var(--s1); border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
 .card-panel[open] > .card-panel-head::before { transform: rotate(45deg); }
+/* 试跑示例（onboarding-connect O20） */
+.bcard-example { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; }
+.persona-reminder-form { max-width: 640px; }
