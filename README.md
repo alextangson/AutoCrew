@@ -1,5 +1,7 @@
 # AutoCrew
 
+> 如果你是 AI agent（Claude Code / Codex / WorkBuddy），用户让你装 AutoCrew：照 [docs/SETUP-FOR-AGENTS.md](docs/SETUP-FOR-AGENTS.md) 一步步做。
+
 **面向中文内容团队的本地优先 AI 编辑部。**
 
 <p align="center">
