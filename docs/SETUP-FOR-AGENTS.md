@@ -76,14 +76,14 @@ node bin/autocrew.mjs init --host claude --library ~/AutoCrew资料库
 `--host` 填你自己：Claude Code → `claude`，Codex → `codex`，WorkBuddy → `workbuddy`。可以重复跑：做过的步骤会说「跳过」。
 
 看退出码和输出：
-- **0**：两行都是 ✓。告诉用户「接上了，资料库建在 X」。接上之后你要**新开一个会话**才能用到 AutoCrew 的工具（Claude Code / Codex 都是）；提醒用户这一点，或者让他在新会话里继续。
+- **0**：两行都是 ✓。告诉用户「接上了，资料库建在 X」。如果资料库那行后面有「注意：……重启后……」，把这句也照实告诉用户。接上之后你要**新开一个会话**才能用到 AutoCrew 的工具（Claude Code / Codex 都是）；提醒用户这一点，或者让他在新会话里继续。
 - **1**：某一步 ✕，下面有「原因」和「下一步」。把原因用大白话告诉用户，照「下一步」做；不要往后走。常见的：
   - 没装 / 没登录这个 AI：照原因让用户登录（如 `codex login`），再重跑。
   - 路径里已经有别的东西：换一个空文件夹，或用它建议的子文件夹。
   - 路径在「桌面 / 文稿 / 下载」里：macOS 会挡住后台读取，换个位置（默认那个就行）。
   - NAS 没挂载：让用户先在访达里连上 NAS，再重跑。
 - **2**：要先问用户一句再重跑：
-  - 「你在旧位置已经有 N 篇稿，要搬进新资料库吗？」→ 搬：加 `--legacy migrate`（会先整份备份）；不搬：加 `--legacy keep`（旧稿留在原处）。
+  - 「你在旧位置已经有 N 篇稿（共 M 个资料文件），要搬进新资料库吗？」→ 搬：加 `--legacy migrate`（会先整份备份）；不搬：加 `--legacy keep`（旧稿留在原处）。
   - 「搬家要重启一次服务才执行」：按第 3 步查有没有活在跑，再重启，重启后重跑 `init` 确认是 ✓。
 
 ## 5. 用户画像（在对话里问）
@@ -116,7 +116,11 @@ node bin/autocrew.mjs call onboarding:init --payload '{"industry":"…","platfor
 4. 告诉用户下一步：「去拍这条的原片，拍好把视频文件发给我（或拖进工作台收件箱），我帮你挂到这条稿上。」
 
 写不了时（O19）：
-- 你没接上、或 `canWrite` 是 false，但用户配了自己的模型钥匙（`node bin/autocrew.mjs call settings:get` 里 `configured: true`）：用内置引擎写 `node bin/autocrew.mjs write --topic <选题id> --platform douyin`。
+- 你没接上、或 `canWrite` 是 false，但用户配了自己的模型钥匙（`node bin/autocrew.mjs call settings:get` 里 `configured: true`）：让内置引擎写。
+  1. 建示例选题：`node bin/autocrew.mjs call topic:create --payload '{"title":"…","description":"…","source":"setup","example":true}'`，记下返回里的选题 id。
+  2. 在对话里问用户这条想讲什么，用他自己的话定立意。
+  3. `node bin/autocrew.mjs write --topic "<选题标题>" --topic-id <选题id> --platform douyin --direction "<立意>" --founder-words "<用户原话>"`
+  原话必须是用户说的，不能你代编；缺了会被选题会闸口拒（`needs_founder_angle`）。写完的稿同样在看板「写稿中」，让用户点开认稿进「待录制」。
 - 两样都没有：**停在建好选题这一步**，告诉用户「示例选题建好了，但现在没有能写稿的 AI：接上一个（重跑第 4 步），或者在设置里填一把模型钥匙，就能接着写」。
 
 ## 7. 给工作台链接

@@ -60,3 +60,29 @@ it("playbook stats skip example drafts", () => {
   expect(computeStats({ playbooks: [] } as never, [draft(false)], []).unattributed).toBe(1);
   expect(computeStats({ playbooks: [] } as never, [draft(true)], []).unattributed).toBe(0);
 });
+
+it("outcome ingestion refuses example drafts even with an explicit content id (codex P2)", async () => {
+  const { recordOutcome } = await import("../modules/flywheel/outcome-store.js");
+  const { c } = await exampleDraft();
+  const r = await recordOutcome({ contentId: c.id, platform: "douyin", platformTitle: "用 AI 写周报", publishedAt: null,
+    metricDate: "2026-10-15", metrics: { views: 10 }, source: "paste" } as never, dir);
+  expect(r).toMatchObject({ ok: false });
+  expect(r.error).toContain("示例");
+});
+
+it("engine-only trial: generate:script with founder words + direction passes the angle gate on the example topic (O19)", async () => {
+  const { founderAngleFromPayload } = await import("../desktop/ipc.js");
+  const { newDraftAngleRefusal } = await import("../modules/research/angle-gate.js");
+  const t = await executeTopicCreate({ action: "create", title: "示例", description: "d", tags: [], example: true, _dataDir: dir });
+  const id = (t as { topic: { id: string } }).topic.id;
+  expect(await newDraftAngleRefusal(id, dir)).toMatchObject({ code: "needs_founder_angle" });
+  expect(await founderAngleFromPayload(id, { direction: "讲周报", founder_words: "就讲周报怎么省时间" }, dir)).toBeNull();
+  expect(await newDraftAngleRefusal(id, dir)).toBeNull();
+  expect(await founderAngleFromPayload("topic-nope", { direction: "x", founder_words: "y" }, dir)).toMatchObject({ code: "topic_not_found" });
+});
+
+it("IPC topic:create carries the example flag", async () => {
+  const { topicCreateHandler } = await import("../desktop/ipc.js");
+  const r = await topicCreateHandler({ title: "示例题", source: "setup", example: true, _dataDir: dir });
+  expect((r as { topic?: { example?: boolean } }).topic?.example ?? (r as { data?: { example?: boolean } }).data?.example).toBe(true);
+});

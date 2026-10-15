@@ -83,7 +83,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
-import { ANGLE_GATE_COPY, aiContentWriteRefusal, founderDirectionFor, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
+import { recordFounderAngle, ANGLE_GATE_COPY, aiContentWriteRefusal, founderDirectionFor, newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -533,6 +533,20 @@ async function publishWechatDraftApprovedHandler(
 
 // ── generate:script — 后台化写稿（契约 P1:任务生命周期与 HTTP 请求解耦） ─────
 
+/**
+ * 只配了引擎钥匙的试跑（onboarding-connect O19）：命令行带上创始人原话 + 立意，先记成创始人自定角度再过选题会闸口。
+ * 两样缺一样就不记（闸口照常拒）；选题不存在照实报。
+ */
+export async function founderAngleFromPayload(topicId: string | undefined, payload: Record<string, unknown>, dataDir?: string): Promise<Record<string, unknown> | null> {
+  const direction = typeof payload.direction === "string" ? payload.direction.trim() : "";
+  const words = typeof payload.founder_words === "string" ? payload.founder_words.trim() : "";
+  if (!topicId || !direction || !words) return null;
+  const topic = await getTopic(topicId, dataDir);
+  if (!topic || topic.deletedAt) return { ok: false, code: "topic_not_found", error: `选题不存在或已删除：${topicId}` };
+  if (!await recordFounderAngle(topic, direction, words, dataDir)) return { ok: false, code: "angle_failed", error: "立意没记上：选题记录写不进去" };
+  return null;
+}
+
 async function generateBackgroundHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
@@ -540,6 +554,8 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
   const dataDir = (payload._dataDir as string) || undefined;
   // 选题会闸口：后台写稿每次都开新稿，选题必须先开过选题会、由创始人定了角度
   const topicId = typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined;
+  const angled = await founderAngleFromPayload(topicId, payload, dataDir);
+  if (angled) return angled;
   const refused = await newDraftAngleRefusal(topicId, dataDir);
   if (refused) return refused;
   // 创始人最近一次是自定角度：按他那句写
@@ -1569,6 +1585,8 @@ export async function topicCreateHandler(
         source,
         ...(typeof payload.reason === "string" && payload.reason ? { reason: payload.reason } : {}),
         ...(typeof payload.link === "string" && payload.link ? { link: payload.link } : {}),
+        // 装好后的试跑示例（onboarding-connect O20）
+        ...(payload.example === true ? { example: true } : {}),
         ...(idea
           ? {
               score: idea.totalScore,

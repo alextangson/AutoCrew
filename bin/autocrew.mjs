@@ -32,7 +32,7 @@ function printHelp() {
   autocrew build          重新构建前端
   autocrew topics         列出选题
   autocrew contents       列出稿件
-  autocrew write          开始写稿（--topic --platform）
+  autocrew write          开始写稿（--topic --platform；--topic-id 挂已有选题，--direction --founder-words 带上用户定的立意）
   autocrew revise         修改稿件（--content --instruction）
   autocrew prepare        生成发布文案（--content）
   autocrew retro          生成复盘（--mode weekly|monthly）
@@ -546,7 +546,12 @@ switch (command) {
   case "write": {
     const topic = requiredOption("topic");
     const platform = optionValue("platform", "wechat_mp");
-    const result = await invokeChannel("generate:script", { topic, platform });
+    // 挂到已有选题（--topic-id）；带上用户原话 + 立意（--founder-words --direction）就先记成用户自定角度
+    const topicId = optionValue("topic-id");
+    const direction = optionValue("direction");
+    const founderWords = optionValue("founder-words");
+    const result = await invokeChannel("generate:script", { topic, platform, ...(topicId ? { topic_id: topicId } : {}),
+      ...(direction ? { direction } : {}), ...(founderWords ? { founder_words: founderWords } : {}) });
     printResult(result, (data) => `写稿任务已受理 · ${data.contentId ?? ""} · ${data.runId ?? ""}`);
     break;
   }
