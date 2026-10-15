@@ -224,6 +224,7 @@ export function renderBrandContext(
   if (profile.expressionPersona?.trim()) {
     parts.push("## 表达定位", profile.expressionPersona.trim(), "");
   }
+  if (profile.referenceWorks?.length) parts.push("## 创作者自己满意的旧作（口吻参考，能打开就先读）", ...profile.referenceWorks.map((u) => `- ${u}`), "");
   const format = profile.contentFormat;
   if (format) {
     const preferences = [

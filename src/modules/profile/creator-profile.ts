@@ -224,6 +224,10 @@ export interface CreatorProfile {
   publishRules?: PublishRule[];
   /** agent 提议的新偏好（propose_preference），创始人在网页确认才写进上面两项 */
   preferenceProposals?: PreferenceProposal[];
+  /** 引导「你是谁」里给的一两条自己满意的旧作链接（onboarding-connect §7.2-4），写稿时当口吻参考 */
+  referenceWorks?: string[];
+  /** 引导里跳过了画像（O18）：看板留「补全画像」提醒，不拦写稿；补全后清掉 */
+  personaSkippedAt?: string;
   /** Profile creation timestamp */
   createdAt: string;
   /** Last update timestamp */
