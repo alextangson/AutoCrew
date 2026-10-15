@@ -2,12 +2,16 @@
  * 卡片面板顶上的「下一步」（1b 验收）：一句人话 + 需要创始人拍板时的主按钮。由 explain() 的结果推出，不另立规则。
  * 用词按创始人认过的：稿子没问题 / 已经发出去了 …；屏幕上不出现 fact / sha / 版本号。
  */
+import { handoffLine, type HandoffView } from "./handoff-line";
+
 export type NextAction = "approve_script" | "open_cut" | "open_cover" | "i_published";
 export interface NextStep { text: string; action?: NextAction; label?: string; note?: string }
 
 export interface NextInput {
   column: string | null; stage: string | null; status: string; missing: string[]; active: boolean;
   arolls?: unknown[];
+  /** 「开始写」交给了谁、接没接手（spec 2026-10-15 §B5）：没人接手就不说「AI 在写」 */
+  handoff?: HandoffView;
 }
 
 const WRITTEN = new Set(["draft_ready", "reviewing", "revision"]);
@@ -31,7 +35,11 @@ export function nextStep(d: NextInput): NextStep | null {
   if (!d.active) return null;
   const col = d.stage ?? d.column;
   if (col === "写稿中") {
-    if (!WRITTEN.has(d.status)) return { text: "AI 在写稿，写完等你看，暂时不用你操作" };
+    if (!WRITTEN.has(d.status)) {
+      const line = d.status === "drafting" ? handoffLine(d.handoff) : null;
+      if (line?.stale) return { text: `${line.text}可以在看板卡上「重新交给」它，或换一个 AI` };
+      return { text: line ? `${line.text}；写完等你看，暂时不用你操作` : "AI 在写稿，写完等你看，暂时不用你操作" };
+    }
     return { text: "稿子写好了，你看过觉得没问题就点这里", action: "approve_script", label: "稿子没问题",
       note: (d.arolls ?? []).length ? "已经有原片了，点了就进剪辑中" : "点了进待录制，等你录" };
   }

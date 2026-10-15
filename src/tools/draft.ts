@@ -52,7 +52,7 @@ export const draftSchema = Type.Object({
   body: Type.Optional(Type.String({ description: "save：全文（纯朗读正文）" })),
   note: Type.Optional(Type.String({ description: "save：这一版改了什么；propose_promotion：为什么升级" })),
   review_notes: Type.Optional(Type.Unknown({ description: "save：旧版 Codex 审稿结果（已由观众试读替代，旧会话照收）" })),
-  feedback: Type.Optional(Type.Unknown({ description: "save：创始人这次的意见 {founder_words: 原话逐字}；第一版不收，开头阶段的意见用 opening 记" })),
+  feedback: Type.Optional(Type.Unknown({ description: "save：创始人这次的意见 {founder_words: 原话逐字, chosen_option?: 原话只是选项代号时带那个选项全文}；第一版不收，开头阶段的意见用 opening 记" })),
   citations: Type.Optional(Type.Array(Type.Object({
     text: Type.String(),
     evidence_ids: Type.Array(Type.String()),

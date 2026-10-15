@@ -88,3 +88,10 @@
 /* 1b 验收：卡片面板顶上的「下一步」 */
 .card-panel-next { padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; background: var(--surface-2, #f6f6f4); }
 .card-panel-next p { margin: 0 0 6px; }
+/* 折叠时也看得出能点开：标题前一个三角，展开时转下来 */
+.card-panel-head::-webkit-details-marker { display: none; }
+.card-panel-head::before { content: ""; flex: 0 0 auto; align-self: center; width: 7px; height: 7px; margin: 0 var(--s1); border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+.card-panel[open] > .card-panel-head::before { transform: rotate(45deg); }
+/* 试跑示例（onboarding-connect O20） */
+.bcard-example { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; }
+.persona-reminder-form { max-width: 640px; }

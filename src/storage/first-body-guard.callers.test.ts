@@ -14,9 +14,10 @@ const WRITERS = /(?<![\w.])(saveContent|updateContent|updateContentIfDraftMatche
 /** key = 文件#函数名#该文件里第几处同名调用（从 1 起）；value = 不带来源也安全的理由 */
 const NO_BODY_WRITES: Record<string, { reason: string; placeholderBody?: true }> = {
   "src/desktop/board-actions.ts#saveContent#1": { reason: "看板「开始写」建空正文的写稿中占位", placeholderBody: true },
-  "src/desktop/board-actions.ts#updateContent#1": { reason: "只改 manualPublications（我发了）" },
-  "src/desktop/board-actions.ts#updateContent#2": { reason: "只改 manualPublications（撤销我发了）" },
-  "src/desktop/board-actions.ts#updateContent#3": { reason: "只改 manualPublications" },
+  "src/desktop/board-actions.ts#updateContent#1": { reason: "只写 writingHandoff（开始写交给了谁、什么时候）" },
+  "src/desktop/board-actions.ts#updateContent#2": { reason: "只改 manualPublications（我发了）" },
+  "src/desktop/board-actions.ts#updateContent#3": { reason: "只改 manualPublications（撤销我发了）" },
+  "src/desktop/board-actions.ts#updateContent#4": { reason: "只改 manualPublications" },
   "src/desktop/orphan-reconcile.ts#updateContent#1": { reason: "只改标题前缀与 lastError（中断标记）" },
   "src/modules/flywheel/work-binding.ts#saveContent#1": { reason: "历史作品登记，空正文", placeholderBody: true },
   "src/modules/video/handoff/register-commit.ts#updateContent#1": { reason: "只写成片登记与认领" },
@@ -30,6 +31,7 @@ const NO_BODY_WRITES: Record<string, { reason: string; placeholderBody?: true }>
   "src/storage/claims.ts#updateContent#1": { reason: "只写认领令牌与交接记录" },
   "src/storage/claims.ts#updateContent#5": { reason: "只写认领令牌" },
   "src/storage/local-store.ts#updateContent#3": { reason: "只写采纳判定 adoption" },
+  "src/tools/draft-start.ts#updateContent#2": { reason: "只写 writingHandoff.pickedUpAt（agent 接手了看板交出去的稿）" },
   "src/tools/editorial.ts#updateContentIfDraftMatches#1": { reason: "只写修改反馈（writingFeedback），第二个参数是期望正文不是写入" },
   "src/tools/host-review.ts#updateContentIfDraftMatches#1": { reason: "只写系列比对结论" },
   "src/tools/pre-publish.ts#updateContentIfDraftMatches#1": { reason: "只写发布包 videoKit" },

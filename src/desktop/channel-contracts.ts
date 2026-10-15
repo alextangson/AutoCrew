@@ -121,6 +121,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "topic:create": ["title"],
   "topic:update": ["id"],
   "topic:delete": ["id"],
+  "topic:delete_example": ["id"],
   "topic:restore": ["id"],
   // 角度点选：brief_revision 是乐观锁（必须是该选题最新版，否则用户看的是过期候选）；
   // 可选键 card = 改写后的整张卡（§1.4 改写动作），缺省则落原卡快照

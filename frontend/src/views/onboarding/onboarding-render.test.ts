@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ConnectResult, ConnectView, HostStatus, ProbeResult } from "./connect-api";
+import type { LibraryStatus, SetupResult } from "./library-api";
 
-const store: { view: ConnectView; probe: ProbeResult; connect: (h: string) => ConnectResult; calls: string[] } = {
+const store: { view: ConnectView; probe: ProbeResult; connect: (h: string) => ConnectResult; calls: string[]; lib: LibraryStatus; setup: (t: string, l?: string) => SetupResult; payloads: Record<string, unknown>[] } = {
+  lib: { configured: false, root: null, defaultPath: "/Users/x/AutoCrew资料库", legacyDrafts: 0 }, setup: (t) => ({ status: "created", root: t }), payloads: [],
   view: { hosts: [], skipped: false }, probe: { ok: true, detail: "已登录，能用" }, connect: () => ({ ok: true, host: "claude", registered: true, verified: true, message: "已接上" }), calls: [],
 };
 vi.mock("./connect-api", async (orig) => {
@@ -19,7 +21,14 @@ vi.mock("./connect-api", async (orig) => {
     skipOnboarding: async () => { store.calls.push("skip"); store.view = { ...store.view, skipped: true }; return { ok: true, data: { skipped: true } }; },
   };
 });
-vi.mock("../../transport", () => ({ invoke: async () => ({ ok: true, data: { configured: false } }), authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
+vi.mock("./library-api", () => ({
+  loadLibrary: async () => ({ ok: true, data: store.lib }),
+  setupLibrary: async (t: string, l?: string) => { store.calls.push(`setup:${t}${l ? `:${l}` : ""}`); return { ok: true, data: store.setup(t, l) }; },
+}));
+vi.mock("../../transport", () => ({
+  invoke: async (ch: string, p: Record<string, unknown> = {}) => { store.calls.push(`invoke:${ch}`); store.payloads.push(p); return { ok: true, data: { configured: false } }; },
+  authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x",
+}));
 
 const H = (host: HostStatus["host"], over: Partial<HostStatus> = {}): HostStatus => ({
   host, label: { claude: "Claude Code", codex: "Codex", workbuddy: "WorkBuddy" }[host], found: false, loggedIn: null,
@@ -29,13 +38,16 @@ const H = (host: HostStatus["host"], over: Partial<HostStatus> = {}): HostStatus
 let el: HTMLDivElement, root: Root, done: number;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  store.calls = []; store.probe = { ok: true, detail: "已登录，能用" }; done = 0;
+  store.calls = []; store.payloads = []; store.setup = (t) => ({ status: "created", root: t });
+  store.lib = { configured: false, root: null, defaultPath: "/Users/x/AutoCrew资料库", legacyDrafts: 0 }; store.probe = { ok: true, detail: "已登录，能用" }; done = 0;
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
 });
 afterEach(async () => { await act(async () => root.unmount()); el.remove(); });
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 const btn = (t: string) => [...el.querySelectorAll("button")].find((b) => b.textContent?.includes(t)) as HTMLButtonElement | undefined;
 const click = async (t: string) => { const b = btn(t); expect(b, t).toBeTruthy(); await act(async () => b!.click()); await tick(); };
+/** 第 3、4 步（资料放哪 / 你是谁）都先跳过，走到完成页 */
+const passSetup = async () => { await click("以后再说"); await click("先跳过"); };
 const card = (h: string) => el.querySelector(`[data-host="${h}"]`) as HTMLElement;
 async function mount() {
   const { Onboarding } = await import("../Onboarding");
@@ -103,6 +115,7 @@ describe("第 2 步与完成页", () => {
     expect(store.calls).toEqual(["connect:claude"]);
     expect(card("claude").textContent).toContain("已接上");
     await click("好了，进去看看");
+    await passSetup();
     expect(el.textContent).toContain("去 Claude Code 里说「帮我写一条……」就能开工");
     expect(el.textContent).toContain("深调研、选题雷达、复盘、人设、每日摘要这几样要用你自己的模型钥匙（DeepSeek 最省事）");
     expect(el.textContent).not.toContain("在做");
@@ -217,6 +230,7 @@ describe("Codex 评审 P2-5：没接上、没钥匙就离开引导，也要记�
     await mount();
     await click("下一步");
     await click("先跳过，进去看看");
+    await passSetup();
     await click("进入 AutoCrew");
     expect(store.calls).toContain("skip");
     expect(done).toBe(1);
@@ -228,6 +242,7 @@ describe("Codex 评审 P2-5：没接上、没钥匙就离开引导，也要记�
     await click("下一步");
     await click("一键接上");
     await click("好了，进去看看");
+    await passSetup();
     await click("进入 AutoCrew");
     expect(store.calls).not.toContain("skip");
   });
@@ -249,18 +264,40 @@ describe("Codex 评审第 2 轮 P2-b：没核对上 / 只剩令牌也能断开",
   });
 });
 
+describe("设置 · 宿主：默认写稿 AI（spec 2026-10-15 §B1）", () => {
+  it("存下的默认（WorkBuddy）断开了：不把 Codex 冒充成默认，Codex 那行给「设成默认写稿」", async () => {
+    store.view = { hosts: [H("codex", { found: true, connected: true, canWrite: true }), H("claude"), H("workbuddy", { found: true })], skipped: false, writingHost: "workbuddy", writers: ["codex"] };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("codex").querySelector(".chip")).toBeNull();
+    expect([...card("codex").querySelectorAll("button")].map((b) => b.textContent)).toContain("设成默认写稿");
+  });
+  it("没存过默认、只接了 Codex：Codex 就是默认", async () => {
+    store.view = { hosts: [H("codex", { found: true, connected: true, canWrite: true }), H("claude"), H("workbuddy")], skipped: false, writingHost: null, writers: ["codex"] };
+    const { HostsCard } = await import("./HostsCard");
+    await act(async () => root.render(createElement(HostsCard))); await tick();
+    expect(card("codex").textContent).toContain("默认写稿");
+  });
+});
+
 describe("Codex 评审第 2 轮 P2-c：完成页提示按宿主权限", () => {
-  it("只接了 Codex：让它登记成片，并说写稿要接 Claude Code / WorkBuddy 或填钥匙", async () => {
-    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("claude"), H("workbuddy")], skipped: false };
+  it("只接了 Codex（能写稿）：完成页叫它写稿、记成默认写稿 AI，没有「写稿要接 Claude Code 或 WorkBuddy」那句（spec 2026-10-15 §B）", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: true }), H("claude"), H("workbuddy")], skipped: false };
     store.connect = (h) => ({ ok: true, host: h as "codex", registered: true, verified: true, message: "已接上" });
     await mount();
     await act(async () => card("codex").click()); await tick();
     await click("下一步");
     await click("一键接上");
     await click("好了，进去看看");
-    expect(el.textContent).toContain("去 Codex 里说「把这条视频的成片登记到 AutoCrew」");
-    expect(el.textContent).not.toContain("去 Codex 里说「帮我写一条");
-    expect(el.textContent).toContain("写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎");
+    await passSetup();
+    expect(el.textContent).toContain("去 Codex 里说「帮我写一条……」就能开工");
+    expect(el.textContent).not.toContain("写稿要接 Claude Code 或 WorkBuddy");
+    expect(el.textContent).toContain("默认交给 Codex");
+  });
+  it("按限权表不能写稿的宿主：卡片不能选（选中的会存成默认写稿 AI）", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("claude"), H("workbuddy")], skipped: false };
+    await mount();
+    expect(card("codex").getAttribute("role")).toBeNull();
   });
   it("接了能写的 Claude Code：提示写稿，没有那句补充", async () => {
     store.view = { hosts: [H("claude", { found: true, detail: "找到了", canWrite: true }), H("codex"), H("workbuddy")], skipped: false };
@@ -269,7 +306,82 @@ describe("Codex 评审第 2 轮 P2-c：完成页提示按宿主权限", () => {
     await click("下一步");
     await click("一键接上");
     await click("好了，进去看看");
+    await passSetup();
     expect(el.textContent).toContain("去 Claude Code 里说「帮我写一条……」");
     expect(el.textContent).not.toContain("写稿要接");
+  });
+});
+
+describe("资料放哪 + 你是谁（onboarding-connect §7）", () => {
+  const toLibrary = async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了" }), H("codex"), H("workbuddy")], skipped: false };
+    store.connect = (h) => ({ ok: true, host: h as "claude", registered: true, verified: true, message: "已接上" });
+    await mount();
+    await click("下一步");
+    await click("一键接上");
+    await click("好了，进去看看");
+    expect(el.textContent).toContain("资料放哪");
+  };
+  const typeInto = async (label: string, value: string) => {
+    const input = [...el.querySelectorAll("input, textarea")].find((i) => i.closest("label")?.textContent?.includes(label) || i.getAttribute("aria-label") === label) as HTMLInputElement;
+    expect(input, label).toBeTruthy();
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")!.set!;
+    await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  };
+
+  it("默认路径预填，点「就放这里」当场建好，再到「你是谁」", async () => {
+    await toLibrary();
+    expect((el.querySelector('input[aria-label="资料库位置"]') as HTMLInputElement).value).toBe("/Users/x/AutoCrew资料库");
+    await click("就放这里");
+    expect(store.calls).toContain("setup:/Users/x/AutoCrew资料库");
+    expect(el.textContent).toContain("建好了：/Users/x/AutoCrew资料库");
+    await click("下一步");
+    expect(el.textContent).toContain("你是谁");
+  });
+
+  it("O13/O14：路径不合适照实说原因，给改用建议，不跳到下一步", async () => {
+    store.setup = (t) => (t.endsWith("stuff")
+      ? { status: "refused", code: "not_empty", error: "/Users/x/stuff 里已经有别的东西，不往里面写", suggestion: "/Users/x/stuff/AutoCrew资料库" }
+      : { status: "created", root: t });
+    await toLibrary();
+    await typeInto("资料库位置", "/Users/x/stuff");
+    await click("就放这里");
+    expect(el.textContent).toContain("不往里面写");
+    expect(el.textContent).not.toContain("你是谁");
+    await click("改用 /Users/x/stuff/AutoCrew资料库");
+    await click("就放这里");
+    expect(el.textContent).toContain("建好了：/Users/x/stuff/AutoCrew资料库");
+  });
+
+  it("O15：旧位置有稿先问；选「搬进去」才带 migrate", async () => {
+    store.setup = (t, l) => (l ? { status: "migrated", root: t, backup: "/Users/x/.autocrew-backup-1" } : { status: "needs_legacy_choice", root: t, drafts: 3 });
+    await toLibrary();
+    await click("就放这里");
+    expect(el.textContent).toContain("已经有 3 篇稿");
+    await click("搬进去");
+    expect(store.calls).toContain("setup:/Users/x/AutoCrew资料库:migrate");
+    expect(el.textContent).toContain("备份在 /Users/x/.autocrew-backup-1");
+  });
+
+  it("已经建过库：直接说在哪，不再建", async () => {
+    store.lib = { configured: true, root: "/Volumes/NAS/AutoCrew", defaultPath: "/Users/x/AutoCrew资料库", legacyDrafts: 0 };
+    await toLibrary();
+    expect(el.textContent).toContain("资料库已经在 /Volumes/NAS/AutoCrew");
+    expect(btn("就放这里")).toBeUndefined();
+  });
+
+  it("画像：四项填齐才能存，存进 onboarding:init；跳过只记跳过（O18）", async () => {
+    await toLibrary();
+    await click("以后再说");
+    expect(btn("存好，下一步")?.disabled).toBe(true);
+    await typeInto("你是做什么的", "AI 工具博主");
+    await act(async () => (el.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+    await typeInto("给谁看", "上班族");
+    await typeInto("想要的口吻", "像朋友聊天");
+    await typeInto("旧作链接", "https://v.douyin.com/a");
+    await click("存好，下一步");
+    expect(store.calls).toContain("invoke:onboarding:init");
+    expect(store.payloads.at(-1)).toMatchObject({ industry: "AI 工具博主", platforms: ["douyin"], audience: "上班族", voice: "像朋友聊天", referenceWorks: ["https://v.douyin.com/a"] });
+    expect(el.textContent).toContain("接好了");
   });
 });

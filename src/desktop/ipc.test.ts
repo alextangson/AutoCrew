@@ -135,6 +135,7 @@ describe("IPC_CHANNELS", () => {
     "topics:list",
     "topic:create",
     "topic:delete",
+    "topic:delete_example",
     "topic:restore",
     "topic:select_angle",
     "topic:clear_angle",
@@ -155,8 +156,9 @@ describe("IPC_CHANNELS", () => {
   // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
-  it("has exactly 172 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(172);
+  // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
+  it("has exactly 173 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(173);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -361,6 +363,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "topic:create" &&
           ch !== "topic:update" &&
           ch !== "topic:delete" &&
+          ch !== "topic:delete_example" &&
           ch !== "topic:restore" &&
           // 角度点选：ipc.ts 的 topicSelectAngleHandler / topicClearAngleHandler
           ch !== "topic:select_angle" &&

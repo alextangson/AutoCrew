@@ -90,7 +90,7 @@ export async function deriveAndRecordAdoption(
   dataDir?: string,
 ): Promise<AdoptionRecord | null> {
   const content = await getContent(contentId, dataDir);
-  if (!content || content.adoption) return null;
+  if (!content || content.adoption || content.example) return null; // O20：示例稿不算采纳
 
   const verdict = deriveAdoptionVerdict(baselineBody(content), content.body);
   const updated = await recordAdoption(contentId, verdict, dataDir, undefined, undefined, { derived: true });

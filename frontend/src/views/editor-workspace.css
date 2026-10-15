@@ -216,3 +216,11 @@
 .editor-workspace .ed-next-action-button:disabled { opacity: .5; }
 .editor-workspace .ed-stage-menu-button { border-color: transparent; background: none; color: var(--muted); padding: var(--btn-pad); padding-left: var(--s2); padding-right: var(--s2); font-size: var(--fs-lg); line-height: 20px; }
 .editor-workspace .ed-stage-menu-button:hover:not(:disabled) { background: var(--lane); color: var(--ink); }
+
+/* 定稿区（DraftFinalPanel）：和上面「素材与历史」同一条边距；引文缩进成引用，不和结论挤成一段 */
+.draft-final { margin: var(--s3) var(--s5); display: flex; flex-direction: column; gap: var(--s3); }
+.draft-final ul { margin: var(--s2) 0 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.draft-final li { line-height: 1.6; }
+.draft-final blockquote { margin: var(--s1) 0 0; padding: var(--s1) var(--s3); border-left: 3px solid var(--border); color: var(--muted); font-size: var(--fs-sm); white-space: pre-wrap; }
+.draft-final-notes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-sm); margin: var(--s2) 0 0; }
+.draft-final details > summary { cursor: pointer; color: var(--muted); }

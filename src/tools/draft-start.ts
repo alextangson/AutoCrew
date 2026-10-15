@@ -95,6 +95,9 @@ async function resume(a: DraftArgs): Promise<Content | Record<string, unknown>> 
   const stage = stageRefusal(content);
   if (stage) return stage;
   if (!content.draftPath) content = await updateContent(content.id, { draftPath: { kind: "thin", startedAt: new Date().toISOString() } }, a.dataDir) ?? content;
+  // 看板「开始写」交出去的稿：第一次有 agent 接手就记下，看板从「等它接手」改说「X 在写」（spec 2026-10-15 §B5）
+  const h = content.writingHandoff;
+  if (h && !h.pickedUpAt) content = await updateContent(content.id, { writingHandoff: { ...h, pickedUpAt: new Date().toISOString(), pickedUpBy: a.host } }, a.dataDir) ?? content;
   // 只存了选题的稿：接手即进「写作中」，否则之后推不到「等你认稿」
   if (content.status === "topic_saved") {
     const moved = await transitionStatus(content.id, "drafting", { host: a.host }, a.dataDir);

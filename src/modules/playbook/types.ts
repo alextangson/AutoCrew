@@ -39,6 +39,8 @@ export interface PlaybookProposal {
   /** lesson：意见原文（去重 / 墓碑按它比） */
   lesson?: string;
   founder_words: string;
+  /** founder_words 只是选项代号（「A」「2」）时：那个选项的全文 */
+  chosen_option?: string;
   reason: string;
   /** hash(id, based_on, text)：「等你拍板」的代次 */
   gen: string;
@@ -69,6 +71,8 @@ export interface PlaybookEvent {
   /** 同一 eventId 重放时比对内容 */
   fp: string;
   proposal_id?: string;
+  /** 合并批（spec 2026-10-15 §A4）：这一次一起定的几份提案 */
+  proposal_ids?: string[];
   to_version?: number;
   expected_current_version?: number;
   /** 这次决定产生的版本（approve / rollback） */

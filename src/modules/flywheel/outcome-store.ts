@@ -190,6 +190,10 @@ export async function recordOutcome(
       contentId: input.contentId,
       dataDir,
     });
+    // O20：示例稿不收任何数据（显式 contentId、绑定表、认领都走到这里）
+    if (binding.contentId && (await getContent(binding.contentId, dataDir))?.example) {
+      return { ok: false, replaced: false, error: `稿件 ${binding.contentId} 是试跑示例，不收数据回流` };
+    }
     const key = outcomeKey({ ...input, contentId: binding.contentId });
     const replaced = existing.some((o) => outcomeKey(o) === key);
 
@@ -252,7 +256,7 @@ export async function matchDraft(
   const targetPlatform = normalizePlatform(platform);
   const candidates: DraftCandidate[] = [];
   for (const c of await listContents(dataDir)) {
-    if (c.status !== "published") continue;
+    if (c.status !== "published" || c.example) continue; // O20：示例稿不进数据回流
     const platforms = await draftPlatforms(c, dataDir);
     const titles = platforms.get(targetPlatform);
     if (titles) candidates.push({ content: c, titles: [c.title, ...titles] });

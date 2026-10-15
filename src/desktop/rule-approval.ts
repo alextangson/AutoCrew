@@ -34,13 +34,15 @@ export function createRuleApprovalHandler(deps: RuleApprovalDeps) {
     let a: Record<string, unknown>;
     try { a = JSON.parse(await deps.readBody(req)) as Record<string, unknown>; } catch { send(400, { ok: false, error: "bad json" }); return true; }
     const ruleId = a.ruleId, revision = a.revision, decision = a.decision, eventId = a.eventId;
+    // 「要，替换第 X 条」（spec 2026-10-15 §A 边界）：生效满上限时带上要换掉的那条
+    const replaces = typeof a.replaces === "string" && a.replaces ? a.replaces : undefined;
     if (typeof ruleId !== "string" || !ruleId || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 ||
         !DECISIONS.includes(decision as RuleDecision) || typeof eventId !== "string" || !/^[A-Za-z0-9_-]{8,100}$/.test(eventId)) {
       send(400, { ok: false, error: "invalid_rule_decision：需要 ruleId、revision、decision(active|rejected|disabled)、eventId" });
       return true;
     }
     try {
-      const profile = await decideWritingRule({ ruleId, revision, decision: decision as RuleDecision, eventId }, await deps.resolveDataDir());
+      const profile = await decideWritingRule({ ruleId, revision, decision: decision as RuleDecision, eventId, ...(replaces ? { replaces } : {}) }, await deps.resolveDataDir());
       send(200, { ok: true, rules: profile.writingRules });
     } catch (e) {
       const extra = e instanceof RuleDecisionError ? { code: e.code, ...e.extra } : {};

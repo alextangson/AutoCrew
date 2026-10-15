@@ -209,7 +209,7 @@ describe("每个开写入口走同一判定", () => {
   it("看板「开始写」没立意也放行：只建空占位、开 Claude，标 needs_angle；正文仍由写稿闸挡", async () => {
     const t = await makeTopic(f.data, "没开会-看板");
     const spawnImpl = vi.fn(() => { const c = new EventEmitter(); setImmediate(() => c.emit("exit", 0)); return c; });
-    const out = await startWriting(t.id, "douyin", f.data, { platform: "darwin", spawnImpl: spawnImpl as never });
+    const out = await startWriting(t.id, "douyin", f.data, { platform: "darwin", spawnImpl: spawnImpl as never, writer: () => ({ ok: true, host: "claude", label: "Claude Code" }) });
     expect(out).toMatchObject({ ok: true, created: true, opened: true, needs_angle: true });
     expect(spawnImpl).toHaveBeenCalledTimes(1);
     const placeholder = await getContent((out as { content_id: string }).content_id, f.data);
@@ -313,7 +313,7 @@ describe("豁免照常放行", () => {
   it("创始人定了角度 → 看板开始写放行并建稿", async () => {
     const t = await makeTopic(f.data, "开过会");
     await founderAuthored(f.data, t.id);
-    const r = await startWriting(t.id, "douyin", f.data, { platform: "linux" });
+    const r = await startWriting(t.id, "douyin", f.data, { platform: "linux", writer: () => ({ ok: true, host: "claude", label: "Claude Code" }) });
     expect(r).toMatchObject({ ok: true, created: true });
     expect(TEST_FOUNDER_WORDS).toBeTruthy();
   });

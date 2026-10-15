@@ -5,7 +5,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ChatMarkdown } from "./markdown";
-import { copyForWorkbuddy } from "./workbuddy";
+import { HandOffButton } from "../views/HandOffButton";
+import { CHIEF_PREFILL_EVENT, WRITING_STATUSES } from "../views/hand-off";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
@@ -142,6 +143,7 @@ export function ChatDock(props: {
    */
   const handledContentRef = useRef<string | undefined>(props.contentContext?.contentId);
   const [contextTitle, setContextTitle] = useState("");
+  const [contextWriting, setContextWriting] = useState(false);
   /** 可选模型档位（服务端给的真实清单）与当前选择；只有 >1 档时才显示切换器 */
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   /** 清单拉不到时的红字——只有"引擎真的只有一档"才该让切换器消失，读取失败必须说出来 */
@@ -184,13 +186,25 @@ export function ChatDock(props: {
       return;
     }
     let active = true;
-    void invoke("content:get", { id }).then((result) => {
+    const read = () => void invoke("content:get", { id }).then((result) => {
       if (!active) return;
-      const content = (result as unknown as { content?: { title?: string } }).content;
+      const content = (result as unknown as { content?: { title?: string; status?: string } }).content;
       setContextTitle(result.ok ? (content?.title ?? id) : id);
+      // 稿子开着时阶段会变（认稿、交剪辑）：「交给 X 写 / 看」跟着变，不让人点到服务端拒的那一个
+      if (result.ok) setContextWriting(Boolean(content?.status && WRITING_STATUSES.has(content.status)));
     });
-    return () => { active = false; };
+    read();
+    const poll = window.setInterval(read, 10_000);
+    window.addEventListener("focus", read);
+    return () => { active = false; window.clearInterval(poll); window.removeEventListener("focus", read); };
   }, [props.contentContext?.contentId]);
+
+  // 「交给总编辑写」：指令填进输入框，不自动发送（spec 2026-10-15 §B 边界：只配了钥匙的人）
+  useEffect(() => {
+    const on = (e: Event) => setInput((e as CustomEvent<{ text: string }>).detail.text);
+    window.addEventListener(CHIEF_PREFILL_EVENT, on);
+    return () => window.removeEventListener(CHIEF_PREFILL_EVENT, on);
+  }, []);
 
   /** 失败回 null（不是空数组）——调用方据此保住现有列表，不把一次网络抖动渲染成"没有会话" */
   const listConversations = async (): Promise<ConversationSummary[] | null> => {
@@ -569,7 +583,7 @@ export function ChatDock(props: {
         props.contentContext && (
           <div className="chat-context" title={props.contentContext.contentId}>
             当前稿件：{contextTitle || "正在读取…"} · 修改建议会保存为新版本
-            {contextTitle && <button className="chat-copy-wb" title="复制一句话，粘到 WorkBuddy 里让它通过 AutoCrew 打开这篇" onClick={() => void copyForWorkbuddy(contextTitle, props.contentContext!.contentId)}>复制给 WorkBuddy</button>}
+            {contextTitle && <HandOffButton className="chat-copy-wb" contentId={props.contentContext.contentId} mode={contextWriting ? "write" : "look"} />}
           </div>
         )
       )}

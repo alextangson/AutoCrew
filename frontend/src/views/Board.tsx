@@ -10,12 +10,15 @@ import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { requestDockCollapsed } from "../chat/dock-prefs";
 import { newIdea } from "../new-idea";
-import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting } from "./board-api";
+import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting, type StartReply } from "./board-api";
+import { announce, explainFailure, useWriters } from "./hand-off";
+import type { HostId } from "./onboarding/connect-api";
 import { ReviewInbox } from "./review/ReviewInbox";
 import { UpdateBanner } from "./update/UpdateBanner";
 import { decideItem } from "./review/review-api";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
+import { PersonaReminder } from "./PersonaReminder";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
 import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
@@ -74,11 +77,13 @@ export function Board(props: Nav) {
   // 看板默认收起总编辑（§28），离开回到偏好
   useEffect(() => requestDockCollapsed(), []);
 
-  const start = async (topicId: string) => {
+  const writers = useWriters();
+  const start = async (topicId: string, host?: HostId) => {
     if (starting) return;
     setStarting(topicId);
-    try { await runStart(topicId, props.openEditor); await reload(); } finally { setStarting(null); }
+    try { await runStart(topicId, props.openEditor, host); await reload(); } finally { setStarting(null); }
   };
+  const otherWriters = (writers?.writers ?? []).filter((h) => h !== writers?.defaultHost);
   const trashTopic = async (id: string) => {
     const r = await invoke("topic:delete", { id });
     toast(r.ok ? "已移入回收站（可恢复）" : r.error ?? "删除失败");
@@ -120,6 +125,7 @@ export function Board(props: Nav) {
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
     <UpdateBanner />
+    <PersonaReminder />
     <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} {...(props.inboxTypes ? { focusTypes: props.inboxTypes } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
@@ -142,7 +148,7 @@ export function Board(props: Nav) {
         </header>
         {cards === null ? <p className="bcol-note">读取中</p>
           : <ColumnBody col={col} cards={cards[col]} data={data!} expanded={expanded.has(col)} allEmpty={allEmpty} starting={starting}
-            onExpand={() => setExpanded((s) => new Set(s).add(col))} nav={props} start={start} trashTopic={trashTopic}
+            onExpand={() => setExpanded((s) => new Set(s).add(col))} nav={props} start={start} others={otherWriters} trashTopic={trashTopic}
             beginDrag={beginDrag} endDrag={endDrag} pause={pause} reload={reload} moving={moving} />}
       </section>; })}
     </div>
@@ -158,7 +164,7 @@ function colWidth(col: BoardColumn, cards: Record<BoardColumn, Card[]> | null): 
 
 function ColumnBody(p: {
   col: BoardColumn; cards: Card[]; data: BoardData; expanded: boolean; allEmpty: boolean; starting: string | null;
-  onExpand: () => void; nav: Nav; start: (id: string) => Promise<void>; trashTopic: (id: string) => Promise<void>;
+  onExpand: () => void; nav: Nav; start: (id: string, host?: HostId) => Promise<void>; others: HostId[]; trashTopic: (id: string) => Promise<void>;
   beginDrag: (from: BoardColumn, id: string, item: BoardItem | null) => void; endDrag: () => void; pause: (on: boolean) => void; reload: () => Promise<void>;
   moving: Set<string>;
 }) {
@@ -171,7 +177,7 @@ function ColumnBody(p: {
   return <div className="bcol-body">
     {shown.map((c) => c.kind === "topic"
       ? <TopicCard key={c.topic.id} {...drag} topic={c.topic} busy={p.starting === c.topic.id}
-        onStart={() => void p.start(c.topic.id)} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} />
+        onStart={(host) => void p.start(c.topic.id, host)} others={p.others} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} reload={p.reload} />
       : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => p.nav.openEditor(c.item.id)} onMenu={p.pause} reload={p.reload}
         siblings={sameTopicCards(p.data.items, c.item)} openOther={(id) => p.nav.openEditor(id)} />)}
     {hidden > 0 && <button className="bcol-more" onClick={p.onExpand}>还有 {hidden} 条 ▾</button>}
@@ -223,20 +229,20 @@ async function runUndo(undo: UndoMove, item: BoardItem, reload: () => Promise<vo
   } finally { await reload(); }
 }
 
-/** 「开始写」的收尾：已开写就打开那篇；打不开 Claude 就退回剪贴板，一行提示不静默（§9/§11/§12） */
-async function runStart(topicId: string, openEditor: (id: string) => void): Promise<void> {
-  const r = await startWriting(topicId);
-  if (!r.ok) return toast(r.error);
+/**
+ * 「开始写」的收尾（spec 2026-10-15 §B2）：已开写就打开那篇；交给默认写稿 AI（或这一次换的那个），
+ * 按 AI 说清下一步（Claude 按发送 / Codex 粘贴 / WorkBuddy 粘过去）；没接 AI、默认的断了都明说，不假装开工。
+ */
+async function runStart(topicId: string, openEditor: (id: string) => void, host?: HostId): Promise<void> {
+  const r = await startWriting(topicId, host);
+  if (!r.ok) return explainFailure(r, (alt) => runStart(topicId, openEditor, alt));
   if (!r.data.created) {
     toast("这条已经开写了，打开那篇");
     return openEditor(r.data.content_id);
   }
-  if (r.data.opened && r.data.needs_angle) return toast("已建稿，Claude 新会话已填好指令。这条还没定立意，按发送后先在 Claude 里调研、选立意卡，再开写");
-  if (r.data.opened) return toast("已建稿，Claude 新会话已填好指令，按发送开始写");
-  let copied = false;
-  try { if (r.data.prompt) { await navigator.clipboard.writeText(r.data.prompt); copied = true; } } catch { /* 下面明说 */ }
-  const why = r.data.open_error ?? "Claude 没打开";
-  toast(copied ? `已建稿，但${why}。指令已复制，去 Claude 新会话粘贴发送` : `已建稿，但${why}。请把这句发给 Claude：${r.data.prompt ?? ""}`);
+  const d = r.data as Required<Pick<StartReply, "host" | "label" | "prompt" | "opened" | "paste">> & StartReply;
+  const angle = r.data.needs_angle ? "（这条还没定立意，它会先调研、给你立意卡选）" : "";
+  await announce(d, "write", `已建稿${angle}。`);
 }
 
 /**

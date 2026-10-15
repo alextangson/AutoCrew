@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pickOpening } from "./draft-test-helpers.js";
 import { executeDraft } from "./draft.js";
 import { setQuoteFetch } from "../modules/draft/verify-quote.js";
-import { getContent } from "../storage/local-store.js";
+import { getContent, updateContent } from "../storage/local-store.js";
 import { loadProfile, updateProfile } from "../modules/profile/creator-profile.js";
 import { loadManifest } from "../modules/playbook/store.js";
 import { putExemplar, readExemplarText } from "../modules/exemplar/store.js";
@@ -88,6 +88,27 @@ describe("save feedback：只记原话，不即时造规则", () => {
     const after = (await getContent(id, dir))!.draftPath!;
     expect(after.feedback).toHaveLength(1);
     expect(after.angle!.opening_pick).toMatchObject({ chosen: "丁丁丁", founder_words: "选 1" });
+  });
+});
+
+describe("示例稿与看板交接（main 合进来的行为）", () => {
+  it("O20：示例稿的意见记在稿上，回执说明不进学习；跨稿意见里也不出现", async () => {
+    const { id, version } = await firstVersion();
+    await updateContent(id, { example: true }, dir);
+    const r = await run("save", { content_id: id, base_version: version, body: BODY2, feedback: { founder_words: "开头别先说结论", lessons: [{ rule: "开头不先抛结论", scope: "platform:douyin", relation: "new" }] } });
+    expect(r).toMatchObject({ ok: true, lessons_skipped: expect.stringContaining("示例稿") });
+    expect((await getContent(id, dir))!.draftPath!.feedback!.filter((f) => f.stage === "body")).toEqual([expect.objectContaining({ founder_words: "开头别先说结论" })]);
+    expect((await run("feedback_history", {})).entries).toEqual([]);
+  });
+
+  it("看板交出去的稿：没再调 start、直接存了一版也算接手，记下是谁（spec 2026-10-15 §B5）", async () => {
+    const s = await run("start", { inspiration: "x" });
+    const id = s.content_id as string, v = (s.progress as { version: number }).version;
+    await run("angle", { content_id: id, base_version: v, ...ANGLE });
+    await pickOpening(run, id, v);
+    await updateContent(id, { writingHandoff: { host: "codex", at: new Date().toISOString() } }, dir);
+    expect(await run("save", { content_id: id, base_version: v, body: BODY })).toMatchObject({ ok: true });
+    expect((await getContent(id, dir))!.writingHandoff).toMatchObject({ host: "codex", pickedUpBy: "claude-code", pickedUpAt: expect.any(String) });
   });
 });
 

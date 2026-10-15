@@ -134,6 +134,8 @@ export function claimView(content: Content): { host: string; live: boolean; leas
   return { host: hostLabel(c.host), live: leaseOk && idle < 2, lease_ok: leaseOk, idle_hours: Number.isFinite(idle) ? idle : null };
 }
 
+import { handoffView } from "./handoff-view.js";
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
@@ -147,7 +149,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates,
     // 一条视频一张卡：各平台状态与剩下的动作（吸收 4）；只有回执没认稿 = 只提醒
     targets: publishTargets(content, doc, record, active), no_script_approval: exp.no_script_approval === true,
-    claim: claimView(content) };
+    claim: claimView(content), ...(handoffView(content) ? { handoff: handoffView(content) } : {}) };
   if (!active) return base;
   const receipts = publishReceipts(doc);
   // 一行 = 一个平台的发布槽（本轮每个平台只有一个）；纠正指向槽 id；按真实时间新的在前

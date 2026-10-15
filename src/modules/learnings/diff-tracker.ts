@@ -10,7 +10,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../../storage/local-store.js";
+import { getContent, getDataDir } from "../../storage/local-store.js";
 
 export interface EditDiff {
   id: string;
@@ -76,6 +76,8 @@ export async function recordDiff(
     createdAt: new Date().toISOString(),
   };
 
+  // O20：示例稿的改动不进学习样本（不落盘；风格提炼只读落盘的 diff）
+  if ((await getContent(contentId, dataDir).catch(() => null))?.example) return diff;
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(diff, null, 2), "utf-8");
   return diff;
 }

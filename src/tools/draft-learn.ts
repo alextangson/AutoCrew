@@ -21,7 +21,7 @@ const HISTORY_MAX = 300;
 const TARGETS = ["playbook", "exemplar", "method"];
 
 const douyinDrafts = async (dataDir?: string): Promise<Content[]> =>
-  (await listContents(dataDir)).filter((c) => !c.deletedAt && c.platform === DRAFT_PLATFORM && c.draftPath?.feedback?.length);
+  (await listContents(dataDir)).filter((c) => !c.deletedAt && !c.example && c.platform === DRAFT_PLATFORM && c.draftPath?.feedback?.length);
 
 export async function draftFeedbackHistory(a: DraftArgs): Promise<R> {
   const rows = (await douyinDrafts(a.dataDir)).flatMap((c) => (c.draftPath!.feedback ?? []).map((f, i) => ({

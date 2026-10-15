@@ -8,7 +8,8 @@ import { boardData } from "./board-data.js";
 import { dataPage } from "./data-page.js";
 import { createCoverHandler } from "./data-cover-route.js";
 import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/outcome-links.js";
-import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
+import { markPublished, startWriting, unmarkPublished } from "./board-actions.js";
+import { handOff, type HandOffDeps } from "./writing-handoff.js";
 import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
@@ -29,7 +30,8 @@ export interface BoardRouteDeps {
   originAllowed: (req: http.IncomingMessage) => boolean;
   resolveDataDir: () => Promise<string>;
   readBody: (req: http.IncomingMessage) => Promise<string>;
-  open?: OpenDeps;
+  /** 测试注入：不真开窗、不读真的宿主配置 */
+  open?: HandOffDeps;
   /** 测试注入：不真开浏览器 */
   storyboard?: StoryboardOpenDeps;
   /** 测试注入：不真开访达 */
@@ -156,7 +158,12 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       return true;
     }
     if (p === "/api/board/start-writing" && req.method === "POST") {
-      await post(req, res, (b, dir) => startWriting(String(b.topic_id ?? ""), typeof b.platform === "string" ? b.platform : undefined, dir, deps.open));
+      await post(req, res, (b, dir) => startWriting(String(b.topic_id ?? ""), typeof b.platform === "string" ? b.platform : undefined, dir, deps.open, typeof b.host === "string" ? b.host : null));
+      return true;
+    }
+    // 已有稿件「交给 X 写 / 看」（spec 2026-10-15 §B4、§B5 重新交给）：服务端拼指令和链接，浏览器只说交给谁
+    if (p === "/api/board/hand-off" && req.method === "POST") {
+      await post(req, res, (b, dir) => handOff(String(b.content_id ?? ""), { host: typeof b.host === "string" ? b.host : null, mode: b.mode === "look" ? "look" : "write" }, dir, deps.open));
       return true;
     }
     // 本体（spec 2026-09-29）：两个创始人决定只走浏览器会话——重开文稿（§2.5）与启用本体（§4.1）

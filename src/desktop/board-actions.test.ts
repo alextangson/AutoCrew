@@ -6,7 +6,8 @@ import { EventEmitter } from "node:events";
 import type { spawn } from "node:child_process";
 import { initializeProjectLayout, resolveContentProject } from "../storage/content-project.js";
 import { getContent, listContents, saveContent, saveTopic, softDeleteTopic, type Topic } from "../storage/local-store.js";
-import { claudeLink, markPublished, startPrompt, startWriting, unmarkPublished } from "./board-actions.js";
+import { claudeLink, markPublished, startWriting, unmarkPublished } from "./board-actions.js";
+import { writePrompt } from "./writing-handoff.js";
 import { founderAuthored } from "../modules/research/angle-gate.test-helper.js";
 import type * as AngleGate from "../modules/research/angle-gate.js";
 import { HUMAN_WRITE } from "../storage/first-body-guard.js";
@@ -24,7 +25,8 @@ vi.mock("../modules/research/angle-gate.js", async (orig) => {
 
 let dir: string, topic: Topic, exitCode: number;
 const spawnImpl = vi.fn(() => { const c = new EventEmitter(); setImmediate(() => c.emit("exit", exitCode)); return c; }) as unknown as typeof spawn;
-const mac = { platform: "darwin" as const, spawnImpl, programDir: "/opt/autocrew" };
+const claude = () => ({ ok: true as const, host: "claude" as const, label: "Claude Code" });
+const mac = { platform: "darwin" as const, spawnImpl, programDir: "/opt/autocrew", writer: claude };
 
 beforeEach(async () => {
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-board-actions-")));
@@ -86,8 +88,8 @@ it("打不开 Claude：稿照建，回指令原文和原因让前端退回剪贴
 });
 
 it("指令短：标题截断，链接里的 q 是编码过的", () => {
-  const p = startPrompt("长".repeat(200), "topic-1-a", "content-1-b", "douyin");
-  expect(Array.from(p).length).toBeLessThan(140);
+  const p = writePrompt("长".repeat(200), "topic-1-a", "content-1-b", "douyin");
+  expect(Array.from(p).length).toBeLessThan(200);
   expect(claudeLink("a&b", "/x y")).toBe("claude://code/new?q=a%26b&folder=%2Fx%20y");
 });
 

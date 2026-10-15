@@ -1,34 +1,40 @@
 /**
- * 新引导（onboarding-connect §2）：两步 + 完成页。
+ * 新引导（onboarding-connect §2 + §7）：四步 + 完成页。
  *   1. 你想让哪个 AI 来写稿？（本机 AI 卡片 / DeepSeek 钥匙 / 高级）
  *   2. 接上（每个选中的宿主一键接上，核对真连上）
+ *   3. 资料放哪（默认 ~/AutoCrew资料库，当场建好）
+ *   4. 你是谁（画像，可跳过）
  *   完成：去哪开工 + 哪几样暂时还要一把 DeepSeek 钥匙。
  * 「先不配」存本机目录（O1），刷新、重启都不再弹。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { loadConnect, skipOnboarding, type ConnectResult, type HostId, type HostStatus } from "./onboarding/connect-api";
+import { loadConnect, setWritingHost, skipOnboarding, type ConnectResult, type HostId, type HostStatus } from "./onboarding/connect-api";
 import { PickStep } from "./onboarding/PickStep";
 import { ConnectStep } from "./onboarding/ConnectStep";
+import { LibraryStep } from "./onboarding/LibraryStep";
+import { PersonaStep } from "./onboarding/PersonaStep";
 import "./onboarding/onboarding.css";
 
-type Step = "pick" | "connect" | "done";
+type Step = "pick" | "connect" | "library" | "persona" | "done";
 
 /** 开工提示按能力查表，不按宿主名写死：能力来自服务端的 host-policy（canWrite），以后放开谁写稿不用改这里 */
 const START_HINT = { write: "帮我写一条……", edit: "把这条视频的成片登记到 AutoCrew" } as const;
 
-export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void; onOpenSettings: () => void }) {
+/** 默认写稿 AI 记下了没有（spec 2026-10-15 §B1）：记下 → 说是谁；没记下 → 照实说 */
+export type WriterSaved = { label: string; error?: string } | null;
+
+export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void; onOpenSettings: () => void; writer?: WriterSaved }) {
   const first = props.connected[0];
-  const anyWriter = props.connected.some((h) => h.canWrite);
   return (
     <>
       <h1 className="ob-title">{first ? "接好了" : props.engineReady ? "钥匙存好了" : "先进去看看"}</h1>
       {first
         ? props.connected.map((h) => <p key={h.host} className="ob-sub">去 {h.label} 里说「{START_HINT[h.canWrite ? "write" : "edit"]}」{h.canWrite ? "就能开工。" : "。"}</p>)
         : <p className="ob-sub">{props.engineReady ? "在右边的总编辑里说「帮我写一条……」就能开工。" : "之后在「设置 · 接入更多 · 宿主」里随时接上本机 AI。"}</p>}
-      {first && !anyWriter && !props.engineReady && (
-        <p className="ob-sub">写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎。</p>
-      )}
+      {props.writer && (props.writer.error
+        ? <p className="ob-fail">没记住默认写稿的 AI（{props.writer.label}）：{props.writer.error}。之后在「设置 · 接入更多 · 宿主」里再选一次。</p>
+        : <p className="ob-note">看板上点「开始写」默认交给 {props.writer.label}，在「设置 · 接入更多 · 宿主」里能改。</p>)}
       {!props.engineReady && (
         <p className="ob-note">
           深调研、选题雷达、复盘、人设、每日摘要这几样要用你自己的模型钥匙（DeepSeek 最省事）。现在可以先跳过，以后在设置里补。{" "}
@@ -49,6 +55,7 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
   const [engineReady, setEngineReady] = useState(false);
   const [skipError, setSkipError] = useState<string | null>(null);
   const [afterSkipError, setAfterSkipError] = useState<() => void>(() => props.onDone);
+  const [writer, setWriter] = useState<WriterSaved>(null);
 
   const load = async () => {
     const r = await loadConnect();
@@ -79,6 +86,15 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
   };
   const skip = () => leave(props.onDone);
 
+  /** 接完进「资料放哪」：第 1 步选中、接上了、能写稿的第一个记成默认写稿 AI */
+  const finish = async () => {
+    setStep("library");
+    const pick = picked.find((h) => results[h]?.verified && hosts?.find((x) => x.host === h)?.canWrite !== false);
+    if (!pick) return;
+    const label = hosts?.find((x) => x.host === pick)?.label ?? pick;
+    const r = await setWritingHost(pick);
+    setWriter(r.ok ? { label } : { label, error: r.error });
+  };
   if (!hosts) return <div className="ob"><span className="ob-sub">正在看这台电脑上装了哪些 AI…</span></div>;
   const connected = hosts.filter((h) => results[h.host]?.verified);
   return (
@@ -87,14 +103,16 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
         <div className="ob-brand">AutoCrew</div>
         {step === "pick" && (
           <PickStep hosts={hosts} picked={picked} setPicked={setPicked} onRefresh={() => void load()} onHostUpdate={(host, patch) => setHosts((list) => list?.map((h) => (h.host === host ? { ...h, ...patch } : h)) ?? list)} onNext={() => setStep("connect")}
-            onSkip={() => void skip()} onEngineSaved={() => void engineSaved()} engineReady={engineReady} onFinish={() => setStep("done")}
+            onSkip={() => void skip()} onEngineSaved={() => void engineSaved()} engineReady={engineReady} onFinish={() => setStep("library")}
             {...(loadError ? { loadError } : {})} />
         )}
         {step === "connect" && (
           <ConnectStep hosts={hosts} picked={picked} results={results} onResult={(r) => setResults((x) => ({ ...x, [r.host]: r }))}
-            onBack={() => setStep("pick")} onNext={() => setStep("done")} />
+            onBack={() => setStep("pick")} onNext={() => void finish()} />
         )}
-        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={() => void leave(props.onDone)} onOpenSettings={() => void leave(props.onOpenSettings ?? props.onDone)} />}
+        {step === "library" && <LibraryStep onNext={() => setStep("persona")} />}
+        {step === "persona" && <PersonaStep onNext={() => setStep("done")} />}
+        {step === "done" && <DonePage connected={connected} engineReady={engineReady} writer={writer} onEnter={() => void leave(props.onDone)} onOpenSettings={() => void leave(props.onOpenSettings ?? props.onDone)} />}
         {skipError && (
           <div className="ob-actions"><p className="ob-fail">{skipError}</p><button onClick={afterSkipError}>进去</button></div>
         )}

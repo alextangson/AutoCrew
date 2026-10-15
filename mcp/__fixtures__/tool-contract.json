@@ -10,12 +10,16 @@
        "list",
        "radar_pool",
        "radar_score",
-       "delete"
+       "delete",
+       "delete_example"
       ],
       "type": "string"
      },
      "description": {
       "type": "string"
+     },
+     "example": {
+      "type": "boolean"
      },
      "id": {
       "type": "string"
@@ -1415,6 +1419,7 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "playbook_batch",
        "approve_promotion",
        "reject_promotion",
        "waive_sliver_check",
@@ -1445,6 +1450,7 @@
      "item_id": {
       "type": "string"
      },
+     "items": {},
      "note": {
       "type": "string"
      },
@@ -3019,12 +3025,16 @@
        "list",
        "radar_pool",
        "radar_score",
-       "delete"
+       "delete",
+       "delete_example"
       ],
       "type": "string"
      },
      "description": {
       "type": "string"
+     },
+     "example": {
+      "type": "boolean"
      },
      "id": {
       "type": "string"
@@ -4424,6 +4434,7 @@
        "replace_rule",
        "approve_playbook",
        "reject_playbook",
+       "playbook_batch",
        "approve_promotion",
        "reject_promotion",
        "waive_sliver_check",
@@ -4454,6 +4465,7 @@
      "item_id": {
       "type": "string"
      },
+     "items": {},
      "note": {
       "type": "string"
      },

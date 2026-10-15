@@ -13,15 +13,15 @@ const EVENTS_KEPT = 1000;
 const SUPPLEMENT = "## 创始人补充";
 
 const genOf = (p: Pick<PlaybookProposal, "id" | "based_on" | "text">) => shortHash([p.id, p.based_on, p.text]);
-const nextVersion = (e: PlaybookEntry) => Math.max(...e.versions.map((v) => v.version)) + 1;
+export const nextVersion = (e: PlaybookEntry) => Math.max(...e.versions.map((v) => v.version)) + 1;
 
-function checkSize(text: string): void {
+export function checkSize(text: string): void {
   const n = charCount(text);
   if (n > PLAYBOOK_MAX_CHARS) throw new PlaybookError("too_long", `手册全文 ${n} 字，超过上限 ${PLAYBOOK_MAX_CHARS} 字：压缩后再提案`, { chars: n, max: PLAYBOOK_MAX_CHARS });
 }
 
 /** 当前版本变了：挂在旧版本上的待批提案全部过期 */
-function markStale(e: PlaybookEntry, at: string): void {
+export function markStale(e: PlaybookEntry, at: string): void {
   for (const p of e.proposals) if (p.status === "pending" && p.based_on !== e.current) { p.status = "stale"; p.decided_at = at; }
 }
 
@@ -43,7 +43,10 @@ export function appendSupplement(text: string, lesson: string, founderWords: str
   return `${lines.join("\n")}\n`;
 }
 
-export interface LessonProposalInput { id: PlaybookId; lesson: string; founder_words: string; origin?: { content_id: string; version: number } }
+export interface LessonProposalInput { id: PlaybookId; lesson: string; founder_words: string; chosen_option?: string; origin?: { content_id: string; version: number } }
+
+/** 写进手册里的那句原话：选项代号带上选项内容，读手册的人才看得懂 */
+export const saidOf = (p: { founder_words: string; chosen_option?: string }) => (p.chosen_option ? `${p.founder_words}：${p.chosen_option}` : p.founder_words);
 export type LessonProposalOutcome = "playbook_proposed" | "playbook_duplicate" | "blocked_by_rejected";
 
 /** 写稿意见（scope playbook:<id>）挂成一条待批提案；同文待批 = duplicate，否决过 = blocked_by_rejected */
@@ -63,10 +66,10 @@ export function proposeLesson(input: LessonProposalInput, dataDir?: string): Pro
       }
       return { outcome: "playbook_duplicate" as const, proposal_id: pending.id };
     }
-    const text = appendSupplement(await readVersionText(input.id, e.current, dataDir), input.lesson.trim(), input.founder_words);
+    const text = appendSupplement(await readVersionText(input.id, e.current, dataDir), input.lesson.trim(), saidOf(input));
     checkSize(text);
     const id = `pp-${randomUUID()}`;
-    const p: PlaybookProposal = { id, kind: "lesson", based_on: e.current, text, lesson: input.lesson.trim(), founder_words: input.founder_words,
+    const p: PlaybookProposal = { id, kind: "lesson", based_on: e.current, text, lesson: input.lesson.trim(), founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}),
       reason: "写稿时创始人的意见", gen: "", status: "pending", at: new Date().toISOString(), ...(input.origin ? { origin: input.origin } : {}) };
     p.gen = genOf(p);
     e.proposals.push(p);
@@ -100,14 +103,14 @@ export function proposeRevision(input: RevisionInput, dataDir?: string): Promise
 export interface DecisionMeta { eventId: string; source: PlaybookEvent["source"]; founder_words?: string; requested_by?: string }
 
 /** 同一 eventId：内容相同 → 回放；不同 → request_conflict。没有 → null */
-function replay(m: PlaybookManifest, eventId: string, fp: string): R | null {
+export function replay(m: PlaybookManifest, eventId: string, fp: string): R | null {
   const prior = m.events.find((x) => x.eventId === eventId);
   if (!prior) return null;
   if (prior.fp !== fp) throw new PlaybookError("request_conflict", "这个请求号已经用在另一个手册决定上了：换一个新的");
   return { ok: true, replayed: true, playbook: prior.playbook, decision: prior.type, ...(prior.version ? { version: prior.version } : {}), ...(prior.proposal_id ? { proposal_id: prior.proposal_id } : {}) };
 }
 
-function logEvent(m: PlaybookManifest, ev: Omit<PlaybookEvent, "at">, at: string): void {
+export function logEvent(m: PlaybookManifest, ev: Omit<PlaybookEvent, "at">, at: string): void {
   m.events = [...m.events, { ...ev, at }].slice(-EVENTS_KEPT);
 }
 
@@ -120,7 +123,7 @@ export async function recoverPlaybookEvent(eventId: string, dataDir?: string): P
 
 export interface ProposalDecision extends DecisionMeta { id: PlaybookId; proposal_id: string; gen: string; decision: "approve" | "reject" }
 
-function pendingProposal(e: PlaybookEntry, input: ProposalDecision): PlaybookProposal {
+export function pendingProposal(e: PlaybookEntry, input: Pick<ProposalDecision, "id" | "proposal_id" | "gen">): PlaybookProposal {
   const p = e.proposals.find((x) => x.id === input.proposal_id);
   if (!p) throw new PlaybookError("not_found", `手册 ${input.id} 上没有提案 ${input.proposal_id}`);
   if (p.status === "stale") throw new PlaybookError("stale", "这份提案已过期（手册之后改过版本）：要重新提案，不能叠到新版本上");

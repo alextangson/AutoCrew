@@ -39,7 +39,7 @@ export interface WritingRule {
   /** 已完成的升级：来自哪条平台规则（只作记录，不再参与审批） */
   promotedFrom?: string;
   /** 从哪篇稿的哪一版改稿意见来的（对话里记下的规则；定稿时据此列这篇攒下的待批规则） */
-  origin?: { content_id: string; version: number; founder_words?: string };
+  origin?: { content_id: string; version: number; founder_words?: string; chosen_option?: string };
   /** AI 判断它和哪条已有规则矛盾（只作提示，批准时由创始人选替换 / 都留） */
   conflictsWith?: string;
   /** 停用原因（如「被 <id> 替换」） */
@@ -226,6 +226,10 @@ export interface CreatorProfile {
   publishRules?: PublishRule[];
   /** agent 提议的新偏好（propose_preference），创始人在网页确认才写进上面两项 */
   preferenceProposals?: PreferenceProposal[];
+  /** 引导「你是谁」里给的一两条自己满意的旧作链接（onboarding-connect §7.2-4），写稿时当口吻参考 */
+  referenceWorks?: string[];
+  /** 引导里跳过了画像（O18）：看板留「补全画像」提醒，不拦写稿；补全后清掉 */
+  personaSkippedAt?: string;
   /** Profile creation timestamp */
   createdAt: string;
   /** Last update timestamp */

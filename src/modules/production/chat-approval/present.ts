@@ -17,6 +17,7 @@ import { chatDecidable, chatItem } from "./view.js";
 import { ruleBrief } from "./rule-decide.js";
 import { playbookBrief } from "./playbook-decide.js";
 import { promotionBrief } from "./promotion-decide.js";
+import { isLessonType, lessonGroupTitle, mergeKeyOf } from "../lesson-view.js";
 
 type Result = Record<string, unknown>;
 export interface ListInput { preview_dir?: string; content_id?: string; item_id?: string; group_id?: string; fact_id?: string }
@@ -47,10 +48,15 @@ function previewFiles(item: InboxItem, doc: ProductionDoc, dataDir: string, sel:
   return out.filter((x): x is PreviewFile => Boolean(x));
 }
 
-async function present(item: InboxItem, n: number | null, dataDir: string, input: ListInput): Promise<Result> {
+async function present(item: InboxItem, n: number | string | null, dataDir: string, input: ListInput, head?: string): Promise<Result> {
   const base = await chatItem(item, dataDir);
   if (!decidable(item)) return base;
-  if (item.type === "writing_rule" || item.type === "playbook_change" || item.type === "writing_promotion") { const b = item.type === "writing_rule" ? ruleBrief(item) : item.type === "writing_promotion" ? promotionBrief(item) : playbookBrief(item); return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${b}` : b, shown: {} }; }
+  if (item.type === "writing_promotion") { const b = promotionBrief(item); return { ...base, ...(n ? { number: n } : {}), brief: n ? `${n}. ${b}` : b, shown: {} }; }
+  if (isLessonType(item.type)) {
+    const b = item.type === "writing_rule" ? ruleBrief(item) : playbookBrief(item);
+    const merge = mergeKeyOf(item.detail);
+    return { ...base, ...(n ? { number: n } : {}), ...(merge ? { merge_key: merge } : {}), brief: `${head ? `${head}\n` : ""}${n ? `${n}. ${b}` : b}`, shown: {} };
+  }
   const doc = await readProductionDocOrEmpty(item.content_id!, dataDir);
   const sel = input.item_id === item.item_id ? input : {};
   const brief = await briefOf(item, doc, dataDir, sel);
@@ -70,6 +76,7 @@ const NEXT = [
   "请示：他的话对得上唯一一个选项才 decide answer_ask（带 option_id，多说的话放 note）；对不上或只说「行」而选项不止一个就先问他，别猜。",
   "发之前再看一眼：他说「都没问题」时，可以对这次列出来的每件 publish_check 各 decide 一次 publish_check_confirm（同一句原话、各自的 item_id / gen / request_id）；他点了哪几个平台就只定那几个；没在这次列表里给他看过的不许顺带定。",
   "发了没（publish_claim / published_ask）：他说「都发了」同样对这次列出来的每件各 decide 一次（同一句原话）；点了平台就只定那些；没列出来的不许顺带定。他给的作品链接原样放 url。",
+  "改稿攒下的经验（writing_rule / playbook_change）按稿分组（groups），编号「组-条」：他说「1-3 要，其余不要」就对组 1 的每一条各定一次。同一组里 merge_key 相同的几条手册意见是同一份改动：必须用 decision:\"playbook_batch\" 带 items:[{item_id,gen,decision:approve_playbook|reject_playbook}] 一次定完（每条都要列上），别逐条 approve_playbook。",
   "写作规则（writing_rule）：他说哪几条要就 approve_rule，不要就 reject_rule，替换就 replace_rule 带 target_rule_id；只说「你定 / 都行」不算，问他要哪条。",
   "体裁手册改动（playbook_change）：brief 里的改前改后原样给他看；他说批就 approve_playbook，不要就 reject_playbook；只说「你定 / 都行」不算，问他。回 stale 说明手册之后改过，这份作废。",
   "改稿意见升级（writing_promotion）：brief 原样给他看；批 = approve_promotion（范文出新版本；写法出补丁，显示「已批，等发布」），不要 = reject_promotion；只说「你定 / 都行」不算。",
@@ -95,6 +102,27 @@ export async function sweepDecided(dataDir: string, previewDir: string): Promise
   }
 }
 
+/**
+ * 编号（spec 2026-10-15 §A1）：改稿攒下的经验按稿收成一组，组号 g、组内条目「g-k」（「1-3 要，其余不要」对得上）；
+ * 其他能在对话里定的事各占一个号。只有一件能定的事时不编号。组的标题放在组里第一条的 brief 前面。
+ */
+function numbering(items: InboxItem[]) {
+  const numbers = new Map<string, number | string>(), heads = new Map<string, string>();
+  const groups: Array<{ number: number; content_id: string; title: string; item_ids: string[] }> = [];
+  const many = items.filter(decidable).length > 1;
+  let n = 0;
+  for (const i of items.filter(decidable)) {
+    if (numbers.has(i.item_id)) continue;
+    if (!isLessonType(i.type) || !i.content_id) { if (many) numbers.set(i.item_id, ++n); continue; }
+    const members = items.filter((x) => decidable(x) && isLessonType(x.type) && x.content_id === i.content_id);
+    const g = ++n, title = lessonGroupTitle(i.detail.content_title as string | undefined, members.length);
+    members.forEach((x, k) => numbers.set(x.item_id, `${g}-${k + 1}`));
+    heads.set(i.item_id, `${g}. ${title}`);
+    groups.push({ number: g, content_id: i.content_id, title, item_ids: members.map((x) => x.item_id) });
+  }
+  return { numbers, heads, groups };
+}
+
 /** list：可按 content_id / item_id 收窄；带 preview_dir 时先清理再放文件 */
 export async function listForChat(dataDir = getDataDir(), input: ListInput = {}): Promise<Result> {
   const warnings = input.preview_dir ? await sweepDecided(dataDir, input.preview_dir) : [];
@@ -105,11 +133,10 @@ export async function listForChat(dataDir = getDataDir(), input: ListInput = {})
   const named = input.item_id ? items.find((i) => i.item_id === input.item_id) : undefined;
   const stale = named ? staleSelector(named, input) : null;
   if (named && stale) return { ok: false, code: "stale_selector", error: stale, item: await present(named, null, dataDir, { ...input, group_id: undefined, fact_id: undefined }), ...(warnings.length ? { warnings } : {}) };
-  const many = items.filter(decidable).length > 1;
-  let n = 0;
+  const { numbers, heads, groups } = numbering(items);
   const shown = [];
-  for (const i of items) shown.push(await present(i, many && decidable(i) ? ++n : null, dataDir, input));
-  return { ok: true, count: shown.length, items: shown, ...(warnings.length ? { warnings } : {}), next_action: NEXT };
+  for (const i of items) shown.push(await present(i, numbers.get(i.item_id) ?? null, dataDir, input, heads.get(i.item_id)));
+  return { ok: true, count: shown.length, items: shown, ...(groups.length ? { groups } : {}), ...(warnings.length ? { warnings } : {}), next_action: NEXT };
 }
 
 /**

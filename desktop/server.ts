@@ -8,6 +8,7 @@ import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { detectInterrupted, protectedStamps } from "../src/modules/update/interrupted.js";
 import { createConnectHandler } from "../src/desktop/connect-route.js";
+import { createLibraryHandler } from "../src/desktop/library-route.js";
 import { sweepOrphanPrev, sweepTrash } from "../src/modules/update/deps-swap.js";
 import { lockHeld } from "../src/modules/update/preflight.js";
 import { asrWarmupCount } from "../src/modules/video/asr.js";
@@ -17,7 +18,7 @@ import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { launchedByLauncher, launchVia } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
-import { acquireLibraryLock } from "../src/storage/library-lock.js";
+import { holdProcessLibraryLock, releaseProcessLibraryLocks } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
 import { archivePublished } from "../src/storage/nas-archive.js";
 import { backupPublished } from "../src/storage/nas-backup.js";
@@ -78,7 +79,8 @@ import { reconcileDue } from "../src/modules/calibration/reconcile.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
 
-const releaseLibraryLock = acquireLibraryLock();
+holdProcessLibraryLock();
+const releaseLibraryLock = releaseProcessLibraryLocks;
 process.once("exit", releaseLibraryLock);
 process.once("SIGTERM", () => { releaseLibraryLock(); process.exit(0); });
 process.once("SIGINT", () => { releaseLibraryLock(); process.exit(0); });
@@ -229,6 +231,9 @@ const updateRoute = createUpdateHandler({
 
 // 一键接入宿主（onboarding-connect §3）：写宿主用户配置，只认同源浏览器会话
 const connectRoute = createConnectHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody });
+// 「资料放哪」（onboarding-connect §7.3）：当场建库；浏览器会话或本机命令行（autocrew init）
+const libraryRoute = createLibraryHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
+  onActivated: () => rebindToActiveLibrary() });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -433,6 +438,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await board(req, res, url)) return;
   if (await updateRoute(req, res, url)) return;
   if (await connectRoute(req, res, url)) return;
+  if (await libraryRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
   if (await playbooks(req, res, url)) return;
@@ -510,6 +516,8 @@ let myContentTimer: NodeJS.Timeout | undefined;
 let archiveStartTimer: NodeJS.Timeout | undefined;
 let archiveTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
+/** 每日摘要启动时绑定的工作区目录（null = 每次现取，切库后自动跟上） */
+let digestBoundDir: string | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
   stopMetricsPull?.();
@@ -620,6 +628,7 @@ void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
 // 与收件箱「保存即热重启」的口径不一致。没配 token 的 tick 是一次纯内存判断,不碰网络也不写盘。
 void (async () => {
   const dataDir = await activeWorkspaceDataDir();
+  digestBoundDir = dataDir ?? null;
   await startDigestScheduler({ ...(dataDir ? { dataDir } : {}) });
   const configured = Boolean((await getInboxSettingsRaw())?.botToken);
   console.log(`  [digest] 每日选题摘要:${configured ? "已接线(到点自动发)" : "未配 bot,不发"}`);
@@ -650,7 +659,7 @@ try {
   console.error("[engine] 线路健康启动失败:", err instanceof Error ? err.message : err);
 }
 
-try {
+async function startVideoService(): Promise<void> {
   const videoDataDir = await activeDataDir();
   videoService = createVideoService({
     dataDir: videoDataDir,
@@ -658,8 +667,30 @@ try {
     onError: (msg) => console.error(`[video] ${msg}`),
   });
   setVideoService(videoService, videoDataDir);
+}
+try {
+  await startVideoService();
 } catch (err) {
   console.error("[video] 视频服务启动失败:", err instanceof Error ? err.message : err);
+}
+
+/**
+ * 引导里当场建库后（onboarding-connect §7.3）：启动时绑死旧目录的视频服务、线路健康换到新库。
+ * 视频服务正在剪就不换（会打断剪辑），照实回「重启后生效」。每日摘要启动时若绑了具体工作区，也要重启才切。
+ */
+async function rebindToActiveLibrary(): Promise<string[]> {
+  const later: string[] = [];
+  initEngineHealth(await activeDataDir());
+  if (videoService && videoService.busyCount() > 0) later.push("正在剪的视频跑完、重启 AutoCrew 后，剪辑才用新资料库");
+  else {
+    const old = videoService;
+    videoService = null;
+    setVideoService(null);
+    await old?.shutdown();
+    await startVideoService();
+  }
+  if (digestBoundDir) later.push("每日摘要重启 AutoCrew 后才用新资料库");
+  return later;
 }
 
 server.listen(PORT, HOST, () => {

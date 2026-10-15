@@ -41,7 +41,7 @@ function bodyRefusal(body: string | undefined): R | null {
 
 function feedbackRecord(input: DraftFeedbackInput, version: number, c: Content, bodyChanged: boolean): DraftFeedbackRecord {
   const playbook = c.draftPath?.angle?.playbook;
-  return { version, founder_words: input.founder_words, at: new Date().toISOString(), stage: "body", body_changed: bodyChanged, lessons: [],
+  return { version, founder_words: input.founder_words, ...(input.chosen_option ? { chosen_option: input.chosen_option } : {}), at: new Date().toISOString(), stage: "body", body_changed: bodyChanged, lessons: [],
     ...(playbook ? { playbook } : {}), ...(input.lessons.length ? { deferred_lessons: input.lessons } : {}) };
 }
 
@@ -53,7 +53,10 @@ async function saveBody(a: DraftArgs, c: Content, tx: ContentTx): Promise<Conten
   const angle = c.draftPath?.angle;
   const provenance = modelWrite(a.host, angle ? { direction: angle.main_line } : undefined);
   try {
-    const saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host }, _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
+    const saved = await tx.write({ ...(a.title ? { title: a.title } : {}), body: a.body!, writtenBy: { kind: "host", host: a.host },
+      // 看板交出去的稿没调 start 直接存了一版，也算接手（spec 2026-10-15 §B5）
+      ...(c.writingHandoff && !c.writingHandoff.pickedUpAt ? { writingHandoff: { ...c.writingHandoff, pickedUpAt: new Date().toISOString(), pickedUpBy: a.host } } : {}),
+      _versionNote: a.note ?? "AI 写入", _editor: "agent", _provenance: provenance });
     return saved ?? fail("not_found", `稿件不存在：${c.id}`);
   } catch (err) {
     if (err instanceof FirstBodyRefusedError) return fail("needs_angle", "还没记录创始人选定的立意：先出 3 个立意让创始人选，用 angle 记下再存稿", { detail: err.refusal.error, next_action: { tool: "autocrew_draft", params: { action: "angle", content_id: c.id } } });
@@ -83,7 +86,9 @@ async function writeVersion(a: DraftArgs, c: Content, tx: ContentTx): Promise<R>
   return { ok: true, version, status: s.status, body_changed: bodyChanged, reviewed: notes.length > 0 || reads.length > 0,
     format_warnings: FORMAT_MARKS.filter(([re]) => re.test(a.body!)).map(([, msg]) => msg),
     ...(fb ? { feedback_recorded: { index: (dp.feedback?.length ?? 0) + 1, version } } : {}),
-    ...(replay ? { feedback_replayed: true } : {}), ...(input?.lessons.length ? { lessons_note: LESSONS_DEFERRED } : {}) };
+    ...(replay ? { feedback_replayed: true } : {}), ...(input?.lessons.length ? { lessons_note: LESSONS_DEFERRED } : {}),
+    // O20：示例稿的意见照记在稿上，但不进跨稿学习
+    ...(input && c.example ? { lessons_skipped: "这是示例稿：意见记在稿上，不进写作规则和手册学习" } : {}) };
 }
 
 function argRefusal(a: DraftArgs): R | null {

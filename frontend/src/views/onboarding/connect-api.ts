@@ -17,7 +17,8 @@ export interface HostStatus {
   canWrite?: boolean;
   lastUsedAt?: string;
 }
-export interface ConnectView { hosts: HostStatus[]; skipped: boolean }
+/** writingHost = 存下的默认写稿 AI；writers = 接上了、能写稿的（按 Claude、Codex、WorkBuddy 排） */
+export interface ConnectView { hosts: HostStatus[]; skipped: boolean; writingHost?: HostId | null; writers?: HostId[] }
 export interface ConnectResult { ok: boolean; host: HostId; registered: boolean; verified: boolean; message: string; error?: string; code?: string; replaced?: boolean; backup?: string }
 export type ProbeResult = { ok: true; detail: string } | { ok: false; code: string; error: string };
 export type Reply<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -42,6 +43,7 @@ export const loadConnect = () => call<ConnectView>("/api/connect");
 export const probeHost = (host: HostId) => post<ProbeResult>("/api/connect/probe", { host }, true);
 export const connectHost = (host: HostId) => post<ConnectResult>("/api/connect/connect", { host }, true);
 export const disconnectHost = (host: HostId) => post<ConnectResult>("/api/connect/disconnect", { host }, true);
+export const setWritingHost = (host: HostId) => post<{ writingHost: HostId }>("/api/connect/writing-host", { host });
 export const skipOnboarding = () => post<{ skipped: boolean }>("/api/connect/skip", { skipped: true });
 
 /** 网络/会话层面的失败也折成一条结果，界面只认一种形状 */
