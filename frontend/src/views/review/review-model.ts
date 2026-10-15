@@ -65,10 +65,16 @@ export interface Row { key: string; items: InboxItem[]; title: string; sub: stri
 const MEASURE: Record<string, string> = { cover: "张", srt: "份", cut: "段", aroll: "段" };
 const KIND: Record<string, string> = { cover: "封面", srt: "字幕", cut: "成片", aroll: "原片" };
 
+/** 改稿攒下的经验（规则 + 手册提案）：同一篇稿收成一行（spec 2026-10-15 §A1） */
+export const LESSON_PREFIX = "group:lesson:";
+export const isLessonItem = (i: Pick<InboxItem, "type" | "content_id">) => (i.type === "writing_rule" || i.type === "playbook_change") && Boolean(i.content_id);
+export const isLessonRow = (r: Pick<Row, "key">) => r.key.startsWith(LESSON_PREFIX);
+export const lessonTitle = (contentTitle: unknown, n: number) => `《${typeof contentTitle === "string" && contentTitle.trim() ? contentTitle.trim() : "已删的稿"}》改稿攒下 ${n} 条经验，要不要以后都照着写`;
+
 export function groupRows(items: InboxItem[]): Row[] {
   const byKey = new Map<string, InboxItem[]>();
   // 挡着成片 / 封面审阅的稿子单独一行，说明不能被「N 篇稿子写好了」吞掉
-  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.item_id);
+  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : isLessonItem(i) ? `${LESSON_PREFIX}${i.content_id}` : i.item_id);
   for (const i of items) byKey.set(keyOf(i), [...(byKey.get(keyOf(i)) ?? []), i]);
   const rows: Row[] = [];
   for (const [key, group] of byKey) {
@@ -76,8 +82,10 @@ export function groupRows(items: InboxItem[]): Row[] {
     const single = group.length === 1;
     let title = plainWords(first.summary);
     if (!single && first.type === "candidate") { const k = String(first.detail.kind); title = `找到 ${group.length} ${MEASURE[k] ?? "个"}${KIND[k] ?? "文件"}，看看是不是这条的`; }
-    const sub = secondLine(first);
-    rows.push({ key: single ? first.item_id : key, items: group, title, sub, since: group.map((g) => g.since).sort()[0], rank: Math.min(...group.map((g) => g.rank)), agent_waiting: group.some((g) => g.agent_waiting) });
+    const lesson = key.startsWith(LESSON_PREFIX);
+    if (lesson) title = lessonTitle(first.detail.content_title, group.length);
+    const sub = lesson ? "点开逐条定「要 / 不要」" : secondLine(first);
+    rows.push({ key: single && !lesson ? first.item_id : key, items: group, title, sub, since: group.map((g) => g.since).sort()[0], rank: Math.min(...group.map((g) => g.rank)), agent_waiting: group.some((g) => g.agent_waiting) });
   }
   return rows.sort((a, b) => a.rank - b.rank || a.since.localeCompare(b.since) || a.key.localeCompare(b.key));
 }

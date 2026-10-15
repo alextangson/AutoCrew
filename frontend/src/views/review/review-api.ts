@@ -47,3 +47,10 @@ export interface InboxOpenDetail { content_id: string; types?: string[] }
 export function openInboxItem(contentId: string, types?: string[]): void {
   window.dispatchEvent(new CustomEvent<InboxOpenDetail>(INBOX_OPEN_EVENT, { detail: { content_id: contentId, ...(types ? { types } : {}) } }));
 }
+
+/** 改稿经验组（spec 2026-10-15 §A）：规则走工作台规则路由，手册走手册路由；eventId 由面板按条固定，双击 / 重试不重复记 */
+export const decideRule = (body: { ruleId: string; revision: number; decision: "active" | "rejected"; eventId: string; replaces?: string }) =>
+  call<Json>("/api/rules/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+export const decidePlaybook = (body: Json) =>
+  call<Json>("/api/playbooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

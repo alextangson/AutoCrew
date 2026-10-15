@@ -66,3 +66,10 @@
 .ri-quick { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 220px; }
 .ri-quick-text { color: var(--ri-gray); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .ri-textline-sm { padding: 4px 8px; }
+
+/* 改稿经验组（spec 2026-10-15 §A）：每条一块，问题醒目、原话次要 */
+.ri-lesson { padding: 12px 0; }
+.ri-lesson-text { font-size: var(--fs-md); font-weight: 500; margin-bottom: 6px; }
+.ri-lesson .ri-question { font-size: var(--fs-md); margin: 0 0 4px; }
+.ri-lesson select { margin-left: 6px; max-width: 100%; }
+.ri-lesson .ri-check li { border-bottom: none; padding: 4px 0; }

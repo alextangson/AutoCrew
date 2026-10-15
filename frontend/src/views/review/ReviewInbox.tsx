@@ -11,7 +11,8 @@ import { relativeLabel } from "../../time-format";
 import { focusPick } from "./inbox-focus";
 import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
 import { invoke, SESSION_EXPIRED } from "../../transport";
-import { DONE_TEXT, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
+import { LessonPanel } from "./LessonGroup";
+import { DONE_TEXT, isLessonRow, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
 import { GroupPanel } from "./ReviewGroup";
 import { useInboxNotify } from "./review-notify";
@@ -230,7 +231,8 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
       </li>;
     })}</ul>}
     <PrimaryContext.Provider value={setPrimary}>
-    {shown && (shown.items.length === 1
+    {shown && isLessonRow(shown) ? <LessonPanel key={shown.key} row={current ?? shown} gone={!current} onClose={() => open(null)} reload={reload} />
+      : shown && (shown.items.length === 1
       ? <ReviewPanel item={shown.items[0]} gone={!current} onClose={() => open(null)} act={async (a, extra) => { await act(shown.items[0], a, extra); }} />
       : <GroupPanel row={current ?? shown} gone={!current} onClose={() => open(null)} act={async (i, a, extra) => { await act(i, a, extra); }} rejectAll={rejectAll} />)}
     </PrimaryContext.Provider>
