@@ -13,7 +13,7 @@ import { claudeLink, openLink, PROGRAM_DIR, type OpenDeps } from "./board-action
 import { defaultHostEnv } from "./host-connect/env.js";
 import { pickWriter, type WriterPick } from "./host-connect/writing-host.js";
 import type { ConnectHost } from "./host-connect/detect.js";
-import { holderLabel } from "./host-label.js";
+import { holderLabel } from "../modules/production/handoff-view.js";
 
 export type HandOffMode = "write" | "look";
 export interface HandOffDeps extends OpenDeps { writer?: (override?: string | null) => WriterPick }
