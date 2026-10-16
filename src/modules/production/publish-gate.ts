@@ -10,7 +10,7 @@
 import path from "node:path";
 import type { Content } from "../../storage/local-store.js";
 import { contentRoot, safeProjectPath } from "../../storage/content-project.js";
-import { isOntologyActive, readProductionDocOrEmpty, scriptApprovalFor } from "../../storage/production-store.js";
+import { isOntologyActive, latestScriptDecision, readProductionDocOrEmpty, scriptApprovalFor } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc, Registration } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { cachedSha, commitSha, loadHashCache } from "./hash-cache.js";
@@ -51,13 +51,21 @@ export async function registeredPackage(content: Content, dataDir: string, opts:
   await loadHashCache(dataDir);
   const fresh = opts.fresh === true;
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
-  if (!scriptApprovalFor(doc, content.body)) return { ok: false, code: "not_approved", error: "这条的认稿已失效（正文改过或重开了），先认稿、剪辑、批准再发" };
+  if (!scriptApprovalFor(doc, content.body)) {
+    // 这一轮从没认过稿 vs 认过但撤了 / 正文改过 / 重开了：缺的东西不同，指路也不同
+    // 重开文稿的 reopen 记在上一轮、轮次随即 +1：本轮查不到决定，但上一轮重开过也算「认过、被重开」
+    return latestScriptDecision(doc) || doc.decisions.some((d) => d.type === "reopen" && d.round < doc.round)
+      ? { ok: false, code: "script_approval_stale", error: "认稿后正文改过或重开了，这版稿还没重新认：先认稿，再批成片和封面后发" }
+      : { ok: false, code: "script_not_approved", error: "这条还没认稿：先认稿，再批成片和封面后发" };
+  }
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);
   const reg = matchingRegistration(doc, content.body, cut, cover);
   if (!reg) {
     const newer = cut && cover;
+    const missing = [!cut ? "成片" : "", !cover ? "封面" : ""].filter(Boolean).join("和");
     return { ok: false, code: newer ? "registration_pending" : "no_registration",
-      error: newer ? `新版已批准，但登记还没完成：${doc.commit_failure?.round === doc.round ? doc.commit_failure.reason : srtFor(doc, cut!.sha256) ? "等登记提交" : "缺这版成片的字幕"}；不会用旧包发布` : "没有当前有效的登记：成片或封面批准变了、被撤了，或还没批——重新通过后自动登记" };
+      error: newer ? `新版已批准，但登记还没完成：${doc.commit_failure?.round === doc.round ? doc.commit_failure.reason : srtFor(doc, cut!.sha256) ? "等登记提交" : "缺这版成片的字幕"}；不会用旧包发布`
+        : `没有当前有效的登记：${missing}还没批（或批准变了、被撤了）——批准后自动登记` };
   }
   const root = contentRoot(content.id, dataDir);
   const video = await fileOf(root, accepted(doc, "cut", reg.cut_sha), "成片", fresh);

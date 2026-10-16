@@ -21,6 +21,7 @@ import { overdueSchedule, type Slot } from "./receipts.js";
 import { fileName, isStrayCover, KIND_NAME, measure, plainReason } from "./plain-reason.js";
 import { markedCuts } from "./ready.js";
 import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
+import { NON_OVERRIDABLE } from "../publish/review-gate/types.js";
 
 export type InboxType =
   | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
@@ -301,6 +302,9 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
   for (const c of input.checks) {
     if (live.has(c.platform)) continue;
     const blocked = c.verdict === "block";
+    // 只剩批准 / 登记这类不能例外的拦截时不给破例按钮：破例修不了，只会让人白写一段原话
+    // 按现在的规则判：旧检查留档里批准 / 登记类拦截还标着 overridable: true，不能据此给按钮
+    const overridable = (c.items as Array<{ result?: string; overridable?: boolean; rule?: string }>).some((x) => x.result === "block" && x.overridable === true && !NON_OVERRIDABLE.has(x.rule ?? ""));
     // 被拦的检查不给「没问题」主按钮，按钮位置写拦的原因（verifier 2a P2）
     const reasons = (c.items as Array<{ result?: string; basis?: string }>).filter((x) => x.result === "block").map((x) => x.basis ?? "").filter(Boolean).slice(0, 2);
     out.push({
@@ -308,7 +312,7 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
       actions: [
         ...(blocked ? [] : [{ action: "publish_check_confirm", label: "没问题", role: "primary" as const, params: { check_id: c.check_id } }]),
         { action: "publish_check_revise", label: "有几处要改…", role: "secondary", params: { check_id: c.check_id }, note: "required", placeholder: "比如：标题别用问号，话题加上 #AI工具" },
-        ...(blocked ? [{ action: "publish_check_override", label: "这条我破例…", role: "quiet" as const, params: { check_id: c.check_id }, note: "required" as const, placeholder: "写你的原话，比如：这次封面字小一点没关系" }] : []),
+        ...(blocked && overridable ? [{ action: "publish_check_override", label: "这条我破例…", role: "quiet" as const, params: { check_id: c.check_id }, note: "required" as const, placeholder: "写你的原话，比如：这次封面字小一点没关系" }] : []),
       ],
       ...(c.input && !c.input.same ? { blocked_reason: "计划刚改过，按新计划重新检查后再看" } : blocked ? { blocked_reason: `被拦了：${reasons.join("；") || "有规则没过"}` } : {}),
       detail: { check_id: c.check_id, platform: c.platform, verdict: c.verdict, items: c.items, plan_changed: c.input ? !c.input.same : false },

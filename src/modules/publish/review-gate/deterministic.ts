@@ -8,7 +8,7 @@ import { validatePublishText } from "../publish-limits.js";
 import type { Registration } from "../../../storage/production-types.js";
 import { fileFact, type FileFact } from "./files.js";
 import { resolveInProject, type PlanEntry } from "./plan.js";
-import { NON_OVERRIDABLE, type CheckItem, type Override } from "./types.js";
+import { APPROVAL_RULES, approvalFix, NON_OVERRIDABLE, type CheckItem, type Override } from "./types.js";
 
 /** 像素比例容差 1%（spec §5） */
 export const RATIO_TOLERANCE = 0.01;
@@ -16,7 +16,7 @@ const KNOWN_RATIOS = ["3:4", "4:3", "16:9", "9:16", "1:1", "2.35:1"];
 
 export type RegistrationState =
   | { kind: "ok"; registration: Registration; srt: string | null }
-  | { kind: "blocked"; error: string }
+  | { kind: "blocked"; code: string; error: string }
   | { kind: "none"; reason: string };
 
 export interface CoverFact { usage: string | null; declared: string | null; path: string; fact: FileFact; pixel_ratio: string | null; slot: string | null }
@@ -75,6 +75,12 @@ async function coverChecks(input: DetInput, items: CheckItem[]): Promise<CoverFa
   return covers;
 }
 
+/** registeredPackage 的阻止码 → 规则名（都不能例外） */
+const BLOCKED_RULE: Record<string, string> = {
+  script_not_approved: "approval_missing", script_approval_stale: "approval_missing",
+  no_registration: "registration_missing", registration_pending: "registration_pending", registered_file_changed: "registered_file_changed",
+};
+
 function registeredChecks(input: DetInput, covers: CoverFact[], video: FileFact | null, items: CheckItem[]): void {
   const reg = input.registration;
   if (reg.kind === "none") {
@@ -82,20 +88,22 @@ function registeredChecks(input: DetInput, covers: CoverFact[], video: FileFact 
     return;
   }
   if (reg.kind === "blocked") {
-    items.push(block("登记成片", "cut_registered", reg.error, "video"));
-    items.push(block("登记封面", "cover_registered", reg.error, "covers"));
+    const rule = BLOCKED_RULE[reg.code] ?? "registration_missing";
+    const basis = `${reg.error}。${approvalFix(rule)}`;
+    items.push(block("登记成片", rule, basis, "video"));
+    items.push(block("登记封面", rule, basis, "covers"));
     return;
   }
   const r = reg.registration;
   if (video?.ok) items.push(video.sha256 === r.cut_sha
     ? { check: "登记成片", result: "pass", basis: `成片字节与登记记录 ${r.id} 一致` }
-    : block("登记成片", "cut_registered", `成片不是当前登记记录 ${r.id} 里的成片（字节指纹对不上）`, "video", video.abs));
+    : block("登记成片", "cut_registered", `成片不是当前登记记录 ${r.id} 里的成片（字节指纹对不上）：${approvalFix("cut_registered")}`, "video", video.abs));
   const bySlot: Record<string, string | undefined> = { "3:4": r.cover_3x4_sha, "4:3": r.cover_4x3_sha };
   for (const c of covers.filter((x) => x.fact.ok)) {
     const want = c.pixel_ratio ? bySlot[c.pixel_ratio] : undefined;
     items.push(want && c.fact.sha256 === want
       ? { check: "登记封面", result: "pass", basis: `${c.path} 是登记记录 ${r.id} 选定的 ${c.pixel_ratio} 封面`, field: "covers" }
-      : block("登记封面", "cover_registered", `${c.path} 不是当前登记记录 ${r.id} 里选定的那一对（按字节指纹）`, "covers", c.path));
+      : block("登记封面", "cover_registered", `${c.path} 不是当前登记记录 ${r.id} 里选定的那一对（按字节指纹）：${approvalFix("cover_registered")}`, "covers", c.path));
   }
 }
 
@@ -160,6 +168,10 @@ export async function deterministicChecks(input: DetInput): Promise<DetOutput> {
 const RULE_FAMILY: Record<string, string> = { cover_ratio: "cover_slots", cover_extra_ratio: "cover_slots" };
 export const sameRuleFamily = (a: string, b: string) => a === b || (RULE_FAMILY[a] !== undefined && RULE_FAMILY[a] === RULE_FAMILY[b]);
 
+const lockedNote = (rule: string) => APPROVAL_RULES.has(rule)
+  ? `「${rule}」是批准 / 登记的问题，破例修不了：${approvalFix(rule)}`
+  : `「${rule}」是没法发的问题（文件缺失 / 计划形状不对），不能例外`;
+
 export function applyOverrides(platform: string, items: CheckItem[], overrides: Override[]): CheckItem[] {
   const mine = overrides.filter((o) => o.platform === platform);
   const used = new Set<Override>();
@@ -171,8 +183,8 @@ export function applyOverrides(platform: string, items: CheckItem[], overrides: 
     return { ...i, result: "override" as const, override_quote: o.founder_quote };
   });
   for (const o of mine.filter((x) => !used.has(x))) {
-    const locked = items.some((i) => sameRuleFamily(o.rule, i.rule ?? "") && i.result === "block" && !i.overridable);
-    out.push({ check: "例外", result: "warn", rule: o.rule, basis: locked ? `「${o.rule}」是没法发的问题（文件缺失 / 计划形状不对），不能例外` : `例外「${o.rule}」没对上本平台任何拦截`, override_quote: o.founder_quote });
+    const locked = APPROVAL_RULES.has(o.rule) || items.some((i) => sameRuleFamily(o.rule, i.rule ?? "") && i.result === "block" && !i.overridable);
+    out.push({ check: "例外", result: "warn", rule: o.rule, basis: locked ? lockedNote(o.rule) : `例外「${o.rule}」没对上本平台任何拦截`, override_quote: o.founder_quote });
   }
   return out;
 }

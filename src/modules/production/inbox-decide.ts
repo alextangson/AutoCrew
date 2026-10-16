@@ -19,7 +19,7 @@ import { checkFilesUnsettled, checkInputsNow, executePublishCheck, rerunMatchesO
 import { checksDir } from "../publish/review-gate/check-store.js";
 import { readCheckRecord } from "../publish/review-gate/check-store.js";
 import type { JevCaller } from "../publish/review-gate/jev-client.js";
-import type { Override } from "../publish/review-gate/types.js";
+import { NON_OVERRIDABLE, type Override } from "../publish/review-gate/types.js";
 import { founderAnswer, undoReportedAnswer } from "./asks.js";
 import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js";
 import { scopedId, type InboxAction, type InboxItem } from "./inbox.js";
@@ -88,7 +88,7 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
   const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; input_at?: string; checked_at?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
     inputs?: { plan_source?: string; plan_snapshot?: unknown; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
   if (!rec) return fail("stale", "这次检查的留档不见了，刷新再看");
-  const rules = [...new Set((rec.items ?? []).filter((i) => i.result === "block" && i.overridable && i.rule).map((i) => i.rule!))];
+  const rules = [...new Set((rec.items ?? []).filter((i) => i.result === "block" && i.overridable && i.rule && !NON_OVERRIDABLE.has(i.rule)).map((i) => i.rule!))];
   if (!rules.length) return fail("not_overridable", "这次检查没有能破例的拦截项：只能改计划后重跑");
   const founderOverrides = rules.map((rule) => ({ platform: rec.platform!, rule, founder_quote: quote }));
   const inputs = rec.inputs ?? {};

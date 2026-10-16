@@ -75,7 +75,7 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
   // Unmanaged content (wechat_mp_draft via article_path) has no checklist to run
   const contentId = params.content_id as string | undefined;
   if (!contentId) return next();
-  // 启用本体的稿出包：旧预检照跑（内容审核 / 标签 / 标题 / 字数 / 平台 / 登记出口 / 阶段门），只把旧封面审核换成登记 + 发布前把关
+  // 启用本体的稿出包：旧预检照跑内容审核 / 平台 / 登记出口 / 阶段门；封面、标题、标签、字数交给登记 + 发布计划检查（不重复拦）
   const ontologyGated = params.action === "ego_lite_prepare" && (await isOntologyActive(ctx.dataDir, contentId));
 
   try {

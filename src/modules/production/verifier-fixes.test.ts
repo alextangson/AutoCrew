@@ -16,6 +16,8 @@ import { reconcileContent } from "./reconcile.js";
 import { registeredVideo } from "../publish/review-gate/testkit.js";
 import { makeEnv, png, put, videoContent, type Env } from "./testkit.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
+import { saveContent } from "../../storage/local-store.js";
+import { executePrePublish } from "../../tools/pre-publish.js";
 
 const enable = () => writeEnabledVersion(env.dir);
 
@@ -177,17 +179,24 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
 });
 
 describe("seg9", () => {
-  it("[P2 tool-runner] 启用后出包：旧预检里闸门没覆盖的项照拦（无标签、字数），只有旧封面审核跳过", async () => {
+  it("[P2 tool-runner] 启用后出包：标题 / 标签 / 字数 / 封面交给发布计划检查，旧预检不再按稿件拦；出包仍要有效检查", async () => {
     await enable();
     const r = await registeredVideo(env);
     const runner = new ToolRunner({ ctx: createContext({ data_dir: env.dir }), eventBus: new EventBus() });
     runner.register({ name: "autocrew_publish", label: "publish", description: "", parameters: publishSchema, execute: executePublish });
-    const res = await runner.execute("autocrew_publish", { action: "ego_lite_prepare", content_id: r.id, check_ids: ["chk-x"], _host: "claude-code" }) as { ok: boolean; checks?: Array<{ name: string; status: string }> };
+    const res = await runner.execute("autocrew_publish", { action: "ego_lite_prepare", content_id: r.id, check_ids: ["chk-x"], _host: "claude-code" }) as { ok: boolean; error?: string; code?: string };
     expect(res.ok).toBe(false);
-    const by = Object.fromEntries((res.checks ?? []).map((c) => [c.name, c.status]));
-    expect(by["Hashtags"]).toBe("fail");
-    expect(by["封面审核"]).toBe("skip");
+    expect(res.error).not.toBe("pre_publish_check_failed");
     expect(JSON.stringify(res)).not.toContain("force");
+    const direct = await executePrePublish({ action: "check", content_id: r.id, _dataDir: env.dir, _ontologyGated: true, _readOnly: true }) as { checks: Array<{ name: string; status: string }> };
+    const by = Object.fromEntries(direct.checks.map((c) => [c.name, c.status]));
+    expect(by).toMatchObject({ Hashtags: "skip", 标题规范: "skip", 正文字数: "skip", 封面审核: "skip" });
+    expect(by["内容审核"]).toBeDefined();
+    expect(by["登记（发布出口）"]).toBe("pass");
+    // 模型自带 _ontologyGated、但这条不按本体走（非视频稿）：照旧按稿件拦
+    const mp = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, env.dir);
+    const legacy = await executePrePublish({ action: "check", content_id: mp.id, _dataDir: env.dir, _ontologyGated: true, _readOnly: true }) as { checks: Array<{ name: string; status: string; detail: string }> };
+    expect(legacy.checks.some((c) => c.detail.includes("按发布计划"))).toBe(false);
   });
 
   it("[P2 receipts] 历史纠正存的是中文平台名槽（slot:1:视频号）：归一后照样作废那条回执", async () => {

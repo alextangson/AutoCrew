@@ -71,15 +71,15 @@ describe("seg6 P1", () => {
     expect(out.data!.packages[0].covers[0].path).toBe(copy);
   });
 
-  it("[P1 ego-lite.ts:168] 检查的是另一版成片（原话例外）：发布包拒绝，不静默换回登记成片", async () => {
+  it("[P1 ego-lite.ts:168] 检查的是另一版成片（原话例外）：check 就拦（换片不能破例），发布包拒绝", async () => {
     const r = await registeredVideo(env);
     await put(path.join(r.root, "07-delivery/other.mp4"), "other-cut");
     const q = "这次发另一版，我认";
     await writePlan(r, [douyin(r)], { final_video: { path: "07-delivery/other.mp4" } });
     const { by } = await check(r, { founder_quotes: [q], overrides: [{ platform: "douyin", rule: "cut_registered", founder_quote: q }] });
-    expect(by.douyin.verdict).toBe("override");
+    expect(by.douyin.verdict).toBe("block");
     const out = await prepare(r, { check_ids: [by.douyin.check_id] });
-    expect(out).toMatchObject({ ok: false, refused: [{ code: "video_not_checked" }] });
+    expect(out).toMatchObject({ ok: false, refused: [{ code: "check_blocked" }] });
   });
 
   it("[P1 publish.ts:156] 启用前旧调用方照旧单包出；启用后必须带 check_ids", async () => {

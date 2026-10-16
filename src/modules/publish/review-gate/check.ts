@@ -27,7 +27,7 @@ import { runSemantic, type CallRecord } from "./semantic-run.js";
 import { loadBasis, type Basis } from "./subtitles.js";
 import { newCheckId, readCheckRecord, writeCheckRecord } from "./check-store.js";
 import { summaryMarkdown, summaryRows } from "./summary.js";
-import { platformVerdict, type CheckItem, type Override, type SummaryRow, type Verdict } from "./types.js";
+import { APPROVAL_RULES, approvalFix, platformVerdict, type CheckItem, type Override, type SummaryRow, type Verdict } from "./types.js";
 
 /**
  * overrideSource：创始人在「等你拍板」里亲手写的破例（review-inbox §7-6）→ 重跑出新的检查，
@@ -59,7 +59,7 @@ type Fail = { ok: false; code: string; error: string };
 async function registrationState(content: Content, dataDir: string, fresh: boolean): Promise<RegistrationState> {
   const g = await registeredPackage(content, dataDir, { fresh });
   if (!g) return { kind: "none", reason: "这条没按内容本体登记（旧流程或非视频稿），没有登记记录可比" };
-  if (!g.ok) return { kind: "blocked", error: g.error };
+  if (!g.ok) return { kind: "blocked", code: g.code, error: g.error };
   return { kind: "ok", registration: g.files.registration, srt: g.files.srt };
 }
 
@@ -208,6 +208,8 @@ export interface CheckedPlatform {
   overrides: Override[];
   /** 检查过的成片（绝对路径）：出包时必须就是它 */
   video_path: string | null;
+  /** 检查过的成片字节指纹：出包时和登记成片比字节，不比路径 */
+  video_sha256: string | null;
 }
 
 type Rec = Record<string, unknown> & { platform?: string; verdict?: Verdict; payload_hash?: string; fingerprint?: string; checked_at?: string; covers?: CheckedPlatform["covers"];
@@ -244,7 +246,7 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
   if (platformVerdict(now.detItems) === "block") return { ok: false, code: "check_blocked", error: `${who}按现在的计划重判被拦了（${checkId}）：重跑 check 看原因` };
   // 返回的封面就是这次重新核过的文件（路径 + 字节），不是留档里当时的路径
   const covers = coverRows(now.det.covers) as CheckedPlatform["covers"];
-  return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null } };
+  return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null, video_sha256: now.det.video?.ok ? now.det.video.sha256 ?? null : null } };
 }
 
 /**
@@ -317,6 +319,18 @@ function blockedDetail(results: PlatformResult[], planBlocked: boolean): string 
   return [...parts, ...(planBlocked ? ["计划本身：形状问题（不能例外）"] : [])].join("；");
 }
 
+/** 被拦时的下一步：还有能例外的拦截才提破例；全是批准 / 登记 / 文件类的，直接指去修 */
+function blockedNext(results: PlatformResult[], planBlocked: boolean): string {
+  const blocks = results.filter((r) => r.verdict === "block").flatMap((r) => r.items.filter((i) => i.result === "block"));
+  const head = `被拦的平台不得提交（${blockedDetail(results, planBlocked)}）`;
+  const fixes = [...new Set(blocks.filter((i) => i.rule && APPROVAL_RULES.has(i.rule)).map((i) => approvalFix(i.rule!)))];
+  const fixText = fixes.length ? `批准 / 登记类拦截不能破例：${fixes.join("；")}` : "";
+  if (blocks.some((i) => i.overridable)) {
+    return `${head}：改计划后重跑 check；创始人明确要破例时，对还拦着的可例外规则带 overrides[{platform, rule, founder_quote}] 重跑（没法例外的只能改计划）${fixText ? `；${fixText}` : ""}`;
+  }
+  return `${head}：这些都不能例外。${fixText || "改计划后重跑 check"}`;
+}
+
 /**
  * 发布计划里某平台条目（实际提交的那份）的 payload 哈希：发布回执据此认「检查的就是发出去的这份」（闸门 §11，创始人 09-29）。
  * 计划读不到 / 没这个平台 → null（= 没法证明检查过发出去的内容）。
@@ -353,8 +367,6 @@ export async function executePublishCheck(params: Record<string, unknown>, deps:
     summary_table: summaryMarkdown(rows), summary_rows: rows,
     semantic: failed.length ? { status: "not_run", reasons: failed } : { status: "ok" },
     blocked_platforms: blocked,
-    next_action: blocked.length
-      ? `被拦的平台不得提交（${blockedDetail(results, planProblems.length > 0)}）：改计划后重跑 check；创始人明确要破例时，对还拦着的规则带 overrides[{platform, rule, founder_quote}] 重跑（没法例外的只能改计划）`
-      : "把 summary_table 原样贴进给创始人的一次确认汇总；计划改了就重跑 check；最终点击前逐字段读回页面与发布包比对",
+    next_action: blocked.length ? blockedNext(results, planProblems.length > 0) : "把 summary_table 原样贴进给创始人的一次确认汇总；计划改了就重跑 check；最终点击前逐字段读回页面与发布包比对",
   };
 }

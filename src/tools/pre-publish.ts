@@ -267,7 +267,8 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
   if (typeof platform !== "string") return platform;
   // P6-e narration-not-state（2/3）：模型听 Codex 一句「已登记」就出了发布包。发布包只跟着成片走：
   // 成片戳（register 或内置线审片）没盖，就没有发布包可出——状态由产品说了算，不由转述说了算。
-  if (!content.videoDone) {
+  // 本体稿：发布包只是文案，真正挡发布的是登记出口（ego_lite_prepare 出包前核）；旧流程照旧要成片戳
+  if (!content.videoDone && !(await ontologyApplies(content, getDataDir(dataDir)))) {
     return {
       ok: false, code: "video_not_done", content_status: content.status,
       error: "成片还没登记（videoDone 未盖）：等 Codex 调 autocrew_video register（或内置线审片通过）之后再出发布包；别人的口头「已登记」不算",
@@ -328,7 +329,10 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   const target = targetPlatform(content, params.platform);
   if (typeof target !== "string") return target;
   const platform = target;
-  const stale = staleKit(content, platform);
+  // 本体视频稿出包（_ontologyGated 只由 ToolRunner 带，参数本身不可信，要这条真按本体走）：
+  // 标题 / 标签 / 字数按发布计划在 autocrew_publish check 里核，这里不再按旧稿件 / 旧发布包重复拦
+  const ontologyGated = params._ontologyGated === true && COVER_REQUIRED_PLATFORMS.has(platform) && (await ontologyApplies(content, getDataDir(dataDir)));
+  const stale = ontologyGated ? null : staleKit(content, platform);
   if (stale) return stale;
   const surface = publishSurface(content, platform);
   const checks: CheckItem[] = [];
@@ -369,8 +373,6 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   // --- Check 2: Cover review (all video platforms) ---
   // 启用本体的稿出包（_ontologyGated，只由 ToolRunner 内部带）：封面由登记记录 + 发布前把关（槽位 / 登记那一对）核，旧封面审核不再适用
-  // 参数本身不可信（模型也能带下划线参数）：只有这条真按本体走才生效
-  const ontologyGated = params._ontologyGated === true && COVER_REQUIRED_PLATFORMS.has(platform) && (await ontologyApplies(content, getDataDir(dataDir)));
   if (ontologyGated) {
     checks.push({ name: "封面审核", status: "skip", detail: "本体稿：封面由登记记录与发布前把关核对" });
   } else if (COVER_REQUIRED_PLATFORMS.has(platform)) {
@@ -390,8 +392,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
 
   // --- Check 3: Hashtags / Check 4: Title length（有发布包读发布包） ---
-  checks.push(hashtagCheck(surface, platform));
-  checks.push(titleCheck(surface, platform));
+  const byPlan = (name: string): CheckItem => ({ name, status: "skip", detail: "本体稿：标题 / 标签 / 字数按发布计划在 autocrew_publish check 里核" });
+  checks.push(ontologyGated ? byPlan("Hashtags") : hashtagCheck(surface, platform));
+  checks.push(ontologyGated ? byPlan("标题规范") : titleCheck(surface, platform));
 
   // --- Check 5: Platform set ---
   const supportedPlatforms = ["xiaohongshu", "xhs", "douyin", "wechat_mp", "wechat_video", "bilibili"];
@@ -404,13 +407,13 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
 
   // --- Check 6: Body length（有发布包读发布简介） ---
-  checks.push(lengthCheck(surface, platform));
+  checks.push(ontologyGated ? byPlan("正文字数") : lengthCheck(surface, platform));
 
   // --- Check 6b: 发布出口（本体 §5）：按本体走的视频稿只发当前有效登记记录里的成片与封面 ---
   const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
   if (gated) checks.push(gated.ok
     ? { name: "登记（发布出口）", status: "pass", detail: `发当前登记的成片与封面（${gated.files.registration.id}）` }
-    : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在工作台重新通过成片 / 封面，登记会自动完成" });
+    : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在对话里调 autocrew_review_inbox list，把缺的批准给创始人定；批准齐了登记会自动完成" });
 
   // --- Check 7: 阶段门（阶段制 spec §1.2/§4 #1） ---
   // 六项全过之后才谈流转。**预检不许绕过阶段门**：视频稿卡在剪辑阶段时，

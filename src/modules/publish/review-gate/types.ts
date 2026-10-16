@@ -41,8 +41,20 @@ export interface SummaryRow {
   其他提醒: string;
 }
 
+/** 批准 / 登记 / 文件身份类规则：例外修不了，只能去批准、重试登记或重新通过（发布链路诊断 2026-10-15） */
+export const APPROVAL_RULES = new Set(["approval_missing", "registration_missing", "registration_pending", "registered_file_changed", "cut_registered", "cover_registered"]);
+
 /** 不能被例外的规则（spec §7：没法发） */
-export const NON_OVERRIDABLE = new Set(["plan_shape", "file_missing"]);
+export const NON_OVERRIDABLE = new Set(["plan_shape", "file_missing", ...APPROVAL_RULES]);
+
+/** 一条批准 / 登记类拦截该去哪儿修（basis 与「不能例外」提醒共用） */
+export function approvalFix(rule: string): string {
+  if (rule === "approval_missing" || rule === "registration_missing") return "在对话里调 autocrew_review_inbox list，把缺的那项给创始人定（稿子还在写稿中时 list 里没有认稿，要先交审）";
+  if (rule === "registration_pending") return "批准都在、登记还没提交：按上面的原因补齐（缺字幕就补报这版字幕），登记会跟着提交，不是破例";
+  if (rule === "registered_file_changed") return "登记的文件被换过：重新通过这一版";
+  if (rule === "cover_registered") return "要换封面就重新选封面（cover_pick），不能破例";
+  return "计划指向登记的那份成片后重跑 check，要换片就重新通过这一版";
+}
 
 export function platformVerdict(items: CheckItem[]): Verdict {
   if (items.some((i) => i.result === "block")) return "block";

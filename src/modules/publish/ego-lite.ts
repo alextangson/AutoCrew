@@ -81,11 +81,12 @@ async function legacyCoverPath(contentId: string, root: string): Promise<string>
 }
 
 /** 按本体走的稿：只取当前有效登记记录里的成片与 3:4 封面，发前核批准与字节（§5） */
-async function publishFiles(content: Content, root: string): Promise<{ videoPath: string; coverPath: string }> {
+/** cutSha：本体稿登记成片的字节指纹（旧流程没有登记，为 null） */
+async function publishFiles(content: Content, root: string): Promise<{ videoPath: string; coverPath: string; cutSha: string | null }> {
   const gated = await registeredPackage(content, root, { fresh: true });
   if (gated && !gated.ok) throw new Error(gated.error);
-  if (gated?.ok) return { videoPath: gated.files.video, coverPath: gated.files.cover34 };
-  return { videoPath: await legacyVideoPath(content, root), coverPath: await legacyCoverPath(content.id, root) };
+  if (gated?.ok) return { videoPath: gated.files.video, coverPath: gated.files.cover34, cutSha: gated.files.registration.cut_sha ?? null };
+  return { videoPath: await legacyVideoPath(content, root), coverPath: await legacyCoverPath(content.id, root), cutSha: null };
 }
 
 /**
@@ -168,10 +169,12 @@ export async function prepareCheckedPublish(contentId: string, checkIds: string[
 }
 
 /** 出包前最后几道：平台支持、成片就是检查过的那一版、排期只能取检查过的计划（要改就改计划重跑 check） */
-function checkedRefusal(c: CheckedPlatform, video: { videoPath: string } | Error, schedule?: string): { code: string; error: string } | null {
+function checkedRefusal(c: CheckedPlatform, video: { videoPath: string; cutSha: string | null } | Error, schedule?: string): { code: string; error: string } | null {
   if (!isEgoLitePlatform(c.platform)) return { code: "platform_unsupported", error: `ego lite 视频发布不支持 ${c.platform}` };
   if (video instanceof Error) return { code: "video_unavailable", error: video.message };
-  if (!c.video_path || path.resolve(c.video_path) !== path.resolve(video.videoPath)) {
+  // 有登记：按字节认（同字节的副本也算检查过登记成片，包里仍用登记路径）；旧流程没登记，照旧按路径认
+  const same = video.cutSha ? c.video_sha256 === video.cutSha : Boolean(c.video_path) && path.resolve(c.video_path!) === path.resolve(video.videoPath);
+  if (!same) {
     return { code: "video_not_checked", error: `${c.platform} 检查的成片（${c.video_path ?? "无"}）不是登记出口的成片（${video.videoPath}）：发布包不能换片，改计划指向登记成片后重跑 check` };
   }
   const s = schedule?.trim();
