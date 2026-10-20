@@ -60,5 +60,5 @@ python3 /Users/jiaxintang/.codex/skills/publish-content/scripts/preflight.py /�
 - 已核对且未变的字段不反复抓整页。截图留给封面裁切、无语义控件和结果证据。
 - 简单模型执行已确定发布包；内容修改、陌生页面结构、未知提交结果进入异常处理，不自行猜测。
 - 保留 published、submitted、reviewing、scheduled 的区别；AutoCrew 登记结果单独记录。
-- check 与旧打包入口冲突时，不反复调用或伪造注册。沿用用户已授权的例外范围；未覆盖的阻碍按发布契约处理。
+- 批准 / 登记类拦截（approval_missing、registration_missing、registration_pending、registered_file_changed、cut_registered、cover_registered）不能破例，也不要向用户提「登记例外」：缺批准就调 `autocrew_review_inbox list` 请用户在对话里定，登记没提交按 check 给的原因补齐，封面不是登记那对就重新选封面。不伪造注册。
 - 完成后按 ego Skill 收尾。审核等待或系统登记缺陷不等于发布失败，准确报告剩余项。

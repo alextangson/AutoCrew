@@ -51,6 +51,6 @@ B站标签位于编辑器外，不用 readEditor 的 topicSelector；单独读�
 
 ## 已确认的产品缺口（2026-10-15）
 
-1. AutoCrew check 接受登记例外，但 video_kit/ego_lite_prepare 仍读旧稿状态。需在产品端统一检查来源；本 Skill 不绕过未授权 gate。
+1. 登记例外已取消（产品端修复，AutoCrew 更新后生效）：批准 / 登记类拦截在 check 和出包两处都不能破例。被拦就去补批准，不再向用户要「登记例外」；本 Skill 不绕过 gate。
 2. 视频号分享短链 weixin.qq.com/sph/... 已来自原生分享菜单，但 record 判 verified=false。需产品端识别域名与证据，不能仅凭接受一个 URL 就宣称公开可播放。
 3. 示例字段与实际发布记录存在 post_id/item_id、public_url/url 差异。产品修复前保留原字段，不迁移已有数据。

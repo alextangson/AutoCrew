@@ -69,6 +69,9 @@
    - 返回的 `summary_table` **原样**贴进下面的一次确认汇总，不改写、不删行；
    - verdict=block 的平台不得提交：改计划后重跑。创始人明确要破例时，带
      `overrides[{platform, rule, founder_quote}]`（rule 取被拦项的 rule 名，原话逐字）重跑，汇总里会显示「按你原话例外」；
+     批准 / 登记类拦截（`approval_missing` / `registration_missing` / `registration_pending` / `registered_file_changed` /
+     `cut_registered` / `cover_registered`）不能破例：缺批准就调 `autocrew_review_inbox list`，让创始人在对话里定；
+     登记没提交就按 check 给的原因补齐；封面不是登记的那一对就重新选封面。只有可例外的规则才能提成破例；
    - 计划任何字段改了（标题、文案、封面、排期、账号、平台）都要重跑 check；
    - 语义检查「没跑成」不挡发布，但要在汇总里照实说；
    - 创始人说了新的长期偏好（如「小红书以后横竖都传」「B站标题别带表情」），用
