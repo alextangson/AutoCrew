@@ -71,7 +71,7 @@ describe("D activities reports platforms with no entries (via MCP)", () => {
   it("skill text routes empty platforms, rechecks and founder-named misses to the full chain", async () => {
     const t = await fs.readFile(path.resolve(__dirname, "../../../skills/publish-content/references/campaigns-and-followup.md"), "utf8");
     for (const s of ["empty_platforms", "完整核查：去哪查", "activity-list.html", "抖音科技", "升级为把这个活动完整重读"]) expect(t).toContain(s);
-    expect(await fs.readFile(path.resolve(__dirname, "../../../skills/publish-content/SKILL.md"), "utf8")).toContain("没看新活动：原因");
+    expect(await fs.readFile(path.resolve(__dirname, "../../../skills/publish-content/references/publishing-contract.md"), "utf8")).toContain("没看新活动：原因");
   });
 });
 

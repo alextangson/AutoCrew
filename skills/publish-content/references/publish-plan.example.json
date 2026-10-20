@@ -22,7 +22,11 @@
       "tags": [],
       "cover_text": null,
       "covers": [
-        { "usage": "竖版封面（上传槽 3:4）", "ratio": "3:4", "path": null }
+        {
+          "usage": "竖版封面（上传槽 3:4）",
+          "ratio": "3:4",
+          "path": null
+        }
       ],
       "scheduled_at": null,
       "timezone": "Asia/Shanghai",
@@ -37,52 +41,19 @@
         "post_id": null,
         "public_url": null,
         "published_at": null,
-        "evidence_path": null
+        "evidence_path": null,
+        "submitted_at": null
       },
-      "campaigns": [
-        {
-          "id": "xiaohongshu-who-ai-work-2026",
-          "ledger_key": "xiaohongshu:谁ai上班",
-          "selected": false,
-          "official_url": "https://fe.xiaohongshu.com/ditto/vincent/c7df19c3fdb34f9e86f562d767221784?naviHidden=yes&fullscreen=true&source=shequn",
-          "checked_at": null,
-          "rules_path": null,
-          "fit_reason": null,
-          "start_date": "2026-09-04",
-          "end_date": "2026-10-15",
-          "deadline_at": null,
-          "required_main_topic": "谁AI上班",
-          "selected_subtopic": null,
-          "required_mentions": [],
-          "association": {
-            "status": "not_checked",
-            "evidence_path": null
-          },
-          "form_ids": [
-            "ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef"
-          ],
-          "selected_subtopic_reason": null
-        }
-      ],
-      "form_submissions": [
-        {
-          "form_id": "ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef",
-          "url": "https://doc.weixin.qq.com/forms/ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef?page=1",
-          "status": "not_prepared",
-          "authorized": false,
-          "fields_verified_at": null,
-          "field_values_with_sources": [],
-          "deadline_at": null,
-          "dedupe_key": null,
-          "attempt_started_at": null,
-          "submitted_at": null,
-          "receipt_id": null,
-          "evidence_path": null,
-          "official_support_status": "not_applied"
-        }
-      ],
+      "campaigns": [],
+      "form_submissions": [],
       "account_display_name": "哈姆雷鹿",
-      "account_identity_verified_at": null
+      "account_identity_verified_at": null,
+      "publish_mode": null,
+      "check_id": null,
+      "declarations": {
+        "ai_content": null,
+        "commercial_content": null
+      }
     }
   ],
   "browser": {
