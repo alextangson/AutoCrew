@@ -42,6 +42,7 @@
       "campaigns": [
         {
           "id": "xiaohongshu-who-ai-work-2026",
+          "ledger_key": "xiaohongshu:谁ai上班",
           "selected": false,
           "official_url": "https://fe.xiaohongshu.com/ditto/vincent/c7df19c3fdb34f9e86f562d767221784?naviHidden=yes&fullscreen=true&source=shequn",
           "checked_at": null,

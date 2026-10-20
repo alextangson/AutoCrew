@@ -1851,7 +1851,9 @@
        "confirm_published",
        "digest",
        "check",
-       "propose_preference"
+       "propose_preference",
+       "activities",
+       "activity_record"
       ],
       "type": "string"
      },
@@ -4866,7 +4868,9 @@
        "confirm_published",
        "digest",
        "check",
-       "propose_preference"
+       "propose_preference",
+       "activities",
+       "activity_record"
       ],
       "type": "string"
      },

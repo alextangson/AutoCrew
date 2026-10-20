@@ -24,12 +24,13 @@ import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js
 import { prepareCheckedPublish, prepareEgoLitePublish } from "../modules/publish/ego-lite.js";
 import { executePublishCheck, type CheckDeps } from "../modules/publish/review-gate/check.js";
 import { proposePreference } from "../modules/publish/review-gate/preferences.js";
+import { executeActivityLedger } from "../modules/publish/activity-ledger-action.js";
 
 export const publishSchema = Type.Object({
-  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "ego_lite_prepare" | "confirm_published" | "digest" | "check" | "propose_preference">({
+  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "ego_lite_prepare" | "confirm_published" | "digest" | "check" | "propose_preference" | "activities" | "activity_record">({
     type: "string",
-    enum: ["wechat_mp_draft", "clipboard", "ego_lite_prepare", "confirm_published", "digest", "check", "propose_preference"],
-    description: "Publish action. 'check' reviews a video publish plan per platform before the one-time founder confirmation (deterministic cover/cut/text rules + TypeSafe semantic warnings); paste its summary_table verbatim and never submit a blocked platform. 'propose_preference' proposes a new cover-ratio or publish rule the founder confirms in the workbench. 'ego_lite_prepare' resolves a browser upload package for 视频号/小红书/抖音/Bilibili without clicking Publish; 'wechat_mp_draft' for WeChat MP; 'clipboard' for copy-paste; 'confirm_published' marks a live result; 'digest' generates/saves a ≤20-char WeChat 摘要.",
+    enum: ["wechat_mp_draft", "clipboard", "ego_lite_prepare", "confirm_published", "digest", "check", "propose_preference", "activities", "activity_record"],
+    description: "Publish action. 'activities' reads the platform activity ledger (活动台账; optional platform filter) with computed freshness: fresh = only re-check key fields on the detail page, recheck = full re-verification, not_open = submission window not open yet (listed with opens_at; usable only if the scheduled time falls after it), expired = not a candidate; not_for_us rows come last with their reason. 'activity_record' merges one verified activity into the ledger (pass it as `value`; only changed fields needed) and returns the rule-field changes vs the previous version plus how many other scheduled videos use it. 'check' reviews a video publish plan per platform before the one-time founder confirmation (deterministic cover/cut/text rules + TypeSafe semantic warnings); paste its summary_table verbatim and never submit a blocked platform. 'propose_preference' proposes a new cover-ratio or publish rule the founder confirms in the workbench. 'ego_lite_prepare' resolves a browser upload package for 视频号/小红书/抖音/Bilibili without clicking Publish; 'wechat_mp_draft' for WeChat MP; 'clipboard' for copy-paste; 'confirm_published' marks a live result; 'digest' generates/saves a ≤20-char WeChat 摘要.",
   }),
   article_path: Type.Optional(Type.String({ description: "Absolute or relative path to the markdown article file." })),
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id. If provided, draft.md will be used." })),
@@ -56,7 +57,7 @@ export const publishSchema = Type.Object({
   overrides: Type.Optional(Type.Unknown({ description: "For 'check': [{platform, rule, founder_quote}] — only when the founder explicitly asked to break a blocked rule (rule = the blocked item's rule name, founder_quote verbatim); shown verbatim in summary_table." })),
   kind: Type.Optional(Type.String({ description: "For 'propose_preference': cover_ratio (platform + ratio list) or rule (free-text publish rule)." })),
   platform: Type.Optional(Type.String({ description: "For 'propose_preference': platform the preference applies to (required for cover_ratio). For 'confirm_published' on video drafts: required — which platform it went out on (one content_id serves all four video platforms). For 'clipboard': which video platform's kit to copy." })),
-  value: Type.Optional(Type.Unknown({ description: "For 'propose_preference': ratio list like [\"3:4\",\"4:3\"] for cover_ratio, or the rule text for rule." })),
+  value: Type.Optional(Type.Unknown({ description: "For 'propose_preference': ratio list like [\"3:4\",\"4:3\"] for cover_ratio, or the rule text for rule. For 'activity_record': the activity object, merged onto the existing record by key (omitted fields keep their value, null clears). Every write needs verified_at + sources[]; creating also needs platform, name, official_url; updating can pass key instead. Optional: platform_activity_id, window{start,end,timezone,raw}, rules{...}, form{url,deadline}, relevance fits_us|not_for_us, reason (required for not_for_us), verified_via, evidence[], founder_quote (required to flip not_for_us back to fits_us)}. Unknown rule values = 「未知」, absent = 「未要求」; never invent a 23:59 end time." })),
   founder_quote: Type.Optional(Type.String({ description: "For 'propose_preference': the founder's exact words behind this preference." })),
 });
 
@@ -130,6 +131,9 @@ export async function executePublish(
       ? { ok: true, proposal: r.proposal, duplicate: r.duplicate, note: "已记为待确认提议：创始人在工作台顶部点「确认」才生效；在那之前 check 仍按现行规则判" }
       : r;
   }
+
+  // --- 活动台账（spec 2026-10-20）：只读写台账文件，不碰稿件 ---
+  if (action === "activities" || action === "activity_record") return executeActivityLedger(action, params, dataDir);
 
   // --- clipboard: format content for manual copy-paste publishing ---
   if (action === "clipboard") {

@@ -27,7 +27,7 @@ export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_editorial: "编辑档案与改稿反馈。profile 读档案；update_profile 改档案（需确认）；inspect 读稿与 draft_hash；feedback 记改稿要求并领改稿包。",
   autocrew_insights: "账号洞察。prepare 备料（内容、定位、回流数据）；submit 保存宿主写的报告；list / get 查看历史报告。meeting_* 选题会。calib_* 判断要对账（预测、复盘、升级）。work_bind / work_claim / history_create / history_delete 作品归属（创始人确认后调）。",
   autocrew_cover_review: "封面。按 action 生成、查看、批准或修改封面；批准前先看图。",
-  autocrew_publish: "发布。check 发布前把关（被拦平台不提交）；propose_preference 提议偏好；wechat_mp_draft 推公众号草稿（需审批）；clipboard 复制；ego_lite_prepare 备上传包；confirm_published 标记已发布（需审批）；digest 摘要。",
+  autocrew_publish: "发布。check 发布前把关（被拦平台不提交）；propose_preference 提议偏好；wechat_mp_draft 推公众号草稿（需审批）；clipboard 复制；ego_lite_prepare 备上传包；confirm_published 标记已发布（需审批）；digest 摘要；activities/activity_record 活动台账。",
   autocrew_pre_publish: "发布前检查：check 逐项核对标题、正文、封面、平台要求，全过才能发布；video_kit 交发布包；title_methods 读标题方法库与试用期统计。",
   autocrew_asset: "稿件素材。add 登记；list 列；remove 删（需审批）；versions / get_version / revert 版本查看与回滚。",
   autocrew_status: "编辑部概览：选题与稿件数量、状态分布、最近动态。",
