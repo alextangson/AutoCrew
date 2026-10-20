@@ -1,13 +1,15 @@
 /** autocrew_publish 的 activities / activity_record 两个动作（活动台账） */
 import { ACTIVITY_PLATFORMS, objectParam } from "./activity-ledger.js";
 import { parsePatch } from "./activity-ledger-patch.js";
+import { isModelCall } from "../../storage/stage-guard.js";
 import { listActivities, recordActivity, scheduledUsers } from "./activity-ledger-store.js";
 
 type Params = Record<string, unknown>;
 const fail = (code: string, e: unknown) => ({ ok: false as const, code, error: e instanceof Error ? e.message : String(e) });
 
-/** 测试可注入 _now（毫秒或 ISO）；默认当前时刻 */
+/** 时钟只认进程内调用（测试）注入的 _now；模型经 MCP 传来的 _now 不认，免得它改新鲜度 */
 function nowOf(p: Params): number {
+  if (isModelCall(p)) return Date.now();
   const t = typeof p._now === "number" ? p._now : typeof p._now === "string" ? Date.parse(p._now) : NaN;
   return Number.isNaN(t) ? Date.now() : t;
 }
@@ -27,7 +29,7 @@ async function recordAction(params: Params, dataDir: string, now: number) {
   const given = params.value ?? params.activity;
   const raw = given !== undefined ? objectParam(given, "value") : { ok: true as const, value: params };
   if (!raw.ok) return { ok: false, code: "bad_param", error: raw.error };
-  const v = parsePatch(raw.value);
+  const v = parsePatch(raw.value, now);
   if (!v.ok) return { ok: false, code: "bad_param", error: v.error };
   let r;
   try { r = await recordActivity(dataDir, v.value, new Date(now).toISOString()); }

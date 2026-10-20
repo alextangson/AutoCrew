@@ -3,6 +3,7 @@
  * 落盘与并发在 activity-ledger-store.ts。和「增长活动」(campaign) 无关。
  */
 import { maybeJson, UNPARSABLE } from "./review-gate/plan.js";
+import { dateIn, parseWhen } from "./activity-ledger-time.js";
 
 export const ACTIVITY_PLATFORMS = ["douyin", "xiaohongshu", "bilibili", "wechat_video"] as const;
 export type ActivityPlatform = (typeof ACTIVITY_PLATFORMS)[number];
@@ -33,7 +34,6 @@ export interface Ledger { version: 1; activities: Record<string, ActivityRecord>
 const DAY = 24 * 3600 * 1000;
 const FRESH_DAYS = 7;
 const NEAR_DEADLINE_MS = 48 * 3600 * 1000;
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** 进 diff / history 的字段：规则相关的都算，核查时间、来源、证据不算 */
 export const RULE_FIELDS = ["name", "platform_activity_id", "official_url", "window", "rules", "form", "relevance", "reason"] as const;
 
@@ -47,38 +47,31 @@ export function activityKey(platform: string, name: string, platformActivityId?:
   return id ? `${platform}:${id}` : `${platform}:${normalizeName(name)}`;
 }
 
-/** 某时刻在 timeZone 下的日历日期 YYYY-MM-DD */
-function dateIn(ms: number, timeZone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
-  } catch {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
-  }
-}
+const tzOf = (r: ActivityRecord) => r.window?.timezone || "Asia/Shanghai";
 
-/** 截止对新鲜度的判断：null = 截止本身不逼重核 */
+/** 截止对新鲜度的判断：null = 截止本身不逼重核；解析不了的截止按保守算 recheck */
 function deadlineVerdict(r: ActivityRecord, now: number): Freshness | null {
   const end = r.window?.end?.trim();
   if (!end) return null;
-  if (DATE_ONLY.test(end)) {
+  const w = parseWhen(end, tzOf(r));
+  if (!w) return "recheck";
+  if (w.kind === "date") {
     // 只写日期没写时刻：不补 23:59；截止当天就重核，过了那天才算过期（边界 6）
-    const today = dateIn(now, r.window?.timezone || "Asia/Shanghai");
-    if (today > end) return "expired";
-    return today === end ? "recheck" : null;
+    const today = dateIn(now, tzOf(r));
+    if (today > w.date) return "expired";
+    return today === w.date ? "recheck" : null;
   }
-  const t = Date.parse(end);
-  if (Number.isNaN(t)) return "recheck";
-  if (now > t) return "expired";
-  return t - now < NEAR_DEADLINE_MS ? "recheck" : null;
+  if (now > w.ms) return "expired";
+  return w.ms - now < NEAR_DEADLINE_MS ? "recheck" : null;
 }
 
-/** 投稿期还没开始：start 只有日期按 timezone 的日历日比，有时刻按时刻比 */
+/** 投稿期还没开始：start 只有日期按 timezone 的日历日比，有时刻按时刻比；解析不了不算未开始 */
 function notOpenYet(r: ActivityRecord, now: number): boolean {
   const start = r.window?.start?.trim();
   if (!start) return false;
-  if (DATE_ONLY.test(start)) return dateIn(now, r.window?.timezone || "Asia/Shanghai") < start;
-  const t = Date.parse(start);
-  return !Number.isNaN(t) && now < t;
+  const w = parseWhen(start, tzOf(r));
+  if (!w) return false;
+  return w.kind === "date" ? dateIn(now, tzOf(r)) < w.date : now < w.ms;
 }
 
 export function freshnessOf(r: ActivityRecord, now: number): Freshness {
@@ -115,6 +108,10 @@ export function recordShapeProblem(r: unknown): string | null {
     if (p) return p;
   }
   if (o.history !== undefined && !Array.isArray(o.history)) return "history 要是数组";
+  if (!Array.isArray(o.sources) || o.sources.some((x) => typeof x !== "string")) return "sources 要是字符串数组";
+  if (o.evidence !== undefined && (!Array.isArray(o.evidence) || o.evidence.some((x) => typeof x !== "string"))) return "evidence 要是字符串数组";
+  if (o.relevance !== "fits_us" && o.relevance !== "not_for_us") return "relevance 要是 fits_us / not_for_us";
+  if (o.relevance === "not_for_us" && (typeof o.reason !== "string" || !o.reason.trim())) return "not_for_us 缺 reason";
   return null;
 }
 

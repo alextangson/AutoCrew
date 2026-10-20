@@ -3,6 +3,7 @@
  * 显式 null 清空（清空也进 diff 和 history）。每次都必须带 verified_at + sources；新建才要求 platform / name / official_url。
  */
 import { maybeJson, UNPARSABLE } from "./review-gate/plan.js";
+import { HAS_OFFSET } from "./activity-ledger-time.js";
 import { ACTIVITY_PLATFORMS, activityKey, listParam, nestedTypeProblem, type ActivityRecord } from "./activity-ledger.js";
 
 type Obj = Record<string, unknown>;
@@ -17,13 +18,23 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : unde
 function isHttp(u: string): boolean { try { return ["http:", "https:"].includes(new URL(u).protocol); } catch { return false; } }
 
 /** 只收传了的字段；null 原样保留表示清空。类型不对的拒 */
-export function parsePatch(o: Obj): R<RecordPatch> {
+const MAX_SKEW_MS = 10 * 60 * 1000;
+
+/** verified_at：必须带时区偏移或 Z，不能在未来（容 10 分钟钟差） */
+function verifiedAtProblem(v: string | undefined, now: number): string | null {
+  if (!v || !HAS_OFFSET.test(v) || Number.isNaN(Date.parse(v))) return "verified_at 每次必填：带时区偏移的 ISO 8601 时间（如 2026-10-20T09:50:00+08:00）";
+  return Date.parse(v) > now + MAX_SKEW_MS ? `verified_at 在未来（${v}）：填实际核查的时间` : null;
+}
+
+export function parsePatch(o: Obj, now = Date.now()): R<RecordPatch> {
   const verifiedAt = str(o.verified_at);
-  if (!verifiedAt || Number.isNaN(Date.parse(verifiedAt))) return { ok: false, error: "verified_at 每次必填：带时区的核查时间（ISO 8601）" };
+  const vProblem = verifiedAtProblem(verifiedAt, now);
+  if (vProblem) return { ok: false, error: vProblem };
   const sources = listParam(o.sources);
   if (sources === UNPARSABLE) return { ok: false, error: "sources 看着是 JSON，但修过引号也解析不了" };
   if (!sources.length) return { ok: false, error: "sources 每次必填：本次核查依据的页面（至少一条）" };
-  const fields: Obj = { verified_at: verifiedAt, sources };
+  if (sources.some((x) => typeof x !== "string")) return { ok: false, error: "sources 要是字符串数组（页面名或 URL）" };
+  const fields: Obj = { verified_at: verifiedAt!, sources };
   for (const k of SCALARS) {
     if (!has(o, k)) continue;
     if (o[k] === null) {

@@ -55,7 +55,8 @@ export interface ToolRunnerOptions {
 // 负责引导，工具执行永不因画像缺失阻断——「onboarding 永不阻断」红线（PRD-v3 §7.3）。
 
 /** Publish actions that don't put content out (no gate needed) */
-const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published", "check", "propose_preference"]);
+// activities / activity_record 只读写活动台账，不碰稿件，不能触发会推进状态的发布前检查
+const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published", "check", "propose_preference", "activities", "activity_record"]);
 
 /**
  * Block autocrew_publish unless the pre-publish checklist passes.

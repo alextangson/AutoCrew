@@ -11,7 +11,7 @@ import { withFileLock } from "./activity-ledger-lock.js";
 import { parsePlan } from "./review-gate/plan.js";
 import { normalizePlatform } from "./review-gate/platforms.js";
 import {
-  freshnessOf, normalizeName, recordShapeProblem, ruleDiff,
+  ACTIVITY_PLATFORMS, freshnessOf, normalizeName, recordShapeProblem, ruleDiff,
   type ActivityRecord, type Freshness, type HistoryEntry, type Ledger,
 } from "./activity-ledger.js";
 import { mergeRecord, patchKey, type RecordPatch } from "./activity-ledger-patch.js";
@@ -82,8 +82,16 @@ export async function listActivities(dataDir: string | undefined, now: number, p
     ledger_path: ledgerPath(dataDir),
     activities: rows,
     counts: { fresh: count("fresh"), recheck: count("recheck"), not_open: count("not_open"), expired: count("expired"), not_for_us: rows.filter((r) => r.relevance === "not_for_us").length },
+    ...(platform ? {} : emptyPlatforms(ledger)),
     ...(rows.length ? {} : { note: "台账里还没有这个范围的活动：按完整核查走一遍，核完每条都用 activity_record 入账（适合或不适合都记）" }),
   };
+}
+
+/** 不带 platform 时：哪些平台台账里一条都没有——那里要走完整核查 */
+function emptyPlatforms(l: Ledger) {
+  const have = new Set(Object.values(l.activities).map((r) => r.platform));
+  const empty = ACTIVITY_PLATFORMS.filter((p) => !have.has(p));
+  return empty.length ? { empty_platforms: empty, empty_platforms_note: `台账里没有 ${empty.join("、")} 的任何活动：这些平台按完整核查走（全站活动中心 / 列表页 / 站内搜索 / 认证官方号），核完入账` } : { empty_platforms: [] };
 }
 
 /** 疑似重复：同平台、规范化名称互相包含、但 key 不同。只提示，不自动合并（边界 8） */
@@ -103,6 +111,10 @@ function applyRecord(l: Ledger, patch: RecordPatch, at: string): RecordOutcome {
   const k = patchKey(patch);
   if (!k.ok) return { ok: false, code: "bad_param", error: k.error };
   const prev = l.activities[k.value];
+  // 乱序到达的旧核查不能把台账往回滚
+  if (prev && Date.parse(String(patch.fields.verified_at)) < Date.parse(prev.verified_at)) {
+    return { ok: false, code: "stale_verification", error: `这次的 verified_at（${String(patch.fields.verified_at)}）比台账里「${prev.name}」已有的核查（${prev.verified_at}）还早：没有写入。用最新一次核查的结果重记` };
+  }
   const founder_quote = patch.founder_quote;
   const merged = mergeRecord(prev, k.value, patch);
   if (!merged.ok) return { ok: false, code: "bad_param", error: merged.error };
@@ -153,7 +165,8 @@ function pendingScheduled(raw: Obj | undefined, entryAt: string | null, plan: Ob
   const pub = raw && typeof raw.publication === "object" && raw.publication ? (raw.publication as Obj) : {};
   if (PUBLIC.has(String(pub.status ?? "")) || pub.published_at || pub.public_url) return false;
   const at = Date.parse(String(pub.scheduled_at ?? entryAt ?? plan.scheduled_at ?? ""));
-  return pub.status === "scheduled" || (!Number.isNaN(at) && at > now);
+  // 只认定时还在未来的：定时已过、状态还写着 scheduled 的不算
+  return !Number.isNaN(at) && at > now;
 }
 
 function planUsesKey(plan: Obj, key: string, now: number): boolean {
