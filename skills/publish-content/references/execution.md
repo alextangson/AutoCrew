@@ -17,7 +17,8 @@
 在 `ego-browser nodejs` 内导入。Page 来自本任务的既有 taskSpace；不新开浏览器。
 
 ```js
-const h = await import("/Users/jiaxintang/.codex/skills/publish-content/scripts/browser-helpers.mjs");
+// <本技能目录> = SKILL.md 所在目录的绝对路径（不是本文件所在的 references/）
+const h = await import("<本技能目录>/scripts/browser-helpers.mjs");
 // selector 和 rootSelector 先从当前 DOM 验证，rootSelector 仅用于已观察到的 open shadow host。
 const config = {selector: "[contenteditable]", rootSelector: null};
 // 只在需要重填时调用。此操作会清空编辑器，先确认目标且发布包包含全文。

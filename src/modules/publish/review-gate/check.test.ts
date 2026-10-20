@@ -49,7 +49,7 @@ type Reg = Awaited<ReturnType<typeof registered>>;
 const CAPTION = "AI 总忘事？这期讲我试过的办法，看完就能用上。#AI工具";
 
 function entry(r: Reg, platform: string, covers: Array<"3:4" | "4:3">, extra: Record<string, unknown> = {}) {
-  return { platform, content_id: r.id, account_display_name: "哈姆雷鹿", title: "AI 老忘事的办法", caption: CAPTION, cover_text: "AI 又忘了？",
+  return { platform, content_id: r.id, account_display_name: "示例账号", title: "AI 老忘事的办法", caption: CAPTION, cover_text: "AI 又忘了？",
     covers: covers.map((ratio) => ({ usage: ratio === "3:4" ? "竖版封面" : "横版封面", ratio, path: ratio === "3:4" ? r.c34 : r.c43 })), ...extra };
 }
 const plan = (r: Reg, platforms: unknown[]) => ({ final_video: { path: r.video }, platforms });

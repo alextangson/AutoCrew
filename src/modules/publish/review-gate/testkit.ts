@@ -33,7 +33,7 @@ export async function registeredVideo(env: Env, coverText = "AI 又忘了？") {
 export type Reg = Awaited<ReturnType<typeof registeredVideo>>;
 
 export function planEntry(r: Reg, platform: string, covers: Array<"3:4" | "4:3">, extra: Record<string, unknown> = {}) {
-  return { platform, content_id: r.id, account_display_name: "哈姆雷鹿", title: "AI 老忘事的办法", caption: CAPTION, cover_text: "AI 又忘了？",
+  return { platform, content_id: r.id, account_display_name: "示例账号", title: "AI 老忘事的办法", caption: CAPTION, cover_text: "AI 又忘了？",
     covers: covers.map((ratio) => ({ usage: ratio === "3:4" ? "竖版封面" : "横版封面", ratio, path: ratio === "3:4" ? r.c34 : r.c43 })), ...extra };
 }
 export const planOf = (r: Reg, platforms: unknown[]) => ({ final_video: { path: r.video }, platforms });

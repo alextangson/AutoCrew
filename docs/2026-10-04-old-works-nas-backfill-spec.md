@@ -6,8 +6,8 @@
 
 - 18 行 = 8 月 3 条老视频 × 4 平台（12 行，9-24/9-26 那次 CSV 导入和旧抓取）+ 9-04～9-24 六条视频的 B 站数据（6 行）。
 - 其中 10 行**没有作品编号**（抖音 CSV 3 行、B 站 7 行），现有「人工绑定」靠作品编号，绑不了。
-- NAS `01_Lawrence/Account/_旧资料库-20260926/workspaces/default/contents/` 是 9-26 改版前的旧资料库，64 篇稿，多数带 `draft.md` 正文。
-- NAS `01_Lawrence/Account/2026/August|September/` 是按作品的素材文件夹（成片、素材、封面、剪辑对照表），基本没有文字稿。
+- NAS `<NAS 归档根目录>/_旧资料库-20260926/workspaces/default/contents/` 是 9-26 改版前的旧资料库，64 篇稿，多数带 `draft.md` 正文。
+- NAS `<NAS 归档根目录>/2026/August|September/` 是按作品的素材文件夹（成片、素材、封面、剪辑对照表），基本没有文字稿。
 
 ## 改什么
 

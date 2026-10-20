@@ -9,6 +9,7 @@ import { acquireLibraryLock } from "./library-lock.js";
 import { portableProjectRecord } from "./project-record.js";
 import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { archivePublished, type ArchiveOptions } from "./nas-archive.js";
+import { ARCHIVE_ROOT_UNSET } from "./storage-roots.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { writeProductionDoc } from "./production-store.js";
 import { emptyProductionDoc } from "./production-types.js";
@@ -132,6 +133,40 @@ describe("NAS 归档", () => {
     expect(await fs.readFile(path.join(view, ERROR_FILE), "utf8")).toContain("NAS 未连接，有 1 条待归档");
     await archive();
     expect(await exists(path.join(view, ERROR_FILE))).toBe(false);
+  });
+
+  it("refuses to archive and reports it visibly when no archive root is configured", async () => {
+    await fiveRecent();
+    const old = await published("旧稿", 8);
+    const r = await archive({ archiveRoot: undefined });
+    expect(r.archived).toEqual([]);
+    expect(r.errors).toEqual([ARCHIVE_ROOT_UNSET]);
+    expect(await exists(path.join(root(old), "02-aroll/raw.mov"))).toBe(true);
+    expect(await fs.readFile(path.join(view, ERROR_FILE), "utf8")).toContain("未配置 NAS 归档目录");
+  });
+
+  it("reads the archive root from storage.json archiveRoot", async () => {
+    await fiveRecent();
+    await published("旧稿", 8);
+    const machine = path.join(temp, "machine");
+    await fs.writeFile(path.join(machine, "storage.json"), JSON.stringify({ version: 1, id: "lib-deadbeef", root: lib, archiveRoot: nas }));
+    const r = await archive({ archiveRoot: undefined });
+    expect(r.errors).toEqual([]);
+    expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
+  });
+
+  it("refuses and deletes nothing when the archive month dir is a symlink back into the project's parent", async () => {
+    await fiveRecent();
+    const old = await published("旧稿", 8);
+    const at = new Date(old.publishedAt!);
+    const month = path.join(nas, String(at.getFullYear()), at.toLocaleString("en-US", { month: "long" }));
+    await fs.mkdir(path.dirname(month), { recursive: true });
+    await fs.symlink(path.dirname(root(old)), month);
+    const r = await archive();
+    expect(r.archived).toEqual([]);
+    expect(r.pending).toBe(1);
+    expect(r.errors.join("\n")).toContain("实际落在本机");
+    expect(await fs.readFile(path.join(root(old), "02-aroll/raw.mov"), "utf8")).toBe("旧稿-raw");
   });
 
   it("deletes nothing when a copy does not verify", async () => {

@@ -8,7 +8,8 @@ import { assertLibraryWriter } from "./library-lock.js";
 
 export const LIBRARY_MARKER = "autocrew-library.json";
 export const STORAGE_CONFIG = "storage.json";
-export interface LibraryLocation { version: 1; id: string; root: string }
+/** archiveRoot: optional NAS archive/backup root for this machine; unset = archive and backup are not configured. */
+export interface LibraryLocation { version: 1; id: string; root: string; archiveRoot?: string }
 export interface LibraryManifest { version: 1; id: string; createdAt: string }
 
 export function getMachineDir(customDir?: string): string {
@@ -25,6 +26,16 @@ export function readLibraryLocation(): LibraryLocation | null {
     throw new Error("资料库位置配置损坏，请修复本机 storage.json；不会切换到其他目录。");
   }
   return value;
+}
+
+export const ARCHIVE_ROOT_UNSET = "未配置 NAS 归档目录（~/.autocrew/storage.json 的 archiveRoot）";
+
+/** NAS archive root from storage.json; null when unset. A non-absolute value is a broken config, not "unset". */
+export function readArchiveRoot(location = readLibraryLocation()): string | null {
+  const root = location?.archiveRoot;
+  if (root === undefined || root === "") return null;
+  if (typeof root !== "string" || !path.isAbsolute(root)) throw new Error("storage.json 的 archiveRoot 必须是绝对路径");
+  return root;
 }
 
 export function assertLibraryAvailable(location = readLibraryLocation()): void {

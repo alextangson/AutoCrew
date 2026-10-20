@@ -23,7 +23,7 @@ export interface BenchCase {
 const OTHER_NUMBER = "效率提升 73%";
 
 function entryView(label: string, title: string, caption: string, cover: { ratio: string; file: string }, extra: Partial<BEntryView> = {}): BEntryView {
-  return { platform: label, 平台集合: [label], 账号: "哈姆雷鹿", 标题: title, 文案: caption, 标签: [], 封面: [{ 用途: "封面", 比例: cover.ratio, 文件: cover.file }], 排期: null, 活动: [], ...extra };
+  return { platform: label, 平台集合: [label], 账号: "示例账号", 标题: title, 文案: caption, 标签: [], 封面: [{ 用途: "封面", 比例: cover.ratio, 文件: cover.file }], 排期: null, 活动: [], ...extra };
 }
 
 /** 字幕 / 正文里挑一句真说过的话当「有据」说法（取中段一行，去掉标点尾巴） */

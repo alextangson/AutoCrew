@@ -9,7 +9,7 @@
 本方案确定以下原则：
 
 1. 沿用 broll 的 00–07 分类，在 `01-script` 内补齐调研、证据与文稿版本，不再增加另一套“01-调研…06-发布结果”。
-2. **当前用户的活动正本位于本地 `/Users/jiaxintang/Documents/AutoCrew资料库`。** 完成视频按 lifecycle 复制并核验到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`；恢复验证和 AutoCrew 路径重定位完成前保留本地文件。其他用户仍可选择 NAS 作为活动库。
+2. **当前用户的活动正本位于本地 `~/Documents/AutoCrew资料库`。** 完成视频按 lifecycle 复制并核验到 `<NAS 归档根目录>/YYYY/<EnglishMonth>/<project-folder>`；恢复验证和 AutoCrew 路径重定位完成前保留本地文件。其他用户仍可选择 NAS 作为活动库。
 3. 现有 `contents/<id>` 中的业务记录也纳入这个项目。切换后不维护 `contents/` 与 `projects/` 两套正文、素材和交接包。
 4. AutoCrew 管理状态与审批记录；项目中的项目信息、导航和 `workflow-state.json` 是生成的只读视图。Agent 的自然语言回复不推进状态。
 5. 纯图文稿同样建立项目，视频专用子目录按需建立。
@@ -22,7 +22,7 @@
 
 | 检查项 | 当前事实 | 本次需要补齐 |
 | --- | --- | --- |
-| 用户资料库 | 已是 `/Volumes/MacMiniData/01_Lawrence/Account`；默认工作区为 `workspaces/default` | 旧库保持原位；当前稿及后续新稿使用独立本地资料库 |
+| 用户资料库 | 已是 `<NAS 归档根目录>`；默认工作区为 `workspaces/default` | 旧库保持原位；当前稿及后续新稿使用独立本地资料库 |
 | 剪辑默认根 | `roots.ts` 已读取本机 `configDir/video.json`。该文件当前不存在；已配置资料库时，实际默认是 `<workspace>/projects`。`~/Projects/broll` 只剩旧模式默认值，文件头注释仍旧 | 已绑定项目优先；受管资料库模式不允许另选一个日常生产根；同步修正文档与注释 |
 | 素材库路径 | 上一轮已完成受管素材的相对路径保存；读取接口仍返回解析后的绝对路径 | 补齐存量兼容、跨挂载点和无法转换记录的明确处理，不能再把接口绝对路径当作磁盘格式 |
 | 写稿文件 | 正文、版本、写作包在 `contents/<id>`；证据分布在内容账本、写作包和 `research/host-evidence` 等处 | 将该稿实际采用的资料、各版文稿和账本归入共享项目 |

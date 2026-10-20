@@ -9,7 +9,8 @@ description: >
 
 目标：执行已批准发布包，保存每个平台的真实结果。主流程负责路由；一次只读当前平台手册。
 所有网页操作用 `ego-browser`。首次读它的 Skill 和用户 managed overrides，遵守当前 API。
-昵称默认哈姆雷鹿，仍须核对目标账号稳定 ID。不同平台共用同一视频的 content_id。
+目标账号昵称沿用最近一个项目 `06-publish/publish-plan.json` 里的 `account_display_name`（各平台不同就按平台取）；
+一个都没有时问用户一次，记进本次计划。仍须核对目标账号稳定 ID。不同平台共用同一视频的 content_id。
 
 ## 先决定从哪里继续
 
@@ -41,8 +42,10 @@ description: >
 
 ## 本地辅助工具
 
+`<本技能目录>` 指这份 SKILL.md 所在的目录（宿主加载技能时给出的路径），下同。
+
 ```bash
-python3 /Users/jiaxintang/.codex/skills/publish-content/scripts/preflight.py /绝对路径/06-publish/publish-plan.json
+python3 <本技能目录>/scripts/preflight.py /绝对路径/06-publish/publish-plan.json
 ```
 
 脚本只核查文件、哈希、必要字段和恢复状态，不替代 AutoCrew check、人工授权或网页核验。

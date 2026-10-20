@@ -46,3 +46,34 @@ export async function assertInside(target: string, rel: string): Promise<void> {
   const st = await lstatOrNull(path.join(target, rel));
   if (st?.isSymbolicLink()) throw new Error(`NAS 上 ${rel} 是链接，不写也不核对`);
 }
+
+/** realpath of the deepest existing ancestor, with the not-yet-existing tail re-appended */
+async function resolveDeep(p: string): Promise<string> {
+  const tail: string[] = [];
+  let cur = path.resolve(p);
+  for (;;) {
+    try { return path.join(await fs.realpath(cur), ...tail.reverse()); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT" || path.dirname(cur) === cur) throw e;
+      tail.push(path.basename(cur));
+      cur = path.dirname(cur);
+    }
+  }
+}
+
+const overlaps = (a: string, b: string) => {
+  const inside = (root: string, t: string) => { const r = path.relative(root, t); return r === "" || (!r.startsWith("..") && !path.isAbsolute(r)); };
+  return inside(a, b) || inside(b, a);
+};
+
+/**
+ * 归档/备份目标经链接解析后若落进本机源项目或资料库（或反过来包住它们），复制等于自己核对自己，
+ * 随后删本机就是删唯一一份。动任何文件之前拒绝。
+ */
+export async function assertTargetOutsideSource(target: string, sources: string[]): Promise<void> {
+  const real = await resolveDeep(target);
+  for (const s of sources) {
+    const src = await resolveDeep(s);
+    if (overlaps(real, src)) throw new Error(`NAS 归档目标 ${target} 实际落在本机 ${src} 里（或包住它），可能经过了链接；没复制也没删任何文件，请检查 storage.json 的 archiveRoot`);
+  }
+}

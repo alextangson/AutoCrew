@@ -317,7 +317,7 @@ export function Integrations() {
             ))}
           </select>
         </label>
-        <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
+        <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "署名"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <Field label="API 代理" value={pForm.api_proxy} placeholder={pub?.apiProxyConfigured ? "已配置（不回显）——填新值覆盖" : "http://user:pass@固定IP:端口（可选，锁定出口）"} onChange={(v) => setPForm((f) => ({ ...f, api_proxy: v }))} />
         <SaveRow label="保存公众号配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ ...EMPTY_PUBLISH_FORM }))} />
       </IntegrationCard>
@@ -332,7 +332,7 @@ export function Integrations() {
         })}
       >
         <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
-        <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
+        <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://你的生图服务/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
         <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
         <label className="set-field set-field-wide">
           <span className="mono muted">

@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Content } from "./local-store.js";
 import { listContents } from "./local-store.js";
-import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
+import { readLibraryLocation, getLibraryRoot, readArchiveRoot, ARCHIVE_ROOT_UNSET } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { productionServiceDir, readProductionDoc } from "./production-store.js";
 import { writeJsonAtomic } from "./json-atomic.js";
@@ -15,10 +15,10 @@ import { VIEW_DIR } from "./my-content-view.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { copyProject, isProjectCache, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
+import { assertTargetOutsideSource } from "./nas-safe-path.js";
 import { KEPT_DIR } from "./nas-kept.js";
 import { publishedSet, type PublishedSet } from "./round-publish-time.js";
 
-export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
 export const MEDIA_DIRS = ["02-aroll", "03-broll", "04-edit", "05-audio", "05-cover", "07-delivery"] as const;
 export const ARCHIVE_MIN_AGE_MS = 7 * 24 * 60 * 60_000;
 export const ARCHIVE_MARGIN_BYTES = 1024 ** 3;
@@ -35,7 +35,7 @@ export interface ArchiveOptions {
 }
 export interface ArchivedItem { title: string; target: string; freedBytes: number }
 export interface ArchiveReport { skipped?: string; archived: ArchivedItem[]; pending: number; errors: string[] }
-interface Ctx { data: string; root: string; now: Date; copy: CopyImpl; free: (dir: string) => Promise<number>; margin: number }
+interface Ctx { data: string; lib: string; root: string; now: Date; copy: CopyImpl; free: (dir: string) => Promise<number>; margin: number }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -148,6 +148,7 @@ async function pruneEmpty(dir: string, keepSelf: boolean): Promise<void> {
 async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<ArchivedItem> {
   const projectRoot = resolveContentProject(c.id, ctx.data)!.project_root;
   const target = archiveTarget(archiveRoot, c, projectRoot);
+  await assertTargetOutsideSource(target, [projectRoot, ctx.lib]);
   const { files: listed } = await walkProject(projectRoot, isProjectCache);
   const size = listed.reduce((n, f) => n + f.size, 0), free = await ctx.free(archiveRoot);
   if (free < size + ctx.margin) {
@@ -205,12 +206,16 @@ export async function archivePublished(dataDir?: string, opts: ArchiveOptions = 
   const data = dataDir ?? path.join(libRoot, "workspaces", "default");
   if (!readProjectRegistry(data)) return { ...report, skipped: "工作区还没有项目目录结构，不做 NAS 归档" };
   const ctx: Ctx = {
-    data, root: path.join(libRoot, VIEW_DIR), now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)),
+    data, lib: libRoot, root: path.join(libRoot, VIEW_DIR), now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)),
     free: opts.freeSpace ?? volumeFree, margin: opts.marginBytes ?? ARCHIVE_MARGIN_BYTES,
   };
   // 与 record 落位、重开文稿同排文件归属事务（本体 §7）：归档核验到删除之间不许有新文件搬进来
-  try { await withFileOwnership(() => runArchive(opts.archiveRoot ?? DEFAULT_ARCHIVE_ROOT, ctx, report)); }
-  catch (e) { report.errors.push(`归档中断：${errMsg(e)}`); }
+  try {
+    const archiveRoot = opts.archiveRoot ?? readArchiveRoot();
+    // 没配归档目录不归档，但要写进错误区让人看见，不静默跳过
+    if (!archiveRoot) report.errors.push(ARCHIVE_ROOT_UNSET);
+    else await withFileOwnership(() => runArchive(archiveRoot, ctx, report));
+  } catch (e) { report.errors.push(`归档中断：${errMsg(e)}`); }
   await fs.mkdir(ctx.root, { recursive: true });
   await writeErrorSection(ctx.root, "archive", report.errors);
   return report;

@@ -11,6 +11,7 @@ import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { columnDir, folderTitle } from "./my-content-plan.js";
 import { archivePublished } from "./nas-archive.js";
 import { backupPublished, type BackupOptions } from "./nas-backup.js";
+import { ARCHIVE_ROOT_UNSET } from "./storage-roots.js";
 import { keptName, nasHash, sha256File } from "./nas-archive-copy.js";
 import { readBackupState } from "./nas-backup-state.js";
 import { HUMAN_WRITE } from "./first-body-guard.js";
@@ -218,6 +219,27 @@ describe("发布即备份 NAS", () => {
     const again = await backup({ now: new Date(NOW.getTime() + 8 * 86400_000) });
     expect(again.backedUp).toEqual(["稿"]);
     expect(await read(path.join(nasDir(c), "符号链接清单.json"))).toBe("创始人自己的文件");
+  });
+
+  it("refuses to back up and reports it visibly when no archive root is configured", async () => {
+    await published("甲", 1);
+    const r = await backup({ archiveRoot: undefined });
+    expect(r.backedUp).toEqual([]);
+    expect(r.errors).toEqual([ARCHIVE_ROOT_UNSET]);
+    expect(await fs.readFile(path.join(view, ERROR_FILE), "utf8")).toContain("未配置 NAS 归档目录");
+  });
+
+  it("refuses visibly when the archive month dir links back into the library", async () => {
+    const a = await published("甲", 1);
+    const at = new Date(a.publishedAt!);
+    const month = path.join(nas, String(at.getFullYear()), at.toLocaleString("en-US", { month: "long" }));
+    const projectRoot = resolveContentProject(a.id, data)!.project_root;
+    await fs.mkdir(path.dirname(month), { recursive: true });
+    await fs.symlink(path.dirname(projectRoot), month);
+    const r = await backup();
+    expect(r.backedUp).toEqual([]);
+    expect(r.errors.join("\n")).toContain("实际落在本机");
+    expect(await fs.readFile(path.join(view, ERROR_FILE), "utf8")).toContain("实际落在本机");
   });
 
   it("marks items unmounted when the NAS is missing, without errors, and catches up once mounted", async () => {

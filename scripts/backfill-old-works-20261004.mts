@@ -7,7 +7,7 @@
  * 默认 dry-run 只打印；--apply 先领资料库写入锁、备份再写。NAS 没挂载 → 停下，什么都不写。
  * 计划有任何问题（找不到行 / 有歧义 / 已归属别的稿）→ 一行都不写。重复执行幂等。
  *
- * 用法：npx tsx scripts/backfill-old-works-20261004.mts [数据目录] [--apply] [--nas=<旧资料库 contents 目录>]
+ * 用法：npx tsx scripts/backfill-old-works-20261004.mts [数据目录] [--apply] --nas=<旧资料库 contents 目录>（必填）
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -23,7 +23,7 @@ import { readArchiveSource, attachArchiveDraft, type ArchiveRead } from "../src/
 import { isImportedHistory } from "../src/storage/imported-history.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 
-export const DEFAULT_NAS = "/Volumes/MacMiniData/01_Lawrence/Account/_旧资料库-20260926/workspaces/default/contents";
+const USAGE = "用法：npx tsx scripts/backfill-old-works-20261004.mts [数据目录] [--apply] --nas=<NAS 归档根目录>/_旧资料库-20260926/workspaces/default/contents";
 
 /** 一组行：平台 + 北京发布日 + 平台标题前缀（归一化后比） */
 export interface RowSpec { platform: string; date: string; title: string }
@@ -124,14 +124,14 @@ export async function nasEntries(nasRoot: string): Promise<string[] | null> {
 }
 
 async function assertNasMounted(nasRoot: string, state: string): Promise<void> {
-  if (!(await nasEntries(nasRoot))) throw new Error(`NAS 旧资料库读不出（${nasRoot}）——已停下，${state}；挂上 MacMiniData 后重跑`);
+  if (!(await nasEntries(nasRoot))) throw new Error(`NAS 旧资料库读不出（${nasRoot}）——已停下，${state}；挂上 NAS 后重跑`);
 }
 
 /** 只读：算出要写什么。不写任何文件 */
-export async function planOldWorks(dataDir: string, nasRoot = DEFAULT_NAS): Promise<Plan> {
+export async function planOldWorks(dataDir: string, nasRoot: string): Promise<Plan> {
   const problems: string[] = [];
   const entries = await nasEntries(nasRoot);
-  if (!entries) return { nasRoot, records: [], problems: [`NAS 旧资料库没挂载或读不出（${nasRoot}）——已停下，什么都没写；挂上 MacMiniData 后再跑`] };
+  if (!entries) return { nasRoot, records: [], problems: [`NAS 旧资料库没挂载或读不出（${nasRoot}）——已停下，什么都没写；挂上 NAS 后再跑`] };
   const [table, claims, latest, contents] = await Promise.all([readPlatformItemsStrict(dataDir), readClaimsStrict(dataDir), latestByKey(dataDir), listContents(dataDir)]);
   const rows = [...latest.values()];
   const records: PlannedRecord[] = [];
@@ -222,7 +222,11 @@ export function describePlan(plan: Plan): string {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = process.argv.slice(2);
   const apply = args.includes("--apply");
-  const nas = args.find((a) => a.startsWith("--nas="))?.slice(6) || DEFAULT_NAS;
+  const nas = args.find((a) => a.startsWith("--nas="))?.slice(6);
+  if (!nas) {
+    console.error(`缺少 --nas 参数（旧资料库 contents 目录）。\n${USAGE}`);
+    process.exit(2);
+  }
   const dataDir = getDataDir(args.find((a) => !a.startsWith("--")));
   console.log(`数据目录：${dataDir}\n模式：${apply ? "apply" : "dry-run（不写任何文件）"}\n`);
   const plan = await planOldWorks(dataDir, nas);

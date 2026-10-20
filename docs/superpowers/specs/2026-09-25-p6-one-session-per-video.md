@@ -524,7 +524,7 @@ P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的
 
 ### 13.2 事故与证据（2026-09-26）
 
-- 14:48–16:06 共 11 篇口播稿在 `scout angles` 存简报时报 `ENOTSUP: operation not supported on socket, link …`。当时资料库在 SMB 盘 `/Volumes/MacMiniData/01_Lawrence/Account`，存简报用硬链接发布。
+- 14:48–16:06 共 11 篇口播稿在 `scout angles` 存简报时报 `ENOTSUP: operation not supported on socket, link …`。当时资料库在 SMB 盘 `<NAS 归档根目录>`，存简报用硬链接发布。
   - 证据：各写稿会话 transcript，例如 worktree `brave-sinoussi-d4ccad` 会话 `447bb9af` 06:50:18Z 的报错原文。
 - 批量派活的指令里写着「撞上就把稿子写到本地 `docs/drafts/*.md`」，11 篇因此全在各 worktree 本地，AutoCrew 一篇都没收到。
 - 15:39 资料库迁到本机 `~/Documents/AutoCrew资料库`，只迁了「深度思考」一条；学院批次的选题留在 NAS 旧库。

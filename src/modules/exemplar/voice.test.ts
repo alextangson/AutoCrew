@@ -13,7 +13,7 @@ let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "voice-")); });
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
-const asr = (title: string, segs: string[]) => `# ${title}\n\n- Author: 哈姆雷鹿\n- URL: https://www.douyin.com/video/${Array.from(title).map((ch) => ch.codePointAt(0)).join("")}\n\n## Transcript\n\n${segs.map((s, i) => `**[00:${String(i * 15).padStart(2, "0")}]** ${s}`).join("\n\n")}\n`;
+const asr = (title: string, segs: string[]) => `# ${title}\n\n- Author: 示例账号\n- URL: https://www.douyin.com/video/${Array.from(title).map((ch) => ch.codePointAt(0)).join("")}\n\n## Transcript\n\n${segs.map((s, i) => `**[00:${String(i * 15).padStart(2, "0")}]** ${s}`).join("\n\n")}\n`;
 
 async function files(): Promise<string[]> {
   const src = path.join(dir, "src");

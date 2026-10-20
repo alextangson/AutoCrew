@@ -164,6 +164,14 @@ describe("executePublish wechat_mp_draft", () => {
     expect(opts.imageGeneratorScript).toBe("/tmp/x/gen.py");
   });
 
+  it("没配署名时不带任何默认作者名", async () => {
+    await fs.writeFile(path.join(dir, "publish.json"), JSON.stringify({ wechatMp: { theme: "github" } }));
+    const c = await mkContent("干净正文");
+    const publishImpl = mockPublish();
+    await executePublish({ action: "wechat_mp_draft", content_id: c.id, _dataDir: dir }, { publishImpl });
+    expect(publishImpl.mock.calls[0][0].author).toBeUndefined();
+  });
+
   it("显式参数优先于 publish.json 配置", async () => {
     await fs.writeFile(
       path.join(dir, "publish.json"),

@@ -2,7 +2,7 @@
 
 日期：2026-09-25 · 评审依据：`~/Projects/harnessed/skills/agent-craft`（design card / symptom→layer / operate / shape 四份参考）· 证据来源：`~/.autocrew/logs/runs/2026-09-22..25.jsonl` 真实 trace、主 checkout 运行中的代码、P3/P5/digest 三份 spec、四个子代理的代码走读。
 
-标注：**[M]** = `/Users/jiaxintang/Projects/autocrew`（守护进程实际运行的代码，含 130 个未提交文件）；**[W]** = 本 worktree（HEAD 0423dab，与 main 相同）。
+标注：**[M]** = `~/Projects/autocrew`（守护进程实际运行的代码，含 130 个未提交文件）；**[W]** = 本 worktree（HEAD 0423dab，与 main 相同）。
 
 **创始人裁决（2026-09-25 同日）：**
 1. 剪辑线定在 Codex：ChatCut + 剪映协作，用创始人已调好的那组 Codex skills（`aroll-rough-cut`、`personal-ip-video-loop`、`video-project-lifecycle`、`alovers-video-packaging`，工作区 `~/Projects/broll/`）。Codex 留。

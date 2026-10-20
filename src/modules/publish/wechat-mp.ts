@@ -478,8 +478,9 @@ export async function publishWechatMpDraft(
     coverPath,
     "--theme",
     options.theme || "newspaper",
+    // 没配署名就显式传空串：不让 vendor 脚本的默认作者名写进草稿（公众号 API 的 author 可为空）
     "--author",
-    options.author || "Lawrence",
+    options.author || "",
     "--yes",
     ...(options.digest ? ["--digest", options.digest] : []),
   ];

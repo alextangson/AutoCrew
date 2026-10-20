@@ -277,7 +277,8 @@ export async function applyPendingStorage(onProgress?: (copied: number, total: n
       await writeJsonAtomic(path.join(target, LIBRARY_MARKER), { version: 1, id, createdAt: new Date().toISOString() } satisfies LibraryManifest);
       published = true;
     }
-    const location: LibraryLocation = { version: 1, id, root: target };
+    // Keep machine-only fields (e.g. archiveRoot) that live alongside the library location.
+    const location: LibraryLocation = { ...old, version: 1, id, root: target };
     assertLibraryAvailable(location);
     const reportDir = path.join(getMachineDir(), "migrations");
     await fs.mkdir(reportDir, { recursive: true, mode: 0o700 });

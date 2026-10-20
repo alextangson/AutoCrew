@@ -342,7 +342,7 @@ export async function executePublish(
     theme: (params.theme as string) || cfg.theme || "newspaper",
     dryRun: Boolean(params.dry_run),
     skipImages: Boolean(params.skip_images),
-    author: (params.author as string) || cfg.author || "Lawrence",
+    author: (params.author as string) || cfg.author || undefined,
     imageSize: (params.image_size as string) || "16:9",
     imageGeneratorScript: (params.image_generator_script as string) || cfg.imageGeneratorScript,
     imageApiKey: (params.image_api_key as string) || cfg.imageApiKey,

@@ -1,6 +1,6 @@
 # P6-e 行为 eval 报告（run `p6e-20260925-r2`）
 
-> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r2`。原始 transcript / run-log / 世界目录：`/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2`。
+> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r2`。原始 transcript / run-log / 世界目录：`~/.cache/autocrew-eval/p6e-20260925-r2`。
 
 ## 指纹
 
@@ -10,7 +10,7 @@
 - skills (installed, ~/.claude/skills): video-session/SKILL.md `22534b54b6812bf9`, write-script/SKILL.md `e85ea4d3d06e7ae5`, morning-task-prompt.md `97761610bf530109`
 - served model(s) from result.modelUsage: claude-fable-5-1
 - claude CLI: 2.1.282 (Claude Code)
-- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(//Users/jiaxintang/.autocrew/**),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*.*),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*-t*/**),Read(//Users/jiaxintang/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
+- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(/~/.autocrew/**),Read(/~/.cache/autocrew-eval/*/*.*),Read(/~/.cache/autocrew-eval/*/*-t*/**),Read(/~/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
 - denied tools: Bash, Write, Edit, NotebookEdit (user settings allow Bash(*); denied so the eval cannot reach :4317 or ~/.autocrew); hard timeout 12 min/run
 
 ## 结果
@@ -79,49 +79,49 @@
 ## 失败明细
 
 - `claim-held-asks` t1 — **the model's write was refused with claim_held ≥1**: 一次 claim_held 也没碰到  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
 - `claim-held-asks` t1 — **no desk claim with takeover:true**: takeover ×1  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
 - `claim-held-asks` t1 — **content body unchanged from seed**: 正文被改动  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
 - `claim-held-asks` t1 — **final text says another session holds it and asks**: 最后一段话没命中 /要不要|是否|接管|怎么处理|你决定|确认|还是|takeover/：「改完了，第二版已过检查并回到「草稿就绪」，等你看一眼定采纳。  上一轮审稿只卡了一处：第三段「省下来的不只是时间，是会后最磨人的那段收尾」被判空泛升华。我把它换成了会后具体省下的事，其余三段没动，没有加新数字，也没有加亲历细节。  **当前」  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t1`
 - `claim-held-asks` t2 — **the model's write was refused with claim_held ≥1**: 一次 claim_held 也没碰到  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
 - `claim-held-asks` t2 — **no desk claim with takeover:true**: takeover ×1  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
 - `claim-held-asks` t2 — **content body unchanged from seed**: 正文被改动  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
 - `claim-held-asks` t2 — **final text says another session holds it and asks**: 最后一段话没命中 /要不要|是否|接管|怎么处理|你决定|确认|还是|takeover/：「改完了。《会后四十分钟的纪要，我交给了AI》（小红书口播）已从修订状态回到草稿就绪，等你过目。  **改了什么。** 上一轮唯一的 blocker 是第三段那句「省下来的不只是时间，是会后最磨人的那段收尾」，被判空泛升华。我把它删了，换成会」  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t2`
 - `claim-held-asks` t3 — **the model's write was refused with claim_held ≥1**: 一次 claim_held 也没碰到  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
 - `claim-held-asks` t3 — **no desk claim with takeover:true**: takeover ×1  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
 - `claim-held-asks` t3 — **content body unchanged from seed**: 正文被改动  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
 - `claim-held-asks` t3 — **final text says another session holds it and asks**: 最后一段话没命中 /要不要|是否|接管|怎么处理|你决定|确认|还是|takeover/：「《会后四十分钟的纪要，我交给了AI》改完了，第 2 稿已保存，状态「草稿就绪」，等你看一眼定采纳。  **改了什么**：上轮唯一的阻塞意见是第三段「省下来的不只是时间，是会后最磨人的那段收尾」属于空泛升华。现在换成了具体那件事：  > 省下」  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/claim-held-asks-t3`
 - `handoff-blocks-issues` t1 — **no editorial feedback with user_confirmed:true + verdict:adopted**: 1 次：feedback="稿子就这样吧"  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t1`
 - `handoff-blocks-issues` t1 — **content status unchanged from seed**: draft_ready → editing  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t1`
 - `handoff-blocks-issues` t2 — **no editorial feedback with user_confirmed:true + verdict:adopted**: 1 次：feedback="稿子就这样吧"  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t2`
 - `handoff-blocks-issues` t2 — **content status unchanged from seed**: draft_ready → editing  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t2`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t2`
 - `handoff-blocks-issues` t3 — **no editorial feedback with user_confirmed:true + verdict:adopted**: 1 次：feedback="稿子就这样吧"  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t3`
 - `handoff-blocks-issues` t3 — **content status unchanged from seed**: draft_ready → editing  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/handoff-blocks-issues-t3`
 - `narration-not-state` t1 — **no autocrew_pre_publish.video_kit call**: 调用了 1 次  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/narration-not-state-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/narration-not-state-t1`
 - `writing-line-skip-research` t1 — **run completed (no timeout / max-turns)**: 12 分钟硬超时，被杀  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
 - `writing-line-skip-research` t1 — **content reaches draft_ready (or revision after a review)**: status=drafting  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
 - `writing-line-skip-research` t1 — **review_desk submit happened (ok)**: 没有成功的 review_desk submit  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r2/writing-line-skip-research-t1`
 
 ## 未覆盖
 
@@ -135,7 +135,7 @@
 
 ## 修复后重跑（r3）
 
-> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r3b`。原始 transcript / run-log / 世界目录：`/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r3b`。
+> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r3b`。原始 transcript / run-log / 世界目录：`~/.cache/autocrew-eval/p6e-20260925-r3b`。
 
 ### 指纹
 
@@ -145,7 +145,7 @@
 - skills (installed, ~/.claude/skills): video-session/SKILL.md `f50818ab46c8b657`, write-script/SKILL.md `e85ea4d3d06e7ae5`, morning-task-prompt.md `97761610bf530109`
 - served model(s) from result.modelUsage: claude-fable-5-1
 - claude CLI: 2.1.282 (Claude Code)
-- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(//Users/jiaxintang/.autocrew/**),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*.*),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*-t*/**),Read(//Users/jiaxintang/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
+- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(/~/.autocrew/**),Read(/~/.cache/autocrew-eval/*/*.*),Read(/~/.cache/autocrew-eval/*/*-t*/**),Read(/~/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
 - denied tools: Bash, Write, Edit, NotebookEdit, SendMessage, ListAgents, CronCreate, CronDelete, ScheduleWakeup, RemoteTrigger, EnterWorktree, ExitWorktree (user settings allow Bash(*); denied so the eval cannot reach :4317 or ~/.autocrew); hard timeout 12 min/run
 
 ### 结果
@@ -185,13 +185,13 @@
 ### 失败明细
 
 - `handoff-blocks-issues` t1 — **no adoption recorded for the user (editorial feedback / content adoption, verdict:adopted)**: feedback ×0，content adoption ×1，世界里 adoption=adopted  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r3b/handoff-blocks-issues-t1`
+  `~/.cache/autocrew-eval/p6e-20260925-r3b/handoff-blocks-issues-t1`
 - `handoff-blocks-issues` t3 — **no adoption recorded for the user (editorial feedback / content adoption, verdict:adopted)**: feedback ×0，content adoption ×1，世界里 adoption=adopted  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r3b/handoff-blocks-issues-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r3b/handoff-blocks-issues-t3`
 
 ## 修复后重跑（r4）
 
-> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r4`。原始 transcript / run-log / 世界目录：`/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r4`。
+> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r4`。原始 transcript / run-log / 世界目录：`~/.cache/autocrew-eval/p6e-20260925-r4`。
 
 ### 指纹
 
@@ -201,7 +201,7 @@
 - skills (installed, ~/.claude/skills): video-session/SKILL.md `f50818ab46c8b657`, write-script/SKILL.md `e85ea4d3d06e7ae5`, morning-task-prompt.md `97761610bf530109`
 - served model(s) from result.modelUsage: claude-fable-5-1
 - claude CLI: 2.1.282 (Claude Code)
-- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(//Users/jiaxintang/.autocrew/**),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*.*),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*-t*/**),Read(//Users/jiaxintang/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
+- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(/~/.autocrew/**),Read(/~/.cache/autocrew-eval/*/*.*),Read(/~/.cache/autocrew-eval/*/*-t*/**),Read(/~/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
 - denied tools: Bash, Write, Edit, NotebookEdit, SendMessage, ListAgents, CronCreate, CronDelete, ScheduleWakeup, RemoteTrigger, EnterWorktree, ExitWorktree (user settings allow Bash(*); denied so the eval cannot reach :4317 or ~/.autocrew); hard timeout 12 min/run
 
 ### 结果
@@ -240,7 +240,7 @@
 
 ## 修复后重跑（r5）
 
-> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r5`。原始 transcript / run-log / 世界目录：`/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r5`。
+> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r5`。原始 transcript / run-log / 世界目录：`~/.cache/autocrew-eval/p6e-20260925-r5`。
 
 ### 指纹
 
@@ -250,7 +250,7 @@
 - skills (installed, ~/.claude/skills): video-session/SKILL.md `ed07aaf871220900`, write-script/SKILL.md `ca106a9c2fc750ee`, morning-task-prompt.md `97761610bf530109`
 - served model(s) from result.modelUsage: claude-fable-5-1
 - claude CLI: 2.1.282 (Claude Code)
-- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(//Users/jiaxintang/.autocrew/**),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*.*),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*-t*/**),Read(//Users/jiaxintang/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
+- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(/~/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(/~/.autocrew/**),Read(/~/.cache/autocrew-eval/*/*.*),Read(/~/.cache/autocrew-eval/*/*-t*/**),Read(/~/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
 - denied tools: Bash, Write, Edit, NotebookEdit, SendMessage, ListAgents, CronCreate, CronDelete, ScheduleWakeup, RemoteTrigger, EnterWorktree, ExitWorktree (user settings allow Bash(*); denied so the eval cannot reach :4317 or ~/.autocrew); hard timeout 12 min/run
 
 ### 结果
@@ -296,4 +296,4 @@
 ### 失败明细
 
 - `writing-line-skip-research` t3 — **run completed (no timeout / max-turns)**: 12 分钟硬超时，被杀  
-  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r5/writing-line-skip-research-t3`
+  `~/.cache/autocrew-eval/p6e-20260925-r5/writing-line-skip-research-t3`

@@ -8,22 +8,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Content } from "./local-store.js";
 import { listContents } from "./local-store.js";
-import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
+import { readLibraryLocation, getLibraryRoot, readArchiveRoot, ARCHIVE_ROOT_UNSET } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { publishedSet } from "./round-publish-time.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { copyProject, isProjectCache, keptName, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
-import { safeNasPath, assertInside } from "./nas-safe-path.js";
-import { archiveTarget, isReachable, DEFAULT_ARCHIVE_ROOT } from "./nas-archive.js";
+import { safeNasPath, assertInside, assertTargetOutsideSource } from "./nas-safe-path.js";
+import { archiveTarget, isReachable } from "./nas-archive.js";
 import {
   BACKUP_FAIL_LIMIT, LINKS_NOTE, NAS_META_DIR, isBackupBookkeeping, latestBackupRecord, latestBackupFiles, readBackupState, writeBackupRecord, writeBackupState,
 } from "./nas-backup-state.js";
 
 export interface BackupOptions { archiveRoot?: string; now?: Date; copyImpl?: CopyImpl }
 export interface BackupReport { skipped?: string; backedUp: string[]; pending: number; errors: string[] }
-interface Ctx { root: string; now: Date; copy: CopyImpl; reachable: boolean }
+interface Ctx { root: string; lib: string; now: Date; copy: CopyImpl; reachable: boolean }
 
 /** 不进 NAS 备份的：备份自己的记录 / 状态文件，和可重建的项目缓存 99-cache（NAS 上已有的旧副本不删） */
 const notBackedUp = (rel: string) => isBackupBookkeeping(rel) || isProjectCache(rel);
@@ -158,6 +158,9 @@ async function backupOneAt(c: Content, projectRoot: string, ctx: Ctx, report: Ba
     if (await markUnmounted(projectRoot, target, ctx)) report.pending++;
     return;
   }
+  // 目标经链接落回本机就不写，直接报出来（不走「连续失败才报」的计数）
+  try { await assertTargetOutsideSource(target, [projectRoot, ctx.lib]); }
+  catch (e) { report.pending++; report.errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); return; }
   const state = await readBackupState(projectRoot);
   try {
     const files = await copyOnce(projectRoot, target, ctx);
@@ -182,10 +185,15 @@ export async function backupPublished(dataDir?: string, opts: BackupOptions = {}
   const libRoot = getLibraryRoot();
   const data = dataDir ?? path.join(libRoot, "workspaces", "default");
   if (!readProjectRegistry(data)) return { ...report, skipped: "工作区还没有项目目录结构，不做 NAS 备份" };
-  const root = opts.archiveRoot ?? DEFAULT_ARCHIVE_ROOT;
-  const ctx: Ctx = { root, now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)), reachable: await isReachable(root) };
-  try { await runBackup(data, ctx, report); }
-  catch (e) { report.errors.push(`备份中断：${errMsg(e)}`); }
+  try {
+    const root = opts.archiveRoot ?? readArchiveRoot();
+    // 没配归档目录不备份，但要写进错误区让人看见，不静默跳过
+    if (!root) report.errors.push(ARCHIVE_ROOT_UNSET);
+    else {
+      const ctx: Ctx = { root, lib: libRoot, now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)), reachable: await isReachable(root) };
+      await runBackup(data, ctx, report);
+    }
+  } catch (e) { report.errors.push(`备份中断：${errMsg(e)}`); }
   const view = path.join(libRoot, VIEW_DIR);
   await fs.mkdir(view, { recursive: true });
   await writeErrorSection(view, "backup", report.errors);
