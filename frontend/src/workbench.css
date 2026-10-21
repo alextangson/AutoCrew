@@ -10,7 +10,7 @@
 .cover-image-wrap .cover-img { display: block; height: 100%; border: 0; pointer-events: none; }
 .cover-img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border: 1px solid var(--border); }
 .cover-mask-selection { position: absolute; z-index: 2; box-sizing: border-box; border: 2px solid #1ea7fd; background: rgba(30, 167, 253, 0.18); box-shadow: 0 0 0 9999px rgba(18, 17, 13, 0.2); pointer-events: none; }
-.cover-mask-hint { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: var(--s1) var(--s2); border-radius: 999px; background: rgba(18, 17, 13, 0.8); color: #fff; font: var(--fs-xs)/1.2 var(--mono); white-space: nowrap; pointer-events: none; }
+.cover-mask-hint { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: var(--s1) var(--s2); border-radius: 999px; background: rgba(18, 17, 13, 0.8); color: var(--accent-text); font: var(--fs-xs)/1.2 var(--mono); white-space: nowrap; pointer-events: none; }
 .cover-missing { display: flex; align-items: center; justify-content: center; }
 .cover-reason { font-size: var(--fs-xs); }
 .cover-concept { font-size: var(--fs-sm); line-height: 1.45; }

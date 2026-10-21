@@ -1,5 +1,5 @@
-/* 编辑部风设计 token（与 desktop/renderer/style.css :root 同源,§7.3-4:
-   衬线做展示层/等宽做标签/近黑白/发丝线。D 期清场前两边手动保持同步。 */
+/* 编辑部风设计 token（§7.3-4）：衬线做展示层/等宽做标签/近黑白/发丝线。
+   这里是唯一真源，docs/DESIGN.md 照这里写。 */
 :root {
   --bg: #F5F4EF;
   --surface: #F5F4EF;
@@ -8,6 +8,7 @@
   --ink: #16150F;
   --text: #16150F;
   --muted: #8B877B;
+  --text-2: #6E6A5E;      /* 次要正文：比 muted 深一档，小字说明、副标题 */
   --accent: #16150F;
   --accent-text: #F8F7F2;
   --hot: #C63D00;
@@ -15,6 +16,7 @@
   --danger: #A32D2D;
   --lane: #ECEAE2;
   --line-2: #B9B5A8;
+  --line-soft: #E8E6E1;   /* 比 border 浅一档的分隔线（弹层内、卡片内分行） */
   --danger-line: #E5C2B5;
   --ok-line: #B7D3C7;
 
@@ -36,6 +38,12 @@
   --radius: 4px;
   --radius-card: 4px;
   --radius-dialog: 6px;
+  /* 阴影只给浮层：卡片一律不加 */
+  --shadow-pop: 0 8px 26px rgba(22, 21, 15, 0.16);     /* 下拉 / 浮出菜单 / 提示 */
+  --shadow-dialog: 0 10px 34px rgba(22, 21, 15, 0.22); /* 弹窗 / 抽屉 */
+  /* 焦点环：只在键盘聚焦（:focus-visible）出现。外圈墨色 + 2px 留白，黑底主按钮上也看得见 */
+  --focus-ring: 2px solid var(--ink);
+  --focus-ring-offset: 2px;
   --dlg-sm: 400px; --dlg-md: 560px; --dlg-lg: 880px;
   --w-data: 1120px; --w-form: 720px; --w-draft: 760px;  /* 页面骨架内容宽 */
   --gap: var(--s4);

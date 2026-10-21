@@ -41,6 +41,7 @@ import {
 import { PickerButton } from "../picker";
 import { renameConversationDialog } from "./conversation-rename";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
+import { useScrollPin } from "./use-scroll-pin";
 
 interface Msg {
   role: "user" | "assistant";
@@ -108,6 +109,8 @@ export function ChatDock(props: {
   view?: ViewSnapshot;
   /** 卡片「在工作区打开」的落点（壳的 setRoute） */
   nav?: (route: Route) => void;
+  /** 栏是否展开：从收起到展开时对话区直接贴底 */
+  open?: boolean;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   // view 每次 App 渲染都是新对象:用 ref 拿最新值，别把它塞进 sendImpl 的依赖里反复重注册
@@ -228,6 +231,7 @@ export function ChatDock(props: {
     if (!r.ok) return toast(r.error ?? "这段会话打开失败");
     const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
     setActiveConversationId(id);
+    scrollPin.pin();
     setMsgs(
       d.messages
         .map((m) => ({
@@ -349,6 +353,7 @@ export function ChatDock(props: {
     if (!message) return { ok: false, error: "消息不能为空" };
     if (busy) return { ok: false, error: "总编辑正在处理上一项任务，请等它受理后再派" };
     setMsgs((m) => [...m, { role: "user", text: message }]);
+    scrollPin.pin();
     setInput("");
     setBusy(true);
     setStopping(false);
@@ -516,9 +521,8 @@ export function ChatDock(props: {
     [],
   );
 
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
-  }, [msgs, progress, stream.text]);
+  // 贴底跟随：用户往上翻就停，「↓ 有新内容」回到底部（规则在 scroll-pin.ts）
+  const scrollPin = useScrollPin(bodyRef, [msgs, progress, stream.text], props.open ?? true);
 
   // 主通道/备用端点/自定义端点分组（清单本身低频变化，随渲染算即可）
   const modelGroups = groupModelOptions(modelOptions).map((g) => ({
@@ -567,6 +571,7 @@ export function ChatDock(props: {
             disabled={busy}
             onClick={() => {
               setActiveConversationId(undefined);
+              scrollPin.pin();
               setMsgs([]);
             }}
           >
@@ -587,6 +592,7 @@ export function ChatDock(props: {
           </div>
         )
       )}
+      <div className="chat-body-wrap">
       <div className="chat-body" ref={bodyRef}>
         {msgs.length === 0 && (
           <p className="muted">
@@ -636,6 +642,12 @@ export function ChatDock(props: {
             )}
           </div>
         )}
+      </div>
+      {scrollPin.showJump && (
+        <button className="chat-jump" aria-label="有新内容，回到底部" onClick={scrollPin.jumpToBottom}>
+          ↓ 有新内容
+        </button>
+      )}
       </div>
       {keyMissing ? (
         // 没配钥匙：旧对话照常能看（spec §2.4），只把输入框换成去设置填钥匙

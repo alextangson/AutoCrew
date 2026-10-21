@@ -35,7 +35,7 @@
 .bcard-meta { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--s1); }
 .bcard-red { color: var(--danger); }
 .bcard-when { font-size: var(--fs-xs); color: var(--muted); letter-spacing: .04em; margin-bottom: var(--s2); }
-.bcard-cover { width: 54px; height: 72px; object-fit: cover; flex: none; background: #EFEDE6; }
+.bcard-cover { width: 54px; height: 72px; object-fit: cover; flex: none; background: var(--lane); }
 .bcard-actions { display: flex; gap: var(--s3); align-items: center; margin-top: var(--s2); flex-wrap: wrap; }
 /* 卡片里只用 28 高的小按钮 */
 .bcard-actions button:not(.bcard-link) { font-size: var(--fs-sm); padding: var(--btn-sm-pad); }
@@ -70,7 +70,7 @@
 .bcard-badge { font-family: inherit; color: var(--ink); }
 .bcol-refuse { font-size: var(--fs-xs); color: var(--danger); margin: var(--s1) 0 0; }
 /* 稿件页里的「这条视频的进度」（原看板卡片面板，spec 2026-10-04 §2） */
-.card-panel { margin: var(--s3) var(--s5); padding: var(--s3) var(--s4); border: 1px solid var(--line, #e5e5e5); border-radius: 8px; background: var(--bg, #fff); display: flex; flex-direction: column; gap: var(--s3); }
+.card-panel { margin: var(--s3) var(--s5); padding: var(--s3) var(--s4); border: 1px solid var(--line-soft); border-radius: 8px; background: var(--bg); display: flex; flex-direction: column; gap: var(--s3); }
 .card-panel:not([open]) { gap: 0; }
 .card-panel-head { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s3); }
 .card-panel-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: anywhere; }
@@ -82,11 +82,11 @@
 .bcard-slate { font-size: var(--fs-xs); color: var(--accent, var(--fg)); border: 1px solid currentColor; padding: 0 var(--s1); margin-right: var(--s2); }
 
 /* 1b：卡片候选 / 收件箱列表的「依据」——分数与完整路径只在这里 */
-.card-panel-cand { padding: 6px 0; border-bottom: 1px solid var(--line, #e5e5e5); }
+.card-panel-cand { padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
 .card-panel-detail { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }
 
 /* 1b 验收：卡片面板顶上的「下一步」 */
-.card-panel-next { padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; background: var(--surface-2, #f6f6f4); }
+.card-panel-next { padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; background: var(--surface); }
 .card-panel-next p { margin: 0 0 6px; }
 /* 折叠时也看得出能点开：标题前一个三角，展开时转下来 */
 .card-panel-head::-webkit-details-marker { display: none; }

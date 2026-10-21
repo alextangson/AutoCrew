@@ -120,7 +120,7 @@
 .set-field-wide textarea { width: 100%; font-size: var(--fs-xs); line-height: 1.6; resize: vertical; }
 
 .sel-bar { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; border: 1px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: var(--s2) var(--s2); margin: var(--s2) 0; }
-.sel-float { position: absolute; z-index: 5; margin: 0; width: max-content; max-width: min(560px, 96%); box-shadow: 0 2px 10px rgba(22, 21, 15, 0.14); }
+.sel-float { position: absolute; z-index: 5; margin: 0; width: max-content; max-width: min(560px, 96%); box-shadow: var(--shadow-pop); }
 .ed-body-wrap { position: relative; }
 /* 预览态(成稿样子)与编辑态用同一套排版参数,切过去不跳版 */
 .md-preview { min-height: 58vh; font-size: var(--fs-lg); line-height: 1.9; overflow-wrap: break-word; }

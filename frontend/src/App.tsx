@@ -212,6 +212,7 @@ export function App() {
             contentContext={route.view === "editor" ? { contentId: route.id } : undefined}
             view={{ route: route.view === "topic" ? "board" : route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
             nav={setRoute}
+            open={dockOpen}
           />
         </aside>
         <button
