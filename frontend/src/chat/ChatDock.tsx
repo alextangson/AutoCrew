@@ -230,8 +230,9 @@ export function ChatDock(props: {
     const r = await invoke("conversations:get", { id });
     if (!r.ok) return toast(r.error ?? "这段会话打开失败");
     const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
+    // 切到别的会话才强制贴底；同一会话的自动刷新（调研回报、断线恢复）保留读者的滚动位置
+    if (id !== activeConvRef.current) scrollPin.pin();
     setActiveConversationId(id);
-    scrollPin.pin();
     setMsgs(
       d.messages
         .map((m) => ({
