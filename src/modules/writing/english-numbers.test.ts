@@ -22,7 +22,8 @@ describe("英文引文的数字说法", () => {
     expect(pick("six to one")).toContainEqual([6, "multiple"]);
     expect(pick("6:1")).toContainEqual([6, "multiple"]);
     expect(pick("a 3x jump, a 4-fold rise")).toEqual(expect.arrayContaining([[3, "multiple"], [4, "multiple"]]));
-    expect(pick("twenty-five teams")).toContainEqual([25, undefined]);
+    expect(pick("twenty-five years")).toContainEqual([25, "year"]);
+    expect(pick("twenty-five teams")).toEqual([]);
     expect(pick("1.2 million users")).toContainEqual([1.2e6, undefined]);
     expect(pick("$3 billion")).toContainEqual([3e9, "usd"]);
     expect(pick("40 percent")).toContainEqual([40, "percent"]);
@@ -70,6 +71,30 @@ describe("英文引文的数字说法", () => {
     expect(sourced("有 20 人", "We spent twenty dollars")).toEqual(["20 人"]);
     expect(sourced("花了 20 美元", "We spent twenty dollars")).toEqual([]);
     expect(sourced("用了 120 年", "one hundred and twenty years")).toEqual([]);
+  });
+
+  it("第二轮：认不全的说法整个放弃，不拿片段当证据", () => {
+    expect(sourced("利润 50亿美元", "Profit was -$5 billion")).toEqual(["50亿美元"]);
+    expect(sourced("增长 5%", "negative five percent")).toEqual(["5%"]);
+    expect(sourced("用了 3-5 年", "from -3 to 5 years")).toEqual(["3-5 年"]);
+    expect(sourced("用户 20-30 人", "between twenty and thirty-five users")).toEqual(["20-30 人"]);
+    expect(sourced("用户 3-5 人", "between three and five million users")).toEqual(["3-5 人"]);
+    expect(sourced("用了 25 年", "twenty-three to twenty-five years")).toEqual(["25 年"]);
+    expect(sourced("用了 23-25 年", "twenty-three to twenty-five years")).toEqual([]);
+    expect(sourced("是人的 6 倍", "six to one hundred")).toEqual(["6 倍"]);
+    expect(sourced("是人的 6 倍", "6 to 1 million")).toEqual(["6 倍"]);
+    expect(sourced("是人的 6 倍", "six to one point five")).toEqual(["6 倍"]);
+    expect(sourced("用了 1 小时", "a quarter of an hour")).toEqual(["1 小时"]);
+    expect(sourced("占一半", "half a percent of staff")).toEqual(["一半"]);
+    expect(sourced("增长 5%", "two point five percent")).toEqual(["5%"]);
+    expect(sourced("有 20 人", "twenty-first place")).toEqual(["20 人"]);
+    expect(sourced("有 100万 人", "one million, two hundred thousand users")).toEqual(["100万 人"]);
+    expect(sourced("有 300万 人", "We spent £3 million")).toEqual(["300万 人"]);
+    expect(sourced("有 20 人", "twenty US dollars")).toEqual(["20 人"]);
+    expect(sourced("有 20 人", "twenty kilograms")).toEqual(["20 人"]);
+    expect(sourced("用户 6-10 人", "The staff-to-agent ratio is six to ten")).toEqual(["6-10 人"]);
+    expect(sourced("花了 20 美元", "twenty US dollars")).toEqual([]);
+    expect(sourced("占 20%", "twenty% of staff")).toEqual([]);
   });
 });
 

@@ -31,20 +31,35 @@ const NUMBER_RE = new RegExp(
   `(\\$\\s?)?(?<![\\w.,])(?:(${DIGITS_SRC})(?![\\d.,]\\d)(?:\\s+(${SCALE_SRC}|hundred)\\b)?|\\b(${WORDS_SRC})\\b|\\b(an?)\\b)`, "gi",
 );
 /** 区间：3-5 years / 3 to 5 / between two and three years；两端都要对上，端点不单独当数 */
-const RANGE_END_SRC = `${DIGITS_SRC}|\\b(?:${LEAD_SRC})\\b`;
+const RANGE_END_SRC = `${DIGITS_SRC}|\\b${WORDS_SRC}\\b`;
 const RANGE_RE = new RegExp(
   `(?<![\\w.,])(between\\s+)?(${RANGE_END_SRC})\\s*(?:-|–|—|to|and)\\s*(${RANGE_END_SRC})(?![\\d.,]\\d)`, "gi",
 );
 
-/** 跟在数后面的英文单位；family 与 number-gate 的 UNITS 同名（欧元/英镑/日元中文侧没有，配不上任何东西，正好不放过） */
-const UNIT_RE = /^[\s-]*(percentage points?|per\s?cent|percent|years?|months?|weeks?|days?|hours?|minutes?|mins?|seconds?|dollars?|usd|yuan|rmb|euros?|pounds?|yen)\b/i;
+/**
+ * 跟在数后面的英文单位；family 与 number-gate 的 UNITS 同名。欧元/英镑/日元和重量长度等中文侧没有对应 family，
+ * 认出来是为了让它们配不上任何东西——不认就会掉成「无单位数」，跟「20 人」这种计数对上。
+ */
+const UNIT_RE = /^[\s-]*(%|percentage points?|per\s?cent|percent|years?|months?|weeks?|days?|hours?|minutes?|mins?|seconds?|(?:us\s+)?dollars?|usd|yuan|rmb|euros?|pounds?|yen|kilo(?:gram|meter|metre|watt)s?|kg|km|tons?|tonnes?|miles?|meters?|metres?|liters?|litres?|[kmgt]b|kwh|watts?)(?![\w])/i;
 const UNIT_FAMILY: ReadonlyArray<readonly [RegExp, string]> = [
   [/^percentage/i, "percent_point"], [/^per/i, "percent"], [/^year/i, "year"], [/^month/i, "month"],
   [/^week/i, "week"], [/^day/i, "day"], [/^hour/i, "hour"], [/^min/i, "minute"], [/^second/i, "second"],
-  [/^(?:dollar|usd)/i, "usd"], [/^(?:yuan|rmb)/i, "cny"], [/^euro/i, "eur"], [/^pound/i, "gbp"], [/^yen/i, "jpy"],
+  [/^(?:us\s+)?dollar|^usd/i, "usd"], [/^(?:yuan|rmb)/i, "cny"], [/^euro/i, "eur"], [/^pound/i, "gbp"], [/^yen/i, "jpy"],
+  [/^%/, "percent"], [/./, "measure"],
 ];
-/** 倍数：6 to 1 / six-to-one / 6:1 / 6x / 6-fold / 6 times as(more…)；分母必须整个是 1（6 to 1.5 不算） */
-const MULTIPLE_RE = /^(?:[\s-]*to[\s-]*(?:1(?![.,]?\d)|one\b)|\s?[:∶]\s?1(?![.,]?\d)|x\b|[\s-]*fold\b|\s+times\s+(?:as|more|larger|higher|faster|bigger|greater|longer|that|the)\b)/i;
+/** 分母必须整个是 1：6 to 1.5 / six to one hundred / 6 to 1 million / six to one point five 都不算 */
+const ONE_SRC = "(?:1|one)(?![.,]?\\d)(?![\\w-])(?!\\s+(?:point|hundred|thousand|million|billion|trillion)\\b)";
+/** 倍数：6 to 1 / six-to-one / 6:1 / 6x / 6-fold / 6 times as(more…) */
+const MULTIPLE_RE = new RegExp(
+  `^(?:[\\s-]*to[\\s-]*${ONE_SRC}|\\s?[:∶]\\s?${ONE_SRC}|x\\b|[\\s-]*fold\\b|\\s+times\\s+(?:as|more|larger|higher|faster|bigger|greater|longer|that|the)\\b)`, "i",
+);
+/** 数的前后还连着别的数字说法（-、minus、point、£、序数词、另一段数词）：认不全就整个放弃，不拿片段当证据 */
+const AMBIGUOUS_BEFORE = new RegExp(`(?:\\b(?:point|minus|negative)\\s+|[-−–£€¥]\\s?|(?:${WORD_SRC}|\\d)[\\s-]*,\\s*)$`, "i");
+const AMBIGUOUS_AFTER = new RegExp(
+  `^(?:-?(?:st|nd|rd|th)\\b|-(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\\b|\\s+point\\b|\\s*,\\s*(?:${WORD_SRC})\\b|[.,]\\d)`, "i",
+);
+const ambiguous = (text: string, start: number, end: number) =>
+  AMBIGUOUS_BEFORE.test(text.slice(Math.max(0, start - 40), start)) || AMBIGUOUS_AFTER.test(text.slice(end));
 
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 const MONTH_ABBR: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
@@ -108,15 +123,18 @@ function scanRanges(text: string, out: NumberMention[], claimed: Claimed): void 
     if (sep === "to" && /^(?:1|one)$/i.test(right)) continue;
     const a = endpoint(left);
     const b = endpoint(right);
-    if (a === null || b === null) continue;
-    const unit = UNIT_RE.exec(text.slice(index + whole.length));
+    const afterRange = text.slice(index + whole.length);
+    const unit = UNIT_RE.exec(afterRange);
     const raw = whole + (unit?.[0] ?? "");
     claimed.push([index, index + raw.length]);
+    // 认不全的区间（带负号、共用量级 three and five million、写明是比例）只认领不出数
+    const sentence = text.slice(0, index).split(/[.!?;]\s/).at(-1) ?? "";
+    if (a === null || b === null || ambiguous(text, index, index + whole.length) || /^\s+(?:hundred|thousand|million|billion|trillion)\b/i.test(afterRange) || /\bratio\b/i.test(sentence)) continue;
     out.push({ ...mention(raw, index, 0, unit ? unitFamily(unit[1]) : undefined), value: null, kind: "range", range: { min: Math.min(a, b), max: Math.max(a, b) } });
   }
 }
 
-/** 数前面单独的负号（不是 3-5、COVID-19 里的连字符）：-5 percent → -5 */
+/** 阿拉伯数字前面单独的负号（不是 3-5、COVID-19 里的连字符）：-5 percent → -5；其余情况交给 ambiguous */
 function signAt(text: string, index: number): { sign: number; start: number } | null {
   const dash = text[index - 1];
   if (dash === undefined || !"-−–".includes(dash)) return { sign: 1, start: index };
@@ -125,11 +143,12 @@ function signAt(text: string, index: number): { sign: number; start: number } | 
 
 function scanNumbers(text: string, out: NumberMention[], claimed: Claimed): void {
   for (const m of text.matchAll(NUMBER_RE)) {
-    const [whole, dollar, digits, scaleWord, words, article] = m;
+    const [whole, dollar, digits, scaleWord, words] = m;
     const index = m.index ?? 0;
     if (isClaimed(claimed, index)) continue;
     const signed = digits !== undefined && !dollar ? signAt(text, index) : { sign: 1, start: index };
     if (!signed) continue;
+    if (ambiguous(text, signed.start, index + whole.length)) continue;
     const after = text.slice(index + whole.length);
     let value: number | null;
     if (digits !== undefined) {
@@ -143,10 +162,9 @@ function scanNumbers(text: string, out: NumberMention[], claimed: Claimed): void
     if (dollar) { out.push(mention(raw, signed.start, value, "usd")); continue; }
     const unit = UNIT_RE.exec(after);
     if (unit) { out.push(mention(raw + unit[0], signed.start, value, unitFamily(unit[1]))); continue; }
-    // 不带单位：阿拉伯数字主抽取器已经抽过；"one" / "a" 单独出现不是数据点
-    if (digits !== undefined && !scaleWord) continue;
-    if (article !== undefined || words?.toLowerCase() === "one") continue;
-    out.push(mention(raw, signed.start, value));
+    // 不带单位只收「阿拉伯数字 + 量级」（1.2 million users）；裸数字主抽取器已抽过，
+    // 不带单位的英文数词（six、twenty-first、three million users）拿不准是什么就不当证据
+    if (digits !== undefined && scaleWord) out.push(mention(raw, signed.start, value));
   }
 }
 
@@ -170,11 +188,13 @@ function scanFractions(text: string, out: NumberMention[], claimed: Claimed): vo
     for (const m of text.matchAll(re)) {
       const index = m.index ?? 0;
       if (isClaimed(claimed, index)) continue;
-      // half a year / half an hour → 0.5 年 / 0.5 小时
-      const timed = /^\s+an?\s+(years?|months?|weeks?|days?|hours?|minutes?)\b/i.exec(text.slice(index + m[0].length));
-      const raw = m[0] + (timed?.[0] ?? "");
+      // half a year / a quarter of an hour / half a percent → 带单位；half a dozen 这类认不出的后缀只认领不出数
+      const tail = /^\s+(?:of\s+)?an?\s+([a-z]+)/i.exec(text.slice(index + m[0].length));
+      const unit = tail ? UNIT_RE.exec(` ${tail[1]}`) : null;
+      const raw = m[0] + (tail?.[0] ?? "");
       claimed.push([index, index + raw.length]);
-      out.push(mention(raw, index, value, timed ? unitFamily(timed[1]) : undefined));
+      if (tail && !unit) continue;
+      out.push(mention(raw, index, value, unit ? unitFamily(unit[1]) : undefined));
     }
   }
 }
