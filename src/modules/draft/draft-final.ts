@@ -142,7 +142,7 @@ function itemFor(c: Ctx, at: { start: number; end: number }, evidence: string[],
 export function buildChecklist(body: string, spans: Span[], entries: readonly LedgerEntry[]): ChecklistItem[] {
   // 和交接出处门同一口径：创始人保留生成的 user-kept-* 不替别的句子作保
   const real = entries.filter((e) => !e.id.startsWith(KEPT_ENTRY_PREFIX));
-  const backed = new Set(verifyNumbers({ title: "", hook: "", body, cta: "" }, real).verified.map((v) => v.mention.index));
+  const backed = new Set(verifyNumbers({ title: "", hook: "", body, cta: "" }, real).verified.filter((v) => !v.citedOnly).map((v) => v.mention.index));
   const ctx: Ctx = { body, spans, entries, backed };
   const items: ChecklistItem[] = [];
   const sentences = checklistSentences(body, backed);
