@@ -55,6 +55,22 @@ describe("英文引文的数字说法", () => {
     expect(sourced("两年后", EV[3].quote)).toEqual(["两年"]);
     expect(sourced("半小时", EV[1].quote)).toEqual(["半小时"]);
   });
+
+  // Codex review 找出的六种误放
+  it("负号、分数组成部分、并列数词、区间端点、非 1 分母、币种都不误放", () => {
+    expect(sourced("增长 5%", "Growth was -5 percent")).toEqual(["5%"]);
+    expect(sourced("下降 -5%", "Growth was -5 percent")).toEqual([]);
+    expect(sourced("花了 1 小时", "it took half an hour")).toEqual(["1 小时"]);
+    expect(sourced("有 2 人", "two thirds of staff")).toEqual(["2 人"]);
+    expect(sourced("用了 5 年", "It takes between two and three years")).toEqual(["5 年"]);
+    expect(sourced("用了 5 年", "It takes 3-5 years")).toEqual(["5 年"]);
+    expect(sourced("用了 3-5 年", "It takes 3-5 years")).toEqual([]);
+    expect(sourced("用了 2-3 年", "It takes between two and three years")).toEqual([]);
+    expect(sourced("是人的 6 倍", "The ratio is 6 to 1.5")).toEqual(["6 倍"]);
+    expect(sourced("有 20 人", "We spent twenty dollars")).toEqual(["20 人"]);
+    expect(sourced("花了 20 美元", "We spent twenty dollars")).toEqual([]);
+    expect(sourced("用了 120 年", "one hundred and twenty years")).toEqual([]);
+  });
 });
 
 describe("prepare_final 清单回归（dovnpj v4）", () => {
