@@ -5,6 +5,7 @@
  * 视频稿的进度单独刷新（key 随状态与存盘时刻变），不碰正在编辑的正文。
  */
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
 import type { AllowedTransition } from "../lib";
@@ -31,6 +32,8 @@ export interface StageCardProps {
   showTitle?: boolean;
   /** 发布表模式（吸收 14）：平台标签只显示状态、不带动作，动作都在表的行里；卡上没事时写读模型给的一句 */
   deskMode?: boolean;
+  /** 顶栏里留的位置：不用你操作时（AI 在做 / 没事），卡收成顶栏一行挂到这里；轮到你才出整张卡 */
+  inlineSlot?: HTMLElement | null;
 }
 
 const OK: ActionResult = { ok: true };
@@ -81,6 +84,24 @@ export function StageCard(p: StageCardProps) {
   const pr = model.primary;
   const blocked = pr?.blockedReason ?? (p.dirty && pr && needsSaved(pr.run) ? "先保存修改，再进入下一阶段" : undefined);
   const stage = data?.stage ?? data?.column ?? null;
+  const chips = Boolean(data && showChips(data.targets, data.stage ?? data.column));
+  // 收成一行的条件：没有主按钮、没有要你确认的平台标签、没有失败原因要常驻
+  const inline = p.inlineSlot && !p.deskMode && model.tone !== "you" && !pr && !chips && !g.error && !model.notes.length;
+  if (inline) {
+    const inlineText = model.text ? `${model.head}：${model.text}` : model.head;
+    const line = <span className="stage-inline">
+      <span className="stage-inline-head" title={inlineText}>{inlineText}</span>
+      <MoreMenu model={model} busy={g.busy} dirty={p.dirty} exec={exec} />
+    </span>;
+    const rest = p.showTitle !== false || (desk && !p.deskMode);
+    return <>
+      {createPortal(line, p.inlineSlot!)}
+      {rest && <div className="stage-card-wrap">
+        {p.showTitle !== false && <h1 className="stage-card-title">{c.title || "无标题"}</h1>}
+        {desk && <RailLine desk={desk} />}
+      </div>}
+    </>;
+  }
   return <div className="stage-card-wrap">
     {!p.deskMode && <p className="stage-card-meta">{platformLabel(c.platform)}{stage ? ` · ${stage}` : ""}</p>}
     {p.showTitle !== false && <h1 className="stage-card-title">{c.title || "无标题"}</h1>}
@@ -92,7 +113,7 @@ export function StageCard(p: StageCardProps) {
     </div>
     {model.text && <p className="stage-card-text">{model.text}</p>}
     {model.notes.map((n) => <p key={n} className="stage-card-note">{n}</p>)}
-    {data && showChips(data.targets, data.stage ?? data.column) && <PlatformChips targets={data.targets!} busy={g.busy}
+    {chips && data && <PlatformChips targets={data.targets!} busy={g.busy}
       onAction={data.active && !p.deskMode ? targetAct : undefined} only={["待发布", "已发布"].includes(data.stage ?? data.column ?? "") ? undefined : RECEIPT_ONLY} />}
     {pr && <div className="stage-card-row">
       <button className="primary" disabled={g.busy || Boolean(blocked)} onClick={() => void exec(pr.label, pr.run, pr.confirm)}>{g.busy ? "处理中…" : pr.label}</button>

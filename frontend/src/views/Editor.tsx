@@ -281,6 +281,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   // 状态在别处变了（吸收 10）：有没保存的改动就让写作台留着，直到保存 / 丢弃；进度卡单独刷新
   const shownWorkspace = useRef<StageWorkspace>("draft");
   const [derivedStage, setDerivedStage] = useState<string | null>(null);
+  // 顶栏里给阶段卡留的位置：不用你操作时卡收成一行挂进来（StageCard inlineSlot）
+  const [stageSlot, setStageSlot] = useState<HTMLElement | null>(null);
 
   if (!c) return loadError ? (
     <div className="pad">
@@ -450,7 +452,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const held = (dirty || saving) && shownWorkspace.current === "draft" && statusWorkspace !== "draft";
   const workspace: StageWorkspace = held ? "draft" : statusWorkspace;
   shownWorkspace.current = workspace;
-  const cardEl = (deskMode = false) => <StageCard content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
+  const cardEl = (deskMode = false) => <StageCard inlineSlot={stageSlot} content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
     transitions={isVideo ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
     isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft" && !deskMode} deskMode={deskMode} />;
   const stageCard = cardEl();
@@ -471,6 +473,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <strong>{platformLabel(c.platform)}</strong>
           <span className="ed-status-label">{derivedStage ?? VARIANT_STATUS[c.status] ?? c.status}</span>
           {workspace !== "draft" && <span className="muted">{WORKSPACE_LABEL[workspace]}</span>}
+          <span className="ed-stage-slot" ref={setStageSlot} />
         </div>
         <HandOffButton className="ed-quiet-button" contentId={props.id} mode={WRITING_STATUSES.has(c.status) ? "write" : "look"} />
         {workspace === "draft" && <button
@@ -515,6 +518,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <button className="ed-quiet-button ed-back-button" onClick={props.back}>← 看板</button>
           <strong className="pb-header-title">{c.title || "无标题"}</strong>
           <span className="muted">{platformLabel(c.platform)}</span>
+          <span className="ed-stage-slot" ref={setStageSlot} />
         </div>
         {stageCard}
         {productionBanner}
@@ -554,7 +558,6 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       {heldNote}
       {stageCard}
       {productionBanner}
-      <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}:${(c as { draftPath?: { checklistAt?: string } }).draftPath?.checklistAt ?? ""}`} dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />
       {props.context}
       <SharedProjectPanel status={c.status} isVideo={isVideo} ontology={ontology} />
 
@@ -698,6 +701,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           </details>
           <span className="muted ed-writing-hint">选中文字可让 AI 只改这一段</span>
         </div>
+
+        {/* 定稿区（试读 + 出处清单 +「定了」）在正文之后：先读稿、再看反馈、再拍板 */}
+        <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}:${(c as { draftPath?: { checklistAt?: string } }).draftPath?.checklistAt ?? ""}`} dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />
 
         {/* 配图要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作。
             成片向导与封面折叠区已搬去各自的工作台（阶段制 spec §2）。 */}

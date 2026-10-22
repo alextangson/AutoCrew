@@ -97,14 +97,28 @@ const tick = () => new Promise((r) => setTimeout(r, 10));
 const click = async (b: Element) => { await act(async () => { (b as HTMLElement).click(); await tick(); }); };
 const button = (t: string) => [...el.querySelectorAll("button")].find((b) => b.textContent === t);
 
-async function render(over: Record<string, unknown>, dirty = false) {
+async function render(over: Record<string, unknown>, dirty = false, inlineSlot?: HTMLElement) {
   card = panel(over);
   const { StageCard } = await import("./StageCard");
   const content = { id: "content-1-a", title: "稿", status: String(card.status), platform: "douyin", body: "正文", updatedAt: new Date().toISOString() };
-  await act(async () => { root.render(createElement(StageCard, { content, transitions: [], reload: async () => {}, isVideo: true, dirty })); await tick(); });
+  await act(async () => { root.render(createElement(StageCard, { content, transitions: [], reload: async () => {}, isVideo: true, dirty, inlineSlot, showTitle: false })); await tick(); });
 }
 
 describe("StageCard 渲染", () => {
+  it("不用你操作：卡收成顶栏一行（带「更多」），页面上不出整张卡", async () => {
+    const slot = document.createElement("span");
+    document.body.appendChild(slot);
+    await render({ status: "drafting", column: "写稿中", draft_item: null, claim: { live: true, host: "Claude Code" } }, false, slot);
+    expect(el.querySelector(".stage-card")).toBeNull();
+    expect(slot.querySelector(".stage-inline")?.textContent).toContain("AI 在做 · Claude Code");
+    slot.remove();
+  });
+  it("轮到你：就算有顶栏位置也出整张卡，顶栏不挂", async () => {
+    const slot = document.createElement("span");
+    await render({ status: "draft_ready" }, false, slot);
+    expect(el.querySelector(".stage-card.is-you")).not.toBeNull();
+    expect(slot.childElementCount).toBe(0);
+  });
   it("写好的稿：一个主按钮「稿子没问题」，走「等你拍板」带代次；没保存时灰掉说原因", async () => {
     await render({ status: "draft_ready" }, true);
     expect(button("稿子没问题")!.hasAttribute("disabled")).toBe(true);

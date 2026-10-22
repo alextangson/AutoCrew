@@ -468,3 +468,8 @@ h2.serif { font-size: var(--fs-2xl); line-height: 1.3; margin-bottom: var(--s3);
 /* 「交给 X 写 / 看」旁的小下拉「换一个」、选题卡「换一个 AI 写」（spec 2026-10-15 §B2、§B4）：安静、不抢主按钮 */
 .handoff { display: inline-flex; align-items: center; gap: 4px; }
 .handoff-other, .bcard-other { font-size: var(--fs-xs); color: var(--muted); background: transparent; border: none; padding: 2px 4px; cursor: pointer; max-width: 9em; }
+/* 阶段卡收进顶栏的一行：不用你操作时只占一个标签位 */
+.ed-stage-slot:empty { display: none; }
+.stage-inline { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--fs-xs); color: var(--muted); }
+.stage-inline-head { max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-inline-head::before { content: "· "; }

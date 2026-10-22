@@ -53,3 +53,15 @@ export function testReadLabel(r: DraftTestRead): string {
   const which = r.current ? `读的是当前版（第 ${r.version} 版）` : `这是修改前那版的试读（第 ${r.version} 版）`;
   return [which, status].filter(Boolean).join(" · ");
 }
+
+/** 试读收起时那一行：数每个小标题（「**划走**」/「## 没听懂」）下的条目，「划走 3 · 没听懂 7」；认不出结构就空串 */
+export function testReadCounts(notes: string): string {
+  const out: Array<[string, number]> = [];
+  for (const line of notes.split("\n")) {
+    const head = line.match(/^\s*(?:\*\*(.+?)\*\*|#{1,6}\s+(.+?))\s*[:：]?\s*$/);
+    if (head) { out.push([(head[1] ?? head[2]).trim(), 0]); continue; }
+    // 只数顶层条目：一条下面缩进的「原话 / 理由」子项不算新的一处
+    if (out.length && /^ ?(?:\d+[.、)]|[-*•])\s+\S/.test(line)) out[out.length - 1][1]++;
+  }
+  return out.filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(" · ");
+}

@@ -1,21 +1,22 @@
 /**
- * 抖音口播薄路径（autocrew_draft）的定稿区：观众试读（旧稿是 Codex 审稿意见，只是提示）+ 出处清单 + 「定了」。
+ * 抖音口播薄路径（autocrew_draft）的定稿区（挂在正文下面：先读稿、再看反馈、再拍板）：观众试读（旧稿是 Codex 审稿意见，只是提示）+ 出处清单 + 「定了」。
  * 「定了」只有创始人在这里点得到（服务端只认浏览器会话），点下去进「等 A-roll」。
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
-import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, testReadLabel, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote, type DraftTestRead } from "./draft-final-lib";
+import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, testReadCounts, testReadLabel, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote, type DraftTestRead } from "./draft-final-lib";
 
-/** 观众试读：小林只拿正文读一遍，标出会划走 / 没听懂 / 会转发的地方；结果原文照摆 */
+/** 观众试读：小林只拿正文读一遍，标出会划走 / 没听懂 / 会转发的地方；默认收成一行摘要，点开原文照摆 */
 export function TestRead(p: { reads: DraftTestRead[] }) {
   const last = p.reads.at(-1);
   if (!last) return null;
-  return <div className="draft-final-review">
-    <strong>观众试读</strong> <span className="muted">{testReadLabel(last)}</span>
+  const counts = last.status === "ok" ? testReadCounts(last.notes) : "";
+  return <details className="draft-final-review draft-final-testread">
+    <summary><strong>观众试读</strong> <span className="muted">{[testReadLabel(last), counts].filter(Boolean).join(" · ")}</span></summary>
     <pre className="draft-final-notes">{last.notes}</pre>
-  </div>;
+  </details>;
 }
 
 /** agent 附的 Codex 审稿意见：认得出三项结论就分项摆，否则原文照摆（调不通时就是原因） */

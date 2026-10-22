@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { finalizeBlock, testReadLabel, type DraftPanelData } from "./draft-final-lib";
+import { finalizeBlock, testReadCounts, testReadLabel, type DraftPanelData } from "./draft-final-lib";
 
 const base = (over: Partial<DraftPanelData> = {}): DraftPanelData => ({
   status: "draft_ready", draft_hash: "h", version: 2, review_notes: [],
@@ -61,5 +61,19 @@ describe("观众试读标签（spec 2026-10-15 §15.12）", () => {
     expect(testReadLabel({ version: 3, status: "ok", notes: "", at: "t", current: true })).toBe("读的是当前版（第 3 版）");
     expect(testReadLabel({ version: 2, status: "failed", notes: "", at: "t", current: false })).toBe("这是修改前那版的试读（第 2 版） · 试读没跑成（不算已审）");
     expect(testReadLabel({ version: 2, status: "unsupported", notes: "", at: "t", current: true })).toContain("不算已审");
+  });
+});
+
+describe("试读收起后的一行摘要", () => {
+  it("按小标题数条目，没条目的标题不写", () => {
+    const notes = "（以小林的身份）\n\n**划走**\n\n1. 约第 35 秒，…\n2. 约第 280 秒，…\n\n**没听懂**\n\n- 约第 0 秒\n- 约第 5 秒\n- 约第 30 秒\n\n## 会转发\n\n1. 好笑\n\n**空的**\n\n我一共会在 2 处划走";
+    expect(testReadCounts(notes)).toBe("划走 2 · 没听懂 3 · 会转发 1");
+  });
+  it("一条下面缩进的子项不算新的一处", () => {
+    expect(testReadCounts("**划走**\n1. 约第 35 秒\n   - 原话：…\n   - 理由：…\n2. 约第 280 秒")).toBe("划走 2");
+  });
+  it("认不出结构就空串，不瞎编数字", () => {
+    expect(testReadCounts("调用失败：超时")).toBe("");
+    expect(testReadCounts("")).toBe("");
   });
 });
