@@ -17,7 +17,7 @@ export const PLATFORM_CATALOG = [
 ] as const;
 
 export function platformLabel(p: string | null | undefined): string {
-  return PLATFORM_CATALOG.find((c) => c.id === p)?.label ?? p ?? "—";
+  return PLATFORM_CATALOG.find((c) => c.id === p)?.label ?? (p ? PLATFORM_CAPS[p]?.label : undefined) ?? p ?? "—";
 }
 
 /** 来源标签人话化(V5.6.2):radar:X → 雷达·X;x:@n → X·@n;其余原样 */
@@ -338,21 +338,55 @@ export function atomRep(atom: Atom): Content | null {
   return rep;
 }
 
-export const VIDEO_PLATFORMS = new Set(["douyin", "wechat_video", "xiaohongshu", "bilibili"]);
-
 /**
- * 平台 → 封面比例(首项 = 默认生成比例)。下拉与适配条都读这张表;
- * 与后端 src/modules/cover/platform-ratios.ts 同源同值,改动两边同步。
+ * 平台能力表的前端镜像：后端 src/modules/publish/platform-caps.ts 是事实源，这里只抄前端用到的字段，
+ * src/modules/publish/platform-caps.test.ts 逐项核两边同值（一行一个平台、值是 JSON，测试按行解析）。
  * 创始人 2026-09-29(发布前把关 §3):小红书 3:4;抖音、视频号 3:4+4:3;
- * B站只 4:3(16:9「个人空间封面」框由平台从 4:3 裁出,发布时核对,不单独出图)。
+ * B站只 4:3(16:9「个人空间封面」框由平台从 4:3 裁出,发布时核对,不单独出图);YouTube / X 16:9。
  */
-export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
-  wechat_mp: ["2.35:1"],
-  xiaohongshu: ["3:4"],
-  wechat_video: ["3:4", "4:3"],
-  douyin: ["3:4", "4:3"],
-  bilibili: ["4:3"],
+type PlatformCapsMirror = { label: string; kind: "video" | "article"; language: "zh" | "en"; coverRatios: string[]; metrics: "browser_pull" | "bind_only" | "unsupported" };
+export const PLATFORM_CAPS: Record<string, PlatformCapsMirror> = {
+  douyin: { "label": "抖音", "kind": "video", "language": "zh", "coverRatios": ["3:4", "4:3"], "metrics": "browser_pull" },
+  wechat_video: { "label": "视频号", "kind": "video", "language": "zh", "coverRatios": ["3:4", "4:3"], "metrics": "browser_pull" },
+  xiaohongshu: { "label": "小红书", "kind": "video", "language": "zh", "coverRatios": ["3:4"], "metrics": "browser_pull" },
+  bilibili: { "label": "B站", "kind": "video", "language": "zh", "coverRatios": ["4:3"], "metrics": "bind_only" },
+  wechat_mp: { "label": "公众号", "kind": "article", "language": "zh", "coverRatios": ["2.35:1"], "metrics": "bind_only" },
+  youtube: { "label": "YouTube", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
+  x: { "label": "X（推特）", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
 };
+
+const PLATFORM_IDS = Object.keys(PLATFORM_CAPS);
+
+/** 全部视频平台（含英文）：判断一条稿是不是视频稿 */
+export const VIDEO_PLATFORMS = new Set(PLATFORM_IDS.filter((p) => PLATFORM_CAPS[p].kind === "video"));
+
+/** 一条稿默认的发布平台：与稿件平台同语言的视频平台（中文视频不列 YouTube / X） */
+export function kitPlatformsFor(platform: string | null | undefined): string[] {
+  const language = PLATFORM_CAPS[platform ?? ""]?.language ?? "zh";
+  return PLATFORM_IDS.filter((p) => PLATFORM_CAPS[p].kind === "video" && PLATFORM_CAPS[p].language === language);
+}
+
+/** 有数据回流的中文视频平台，按表顺序（抖音、视频号、小红书、B站）：数据页的固定平台顺序 */
+export const METRIC_VIDEO_ORDER = PLATFORM_IDS.filter((p) => PLATFORM_CAPS[p].kind === "video" && PLATFORM_CAPS[p].language === "zh" && PLATFORM_CAPS[p].metrics !== "unsupported");
+
+/** 档案里的旧 id：twitter 就是 X（后端 platform-lines 同一张映射） */
+export function seatId(p: string): string {
+  return p === "twitter" ? "x" : p;
+}
+
+/** 席位 X 写图文时用的是 twitter 图文包（稿件平台 twitter）；其余席位原样 */
+export function textPlatformForSeat(p: string): string {
+  return p === "x" ? "twitter" : p;
+}
+
+/** 「发哪些平台」可勾的选项：能力表里的平台在前，再加只写图文的平台（twitter 已由 X 代表） */
+export const SEAT_CHOICES: Array<{ id: string; label: string }> = [
+  ...PLATFORM_IDS.map((id) => ({ id, label: PLATFORM_CAPS[id].label })),
+  ...PLATFORM_CATALOG.filter((c) => !PLATFORM_CAPS[c.id] && c.id !== "twitter").map((c) => ({ id: c.id, label: c.label })),
+];
+
+/** 平台 → 封面比例(首项 = 默认生成比例)。下拉与适配条都读这张表 */
+export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = Object.fromEntries(PLATFORM_IDS.map((p) => [p, PLATFORM_CAPS[p].coverRatios]));
 
 export function coverRatiosForPlatform(platform: string | null | undefined): string[] {
   return COVER_RATIOS_BY_PLATFORM[platform ?? ""] ?? ["3:4", "16:9", "4:3"];

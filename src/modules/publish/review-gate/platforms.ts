@@ -1,20 +1,18 @@
+import { ALL_VIDEO_PLATFORMS, PLATFORM_CAPS, type PlatformId } from "../platform-caps.js";
+
 /**
  * 平台名词表（发布前把关 spec §4）：原话 / 指令里点名的平台按这张表认（含中英文别名），代码匹配，不问模型。
+ * 平台清单、中文名与别名都来自平台能力表（platform-caps）。
  */
-export const GATE_PLATFORMS = ["douyin", "xiaohongshu", "wechat_video", "bilibili"] as const;
-export type GatePlatform = (typeof GATE_PLATFORMS)[number];
+export const GATE_PLATFORMS = ALL_VIDEO_PLATFORMS;
+export type GatePlatform = PlatformId;
 
-export const PLATFORM_LABEL: Record<GatePlatform, string> = {
-  douyin: "抖音", xiaohongshu: "小红书", wechat_video: "视频号", bilibili: "B站",
-};
+export const PLATFORM_LABEL = Object.fromEntries(GATE_PLATFORMS.map((p) => [p, PLATFORM_CAPS[p].label])) as Record<GatePlatform, string>;
 
-/** 别名（小写比较）；长的在前，免得「小红书」先被别的短词吃掉 */
-const ALIASES: Array<[string, GatePlatform]> = [
-  ["xiaohongshu", "xiaohongshu"], ["小红书", "xiaohongshu"], ["rednote", "xiaohongshu"], ["xhs", "xiaohongshu"], ["红书", "xiaohongshu"],
-  ["wechat_video", "wechat_video"], ["shipinhao", "wechat_video"], ["channels", "wechat_video"], ["视频号", "wechat_video"],
-  ["bilibili", "bilibili"], ["哔哩哔哩", "bilibili"], ["b站", "bilibili"], ["b 站", "bilibili"],
-  ["douyin", "douyin"], ["tiktok", "douyin"], ["抖音", "douyin"],
-];
+/** 精确认名的别名（小写比较） */
+const ALIASES: Array<[string, GatePlatform]> = GATE_PLATFORMS.flatMap((p) => PLATFORM_CAPS[p].aliases.map((a): [string, GatePlatform] => [a, p]));
+/** 在一段话里按子串认的别名：单字母的「x」不在里面，否则任何带 x 的词都会点名 X */
+const TEXT_ALIASES: Array<[string, GatePlatform]> = GATE_PLATFORMS.flatMap((p) => PLATFORM_CAPS[p].textAliases.map((a): [string, GatePlatform] => [a, p]));
 
 /** 计划里的平台值 → 规范名；认不出返回 null */
 export function normalizePlatform(raw: unknown): GatePlatform | null {
@@ -27,7 +25,7 @@ export function normalizePlatform(raw: unknown): GatePlatform | null {
 export function platformsNamedIn(text: string): GatePlatform[] {
   const lower = text.toLowerCase();
   const hits: Array<[number, GatePlatform]> = [];
-  for (const [alias, p] of ALIASES) {
+  for (const [alias, p] of TEXT_ALIASES) {
     const at = lower.indexOf(alias);
     if (at >= 0 && !hits.some(([, q]) => q === p)) hits.push([at, p]);
   }

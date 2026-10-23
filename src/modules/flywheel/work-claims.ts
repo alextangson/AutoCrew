@@ -15,11 +15,12 @@ import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { normalizePlatform, normalizeTitle, shanghaiDate, isTruncatedItemId, outcomeKey, ATTRIBUTION_REVIEW_PREFIX, type PerformanceOutcome } from "./outcome-schema.js";
 import { appendOutcomes, latestByKey, serializeOutcomeWrite } from "./outcome-store.js";
 import { serializeHistory } from "./history-queue.js";
+import { METRICS_PLATFORMS } from "../publish/platform-caps.js";
 
 const CLAIMS_FILE = "work-claims.json";
 const SCHEMA_VERSION = 1;
-/** 与 work-binding 的 BINDABLE_PLATFORMS 一致（不从那里引，免得循环依赖） */
-const CLAIMABLE_PLATFORMS: readonly string[] = ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"];
+/** 与 work-binding 的 BINDABLE_PLATFORMS 同源：平台能力表里有数据回流的平台 */
+const CLAIMABLE_PLATFORMS: readonly string[] = METRICS_PLATFORMS;
 
 export interface WorkClaim { contentId: string; title: string; date: string; claimedAt: string; via: "manual_claim" }
 interface ClaimsFile { schemaVersion: number; claims: Record<string, WorkClaim> }

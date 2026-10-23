@@ -321,6 +321,16 @@ export interface ManualPublication {
   url?: string;
 }
 
+export type DerivationKind = "en_edition" | "wechat_article";
+
+export interface DerivedFrom {
+  contentId: string;
+  kind: DerivationKind;
+  /** 派生那一刻源稿审过的成片身份（见 lineage.approvedCutIdentity） */
+  sourceCutHash: string;
+  at: string;
+}
+
 export interface Content {
   /** 示例稿（O20）：建稿时从选题继承；不进数据回流、不参与写作规则 / 手册学习，可一键删 */
   example?: boolean;
@@ -358,6 +368,11 @@ export interface Content {
   tags: string[];
   /** IDs of sibling content (same topic, different platforms) */
   siblings: string[];
+  /**
+   * 派生关系（全媒体 spec §8 Phase 1 #2）：这条稿是从哪条视频的哪一版审过的成片派生的。
+   * 只由 modules/lineage/lineage.ts 的 deriveSibling 写；源成片身份变了 = 这条过期（isStale）。
+   */
+  derivedFrom?: DerivedFrom;
   /** Platform-specific hashtags */
   hashtags: string[];
   /**

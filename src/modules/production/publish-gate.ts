@@ -29,7 +29,8 @@ async function shaFor(abs: string, fresh: boolean): Promise<string | { error: st
   return !r ? null : r.ok ? r.sha256 : { error: r.reason };
 }
 
-async function fileOf(root: string, f: Fact | undefined, label: string, fresh: boolean): Promise<string | { error: string }> {
+/** 登记 / 批准所绑文件的现状：返回绝对路径，或文件缺失 / 字节变了的人话原因（派生线也用它核源成片） */
+export async function fileOf(root: string, f: Fact | undefined, label: string, fresh: boolean): Promise<string | { error: string }> {
   if (!f?.path) return { error: `登记绑的${label}记录不见了` };
   let abs: string;
   try { abs = path.isAbsolute(f.path) ? f.path : safeProjectPath(root, f.path); } catch (e) { return { error: `${label}路径不安全：${e instanceof Error ? e.message : String(e)}` }; }

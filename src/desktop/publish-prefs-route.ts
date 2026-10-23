@@ -10,7 +10,11 @@ import type http from "node:http";
 import { COVER_CROP_CHECKS, COVER_RATIOS_BY_PLATFORM } from "../modules/cover/platform-ratios.js";
 import { addPublishRule, decideProposal, pendingProposals, readPublishPrefs, removePublishRule, setCoverRatios } from "../modules/publish/review-gate/preferences.js";
 import { saveInstruction } from "../modules/publish/review-gate/instructions.js";
-import { GATE_PLATFORMS, PLATFORM_LABEL } from "../modules/publish/review-gate/platforms.js";
+import { PLATFORM_LABEL } from "../modules/publish/review-gate/platforms.js";
+import { videoPlatformsFor } from "../modules/publish/platform-caps.js";
+
+/** 设置页列的平台：中文视频平台（英文平台的封面比例固定 16:9，Phase 3 再决定要不要进设置页） */
+const PREF_PLATFORMS = videoPlatformsFor("zh");
 
 export interface PublishPrefsRouteDeps {
   authorize(req: http.IncomingMessage): "session" | "bearer" | null;
@@ -24,8 +28,8 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 async function prefsView(dataDir: string): Promise<Record<string, unknown>> {
   const prefs = await readPublishPrefs(dataDir);
-  const defaults = Object.fromEntries(GATE_PLATFORMS.map((p) => [p, COVER_RATIOS_BY_PLATFORM[p] ?? []]));
-  return { ok: true, platforms: GATE_PLATFORMS.map((p) => ({ id: p, label: PLATFORM_LABEL[p] })), defaults, crop_checks: COVER_CROP_CHECKS, ...prefs, proposals: await pendingProposals(dataDir) };
+  const defaults = Object.fromEntries(PREF_PLATFORMS.map((p) => [p, COVER_RATIOS_BY_PLATFORM[p] ?? []]));
+  return { ok: true, platforms: PREF_PLATFORMS.map((p) => ({ id: p, label: PLATFORM_LABEL[p] })), defaults, crop_checks: COVER_CROP_CHECKS, ...prefs, proposals: await pendingProposals(dataDir) };
 }
 
 async function applyOp(a: Body, dataDir: string): Promise<{ ok: boolean; error?: string }> {

@@ -359,7 +359,7 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
   wechat_mp: "公众号", douyin: "抖音", xiaohongshu: "小红书", wechat_video: "视频号",
-  bilibili: "B站", twitter: "X (Twitter)", instagram: "Instagram", reddit: "Reddit", toutiao: "头条",
+  bilibili: "B站", twitter: "X (Twitter)", x: "X（推特）", youtube: "YouTube", instagram: "Instagram", reddit: "Reddit", toutiao: "头条",
 };
 
 /** 平台表达习惯:派生/改写到该平台时注入,让输出是平台原生腔调而非机械套原文结构。 */

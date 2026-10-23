@@ -9,28 +9,23 @@
  * - 文案：字符串长度（JS length），计入并进文案末尾的话题标签；抖音不设硬上限；
  * - 文案下限 20 字（与交发布包同一对上下限）。
  */
-import { publishTitleChars, videoTitleLimit } from "./video-kit.js";
+import { videoTitleLimit } from "./video-kit.js";
+import { countTitleChars, PLATFORM_CAPS, platformsWhere, titleCountNote } from "./platform-caps.js";
 
-export const PLATFORM_MIN_BODY: Record<string, number> = {
-  xiaohongshu: 200,
-  xhs: 200,
-  douyin: 100,
-  wechat_mp: 800,
-  wechat_video: 100,
-  bilibili: 200,
-};
+/** 正文下限（xhs 是旧数据简写，与 xiaohongshu 同值） */
+export const PLATFORM_MIN_BODY: Record<string, number> = withXhsAlias(platformsWhere((c) => c.bodyMin !== undefined).map((p) => [p, PLATFORM_CAPS[p].bodyMin!]));
 
 /**
  * 发布文案上限（创始人裁定：短文案平台 ≤1000）。douyin 不设——body 是口播脚本；
- * 发布简介 ≤300 只是引擎 prompt 纪律（video-kit CAPTION_RULES），宿主发布包同样不设硬上限。
+ * 发布简介 ≤300 只是引擎 prompt 纪律（能力表 captionRule），宿主发布包同样不设硬上限。
  */
-export const PLATFORM_MAX_BODY: Record<string, number> = {
-  xiaohongshu: 1000,
-  xhs: 1000,
-  wechat_video: 800,
-  bilibili: 2000,
-  wechat_mp: 3000,
-};
+export const PLATFORM_MAX_BODY: Record<string, number> = withXhsAlias(platformsWhere((c) => c.bodyMax !== undefined).map((p) => [p, PLATFORM_CAPS[p].bodyMax!]));
+
+function withXhsAlias(entries: Array<[string, number]>): Record<string, number> {
+  const out = Object.fromEntries(entries);
+  if (out.xiaohongshu !== undefined) out.xhs = out.xiaohongshu;
+  return out;
+}
 
 /** 发布简介下限（P6 §3.6）。交包与预检用同一对上下限：交得进去就查得过 */
 export const KIT_CAPTION_MIN = 20;
@@ -51,6 +46,11 @@ export function mergeTags(caption: string, tags: string[]): string {
   return missing.length > 0 ? `${caption}\n\n${missing.map((t) => `#${t}`).join(" ")}` : caption;
 }
 
+/** 中文平台沿用原句「加权计数：中文 1、英文数字半字、空格不计」 */
+function titleNote(platform: string): string {
+  return titleCountNote(platform) === "按字符计" ? "按字符计" : "加权计数：中文 1、英文数字半字、空格不计";
+}
+
 export interface TextRuleResult {
   field: "title" | "caption" | "tags";
   ok: boolean;
@@ -63,9 +63,9 @@ export function validatePublishText(platform: string, input: { title: string; ca
   const out: TextRuleResult[] = [];
   const title = input.title.trim();
   const limit = videoTitleLimit(platform);
-  const chars = publishTitleChars(title);
+  const chars = countTitleChars(platform, title);
   if (!title) out.push({ field: "title", ok: false, detail: "没有标题" });
-  else out.push({ field: "title", ok: chars <= limit, detail: `标题 ${chars} 字（加权计数：中文 1、英文数字半字、空格不计），${platform} 上限 ${limit}` });
+  else out.push({ field: "title", ok: chars <= limit, detail: `标题 ${chars} 字（${titleNote(platform)}），${platform} 上限 ${limit}` });
   const badTags = input.tags.filter((t) => /[\s#]/.test(t.replace(/^#+/, "")));
   out.push(badTags.length
     ? { field: "tags", ok: false, detail: `标签「${badTags.join("」「")}」里有空格或 #，发出去会断开` }

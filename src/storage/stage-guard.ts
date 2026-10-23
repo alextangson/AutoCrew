@@ -9,18 +9,14 @@
  * 三处喂同一份输入拿同一句人话，不许各判一套。
  */
 import type { ContentStatus } from "./local-store.js";
+import { ALL_VIDEO_PLATFORMS } from "../modules/publish/platform-caps.js";
 
 /**
- * 视频平台清单。定义落在这里而不是 `modules/publish/video-kit`：那个文件 import 了
- * local-store，而 local-store 要 import 本文件——放那边会成运行时环。video-kit 改为
- * 从这里再导出，既有调用方一个字不用改。
+ * 视频平台清单（含英文平台）。事实源是平台能力表（modules/publish/platform-caps，零 import，不会成环）；
+ * 「一条视频默认发哪些平台」不读这里，读 kitPlatformsFor——那里按语言分开中英文。
+ * video-kit 从这里再导出，既有调用方一个字不用改。
  */
-export const VIDEO_PLATFORMS: ReadonlySet<string> = new Set([
-  "douyin",
-  "wechat_video",
-  "xiaohongshu",
-  "bilibili",
-]);
+export const VIDEO_PLATFORMS: ReadonlySet<string> = new Set(ALL_VIDEO_PLATFORMS);
 
 export function isVideoPlatform(platform?: string | null): boolean {
   return VIDEO_PLATFORMS.has(platform ?? "");

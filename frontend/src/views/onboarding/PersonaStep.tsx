@@ -4,9 +4,11 @@
  */
 import { useState } from "react";
 import { invoke } from "../../transport";
+import { PLATFORM_CAPS } from "../../lib";
 import "./onboarding.css";
 
-const PLATFORMS: Array<[string, string]> = [["douyin", "抖音"], ["wechat_video", "视频号"], ["xiaohongshu", "小红书"], ["bilibili", "B站"], ["wechat_mp", "公众号"]];
+/** 能力表里的平台（抖音、视频号、小红书、B站、公众号、YouTube、X）；勾了才开对应的生产线 */
+const PLATFORMS: Array<[string, string]> = Object.entries(PLATFORM_CAPS).map(([id, c]) => [id, c.label]);
 
 export function PersonaStep(props: { onNext: () => void }) {
   const [industry, setIndustry] = useState("");

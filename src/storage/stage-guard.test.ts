@@ -12,8 +12,8 @@ const noCover = () => Promise.resolve(false);
 const hasCover = () => Promise.resolve(true);
 
 describe("stage guard", () => {
-  it("视频平台清单是四个短视频平台，公众号不在内", () => {
-    expect([...VIDEO_PLATFORMS].sort()).toEqual(["bilibili", "douyin", "wechat_video", "xiaohongshu"]);
+  it("视频平台清单是四个中文短视频平台加 youtube / x，公众号不在内", () => {
+    expect([...VIDEO_PLATFORMS].sort()).toEqual(["bilibili", "douyin", "wechat_video", "x", "xiaohongshu", "youtube"]);
     expect(isVideoPlatform("wechat_mp")).toBe(false);
     expect(isVideoPlatform(undefined)).toBe(false);
   });

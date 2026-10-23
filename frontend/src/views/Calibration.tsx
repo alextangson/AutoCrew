@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { authedFetch, invoke } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
-import { PLATFORM_CATALOG } from "../lib";
+import { SEAT_CHOICES, seatId } from "../lib";
 import { dateLabel } from "../time-format";
 
 type RuleStatus = "pending" | "active" | "rejected" | "disabled";
@@ -83,7 +83,7 @@ export function Calibration() {
       data?: { industry?: string; platforms?: string[]; focusKeywords?: string[] };
     };
     setIndustry(o.industry ?? o.data?.industry ?? "");
-    setSeats(o.platforms ?? o.data?.platforms ?? []);
+    setSeats([...new Set((o.platforms ?? o.data?.platforms ?? []).map(seatId))]);
     const kws = o.focusKeywords ?? o.data?.focusKeywords ?? [];
     setFocusKeywords(kws.join("、"));
     return kws;
@@ -221,7 +221,7 @@ export function Calibration() {
 
       <div className="ed-section">
         <span className="mono muted">席位：</span>
-        {PLATFORM_CATALOG.map((c) => (
+        {SEAT_CHOICES.map((c) => (
           <button key={c.id} className={"chip" + (seats.includes(c.id) ? " chip-pub" : "")} onClick={() => void toggleSeat(c.id)}>
             {seats.includes(c.id) ? "✓ " : ""}
             {c.label}

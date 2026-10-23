@@ -3,7 +3,8 @@
  * 一条视频发多平台 = 一条稿多份包（videoKits），不再要求 content.platform === 平台（spec 2026-10-12 A）。
  */
 import type { Content } from "../storage/local-store.js";
-import { isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
+import { videoPlatformsFor } from "../modules/publish/platform-caps.js";
 import { videoKitFor } from "../storage/video-kits.js";
 import { editorialDraftHash } from "./editorial.js";
 import { COVER_TEXT_MAX, videoTitleLimit } from "../modules/publish/video-kit.js";
@@ -12,9 +13,9 @@ import { captionTags, KIT_CAPTION_MIN, PLATFORM_MAX_BODY } from "../modules/publ
 
 export type KitFailure = { ok: false; error: string; code?: string; next_action?: Record<string, unknown> };
 
-/** 各视频平台的上限直接从常量拼进工具说明，数字只有一份，不会说明写 20、代码判 22 */
+/** 各视频平台的上限直接从常量拼进工具说明，数字只有一份，不会说明写 20、代码判 22（中文平台；英文发布包 Phase 3 另写说明） */
 export function kitLimitsText(): string {
-  const platforms = [...VIDEO_PLATFORMS];
+  const platforms = videoPlatformsFor("zh");
   const titles = platforms.map((p) => `${p} ${videoTitleLimit(p)}`).join(" / ");
   const captions = platforms.map((p) => `${p} ${PLATFORM_MAX_BODY[p] ?? "不设"}`).join(" / ");
   return `post_title 上限：${titles}（中文 1 字、英文数字半字、空格不计）；caption ≥${KIT_CAPTION_MIN} 字，上限：${captions}；cover_text ≤${COVER_TEXT_MAX} 字`;

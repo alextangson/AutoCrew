@@ -51,7 +51,7 @@ describe("executePrePublish platform-specific checks", () => {
   }
 
   it("公众号仍检查全文上限，不接受无关的视频简介来绕过", async () => {
-    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号长文", body: "字".repeat(3001), platform: "wechat_mp", status: "approved", videoKit: { platform: "douyin", postTitle: "介绍", caption: "字".repeat(300), storyboard: [], coverText: "封面", coverPrompt: "封面", generatedAt: new Date().toISOString() } }, dataDir);
+    const content = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号长文", body: "字".repeat(4001), platform: "wechat_mp", status: "approved", videoKit: { platform: "douyin", postTitle: "介绍", caption: "字".repeat(300), storyboard: [], coverText: "封面", coverPrompt: "封面", generatedAt: new Date().toISOString() } }, dataDir);
     const result = await executePrePublish({ action: "check", content_id: content.id, _dataDir: dataDir, _readOnly: true });
     expect("checks" in result && result.checks.find((c) => c.name === "正文字数")).toMatchObject({ status: "fail" });
   });

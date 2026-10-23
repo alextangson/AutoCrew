@@ -9,7 +9,7 @@ import { Button } from "../components/Button";
 import { useState } from "react";
 import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
-import { VIDEO_PLATFORMS, isHttpUrl } from "../lib";
+import { VIDEO_PLATFORMS, isHttpUrl, kitPlatformsFor } from "../lib";
 import { relativeLabel } from "../time-format";
 import { artifactUrl } from "./board-parts";
 import { CodexPublishButton } from "./CodexPublish";
@@ -103,6 +103,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
         <PickupNudge item={item} reload={props.reload} />
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
+        {item.derivedStale && <span className="bcard-alert" title={item.derivedStale}>已过期：源视频成片变了</span>}
         {item.noScriptApproval && <span className="bcard-meta">没走认稿就发了</span>}
         {showChips(item.targets, item.column) && <PlatformChips targets={item.targets!} />}
         {(props.siblings ?? []).map((s) => <span key={s.id} className="bcard-same">同主题：<button onClick={() => props.openOther?.(s.id)}>{platformName(s.platform ?? "")}{s.title && s.title !== item.title ? `《${s.title}》` : ""}</button></span>)}
@@ -218,7 +219,7 @@ function PublishRows(props: { item: BoardItem; reload: () => Promise<void> }) {
   const rec = props.item.publish;
   if (!rec) return null;
   const listed = rec.kind === "none" ? [] : rec.platforms;
-  const unlisted = [...VIDEO_PLATFORMS].filter((p) => !listed.some((x) => x.platform === p));
+  const unlisted = (props.item.kitPlatforms ?? kitPlatformsFor(props.item.platform)).filter((p) => !listed.some((x) => x.platform === p));
   return <div className="prows">
     {rec.kind === "unreadable" && <div className="prow-note prow-red">发布记录读不到：{rec.reason}</div>}
     {rec.kind === "none" && <div className="prow-note prow-muted">还没有发布记录</div>}
