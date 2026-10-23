@@ -100,6 +100,8 @@ export interface ContentInput {
   ownedElsewhere?: ReadonlySet<string>;
   /** 创始人交接时确认过的封面字（只在决定对得上当前定稿时给）：封面组没带字时预填 */
   handoffCoverText?: string;
+  /** 由视频派生的公众号文章：整包指纹（正文 + 标题 + 配图 + 封面 + 创作来源）进认稿那件的代次，包一变就要重新看 */
+  articlePackageHash?: string;
 }
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
@@ -385,7 +387,7 @@ function waitingBehindScript(doc: ProductionDoc | null): Array<"cut_review" | "c
 
 const BEHIND_TEXT: Record<string, string> = { "cut_review,cover_pick": "成片和封面都做好了", cut_review: "成片剪好了", cover_pick: "封面做好了" };
 
-function draftItem(content: Content, behindDoc: ProductionDoc | null = null): Draft | null {
+function draftItem(content: Content, behindDoc: ProductionDoc | null = null, packageHash?: string): Draft | null {
   if (content.status !== "draft_ready") return null;
   const behind = waitingBehindScript(behindDoc);
   return {
@@ -395,7 +397,7 @@ function draftItem(content: Content, behindDoc: ProductionDoc | null = null): Dr
     actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：开头换成客户问的那句话" }],
     detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length, ...(behind.length ? { waiting_behind: behind } : {}) },
     // 退回修改后重交（同样的正文也算重交）开新代次
-    snapshot: [bodyHash(content.body), content.title, content.updatedAt],
+    snapshot: [bodyHash(content.body), content.title, content.updatedAt, ...(packageHash ? [packageHash] : [])],
   };
 }
 
@@ -412,7 +414,7 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
     drafts.push(...publishItems(doc, input).filter((x) => x.type === "publish_claim" || x.type === "published_ask"));
     return finish(drafts, input, now);
   }
-  const d = draftItem(content, exp?.phase === "writing" ? doc : null);
+  const d = draftItem(content, exp?.phase === "writing" ? doc : null, input.articlePackageHash);
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere), ...sliverItems(doc, content));

@@ -28,6 +28,7 @@ import { loadManifest, readVersionText } from "../playbook/store.js";
 import { paragraphDiff } from "../playbook/diff.js";
 import { promotionItems } from "./chat-approval/promotion-decide.js";
 import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
+import { articleReviewState, isDerivedArticle } from "../wechat-article/review.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 import { DELETED_CONTENT, lessonQuestion, mergeKeyOf, wordsLine } from "./lesson-view.js";
 
@@ -79,6 +80,12 @@ async function plannedPlatforms(content: Content, dataDir: string): Promise<stri
   return [...new Set(list)];
 }
 
+/** 派生公众号文章的整包指纹；读不出来就用读不出的原因占位（代次照样变，不拿旧代次批） */
+async function articlePackageHashOf(id: string, dataDir: string): Promise<string> {
+  const s = await articleReviewState(id, dataDir).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+  return "hash" in s ? s.hash : `unreadable:${s.error}`;
+}
+
 async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType<typeof explainContext>>): Promise<ContentInput> {
   const video = isVideoPlatform(c.platform);
   const active = video && ctx.enabled && !ctx.excluded.has(c.id);
@@ -94,8 +101,9 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
     if (await arollOwnerElsewhere(dataDir, f.sha256!, c.id).catch(() => null)) ownedElsewhere.add(f.id);
   }
   const handoffCoverText = doc ? await confirmedCoverText(c, dataDir) : "";
+  const articlePackageHash = isDerivedArticle(c) && c.status === "draft_ready" ? await articlePackageHashOf(c.id, dataDir) : undefined;
   return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere,
-    ...(handoffCoverText ? { handoffCoverText } : {}) };
+    ...(handoffCoverText ? { handoffCoverText } : {}), ...(articlePackageHash ? { articlePackageHash } : {}) };
 }
 
 /** 创始人交接时确认的封面字：只认创始人来源、且对得上当前定稿的决定 */
