@@ -29,7 +29,7 @@ export const PLATFORM_MAX_BODY: Record<string, number> = {
   xhs: 1000,
   wechat_video: 800,
   bilibili: 2000,
-  wechat_mp: 3000,
+  wechat_mp: 4000,
 };
 
 /** 发布简介下限（P6 §3.6）。交包与预检用同一对上下限：交得进去就查得过 */
