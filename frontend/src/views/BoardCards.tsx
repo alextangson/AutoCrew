@@ -103,6 +103,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
         <PickupNudge item={item} reload={props.reload} />
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
+        {item.derivedStale && <span className="bcard-alert" title={item.derivedStale}>已过期：源视频成片变了</span>}
         {item.noScriptApproval && <span className="bcard-meta">没走认稿就发了</span>}
         {showChips(item.targets, item.column) && <PlatformChips targets={item.targets!} />}
         {(props.siblings ?? []).map((s) => <span key={s.id} className="bcard-same">同主题：<button onClick={() => props.openOther?.(s.id)}>{platformName(s.platform ?? "")}{s.title && s.title !== item.title ? `《${s.title}》` : ""}</button></span>)}

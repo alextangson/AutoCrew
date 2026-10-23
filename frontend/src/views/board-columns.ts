@@ -78,6 +78,8 @@ export interface BoardItem {
   active?: boolean;
   /** 真有问题的提示（卡上标红）；中性信息在 badges */
   alerts?: string[];
+  /** 派生稿（英文版 / 公众号文章）的源成片换了：人话原因；没过期 = null */
+  derivedStale?: string | null;
   badges?: string[];
   /** 本轮候选 / 核对中的事实（本体 explain 给的；写稿段也带） */
   candidates?: Array<{ kind: string; state?: string }>;

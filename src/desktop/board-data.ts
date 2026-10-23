@@ -25,6 +25,7 @@ import { isBeingWritten } from "../modules/production/trash-guard.js";
 import { handoffView, type HandoffView } from "../modules/production/handoff-view.js";
 export { handoffView };
 import { publishTargets, type PublishTarget } from "../modules/production/targets.js";
+import { staleReason } from "../modules/lineage/lineage.js";
 
 export { isBeingWritten };
 
@@ -80,6 +81,8 @@ export interface BoardItem {
   noScriptApproval: boolean;
   /** 本轮轮次（按平台动作要带它）；不按本体走 = null */
   round: number | null;
+  /** 派生稿（英文版 / 公众号文章）的源成片换了：人话原因；不是派生稿或没过期 = null */
+  derivedStale: string | null;
   /** 「开始写」交给了谁、有没有 agent 接手、谁正认领着（spec 2026-10-15 §B5）；没交过 = 不带 */
   handoff?: HandoffView;
 }
@@ -167,7 +170,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
-    active, writing: isBeingWritten(current), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
+    active, writing: isBeingWritten(current), derivedStale: await staleReason(current, dataDir), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
     ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
     // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）
