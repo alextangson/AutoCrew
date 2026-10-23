@@ -178,7 +178,8 @@
        "mark_ready",
        "ask",
        "answer_ask",
-       "withdraw_ask"
+       "withdraw_ask",
+       "wechat_article"
       ],
       "type": "string"
      },
@@ -186,6 +187,7 @@
       "minimum": 0,
       "type": "integer"
      },
+     "article": {},
      "ask_id": {
       "type": "string"
      },
@@ -3195,7 +3197,8 @@
        "mark_ready",
        "ask",
        "answer_ask",
-       "withdraw_ask"
+       "withdraw_ask",
+       "wechat_article"
       ],
       "type": "string"
      },
@@ -3203,6 +3206,7 @@
       "minimum": 0,
       "type": "integer"
      },
+     "article": {},
      "ask_id": {
       "type": "string"
      },

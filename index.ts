@@ -75,7 +75,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     label: "AutoCrew Content",
     description:
       "Manage existing content and explicit manual imports. For NEW AI-written drafts use autocrew_workflow prepare then autocrew_writer submit, never save directly. " +
-      "Actions: save, list, get, update, transition, list_siblings, create_variant.",
+      "Actions: save, list, get, update, transition, list_siblings, create_variant, wechat_article (公众号长文 from an approved video: op derive/source/set_titles/choose_title/set_creation_source/override_length/generate_images/attach_web_image/set_cover/status).",
     parameters: contentSaveSchema,
     execute: executeContentSave,
   });
