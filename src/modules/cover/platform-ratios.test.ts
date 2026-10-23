@@ -21,13 +21,6 @@ describe("coverRatiosForPlatform", () => {
     expect(coverRatiosForPlatform("toutiao")).toEqual(["3:4", "16:9", "4:3"]);
     expect(coverRatiosForPlatform(undefined)).toEqual(["3:4", "16:9", "4:3"]);
   });
-  it("前端镜像同源同值:frontend/src/lib.ts 的 COVER_RATIOS_BY_PLATFORM 与后端逐项相等", async () => {
-    const fs = await import("node:fs/promises");
-    const text = await fs.readFile(new URL("../../../frontend/src/lib.ts", import.meta.url), "utf8");
-    const block = /COVER_RATIOS_BY_PLATFORM: Record<string, string\[\]> = \{([\s\S]*?)\};/.exec(text)![1];
-    const front = Object.fromEntries([...block.matchAll(/(\w+): (\[[^\]]*\])/g)].map((m) => [m[1], JSON.parse(m[2])]));
-    expect(front).toEqual(COVER_RATIOS_BY_PLATFORM);
-  });
   it("账号资料覆盖优先;空覆盖不算", () => {
     expect(effectiveCoverRatios("xiaohongshu", { xiaohongshu: ["3:4", "4:3"] })).toEqual(["3:4", "4:3"]);
     expect(effectiveCoverRatios("xiaohongshu", { xiaohongshu: [] })).toEqual(["3:4"]);

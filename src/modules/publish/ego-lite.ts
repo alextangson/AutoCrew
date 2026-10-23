@@ -6,23 +6,15 @@ import { getContent, getCoverReview, getDataDir, type Asset, type Content } from
 import { sha256File } from "../video/handoff/manifest.js";
 import { registeredPackage } from "../production/publish-gate.js";
 import { verifyCheck, type CheckedPlatform } from "./review-gate/check.js";
-import { formatForClipboard } from "./clipboard-publisher.js";
+import { formatForClipboard, type ClipboardPlatform } from "./clipboard-publisher.js";
+import { PLATFORM_CAPS, platformsWhere, type PlatformId } from "./platform-caps.js";
 
-export const EGO_LITE_VIDEO_PLATFORMS = [
-  "wechat_video",
-  "xiaohongshu",
-  "douyin",
-  "bilibili",
-] as const;
+/** 走 ego lite 发的视频平台与发布页：都读平台能力表（publishChannel = ego_lite） */
+export const EGO_LITE_VIDEO_PLATFORMS: readonly PlatformId[] = platformsWhere((c) => c.kind === "video" && c.publishChannel === "ego_lite" && Boolean(c.publishUrl));
 
-export type EgoLiteVideoPlatform = (typeof EGO_LITE_VIDEO_PLATFORMS)[number];
+export type EgoLiteVideoPlatform = PlatformId;
 
-export const EGO_LITE_PUBLISH_URLS: Record<EgoLiteVideoPlatform, string> = {
-  wechat_video: "https://channels.weixin.qq.com/platform/post/create",
-  xiaohongshu: "https://creator.xiaohongshu.com/publish/publish",
-  douyin: "https://creator.douyin.com/creator-micro/content/upload",
-  bilibili: "https://member.bilibili.com/platform/upload/video/frame",
-};
+export const EGO_LITE_PUBLISH_URLS = Object.fromEntries(EGO_LITE_VIDEO_PLATFORMS.map((p) => [p, PLATFORM_CAPS[p].publishUrl!])) as Record<EgoLiteVideoPlatform, string>;
 
 export interface EgoLitePublishPackage {
   provider: "ego-lite";
@@ -115,7 +107,8 @@ export async function prepareEgoLitePublish(
   const { videoPath, coverPath } = await publishFiles(content, root);
 
   const kit = videoKitFor(content, platform);
-  const fallback = formatForClipboard(platform, content.title, content.body, content.hashtags ?? []);
+  // 没交发布包时的退路排版：X 用 twitter 的排版；YouTube 没有专门排版（英文包 Phase 3 必交，走不到这里）
+  const fallback = formatForClipboard((platform === "x" ? "twitter" : platform) as ClipboardPlatform, content.title, content.body, content.hashtags ?? []);
   const title = kit?.postTitle?.trim() || fallback.formattedTitle;
   const caption = kit?.caption?.trim() || fallback.formattedBody;
 

@@ -13,6 +13,7 @@ import type { LoopTool } from "../../engine/loop.js";
 import { getContent, updateContentWith, getDataDir } from "../../storage/local-store.js";
 import type { VideoKit, StoryboardShot } from "../../storage/local-store.js";
 import { VIDEO_PLATFORMS } from "../../storage/stage-guard.js";
+import { capsOf, cjkWeightedChars, countTitleChars } from "./platform-caps.js";
 import { loadProfile, personaSummary, rulesForPlatform } from "../profile/creator-profile.js";
 import { loadWechatMpConfig } from "./wechat-config.js";
 import { generateImageViaRelay } from "./image-gen.js";
@@ -23,33 +24,18 @@ import { draftHash as editorialDraftHash } from "../../storage/draft-hash.js";
 // 这里再导出一次，既有调用方（ingest、publish）一个字不用改。
 export { VIDEO_PLATFORMS };
 
-/** 平台文案纪律(prompt 注入用,与 clipboard tips 同口径) */
-const CAPTION_RULES: Record<string, string> = {
-  douyin: "发布文案 ≤300 字:首句钩子(时间线只见首行),3-5 个话题标签内联在文末",
-  wechat_video: "发布文案 100-300 字:一句钩子+一句价值点,2-4 个话题标签",
-  xiaohongshu: "发布文案 300-800 字:口语化短段落,可用 emoji,5-15 个话题标签放文末",
-  bilibili: "发布文案(简介)200-500 字:讲清这期讲什么+能带走什么,3-6 个标签",
-};
+// 文案纪律、标题上限、计数口径都在平台能力表（platform-caps）里，这里只留对外的函数名，调用方不用改
+function captionRule(platform: string): string | undefined {
+  return capsOf(platform)?.captionRule;
+}
 
-/** 平台发布标题硬上限(中文字符)——超限工具打回自纠,不静默截断(标题是内容,截断=改意) */
-const TITLE_LIMITS: Record<string, number> = {
-  xiaohongshu: 20,
-  douyin: 30,
-  wechat_video: 22,
-  bilibili: 40,
-};
-
-/** 发布标题上限——引擎 submit_video_kit 与宿主 pre_publish video_kit 共用这一份 */
+/** 发布标题上限——引擎 submit_video_kit 与宿主 pre_publish video_kit 共用这一份；表里没写的平台回退 30 */
 export function videoTitleLimit(platform: string): number {
-  return TITLE_LIMITS[platform] ?? 30;
+  return capsOf(platform)?.titleMax ?? 30;
 }
 
-/** 平台字数口径:中文 1 字,英文/数字按半字折算(平台后台普遍如此),空格不计 */
-export function publishTitleChars(title: string): number {
-  const cjkCount = (title.match(/[一-鿿]/g) ?? []).length;
-  const otherCount = title.replace(/[一-鿿]/g, "").replace(/\s/g, "").length;
-  return cjkCount + Math.ceil(otherCount / 2);
-}
+/** 中文平台字数口径（加权）；按平台选口径用 platform-caps 的 countTitleChars */
+export const publishTitleChars = cjkWeightedChars;
 
 /** 封面大字上限(引擎侧超出截到这里;宿主侧超出直接打回) */
 export const COVER_TEXT_MAX = 12;
@@ -102,7 +88,7 @@ function buildSubmitKitTool(
         }))
         .filter((s) => s.shot && s.visual);
       if (!postTitle) return "Error: postTitle 缺失,请补全后重新调用 submit_video_kit";
-      const titleChars = publishTitleChars(postTitle);
+      const titleChars = countTitleChars(platform, postTitle);
       if (titleChars > titleLimit) {
         return `Error: postTitle 超限(${titleChars} > ${titleLimit} 字),请压缩标题后重新调用——不要靠省略号硬截`;
       }
@@ -153,7 +139,7 @@ export async function prepareVideoKit(
     systemPrompt:
       "你是短视频编导。给定一篇口播稿,产出发布件:平台发布文案(不是口播稿摘要,是让刷到的人停下的文案)、" +
       "分镜表(景别/画面/对应口播句/字幕提示,覆盖全稿)、竖版封面方案(大字 ≤8 字 + 生图 prompt)。" +
-      `平台文案纪律:${CAPTION_RULES[platform] ?? "≤300 字,首句钩子"};发布标题 ≤${videoTitleLimit(platform)} 字(独立于口播稿标题,按平台习惯重拟)。` +
+      `平台文案纪律:${captionRule(platform) ?? "≤300 字,首句钩子"};发布标题 ≤${videoTitleLimit(platform)} 字(独立于口播稿标题,按平台习惯重拟)。` +
       (audience ? `目标受众:${audience}。` : "") +
       (rules ? `\n创作者写作规则:\n${rules}` : "") +
       "\n完成后调用 submit_video_kit 提交。",

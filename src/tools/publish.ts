@@ -16,6 +16,7 @@ import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
+import { kitPlatformsFor } from "../modules/publish/platform-caps.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
@@ -145,9 +146,10 @@ export async function executePublish(
     if (!content) {
       return { ok: false, error: `Content not found: ${contentId}` };
     }
-    // 视频稿四平台共用一条稿：带 platform 取那个平台的发布包；文字稿只认自己的平台
+    // 视频稿同语言的视频平台共用一条稿：带 platform 取那个平台的发布包；文字稿只认自己的平台
     const asked = typeof params.platform === "string" ? params.platform.trim() : "";
-    const platform = (asked && VIDEO_PLATFORMS.has(asked) && VIDEO_PLATFORMS.has(content.platform ?? "") ? asked : content.platform || "xiaohongshu") as ClipboardPlatform;
+    const sameLanguage = VIDEO_PLATFORMS.has(content.platform ?? "") && (kitPlatformsFor(content.platform) as string[]).includes(asked);
+    const platform = (sameLanguage ? asked : content.platform || "xiaohongshu") as ClipboardPlatform;
     const hashtags = (params.hashtags as string[] | undefined) || content.hashtags || [];
     // V5.4b:视频平台有发布件 → 发的是发布件(平台标题+发布文案,已含标签),不是口播稿截断
     const kit = VIDEO_PLATFORMS.has(platform) ? videoKitFor(content, platform) : undefined;

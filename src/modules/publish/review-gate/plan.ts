@@ -8,7 +8,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { safeProjectPath, isMissing } from "../../../storage/content-project.js";
-import { normalizePlatform, type GatePlatform } from "./platforms.js";
+import { GATE_PLATFORMS, normalizePlatform, platformLabel, type GatePlatform } from "./platforms.js";
 
 export interface CoverRef { usage: string | null; ratio: string | null; path: string }
 
@@ -143,7 +143,7 @@ function textField(entry: Obj, key: string, label: string, problems: ShapeProble
 function readEntry(e: unknown, i: number, problems: ShapeProblem[]): PlanEntry | null {
   if (!isObj(e)) { problems.push({ platform: null, field: `platforms[${i}]`, detail: "平台条目要是对象" }); return null; }
   const platform = normalizePlatform(e.platform);
-  if (!platform) { problems.push({ platform: str(e.platform), field: `platforms[${i}].platform`, detail: `认不出平台：${String(e.platform ?? "空")}（抖音 / 小红书 / 视频号 / B站）` }); return null; }
+  if (!platform) { problems.push({ platform: str(e.platform), field: `platforms[${i}].platform`, detail: `认不出平台：${String(e.platform ?? "空")}（${GATE_PLATFORMS.map(platformLabel).join(" / ")}）` }); return null; }
   const { covers, legacy } = readCovers(e, platform, problems);
   const scheduled = e.scheduled_at;
   if (scheduled !== undefined && scheduled !== null && typeof scheduled !== "string") problems.push({ platform, field: "scheduled_at", detail: "scheduled_at 要是时间字符串" });

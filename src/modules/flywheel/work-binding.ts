@@ -14,9 +14,10 @@ import { reattributeItem, retractContentOutcomes } from "./outcome-store.js";
 import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { removeClaimsForContent } from "./work-claims.js";
 import { serializeHistory } from "./history-queue.js";
+import { METRICS_PLATFORMS } from "../publish/platform-caps.js";
 
 /** 回流认得的平台（别名 xhs 先归一） */
-export const BINDABLE_PLATFORMS: readonly string[] = ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"];
+export const BINDABLE_PLATFORMS: readonly string[] = METRICS_PLATFORMS;
 
 export type WorkResult<T extends object = object> =
   | ({ ok: true } & T)

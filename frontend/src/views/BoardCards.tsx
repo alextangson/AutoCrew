@@ -9,7 +9,7 @@ import { Button } from "../components/Button";
 import { useState } from "react";
 import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
-import { VIDEO_PLATFORMS, isHttpUrl } from "../lib";
+import { VIDEO_PLATFORMS, isHttpUrl, kitPlatformsFor } from "../lib";
 import { relativeLabel } from "../time-format";
 import { artifactUrl } from "./board-parts";
 import { CodexPublishButton } from "./CodexPublish";
@@ -218,7 +218,7 @@ function PublishRows(props: { item: BoardItem; reload: () => Promise<void> }) {
   const rec = props.item.publish;
   if (!rec) return null;
   const listed = rec.kind === "none" ? [] : rec.platforms;
-  const unlisted = [...VIDEO_PLATFORMS].filter((p) => !listed.some((x) => x.platform === p));
+  const unlisted = kitPlatformsFor(props.item.platform).filter((p) => !listed.some((x) => x.platform === p));
   return <div className="prows">
     {rec.kind === "unreadable" && <div className="prow-note prow-red">发布记录读不到：{rec.reason}</div>}
     {rec.kind === "none" && <div className="prow-note prow-muted">还没有发布记录</div>}

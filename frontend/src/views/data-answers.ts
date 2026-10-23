@@ -2,7 +2,7 @@
  * 数据页四张问答卡的纯计算（数据页规格 §H.47–52）：结论句全由数字按模板生成，不调模型、不编原因。
  * 口径：「平时」= 该平台全部作品播放中位数（样本 ≥3 才有）；「×」= 一条视频在各平台 播放/平时 的中位数。
  */
-import { platformLabel } from "../lib";
+import { METRIC_VIDEO_ORDER, platformLabel } from "../lib";
 import { MIN_SAMPLES, boldThresholds, latest, median, monthOf, viewsByPlatform, type DataRow, type Work } from "./data-lib";
 
 /** 一段结论：hot = 用强调色（变差的部分） */
@@ -11,7 +11,7 @@ export const UP = 1.05, DOWN = 0.9, SPECIAL = 1.5;
 const DAY_MS = 86_400_000;
 const CN = ["零", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十"];
 export const cnNum = (n: number): string => CN[n] ?? String(n);
-const ORDER = ["douyin", "wechat_video", "xiaohongshu", "bilibili"];
+const ORDER = METRIC_VIDEO_ORDER;
 const rank = (p: string): number => (ORDER.includes(p) ? ORDER.indexOf(p) : ORDER.length);
 /** 平台名按固定顺序（抖音、视频号、小红书、B站）列 */
 const names = (ps: string[]): string => [...ps].sort((a, b) => rank(a) - rank(b)).map(platformLabel).join("、");

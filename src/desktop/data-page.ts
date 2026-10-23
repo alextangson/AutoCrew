@@ -11,9 +11,10 @@ import { buildRows } from "../modules/flywheel/data-assemble.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import { findCover } from "../modules/flywheel/data-covers.js";
 import { coverOf } from "./board-data.js";
+import { platformsWhere } from "../modules/publish/platform-caps.js";
 
-/** 短视频四个平台的默认列顺序（§39） */
-export const DEFAULT_COLUMNS = ["douyin", "wechat_video", "xiaohongshu", "bilibili"];
+/** 默认列（§39）：有数据回流的中文视频平台，按能力表顺序（抖音、视频号、小红书、B站）；YouTube / X 不回流不出列 */
+export const DEFAULT_COLUMNS: string[] = platformsWhere((c) => c.kind === "video" && c.language === "zh" && c.metrics !== "unsupported");
 const PUBLISH_STATUSES = new Set(["publish_ready", "publishing", "published"]);
 const LIVE_STATES = new Set(["public", "manual", "overdue"]);
 /** 「下一条」：定时了还没到 / 到点了还没确认公开 / 审核中 */

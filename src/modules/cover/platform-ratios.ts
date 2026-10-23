@@ -1,31 +1,21 @@
 /**
- * 平台 → 封面上传槽（后端单一事实源；frontend/src/lib.ts 的 COVER_RATIOS_BY_PLATFORM 与此同源同值，改动两边同步）。
+ * 平台 → 封面上传槽（frontend/src/lib.ts 的 PLATFORM_CAPS 镜像同值，platform-caps.test 核对）。
  * 语义是「这个平台发布时要上传哪几个比例的封面」，首项 = 默认主比例。
  *
  * 创始人 2026-09-29（发布前把关 spec §3）：小红书 3:4；抖音、视频号 3:4+4:3；
  * B站只传 4:3，16:9「个人空间封面」框由平台从 4:3 裁出——另列一项「16:9 裁切核对」（见 COVER_CROP_CHECKS），
  * 取代 07-12 的 ["16:9","4:3"]。公众号只 2.35:1。封面生成仍只出 3:4+4:3。
  * 账号资料 `creator-profile.coverRatios` 可覆盖（发布前把关读 effectiveCoverRatios）。
+ * 数字住在平台能力表（modules/publish/platform-caps）；YouTube / X 只传 16:9。
  */
-export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
-  wechat_mp: ["2.35:1"],
-  xiaohongshu: ["3:4"],
-  wechat_video: ["3:4", "4:3"],
-  douyin: ["3:4", "4:3"],
-  bilibili: ["4:3"],
-};
+import { PLATFORM_CAPS, PLATFORM_IDS } from "../publish/platform-caps.js";
+export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = Object.fromEntries(PLATFORM_IDS.map((p) => [p, [...PLATFORM_CAPS[p].coverRatios]]));
 
 /**
  * 平台上传界面能收的封面比例（设置页 / 偏好提议只能在这里面选；默认表是其中的子集）。
- * 小红书 3:4 / 4:3 / 1:1；抖音、视频号 3:4 / 4:3；B站 4:3 / 16:9；公众号 2.35:1。
+ * 小红书 3:4 / 4:3 / 1:1；抖音、视频号 3:4 / 4:3；B站 4:3 / 16:9；公众号 2.35:1；YouTube / X 16:9。
  */
-export const ALLOWED_COVER_SLOTS: Record<string, string[]> = {
-  wechat_mp: ["2.35:1"],
-  xiaohongshu: ["3:4", "4:3", "1:1"],
-  wechat_video: ["3:4", "4:3"],
-  douyin: ["3:4", "4:3"],
-  bilibili: ["4:3", "16:9"],
-};
+export const ALLOWED_COVER_SLOTS: Record<string, string[]> = Object.fromEntries(PLATFORM_IDS.map((p) => [p, [...PLATFORM_CAPS[p].coverSlots]]));
 
 /** 不在这个平台上传槽里的比例（空 = 都合法） */
 export function invalidSlotRatios(platform: string, ratios: string[]): string[] {

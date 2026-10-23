@@ -14,10 +14,12 @@ import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import type { PullStatus } from "../../adapters/browser/pull-types.js";
+import { platformsWhere } from "../publish/platform-caps.js";
 
 /** 自动回流覆盖的三平台（公众号走既有的 flywheel:wechat_pull，不在此列） */
-export const PULL_PLATFORMS = ["douyin", "wechat_video", "xiaohongshu"] as const;
-export type PullPlatform = (typeof PULL_PLATFORMS)[number];
+export type PullPlatform = "douyin" | "wechat_video" | "xiaohongshu";
+/** 能力表 metrics = browser_pull 的平台；类型保持字面量三选一，表里多了就在 platform-caps.test 里报 */
+export const PULL_PLATFORMS = platformsWhere((c) => c.metrics === "browser_pull") as readonly PullPlatform[];
 
 export const PULL_STATE_FILE = "metrics-pull.json";
 export const PULL_STATE_VERSION = 1;
