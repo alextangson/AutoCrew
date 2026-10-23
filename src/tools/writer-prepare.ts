@@ -52,6 +52,7 @@ import {
   type ReadyPack,
   type WritingPackFile,
 } from "./writer-pack.js";
+import { derivedArticleRequest } from "../modules/wechat-article/writer-request.js";
 import {
   countPoll,
   packView,
@@ -246,6 +247,10 @@ export async function startPack(
     ...(params.researchMode !== undefined ? { researchMode: params.researchMode } : {}),
     ...(params.researchReason !== undefined ? { researchReason: params.researchReason.trim() ? params.researchReason : undefined } : {}),
   };
+  // 由视频派生的公众号文章：固定长文包 + 成片底稿（Phase 2a）；底稿拿不到就拒，不悄悄按选题重写
+  const derived = existing ? await derivedArticleRequest(existing, req, dataDir) : null;
+  if (derived && !derived.ok) return { ok: false, code: derived.code, error: derived.error };
+  if (derived) req = derived.req;
   const topicDescription = topic.description ?? "";
   // 旧包没存选题描述，无法反推历史值；其余已保存请求仍可比对，新包从领号起完整冻结。
   const previousDescription = current?.request?.topicDescription ?? previous?.topicDescription ?? topicDescription;

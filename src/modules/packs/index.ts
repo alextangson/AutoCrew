@@ -2,6 +2,7 @@ import type { TrackPack } from "./pack-schema.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 import { KOUBO_PACK } from "./koubo.js";
 import { WECHAT_ARTICLE_PACK } from "./wechat-article.js";
+import { WECHAT_VIDEO_ARTICLE_PACK } from "./wechat-video-article.js";
 import { TWITTER_POST_PACK } from "./twitter-post.js";
 import { REDDIT_POST_PACK } from "./reddit-post.js";
 import { TOUTIAO_ARTICLE_PACK } from "./toutiao-article.js";
@@ -11,6 +12,7 @@ export const DEFAULT_PACK_ID = KOUBO_PACK.id;
 const REGISTRY: Record<string, TrackPack> = {
   [KOUBO_PACK.id]: KOUBO_PACK,
   [WECHAT_ARTICLE_PACK.id]: WECHAT_ARTICLE_PACK,
+  [WECHAT_VIDEO_ARTICLE_PACK.id]: WECHAT_VIDEO_ARTICLE_PACK,
   [TWITTER_POST_PACK.id]: TWITTER_POST_PACK,
   [REDDIT_POST_PACK.id]: REDDIT_POST_PACK,
   [TOUTIAO_ARTICLE_PACK.id]: TOUTIAO_ARTICLE_PACK,

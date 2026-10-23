@@ -86,7 +86,9 @@ async function createDerived(source: Content, kind: DerivationKind, dataDir: str
   try { assertDataDirWritable(dataDir); }
   catch (e) { return { ok: false, code: "library_not_writable", error: e instanceof Error ? e.message : String(e) }; }
   const created = await saveContent({
+    // 跟源视频同一个选题：写作包按选题领（调研简报、立意都是源视频那份）
     title: `${source.title}${SUFFIX[kind]}`, body: "", platform: targetPlatform(kind, profile)!, status: "drafting", tags: [...(source.tags ?? [])],
+    ...(source.topicId ? { topicId: source.topicId } : {}),
     siblings: [source.id], derivedFrom: { contentId: source.id, kind, sourceCutHash: cut.id, at: new Date().toISOString() },
   }, dataDir);
   return { ok: true, content: await linkBothWays(source.id, created.id, dataDir), created: true };
