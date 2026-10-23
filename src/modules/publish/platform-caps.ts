@@ -44,7 +44,11 @@ export interface PlatformCaps {
   publishUrl?: string;
   /** 精确认名的别名（小写）：计划里的 platform 值按它归一 */
   aliases: string[];
-  /** 可以在一段话里按子串认出的别名；「x」这种单字母只能精确认，不能放这里 */
+  /**
+   * 可以在一段话里按子串认出的别名（把关用它判一条规则「只点名了哪些平台」）。英文平台留空：
+   * 「文案不能出现 YouTube 字样」这种规则只是提到这个词，不是只管 YouTube；当成点名会让四个中文平台漏掉它（Codex 审 P2）。
+   * 英文平台只认计划里精确写的平台值（aliases）。
+   */
   textAliases: string[];
 }
 
@@ -98,7 +102,7 @@ const TABLE = {
     captionRule: "Description: first two lines are the hook (shown above the fold), then what the viewer takes away, chapters, 3-5 hashtags",
     kitFields: ["post_title", "caption", "tags", "chapters"], metrics: "unsupported", publishChannel: "ego_lite",
     publishUrl: "https://studio.youtube.com",
-    aliases: ["youtube", "yt", "油管"], textAliases: ["youtube", "油管"],
+    aliases: ["youtube", "yt", "油管"], textAliases: [],
   },
   x: {
     // X 帖子正文 ≤280 字符：非 Premium 账号的基线（Premium 可发长帖，这里按基线保守卡）；X 视频帖没有独立标题，
@@ -108,7 +112,7 @@ const TABLE = {
     captionRule: "Post text ≤280 chars: one hook line, one takeaway, 1-2 hashtags",
     kitFields: ["post_text"], metrics: "unsupported", publishChannel: "ego_lite",
     publishUrl: "https://x.com/compose/post",
-    aliases: ["x", "twitter", "推特"], textAliases: ["twitter", "推特"],
+    aliases: ["x", "twitter", "推特"], textAliases: [],
   },
 } satisfies Record<string, PlatformCaps>;
 

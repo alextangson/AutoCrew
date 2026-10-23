@@ -58,7 +58,9 @@ describe("按语言分开默认发布平台", () => {
     expect(normalizePlatform("Twitter")).toBe("x");
     expect(normalizePlatform("YouTube")).toBe("youtube");
     expect(platformsNamedIn("Max 和 xbox 都不是平台")).toEqual([]);
-    expect(platformsNamedIn("发 YouTube 和推特")).toEqual(["youtube", "x"]);
+    // 只是提到英文平台名的规则不算点名，照旧适用于中文平台
+    expect(platformsNamedIn("文案不能出现 YouTube 字样")).toEqual([]);
+    expect(platformsNamedIn("别提推特和 Twitter")).toEqual([]);
   });
 });
 
