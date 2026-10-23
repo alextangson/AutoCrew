@@ -54,6 +54,15 @@ describe("article images workspace", () => {
     ]);
   });
 
+  it("图位来源：gen: / web: 前缀（中英文冒号都认），没前缀 = gen；旧标记原样匹配", () => {
+    const markers = parseArticleImageMarkers("[IMAGE: web: 官网定价页]\n[IMAGE: gen：概念图]\n[IMAGE: 老标记]");
+    expect(markers).toMatchObject([
+      { kind: "web", description: "官网定价页", prompt: "web: 官网定价页" },
+      { kind: "gen", description: "概念图" },
+      { kind: "gen", description: "老标记", prompt: "老标记" },
+    ]);
+  });
+
   it("单张生成可预览，发布门要求全部准备好，移除后回到待生成", async () => {
     const content = await seed();
     const initial = await getArticleImageReview(content.id, dir);

@@ -13,6 +13,9 @@ export interface ImageGenOutcome {
   stderr: string;
   /** 实际出图的通道名 */
   provider?: string;
+  /** 实际出图通道的类型、它请求的模型（codex 报不出实际模型 → 没有） */
+  providerKind?: "relay" | "codex";
+  model?: string;
   /** 非空=走了备用通道,附主通道的失败原因 */
   degraded?: string;
 }
@@ -288,6 +291,8 @@ async function generateImage(
         stdout: `native relay(${result.provider}): ${outputPath}`,
         stderr: "",
         provider: result.provider,
+        providerKind: result.providerKind,
+        ...(result.model ? { model: result.model } : {}),
         // 降级要可见:备用通道顶上了不等于主通道没坏,写进事件让人知道该去修
         degraded: result.usedFallback
           ? `主生图通道不可用,已由「${result.provider}」出图——${result.skipped.map((s) => `${s.provider}: ${s.error.slice(0, 90)}`).join("；")}`

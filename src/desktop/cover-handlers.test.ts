@@ -207,13 +207,13 @@ describe("approveCoverJob(选用即自动补齐平台比例)", () => {
     expect(kinds).toContain("run_done");
   });
 
-  it("比例已齐(公众号 2.35:1 主)→ 不再起后台任务", async () => {
+  it("比例已齐(公众号 2.35:1 主 + 1:1 分享卡)→ 不再起后台任务", async () => {
     await seedRelay();
     execMock.mockImplementation(async (params: Record<string, unknown>) => {
       if (params.action === "approve") {
         return {
           ok: true,
-          review: { platform: "wechat_mp", approvedLabel: "a", primaryRatio: "2.35:1", variants: [{ label: "a", imagePaths: { "2.35:1": "/x/a.png" } }] },
+          review: { platform: "wechat_mp", approvedLabel: "a", primaryRatio: "2.35:1", variants: [{ label: "a", imagePaths: { "2.35:1": "/x/a.png", "1:1": "/x/a-sq.png" } }] },
         } as never;
       }
       return { ok: false } as never;

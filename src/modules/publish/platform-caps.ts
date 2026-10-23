@@ -89,7 +89,7 @@ const TABLE = {
     aliases: ["bilibili", "哔哩哔哩", "b站", "b 站"], textAliases: ["bilibili", "哔哩哔哩", "b站", "b 站"],
   },
   wechat_mp: {
-    label: "公众号", kind: "article", language: "zh", coverRatios: ["2.35:1"], coverSlots: ["2.35:1"], coverRequired: false,
+    label: "公众号", kind: "article", language: "zh", coverRatios: ["2.35:1", "1:1"], coverSlots: ["2.35:1", "1:1"], coverRequired: false,
     // 正文上限 4000（spec §7 #8：长文 2500–4000 字）；标题上限沿用回退 30
     titleCounter: "cjk_weighted", bodyMin: 800, bodyMax: 4000,
     kitFields: [], metrics: "bind_only", publishChannel: "wechat_api",
