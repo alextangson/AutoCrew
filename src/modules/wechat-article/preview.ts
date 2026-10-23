@@ -36,8 +36,8 @@ export function imageCaption(e: ArticleImageEntry): string {
       : `<p class="cap bad">web 图没有来源链接，不能过审</p>`;
   }
   if (e.origin === "uploaded" || e.origin === "research") return `<p class="cap">创作者自己的图（${e.origin === "research" ? "调研素材" : "上传"}）</p>`;
-  const model = e.modelStatus === "mismatch" ? `实际模型 ${esc(e.reportedModel ?? "?")}，不是 ${esc(e.requestedModel ?? "")}` : e.modelStatus === "unverified" ? "model unverified（通道报不出实际模型）" : esc(e.reportedModel ?? "");
-  return `<p class="cap">AI 生成 · 通道 ${esc(e.provider ?? "?")} · 请求 ${esc(e.requestedModel ?? "?")} · ${model}</p>`;
+  const model = e.modelStatus === "configured" ? "按设置里配的模型请求，未核实" : "model unverified（通道报不出实际模型）";
+  return `<p class="cap">AI 生成 · 通道 ${esc(e.provider ?? "?")} · 请求 ${esc(e.requestedModel ?? "未指定")} · ${model}</p>`;
 }
 
 /** 一段文字：首行是 ## 小标题就出 h2，其余照段落排（单换行 = <br>） */

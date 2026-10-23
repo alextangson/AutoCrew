@@ -18,6 +18,8 @@ export type ArticleImageStatus = "missing" | "generating" | "ready" | "error";
 export type ArticleImageKind = "gen" | "web";
 /** 写稿时请求的生图模型（创始人定的是 Codex Image 2.5）；Codex 通道报不出实际模型，只能记「未核实」 */
 export const REQUESTED_IMAGE_MODEL = "Image 2.5";
+/** 写进 Codex 生图提示词的模型要求（与 cover-generator 技能同口径）：宿主不暴露模型选择器时如实记未核实 */
+export const REQUEST_MODEL_LINE = `目标模型为 ${REQUESTED_IMAGE_MODEL}；如果 image_gen 能选模型就选它，不能选就照常生成（不要虚构模型参数）。`;
 
 export interface ArticleImageEntry {
   id: string;
@@ -41,7 +43,8 @@ export interface ArticleImageEntry {
   provider?: string;
   requestedModel?: string;
   reportedModel?: string;
-  modelStatus?: "unverified" | "mismatch";
+  /** unverified = 请求了但通道报不出实际模型（Codex）；configured = 中转按设置里配的模型请求，同样没有回报核实 */
+  modelStatus?: "unverified" | "configured";
   /** web：图片来源链接与图下署名（没有链接的 web 图不能过审） */
   sourceUrl?: string;
   credit?: string;
@@ -180,7 +183,7 @@ async function updateEntry(
 }
 
 export async function generateArticleImages(
-  input: { contentId: string; index?: number; prompt?: string },
+  input: { contentId: string; index?: number; prompt?: string; codexOnly?: boolean },
   dataDir?: string,
 ): Promise<{ ok: boolean; review: ArticleImageReview; generated: number; failed: number; errors?: string[]; degraded?: string[] }> {
   let review = await getArticleImageReview(input.contentId, dataDir);
@@ -210,7 +213,8 @@ export async function generateArticleImages(
     }, dataDir);
     const filename = `body-${String(target.index + 1).padStart(2, "0")}-r${revision}.png`;
     const outputPath = path.join(loc.assets, filename);
-    const result = await generateWechatImageAsset(enrichBodyImagePrompt(prompt), outputPath, { dataDir, size: "16:9" });
+    const sent = input.codexOnly ? `${REQUEST_MODEL_LINE}\n${enrichBodyImagePrompt(prompt)}` : enrichBodyImagePrompt(prompt);
+    const result = await generateWechatImageAsset(sent, outputPath, { dataDir, size: "16:9", ...(input.codexOnly ? { codexOnly: true } : {}) });
     if (result.ok) {
       generated += 1;
       if (result.degraded) degradations.add(result.degraded);
@@ -218,7 +222,7 @@ export async function generateArticleImages(
         status: "ready",
         imagePath: outputPath,
         origin: "generated",
-        ...genProvenance(result),
+        ...genProvenance(result, input.codexOnly ? REQUESTED_IMAGE_MODEL : undefined),
         error: undefined,
         updatedAt: new Date().toISOString(),
       }, dataDir);
@@ -244,14 +248,17 @@ export async function generateArticleImages(
   };
 }
 
-/** 谁出的图、请求的是什么模型；codex 报不出实际模型就如实记「未核实」，中转出的不是 Image 2.5 记「不一致」 */
-function genProvenance(result: { provider?: string; providerKind?: "relay" | "codex"; model?: string }): Partial<ArticleImageEntry> {
+/**
+ * 谁出的图、请求的是什么模型：requestedModel 只记真正发出去的要求（提示词里写了 Image 2.5 / 中转按设置里配的模型），
+ * 通道都不回报实际模型，所以一律记未核实 / 按配置，从不记成已核实。
+ */
+function genProvenance(result: { provider?: string; providerKind?: "relay" | "codex"; model?: string }, promptModel?: string): Partial<ArticleImageEntry> {
   const codex = result.providerKind === "codex";
   return {
     provider: result.provider ?? "(未知通道)",
-    requestedModel: REQUESTED_IMAGE_MODEL,
-    reportedModel: codex ? undefined : result.model,
-    modelStatus: codex || !result.model ? "unverified" : result.model === REQUESTED_IMAGE_MODEL ? undefined : "mismatch",
+    requestedModel: codex ? promptModel : result.model,
+    reportedModel: undefined,
+    modelStatus: codex ? "unverified" : "configured",
     sourceUrl: undefined,
     credit: undefined,
   };

@@ -346,9 +346,15 @@ async function generateImage(
 export async function generateWechatImageAsset(
   prompt: string,
   outputPath: string,
-  options: { dataDir?: string; size?: string } = {},
+  options: { dataDir?: string; size?: string; codexOnly?: boolean } = {},
 ): Promise<ImageGenOutcome> {
   const cfg = await loadWechatMpConfig(options.dataDir);
+  if (options.codexOnly) {
+    // 派生公众号文章的配图只走 Codex（spec：Codex Image 2.5）；Codex 失败就是失败，不落到付费中转
+    const chain = resolveImageChain(cfg.imageChain).filter((p) => p.kind === "codex");
+    if (!chain.length) return { ok: false, stdout: "", stderr: "没有配 Codex 生图通道：公众号文章配图只走 Codex（Image 2.5），不走中转。请在「设置→发布」的生图通道里加上 codex" };
+    return generateImage(prompt, outputPath, { size: options.size || "16:9", imageGeneratorScript: "", chain });
+  }
   return generateImage(prompt, outputPath, {
     size: options.size || "16:9",
     imageGeneratorScript: resolveImageGeneratorScript(cfg.imageGeneratorScript),

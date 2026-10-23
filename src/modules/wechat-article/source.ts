@@ -4,7 +4,11 @@
  * 不悄悄换底稿。
  */
 import { getContent, type Content } from "../../storage/local-store.js";
-import { registeredPackage } from "../production/publish-gate.js";
+import { createHash } from "node:crypto";
+import { ontologyApplies } from "../production/publish-gate.js";
+import { srtFor, validCutApproval } from "../production/derive.js";
+import { factPath } from "../production/chat-approval/files.js";
+import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import fs from "node:fs/promises";
 import { srtCues } from "../publish/review-gate/subtitles.js";
@@ -36,11 +40,24 @@ export async function articleSource(article: Pick<Content, "derivedFrom">, dataD
   return { ok: true, sourceId: src.id, source: { kind: "script", text: src.body ?? "", note: `底稿 = 源视频的定稿正文（不是成片转写）：${reason}`, ledger } };
 }
 
+/**
+ * 审过的那版成片绑定的字幕（只看成片批准，不等封面——封面和文章是并行做的）。
+ * 字幕文件的字节要和登记时的 sha256 对上，对不上就当没有，原因写明。
+ */
 async function registeredSrt(src: Content, dataDir: string): Promise<{ srt: string | null; why?: string }> {
-  const g = await registeredPackage(src, dataDir, { fresh: true }).catch((e: unknown) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
-  if (!g) return { srt: null, why: "源视频走的是旧流程，没有登记字幕" };
-  if (!g.ok) return { srt: null, why: `成片登记读不出来（${g.error}）` };
-  return g.files.srt ? { srt: g.files.srt } : { srt: null, why: "这版成片没有登记字幕" };
+  if (!(await ontologyApplies(src, dataDir))) return { srt: null, why: "源视频走的是旧流程，没有登记字幕" };
+  const doc = await readProductionDocOrEmpty(src.id, dataDir);
+  const cut = validCutApproval(doc, src.body ?? "");
+  if (!cut?.sha256) return { srt: null, why: "源视频的成片现在没有有效的审片通过" };
+  const fact = srtFor(doc, cut.sha256);
+  if (!fact?.path) return { srt: null, why: "审过的这版成片没有登记字幕" };
+  const file = factPath(src.id, fact, dataDir);
+  try {
+    const sha = createHash("sha256").update(await fs.readFile(file)).digest("hex");
+    return sha === fact.sha256 ? { srt: file } : { srt: null, why: "字幕文件在登记之后被改过" };
+  } catch (e) {
+    return { srt: null, why: `登记字幕读不了（${(e as NodeJS.ErrnoException).code ?? (e as Error).message}）` };
+  }
 }
 
 /** 字幕全文（不按 Jev 比对预算截断）；读不了或是空的交回原因 */

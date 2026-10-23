@@ -28,7 +28,7 @@ async function legacySource(platforms = ["douyin", "wechat_mp"]) {
 }
 
 /** 本体启用、成片已批并登记（带字幕）的源视频 */
-async function registeredSource() {
+async function registeredSource(opts: { covers?: boolean } = {}) {
   env = await makeEnv({ enabled: true });
   await pick(["douyin", "wechat_mp"]);
   const c = await videoContent(env, "AI 又忘了怎么办");
@@ -42,6 +42,7 @@ async function registeredSource() {
   const sha = (id: unknown) => doc.facts.find((f) => f.id === id)!.sha256!;
   await waiveSliverCheck(env, c.id, sha(cut.fact_id));
   expect(await founderDecision(c.id, "approve_cut", { fact_id: cut.fact_id, sha256: sha(cut.fact_id) }, env.dir)).toMatchObject({ ok: true });
+  if (opts.covers === false) return c;
   expect(await founderDecision(c.id, "pick_cover", { cover_3x4_fact_id: c34.fact_id, cover_3x4_sha: sha(c34.fact_id), cover_4x3_fact_id: c43.fact_id, cover_4x3_sha: sha(c43.fact_id) }, env.dir)).toMatchObject({ ok: true });
   return c;
 }
@@ -96,6 +97,15 @@ describe("底稿：成片字幕优先，没有就退回定稿正文并写明", (
     expect(a).toMatchObject({ ok: true });
     const s = await run({ op: "source", content_id: a.content_id });
     expect(s).toMatchObject({ ok: true, kind: "srt", head: "你好" });
+  });
+});
+
+describe("封面还在做（和文章并行）时底稿照样是成片字幕", () => {
+  it("只批了成片、封面没批：kind = srt，不退回定稿正文", async () => {
+    const src = await registeredSource({ covers: false });
+    const a = await run({ op: "derive", content_id: src.id });
+    expect(a).toMatchObject({ ok: true });
+    expect(await run({ op: "source", content_id: a.content_id })).toMatchObject({ ok: true, kind: "srt", head: "你好" });
   });
 });
 
