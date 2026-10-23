@@ -33,7 +33,10 @@ import { executeReview } from "./review.js";
 import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, videoTitleLimit } from "../modules/publish/video-kit.js";
-import { capsOf, countTitleChars, kitPlatformsFor, titleCountNote } from "../modules/publish/platform-caps.js";
+import { capsOf, countTitleChars, titleCountNote } from "../modules/publish/platform-caps.js";
+import { derivedPublishRefusal, derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
+import { allowedKitPlatforms } from "../modules/profile/platform-lines.js";
+import { loadProfile } from "../modules/profile/creator-profile.js";
 import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 import { kitRegisterHash } from "../modules/publish/kit-stale.js";
 import { ontologyApplies, registeredPackage } from "../modules/production/publish-gate.js";
@@ -247,13 +250,12 @@ function validateKit(raw: unknown, platform: string, lib: TitleMethod[]): { fail
 }
 
 /** 平台前置核对：发布包按平台定字数，必须明说是哪个视频平台；视频稿四平台共用一条稿 */
-function kitPlatform(content: Content, requested: unknown): string | Record<string, unknown> {
+function kitPlatform(content: Content, requested: unknown, allowed: string[]): string | Record<string, unknown> {
   const own = content.platform || "";
   if (!isVideoPlatform(own)) {
     return { ok: false, code: "not_video_platform", error: `视频发布包只服务视频平台（${[...VIDEO_PLATFORMS].join(" / ")}），这篇是 ${own || "未知平台"}` };
   }
-  // 只收与稿件同语言的视频平台：中文成片不交 youtube / x 的包，英文版稿件也不交中文平台的包
-  const allowed: string[] = kitPlatformsFor(own);
+  // 只收与稿件同语言的视频平台（英文版稿件再收窄到用户勾了的英文平台）：中文成片不交 youtube / x 的包
   if (typeof requested !== "string" || !allowed.includes(requested.trim())) {
     const got = typeof requested === "string" && requested ? requested : "空";
     return { ok: false, code: "platform_required", error: `platform 要写这份包发到哪个视频平台（${allowed.join(" / ")}；收到 ${got}）`, expected_platform: own };
@@ -267,7 +269,7 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
   if (!contentId) return { ok: false, code: "missing_content_id", error: "content_id 必填" };
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, code: "not_found", error: `稿件不存在：${contentId}` };
-  const platform = kitPlatform(content, params.platform);
+  const platform = kitPlatform(content, params.platform, allowedKitPlatforms(content.platform, await loadProfile(dataDir)));
   if (typeof platform !== "string") return platform;
   // P6-e narration-not-state（2/3）：模型听 Codex 一句「已登记」就出了发布包。发布包只跟着成片走：
   // 成片戳（register 或内置线审片）没盖，就没有发布包可出——状态由产品说了算，不由转述说了算。
@@ -313,6 +315,10 @@ export async function executePrePublishTool(params: Record<string, unknown>): Pr
   const history = await historyGuard(params.content_id, (params._dataDir as string) || undefined);
   if (history) return history;
   if (params.action === "title_methods") return titleMethodsAction(params);
+  if (params.action === "video_kit") {
+    const derived = await derivedPublishRefusalById(params.content_id, getDataDir((params._dataDir as string) || undefined));
+    if (derived) return { ok: false, ...derived };
+  }
   return params.action === "video_kit" ? saveHostVideoKit(params) : executePrePublish(params);
 }
 
@@ -329,6 +335,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // GUI 与发布门直接调这里，不经 executePrePublishTool
   const history = historyRefusal(content);
   if (history) return { ok: false, code: "imported_history", error: history };
+  const derived = await derivedPublishRefusal(content, getDataDir(dataDir));
+  if (derived) return { ok: false, ...derived };
 
   const target = targetPlatform(content, params.platform);
   if (typeof target !== "string") return target;

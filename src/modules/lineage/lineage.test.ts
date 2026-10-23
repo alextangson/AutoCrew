@@ -107,9 +107,9 @@ describe("staleness（旧流程）", () => {
     await setContent(env, src.id, { videoDone: { renderedRevision: 2, at: new Date().toISOString() } });
     expect(await staleReason(r.content, env.dir)).toMatch(/源视频换了一版成片/);
     await setContent(env, src.id, { videoDone: undefined });
-    expect(await staleReason(r.content, env.dir)).toMatch(/没有有效的审片通过/);
+    expect(await staleReason(r.content, env.dir)).toMatch(/重开了剪辑/);
     const card = (await boardData(env.dir)).items.find((i) => i.id === r.content.id);
-    expect(card?.derivedStale).toMatch(/没有有效的审片通过/);
+    expect(card?.derivedStale).toMatch(/重开了剪辑/);
     expect((await boardData(env.dir)).items.find((i) => i.id === src.id)?.derivedStale).toBeNull();
   });
 });
@@ -134,7 +134,7 @@ describe("staleness（本体：成片批准所绑文件的 sha256）", () => {
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "a" });
     const sha1 = await approveCut(c.id, "AI又忘了怎么办.mp4", "cut-v1", "c1");
     const source = (await getContent(c.id, env.dir))!;
-    expect(await approvedCutIdentity(source, env.dir)).toBe(`sha256:${sha1}`);
+    expect(await approvedCutIdentity(source, env.dir)).toEqual({ id: `sha256:${sha1}` });
     const r = await deriveSibling(c.id, "wechat_article", env.dir);
     if (!r.ok) throw new Error(r.error);
     expect(await isStale(r.content, env.dir)).toBe(false);

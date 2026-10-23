@@ -6,7 +6,7 @@
  * 旧档案里的 `twitter` 读出来当 `x`（同一个平台换了规范名）；新加的平台（youtube）一律要用户自己勾，不替旧档案补。
  */
 import type { DerivationKind } from "../../storage/local-store.js";
-import { videoPlatformsFor, type PlatformId } from "../publish/platform-caps.js";
+import { kitPlatformsFor, languageOf, videoPlatformsFor, type PlatformId } from "../publish/platform-caps.js";
 
 /** 旧 id → 规范 id */
 const LEGACY_PLATFORM_IDS: Record<string, string> = { twitter: "x" };
@@ -35,6 +35,11 @@ export function enabledPlatforms(profile: { platforms?: unknown } | null | undef
 export function enKitPlatforms(profile: { platforms?: unknown } | null | undefined): PlatformId[] {
   const on = enabledPlatforms(profile);
   return videoPlatformsFor("en").filter((p) => on.includes(p));
+}
+
+/** 这条稿可以交哪些平台的发布包：中文稿 = 四个中文视频平台（不看勾选，行为不变）；英文版 = 只给勾了的英文平台 */
+export function allowedKitPlatforms(contentPlatform: string | null | undefined, profile: { platforms?: unknown } | null | undefined): string[] {
+  return languageOf(contentPlatform) === "en" ? enKitPlatforms(profile) : kitPlatformsFor(contentPlatform);
 }
 
 export function lineEnabled(profile: { platforms?: unknown } | null | undefined, line: DerivationKind): boolean {

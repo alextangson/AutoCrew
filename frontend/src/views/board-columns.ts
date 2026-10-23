@@ -80,6 +80,8 @@ export interface BoardItem {
   alerts?: string[];
   /** 派生稿（英文版 / 公众号文章）的源成片换了：人话原因；没过期 = null */
   derivedStale?: string | null;
+  /** 这张卡能列的发布平台（服务端按语言与勾选算好）；旧服务端没给 = 按语言回退 */
+  kitPlatforms?: string[];
   badges?: string[];
   /** 本轮候选 / 核对中的事实（本体 explain 给的；写稿段也带） */
   candidates?: Array<{ kind: string; state?: string }>;
