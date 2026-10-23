@@ -126,6 +126,18 @@ Raw output: `~/.cache/autocrew-yt/codex-consult/fullmedia-1023.txt`.
 
 **Build order:** (a) feasibility: one English demo + WeChat schedule/card spike on the real account → (b) shared foundation: lineage, artifact-bound approvals, platform capability table, recoverable publish state → (c) English slice and WeChat slice in parallel → (d) Chinese-publish regression tests throughout.
 
+## 8. Build phases (proposed 2026-10-23, awaiting founder confirmation)
+
+**Phase 1 — shared foundation (no user-visible flow change; existing four platforms must behave identically):**
+1. `PLATFORM_CAPS` single table: kind (video/article), language, cover ratios, title/caption counter (CJK-weighted vs plain chars), required kit fields, metrics support (explicit `unsupported`), publish channel. All scattered lists (stage-guard, review-gate, pre-publish, ego-lite, data-page, flywheel bindings, frontend `lib.ts`) read from it. Add `youtube` and `x` (en, 16:9 cover, plain char counting, metrics unsupported). `wechat_mp` body max 3000 → 4000.
+2. Durable lineage: `Content.derivedFrom = { contentId, kind: "en_edition" | "wechat_article", sourceCutHash }` persisted (not dropped like rewrite's provenance); `deriveSibling(sourceId, kind)` is idempotent (second call returns the existing item); `isStale(item)` = source's current approved-cut hash ≠ `sourceCutHash`, surfaced on the board/inbox as a visible state.
+3. Artifact-bound approvals helper: an approval stores the hash of what was approved; consumers re-check the hash before acting and refuse with a visible reason on mismatch.
+- Acceptance: regression tests proving the four existing platforms' kits, gates, cover ratios and limits are unchanged; tests for youtube/x caps, lineage idempotency and staleness, approval hash mismatch.
+
+**Phase 2 — WeChat article slice:** derive from approved cut transcript + research ledger; scout top-up with verify_quote; writer pack with hit-article method (3–5 titles, 2500–4000 chars); image plan with per-image provenance (`web` source URL+credit / `gen` Codex requested model, "model unverified" shown honestly) and `creationSource` declaration; illustrated HTML preview approval bound to package hash; Codex cover 2.35:1 + 1:1; publish = API draft (persisted media_id/hash/attempt state, idempotent) + ego-lite manual for declaration, 视频号 card (only live videos), 定时群发 at the planned slot, stop at admin QR, reconcile unknown outcomes.
+
+**Phase 3 — English slice:** `en_edition` sibling; localized side-by-side script review; ElevenLabs TTS module (key from settings/env `ELEVENLABS_API_KEY`, checked by `autocrew doctor`; macOS Keychain only as a local convenience); editing recipe §3.3 written into the editing skill as a foreground step; English 16:9 thumbnail via cover skill; youtube/x kits; publish-content manuals for YouTube Studio + X scheduled posts.
+
 ## 6. Deliberate exclusions (v1)
 
 - No metrics pull-back for YouTube/X (AutoCrew analytics stays on the four Chinese platforms + 公众号).
