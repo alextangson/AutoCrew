@@ -20,6 +20,7 @@ const NO_BODY_WRITES: Record<string, { reason: string; placeholderBody?: true }>
   "src/desktop/board-actions.ts#updateContent#4": { reason: "只改 manualPublications" },
   "src/desktop/orphan-reconcile.ts#updateContent#1": { reason: "只改标题前缀与 lastError（中断标记）" },
   "src/modules/flywheel/work-binding.ts#saveContent#1": { reason: "历史作品登记，空正文", placeholderBody: true },
+  "src/modules/lineage/lineage.ts#saveContent#1": { reason: "派生稿（英文版 / 公众号文章）的空正文占位，正文之后走写稿流程", placeholderBody: true },
   "src/modules/video/handoff/register-commit.ts#updateContent#1": { reason: "只写成片登记与认领" },
   "src/modules/video/handoff/register-commit.ts#updateContent#2": { reason: "只写成片登记与认领（patch 只含 video / claim）" },
   "src/modules/video/video-done.ts#updateContent#1": { reason: "只写成片戳 videoDone / videoReadyAt" },
