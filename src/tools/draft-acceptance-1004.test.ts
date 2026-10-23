@@ -85,11 +85,11 @@ describe("立意选项原文", () => {
 });
 
 describe("观众试读提示词（替代 Codex 审稿，spec 2026-10-15 §7）", () => {
-  it("只给小林画像和正文：不带规则、手册、立意；标划走 / 没听懂 / 会转发", async () => {
+  it("只给背景画像和正文：不带规则、手册、立意；标划走 / 没听懂 / 会转发，并说出看完的感受", async () => {
     const prompt = await fs.readFile(path.join(import.meta.dirname, "../../skills/write-script/viewer-test-read-prompt.md"), "utf8");
-    expect(prompt).toContain("小林");
+    expect(prompt).toContain("下班路上");
     expect(prompt).toContain("{{BODY}}");
-    for (const k of ["划走", "没听懂", "会转发"]) expect(prompt).toContain(k);
+    for (const k of ["划走", "没听懂", "会转发", "看完你心里是什么感受"]) expect(prompt).toContain(k);
     for (const k of ["{{RULES}}", "{{CRAFT}}", "{{ANGLE}}"]) expect(prompt).not.toContain(k);
     await expect(fs.access(path.join(import.meta.dirname, "../../skills/write-script/codex-review-prompt.md"))).rejects.toThrow();
   });
