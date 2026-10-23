@@ -63,12 +63,17 @@ const draftItem = async () => (await readInbox(env.dir, { withDrafts: true })).i
 const approve = async () => { const d = await draftItem(); return decideItem({ item_id: d.item_id, gen: d.gen, action: "approve_script", content_id: id }, env.dir); };
 
 describe("配图来源", () => {
-  it("gen：记通道、请求模型 Image 2.5、codex 报不出模型 = model unverified；中转出别的模型 = mismatch", async () => {
+  it("gen：只走 Codex、提示词里真的要了 Image 2.5；记通道和请求的模型，codex 报不出模型 = unverified，从不记成已核实", async () => {
     const r = await run({ op: "generate_images" });
+    expect(genMock.mock.calls[0][0]).toContain("目标模型为 Image 2.5");
+    expect(genMock.mock.calls[0][2]).toMatchObject({ codexOnly: true });
     expect((r.images as Array<Record<string, unknown>>)[0]).toMatchObject({ kind: "gen", status: "ready", provider: "codex", requested_model: "Image 2.5", model_status: "unverified" });
+    // 普通稿件（非 codexOnly）走中转：请求的模型 = 设置里配的，状态 configured，不是已核实
     genMock.mockImplementationOnce(async (_p, out) => { await fs.writeFile(out, png(16, 9, "r")); return { ok: true, stdout: "", stderr: "", provider: "xiaojiu", providerKind: "relay", model: "gpt-image-2" }; });
-    const again = await run({ op: "generate_images", index: 1 });
-    expect((again.images as Array<Record<string, unknown>>)[0]).toMatchObject({ provider: "xiaojiu", model_status: "mismatch" });
+    const { generateArticleImages } = await import("../publish/article-images.js");
+    const plain = await generateArticleImages({ contentId: id, index: 0 }, env.dir);
+    expect(plain.review.entries[0]).toMatchObject({ provider: "xiaojiu", requestedModel: "gpt-image-2", modelStatus: "configured" });
+    expect(plain.review.entries[0].reportedModel).toBeUndefined();
   });
 
   it("gen 失败：那一张显示失败和原始原因，不拿别的图顶上；status 里列为不能批", async () => {
@@ -143,24 +148,70 @@ describe("图文审阅 = 批整包", () => {
     for (const s of ["标题二（已选）", "https://openai.com/pricing", "图源：OpenAI 官网", "内容由AI生成", "model unverified", "2.35:1", "1:1", "<img src=\"file://"]) expect(html).toContain(s);
   });
 
-  it("补齐后批 → 记整包批准；发布核对放行", async () => {
+  it("补齐后批 → 记整包批准；但 2b 接上之前所有发布出口都拒（不按旧标题旧封面发）", async () => {
     await complete();
     expect(await approve()).toMatchObject({ ok: true });
     expect((await readArticlePackage(id, env.dir)).approval?.artifact).toBe("公众号图文发布包");
     expect((await getContent(id, env.dir))!.status).toBe("approved");
-    expect(await derivedPublishRefusal((await getContent(id, env.dir))!, env.dir)).toBeNull();
+    expect(await derivedPublishRefusal((await getContent(id, env.dir))!, env.dir)).toMatchObject({ code: "derived_article_publish_pending" });
+    const { executePublish } = await import("../../tools/publish.js");
+    for (const action of ["clipboard", "ego_lite_prepare", "wechat_mp_draft"]) {
+      const r = await executePublish({ action, content_id: id, _dataDir: env.dir }) as Record<string, unknown>;
+      expect(r, action).toMatchObject({ ok: false, code: "derived_article_publish_pending" });
+      expect(String(r.error)).toMatch(/2b/);
+    }
+    const { executePrePublish } = await import("../../tools/pre-publish.js");
+    expect(await executePrePublish({ action: "check", content_id: id, _dataDir: env.dir })).toMatchObject({ ok: false });
   });
 
-  it("批之后任何一样变了（封面文件、创作来源、配图、正文）→ 批准失效，发布核对说是整包变了", async () => {
+  it("出示之后包被改（绕过代次的竞态）：批准带着出示时的包指纹，对不上就拒", async () => {
+    await complete();
+    const shown = String((await draftItem()).detail.package_hash);
+    const { articleApproveGate } = await import("./approve.js");
+    expect(await articleApproveGate(id, env.dir, shown)).toMatchObject({ ok: true });
+    await run({ op: "set_titles", titles: ["新一", "新二", "新三"] });
+    expect(await articleApproveGate(id, env.dir, shown)).toMatchObject({ ok: false, code: "stale" });
+    expect(await articleApproveGate(id, env.dir, undefined)).toMatchObject({ ok: false, code: "stale" });
+  });
+
+  it("包改动和认稿排同一把锁：先排的改动做完，认稿才核包", async () => {
+    const { withArticleLock } = await import("./package.js");
+    const order: string[] = [];
+    let release!: () => void;
+    const first = withArticleLock(id, () => new Promise<void>((r) => { release = () => { order.push("改包"); r(); }; }));
+    const second = withArticleLock(id, async () => { order.push("认稿"); });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+    release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["改包", "认稿"]);
+  });
+
+  it("出图前就选了「无需声明」：之后有了生成图，status 和批准都拦", async () => {
+    await run({ op: "set_creation_source", creation_source: "无需声明", founder_quote: "不用声明" });
+    await complete();
+    const pkg = await readArticlePackage(id, env.dir);
+    const { writeArticlePackage } = await import("./package.js");
+    await writeArticlePackage(id, { ...pkg, creationSource: { value: "无需声明", founderWords: "不用声明", at: "x" } }, env.dir);
+    expect((await run({ op: "status" })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/不能是「无需声明」/)]));
+    expect(await approve()).toMatchObject({ ok: false, code: "article_not_ready" });
+  });
+
+  it("封面文件被删 → 不能批，原因写明", async () => {
+    await complete();
+    await fs.rm((await readArticlePackage(id, env.dir)).covers[1].path);
+    expect((await run({ op: "status" })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/1:1 封面文件不见了/)]));
+    expect(await approve()).toMatchObject({ ok: false, code: "article_not_ready" });
+  });
+
+  it("批之后封面文件变了 → 批准失效，status 写明是整包变了", async () => {
     await complete();
     await approve();
     const content = async () => (await getContent(id, env.dir))!;
     const pkg = await readArticlePackage(id, env.dir);
     await fs.writeFile(pkg.covers[0].path, png(235, 100, "changed"));
-    const r = await derivedPublishRefusal(await content(), env.dir);
-    expect(r).toMatchObject({ code: "article_approval_invalid" });
-    expect(r!.error).toMatch(/公众号图文发布包在批准之后变了/);
-    expect((await run({ op: "status" })).approval).toMatch(/批准已失效/);
+    void content;
+    expect((await run({ op: "status" })).approval).toMatch(/批准已失效：公众号图文发布包在批准之后变了/);
   });
 
   it("列出之后包变了（换了创作来源）→ 用旧代次批会回 stale，不批旧的", async () => {

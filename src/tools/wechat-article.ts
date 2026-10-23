@@ -14,7 +14,7 @@ import { bodyHash } from "../storage/production-store.js";
 import { deriveSibling } from "../modules/lineage/lineage.js";
 import { asIndex, escapeStrayQuotes, parseArrayArg } from "../modules/video/tool-args.js";
 import { attachUploadedArticleImage, generateArticleImages, getArticleImageReview } from "../modules/publish/article-images.js";
-import { ARTICLE_COVER_RATIOS, CREATION_SOURCES, lengthCheck, readArticlePackage, suggestedCreationSource, writeArticlePackage, isGenerated, type ArticleCoverRatio, type ArticlePackage, type CreationSource } from "../modules/wechat-article/package.js";
+import { ARTICLE_COVER_RATIOS, CREATION_SOURCES, lengthCheck, readArticlePackage, suggestedCreationSource, withArticleLock, writeArticlePackage, isGenerated, type ArticleCoverRatio, type ArticlePackage, type CreationSource } from "../modules/wechat-article/package.js";
 import { articleSource } from "../modules/wechat-article/source.js";
 import { approvalText, articleReviewState, isDerivedArticle, renderReviewPage } from "../modules/wechat-article/review.js";
 
@@ -114,7 +114,7 @@ async function generateImages(id: string, params: Result, dataDir: string): Prom
   const n = params.index === undefined ? null : asIndex(params.index);
   if (params.index !== undefined && n === null) return fail("invalid_params", "index 是第几张图（从 1 开始）");
   try {
-    const r = await generateArticleImages({ contentId: id, ...(n !== null ? { index: n - 1 } : {}) }, dataDir);
+    const r = await generateArticleImages({ contentId: id, codexOnly: true, ...(n !== null ? { index: n - 1 } : {}) }, dataDir);
     return { ok: r.ok, generated: r.generated, failed: r.failed, ...(r.errors ? { errors: r.errors } : {}), ...(r.degraded ? { degraded: r.degraded } : {}), images: imageSummary(r.review.entries) };
   } catch (e) {
     return fail("image_failed", e instanceof Error ? e.message : String(e));
@@ -122,7 +122,7 @@ async function generateImages(id: string, params: Result, dataDir: string): Prom
 }
 
 function imageSummary(entries: Awaited<ReturnType<typeof getArticleImageReview>>["entries"]): Result[] {
-  return entries.map((e) => ({ index: e.index + 1, kind: e.kind ?? "gen", status: e.status, ...(e.error ? { error: e.error } : {}), ...(e.provider ? { provider: e.provider, requested_model: e.requestedModel, model_status: e.modelStatus ?? "match" } : {}), ...(e.sourceUrl ? { source_url: e.sourceUrl, credit: e.credit } : {}) }));
+  return entries.map((e) => ({ index: e.index + 1, kind: e.kind ?? "gen", status: e.status, ...(e.error ? { error: e.error } : {}), ...(e.provider ? { provider: e.provider, requested_model: e.requestedModel ?? null, model_status: e.modelStatus ?? "unverified" } : {}), ...(e.sourceUrl ? { source_url: e.sourceUrl, credit: e.credit } : {}) }));
 }
 
 async function attachWebImage(id: string, params: Result, dataDir: string): Promise<Result> {
@@ -188,8 +188,14 @@ export async function executeWechatArticle(raw: Result): Promise<Result> {
   const a = await articleOrFail(params, dataDir);
   if (!("id" in a) || typeof a.id !== "string") return a;
   const id = a.id;
+  if (op === "source") return source(id, dataDir);
+  if (op === "status") return status(id, dataDir);
+  // 改包的动作和认稿共用一把锁：批的那一刻包不会被改掉
+  return withArticleLock(id, () => mutate(op, id, params, dataDir));
+}
+
+function mutate(op: (typeof OPS)[number], id: string, params: Result, dataDir: string): Promise<Result> {
   switch (op) {
-    case "source": return source(id, dataDir);
     case "set_titles": return setTitles(id, params, dataDir);
     case "choose_title": return chooseTitle(id, params, dataDir);
     case "set_creation_source": return setCreationSource(id, params, dataDir);
@@ -197,6 +203,6 @@ export async function executeWechatArticle(raw: Result): Promise<Result> {
     case "generate_images": return generateImages(id, params, dataDir);
     case "attach_web_image": return attachWebImage(id, params, dataDir);
     case "set_cover": return setCover(id, params, dataDir);
-    default: return status(id, dataDir);
+    default: return Promise.resolve(fail("invalid_params", `未知 op：${op}`));
   }
 }

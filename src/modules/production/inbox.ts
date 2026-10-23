@@ -395,7 +395,7 @@ function draftItem(content: Content, behindDoc: ProductionDoc | null = null, pac
     // 挡着成片 / 封面审阅时算「挡住推进」
     summary: behind.length ? `稿子写好了，过一眼（${BEHIND_TEXT[behind.join(",")]}，认稿后才能审）` : "稿子写好了，过一眼", rank: behind.length ? 1 : 3,
     actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：开头换成客户问的那句话" }],
-    detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length, ...(behind.length ? { waiting_behind: behind } : {}) },
+    detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length, ...(behind.length ? { waiting_behind: behind } : {}), ...(packageHash ? { package_hash: packageHash } : {}) },
     // 退回修改后重交（同样的正文也算重交）开新代次
     snapshot: [bodyHash(content.body), content.title, content.updatedAt, ...(packageHash ? [packageHash] : [])],
   };

@@ -90,26 +90,45 @@ export function suggestedCreationSource(review: Pick<ArticleImageReview, "entrie
 
 export const isGenerated = (e: ArticleImageEntry) => e.kind !== "web" && e.origin !== "web" && e.origin !== "uploaded" && e.origin !== "research";
 
-/** 能不能批：缺什么、哪张图不行，逐条人话（空数组 = 可以批） */
-export function packageProblems(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): string[] {
+/** 能不能批：缺什么、哪张图不行，逐条人话（空数组 = 可以批）。文件要读得到，声明要和现在的图对得上 */
+export async function packageProblems(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<string[]> {
   const out: string[] = [];
   if (pkg.titleOptions.length < 3 || pkg.titleOptions.length > 5) out.push(`标题候选要 3–5 个（现在 ${pkg.titleOptions.length} 个）`);
   else if (!pkg.chosenTitle || !pkg.titleOptions.includes(pkg.chosenTitle)) out.push("创始人还没从标题候选里选定一个");
-  if (!pkg.creationSource) out.push(`创作来源还没请创始人确认${suggestedCreationSource(review) ? "（有生成图，建议「内容由AI生成」）" : ""}`);
+  out.push(...declarationProblems(pkg, review));
   const len = lengthCheck(content.body ?? "", pkg);
   if (!len.ok) out.push(len.reason);
-  out.push(...imageProblems(review.entries));
-  for (const ratio of ARTICLE_COVER_RATIOS) if (!pkg.covers.some((c) => c.ratio === ratio)) out.push(`缺 ${ratio} 封面`);
+  out.push(...(await imageProblems(review.entries)), ...(await coverProblems(pkg)));
   return out;
 }
 
-function imageProblems(entries: ArticleImageEntry[]): string[] {
+function declarationProblems(pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): string[] {
+  const suggested = suggestedCreationSource(review);
+  if (!pkg.creationSource) return [`创作来源还没请创始人确认${suggested ? "（有生成图，建议「内容由AI生成」）" : ""}`];
+  if (pkg.creationSource.value === "无需声明" && review.entries.some((e) => e.status === "ready" && isGenerated(e))) {
+    return ["文章里有 AI 生成的配图，创作来源不能是「无需声明」：请创始人改选（建议「内容由AI生成」）"];
+  }
+  return [];
+}
+
+async function coverProblems(pkg: ArticlePackage): Promise<string[]> {
+  const out: string[] = [];
+  for (const ratio of ARTICLE_COVER_RATIOS) {
+    const c = pkg.covers.find((x) => x.ratio === ratio);
+    if (!c) out.push(`缺 ${ratio} 封面`);
+    else if ((await fileSha(c.path)) !== c.sha256) out.push(`${ratio} 封面文件不见了或在登记后被改过（${c.path}）：重新 set_cover`);
+  }
+  return out;
+}
+
+async function imageProblems(entries: ArticleImageEntry[]): Promise<string[]> {
   const out: string[] = [];
   for (const e of entries) {
     const n = e.index + 1;
     const isWeb = e.kind === "web" || e.origin === "web";
     if (e.status === "error") out.push(`配图 ${n} 生成失败：${e.error ?? "没有原因"}`);
     else if (e.status !== "ready" || !e.imagePath) out.push(`配图 ${n} 还没有图`);
+    else if ((await fileSha(e.imagePath)) === "missing") out.push(`配图 ${n} 的文件读不了：重新生成或登记`);
     else if (isWeb && !e.sourceUrl) out.push(`配图 ${n} 是 web 图但没有来源链接，不能过审`);
   }
   return out;
@@ -135,4 +154,16 @@ export function approvePackage(pkg: ArticlePackage, hash: string, now = new Date
 
 export async function packageApprovalCheck(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<ApprovalCheck> {
   return checkArtifactApproval(pkg.approval, await packageHash(content, pkg, review));
+}
+
+const locks = new Map<string, Promise<unknown>>();
+
+/** 同一篇文章的包改动与批准排队执行：批的那一刻包不会被另一个调用改掉 */
+export function withArticleLock<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = locks.get(contentId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(fn);
+  const tail = run.catch(() => undefined);
+  locks.set(contentId, tail);
+  void tail.then(() => { if (locks.get(contentId) === tail) locks.delete(contentId); });
+  return run;
 }

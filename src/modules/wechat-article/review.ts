@@ -29,7 +29,7 @@ export async function articleReviewState(contentId: string, dataDir: string, opt
   const [pkg, images] = await Promise.all([readArticlePackage(contentId, dataDir), getArticleImageReview(contentId, dataDir)]);
   const hash = await packageHash(content, pkg, images);
   const stale = await staleReason(content, dataDir, opts);
-  const problems = [...(stale ? [stale] : []), ...packageProblems(content, pkg, images)];
+  const problems = [...(stale ? [stale] : []), ...(await packageProblems(content, pkg, images))];
   return { content, pkg, images, problems, hash, approval: checkArtifactApproval(pkg.approval, hash), stale };
 }
 
