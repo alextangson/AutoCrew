@@ -27,3 +27,22 @@ describe("状态人话名与推进顺序（看板列以服务端 explain 为准�
     expect(atomRep({ key: "t", topic: null, members: [m("a", "draft_ready"), m("b", "editing"), m("c", "reviewing")] })?.id).toBe("b");
   });
 });
+
+describe("勾选平台（全媒体 Phase 1 增补）", () => {
+  it("可勾选项由能力表驱动：含 YouTube 与 X（推特），旧 twitter 由 X 代表、不重复列", async () => {
+    const { SEAT_CHOICES, PLATFORM_CAPS, kitPlatformsFor } = await import("./lib");
+    expect(SEAT_CHOICES.slice(0, 7).map((c) => c.id)).toEqual(Object.keys(PLATFORM_CAPS));
+    expect(SEAT_CHOICES.find((c) => c.id === "youtube")?.label).toBe("YouTube");
+    expect(SEAT_CHOICES.find((c) => c.id === "x")?.label).toBe("X（推特）");
+    expect(SEAT_CHOICES.some((c) => c.id === "twitter")).toBe(false);
+    expect(SEAT_CHOICES.some((c) => c.id === "toutiao")).toBe(true);
+    expect(kitPlatformsFor("douyin")).toEqual(["douyin", "wechat_video", "xiaohongshu", "bilibili"]);
+  });
+  it("旧 id twitter 显示为 X；X 席位写图文仍走 twitter 图文包", async () => {
+    const { seatId, textPlatformForSeat, platformLabel } = await import("./lib");
+    expect(seatId("twitter")).toBe("x");
+    expect(textPlatformForSeat("x")).toBe("twitter");
+    expect(textPlatformForSeat("douyin")).toBe("douyin");
+    expect(platformLabel("youtube")).toBe("YouTube");
+  });
+});

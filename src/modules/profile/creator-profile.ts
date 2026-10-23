@@ -5,6 +5,7 @@
  * and style calibration. It's initialized during onboarding (from host MEMORY or
  * by asking the user) and continuously enriched by the Learnings system.
  */
+import { normalizeProfilePlatforms } from "./platform-lines.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -281,6 +282,7 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
     profile.audiencePersona = normalizeAudiencePersona(profile.audiencePersona);
     profile.writingRules = normalizeRules(profile.writingRules ?? []);
     profile.revision ??= 0; // 读出来的档案总带 revision，整份保存时据此做 CAS
+    profile.platforms = normalizeProfilePlatforms(profile.platforms); // 旧 twitter → x（platform-lines）
     return profile;
   } catch {
     return null;

@@ -69,8 +69,8 @@ describe("前端镜像", () => {
     const block = /PLATFORM_CAPS: Record<string, PlatformCapsMirror> = \{([\s\S]*?)\n\};/.exec(text)![1];
     const front = Object.fromEntries([...block.matchAll(/^\s+(\w+): (\{.*\}),$/gm)].map((m) => [m[1], JSON.parse(m[2])]));
     const back = Object.fromEntries(PLATFORM_IDS.map((p) => {
-      const { kind, language, coverRatios, metrics } = PLATFORM_CAPS[p];
-      return [p, { kind, language, coverRatios, metrics }];
+      const { label, kind, language, coverRatios, metrics } = PLATFORM_CAPS[p];
+      return [p, { label, kind, language, coverRatios, metrics }];
     }));
     expect(front).toEqual(back);
     expect(Object.keys(front)).toEqual(PLATFORM_IDS);

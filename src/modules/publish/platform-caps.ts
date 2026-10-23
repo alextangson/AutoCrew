@@ -103,7 +103,7 @@ const TABLE = {
   x: {
     // X 帖子正文 ≤280 字符：非 Premium 账号的基线（Premium 可发长帖，这里按基线保守卡）；X 视频帖没有独立标题，
     // 发布标题就是帖子正文，所以标题和正文同一个上限
-    label: "X", kind: "video", language: "en", coverRatios: ["16:9"], coverSlots: ["16:9"], coverRequired: true,
+    label: "X（推特）", kind: "video", language: "en", coverRatios: ["16:9"], coverSlots: ["16:9"], coverRequired: true,
     titleCounter: "plain", titleMax: 280, bodyMax: 280,
     captionRule: "Post text ≤280 chars: one hook line, one takeaway, 1-2 hashtags",
     kitFields: ["post_text"], metrics: "unsupported", publishChannel: "ego_lite",

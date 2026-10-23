@@ -15,7 +15,7 @@ import { HostBadges } from "./HostBadges";
 import { boardPlatforms } from "./board-model";
 import "./topic-workspace.css";
 import {
-  VARIANT_STATUS, PLATFORM_CATALOG,
+  VARIANT_STATUS, PLATFORM_CATALOG, textPlatformForSeat,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
 } from "../lib";
 
@@ -91,7 +91,7 @@ function Matrix(props: {
   const platformGroups = boardPlatforms(atom);
   const byPlatform = new Map(platformGroups.map((entry) => [entry.platform, entry]));
   const hasTheme = Boolean(t || atom.members.some((member) => member.topicId));
-  const suggestedPlatforms = platformGroups.length === 0 ? seats.slice(0, 3) : [];
+  const suggestedPlatforms = platformGroups.length === 0 ? seats.slice(0, 3).map(textPlatformForSeat) : [];
   const shown = [
     ...PLATFORM_CATALOG.filter((c) => (hasTheme && (suggestedPlatforms.includes(c.id) || addedPlatforms.includes(c.id))) || byPlatform.has(c.id)),
     ...platformGroups.filter((entry) => !PLATFORM_CATALOG.some((c) => c.id === entry.platform)).map((entry) => ({ id: entry.platform, label: platformLabel(entry.platform), gen: false })),
