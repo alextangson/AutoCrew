@@ -6,8 +6,8 @@ import { describe, it, expect } from "vitest";
 import { COVER_CROP_CHECKS, COVER_RATIOS_BY_PLATFORM, coverRatiosForPlatform, effectiveCoverRatios, ratioValue } from "./platform-ratios.js";
 
 describe("coverRatiosForPlatform", () => {
-  it("09-29 上传槽表（10-23 公众号加 1:1 分享卡）:公众号 2.35:1+1:1;小红书 3:4;抖音/视频号 3:4+4:3;B站只 4:3", () => {
-    expect(coverRatiosForPlatform("wechat_mp")).toEqual(["2.35:1", "1:1"]);
+  it("09-29 上传槽表:公众号 2.35:1;小红书 3:4;抖音/视频号 3:4+4:3;B站只 4:3", () => {
+    expect(coverRatiosForPlatform("wechat_mp")).toEqual(["2.35:1"]);
     expect(coverRatiosForPlatform("douyin")).toEqual(["3:4", "4:3"]);
     expect(coverRatiosForPlatform("wechat_video")).toEqual(["3:4", "4:3"]);
     expect(coverRatiosForPlatform("bilibili")).toEqual(["4:3"]);

@@ -46,10 +46,10 @@ describe("中文平台现行口径（回归钉）", () => {
   });
   it("封面上传槽与回退", () => {
     expect(Object.fromEntries(ZH_VIDEO.concat("wechat_mp").map((p) => [p, COVER_RATIOS_BY_PLATFORM[p]]))).toEqual({
-      wechat_mp: ["2.35:1", "1:1"], xiaohongshu: ["3:4"], wechat_video: ["3:4", "4:3"], douyin: ["3:4", "4:3"], bilibili: ["4:3"],
+      wechat_mp: ["2.35:1"], xiaohongshu: ["3:4"], wechat_video: ["3:4", "4:3"], douyin: ["3:4", "4:3"], bilibili: ["4:3"],
     });
     expect(Object.fromEntries(ZH_VIDEO.concat("wechat_mp").map((p) => [p, ALLOWED_COVER_SLOTS[p]]))).toEqual({
-      wechat_mp: ["2.35:1", "1:1"], xiaohongshu: ["3:4", "4:3", "1:1"], wechat_video: ["3:4", "4:3"], douyin: ["3:4", "4:3"], bilibili: ["4:3", "16:9"],
+      wechat_mp: ["2.35:1"], xiaohongshu: ["3:4", "4:3", "1:1"], wechat_video: ["3:4", "4:3"], douyin: ["3:4", "4:3"], bilibili: ["4:3", "16:9"],
     });
     expect(coverRatiosForPlatform("toutiao")).toEqual(["3:4", "16:9", "4:3"]);
   });

@@ -350,7 +350,7 @@ export const PLATFORM_CAPS: Record<string, PlatformCapsMirror> = {
   wechat_video: { "label": "视频号", "kind": "video", "language": "zh", "coverRatios": ["3:4", "4:3"], "metrics": "browser_pull" },
   xiaohongshu: { "label": "小红书", "kind": "video", "language": "zh", "coverRatios": ["3:4"], "metrics": "browser_pull" },
   bilibili: { "label": "B站", "kind": "video", "language": "zh", "coverRatios": ["4:3"], "metrics": "bind_only" },
-  wechat_mp: { "label": "公众号", "kind": "article", "language": "zh", "coverRatios": ["2.35:1", "1:1"], "metrics": "bind_only" },
+  wechat_mp: { "label": "公众号", "kind": "article", "language": "zh", "coverRatios": ["2.35:1"], "metrics": "bind_only" },
   youtube: { "label": "YouTube", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
   x: { "label": "X（推特）", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
 };
@@ -397,7 +397,6 @@ export const COVER_RATIO_LABEL: Record<string, string> = {
   "3:4": "3:4 竖屏",
   "16:9": "16:9 横屏",
   "4:3": "4:3 横屏",
-  "1:1": "1:1 方图（公众号分享卡）",
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
