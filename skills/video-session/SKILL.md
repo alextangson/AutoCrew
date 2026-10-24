@@ -83,6 +83,17 @@ Codex 交来封面或成片（它说做完了、或你看到这条稿有了新�
 5. 用户的原话才能定的三样：选标题 `op:"choose_title"{index,founder_quote}`；创作来源 `op:"set_creation_source"{creation_source,founder_quote}`（有生成图时建议「内容由AI生成」，绝不替他选「无需声明」）；篇幅不在 2500–4000 时他说可以才 `op:"override_length"{founder_quote}`。
 6. `op:"status"` 看还差什么；齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把图文审阅页（preview.pages）给用户看，他说没问题再 decide approve_script——批的是整包，之后正文、标题、图、封面、创作来源任何一样变了都要重批。草稿箱推送、定时群发、视频号卡片、声明勾选是下一步（Phase 2b），这里不做。
 
+### 成片审过后：英文版（只在用户勾了 YouTube 或 X 时）
+
+和封面、公众号文章并行，不等它们：
+
+1. `autocrew_content {action:"en_edition", content_id:<这条视频>, edition:{op:"derive"}}`。回 `line_not_enabled` 就跳过这一节；`no_approved_cut` / `source_deleted` 照说原因。重复调用拿回同一条；英文版只出用户勾了的那几个英文平台的包。
+2. `edition:{op:"source"}` 拿成片字幕的时间槽，写英文脚本：轻本地化（骨架不动，西方观众不认识的例子 / 产品换掉），英文比中文长 5–25%，写紧、守每段时间槽。`op:"set_script"{segments:[{cues:"1-2", en, swaps?, keyword?}]}`：中文原句和时间由字幕给，不能改；每处换例写 `{from, to, reason}`，替换例带事实就 `factual:true` 并先 `op:"verify_quote"{url, quote}` 拿 `evidence_id` 填上，不编事实；每段最多一个字幕标黄词 `keyword`。
+3. `op:"status"` 看还差什么，齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把中英对照审阅页给用户——他看中文判断。他说没问题再 decide approve_script；之后任何一段改了都要重批。
+4. 缩略图：派 Codex 按 cover-generator 的「英文版 16:9 缩略图」出图，交回后 `op:"set_thumbnail"{path}` 登记。
+5. 配音：`op:"dub"`（只按批过的脚本，ElevenLabs 克隆声音，每段一次）。然后按 [英文版制作做法](references/en-edition-recipe.md) 在**前台**做口型对齐和字幕——不派后台 Codex。
+6. 发布包：`op:"chapters"` 拿段起点，按第 6 节交 `video_kit`：youtube 包 `{post_title ≤100, caption, tags, chapters:[{at:"0:00", title}…], hashtags?}`，x 包 `{post_text ≤280, hashtags?}`，按字符计、只收英文。默认排在北京时间 21:00–23:00（美国上午）。发布按 publish-content 的 YouTube / X 手册。
+
 撤回只凭用户一句话：由当前持有认领的会话携带有效令牌调 `autocrew_video {action:"revoke", content_id, claim_token}`。状态回 `draft_ready`，这一代永久作废；之后改稿、重录、重交都是新一代。
 
 ## 6. 发布包与发布

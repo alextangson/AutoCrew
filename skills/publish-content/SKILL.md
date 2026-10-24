@@ -39,6 +39,7 @@ description: >
 
 平台手册：[抖音](references/douyin.md) · [视频号](references/wechat-video.md) ·
 [小红书](references/xiaohongshu.md) · [B站](references/bilibili.md)。
+英文版（YouTube / X，未经实测）：[YouTube](references/youtube.md) · [X](references/x.md)。
 
 ## 本地辅助工具
 
