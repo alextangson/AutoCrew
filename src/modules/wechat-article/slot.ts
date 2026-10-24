@@ -5,6 +5,7 @@
  */
 import { getContent, listContents } from "../../storage/local-store.js";
 import { readPublishRecord } from "../../storage/publish-record.js";
+import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { readPublishState, type PlannedSlot } from "./publish-state.js";
 
 const TZ_MS = 8 * 3600_000;
@@ -45,7 +46,17 @@ export async function videoChannelState(sourceId: string, dataDir: string, now =
   if (!p) return { live: false, at: null, raw: record.kind === "unreadable" ? record.reason : "发布记录里没有视频号" };
   const t = p.publishedAt ?? p.time;
   const at = parseShanghai(t);
-  return { live: p.state === "public" || p.state === "manual", at, raw: `视频号：${p.state}${t ? ` ${t}` : ""}` };
+  if (p.state === "public" || p.state === "manual") return { live: true, at, raw: `视频号：${p.state}${t ? ` ${t}` : ""}` };
+  // 发布台计划停在 overdue / scheduled，但制作记录里已认可了视频号发布回执（老视频常见：发完只在资料库登记）→ 按已公开算
+  const fact = await acceptedChannelsPublish(sourceId, dataDir);
+  if (fact) return { live: true, at: parseShanghai(fact) ?? at, raw: `视频号：已登记发布 ${fact}（发布台计划是 ${p.state}）` };
+  return { live: false, at, raw: `视频号：${p.state}${t ? ` ${t}` : ""}` };
+}
+
+async function acceptedChannelsPublish(sourceId: string, dataDir: string): Promise<string | null> {
+  const doc = await readProductionDocOrEmpty(sourceId, dataDir);
+  const f = doc.facts.find((x) => x.kind === "publish" && x.platform === "wechat_video" && x.state === "accepted" && !x.replaced_at && x.published_at);
+  return f?.published_at ?? null;
 }
 
 /** 别的派生文章已占的群发日（已进编辑器排了时间 / 等扫码 / 已定时 / 已发） */
