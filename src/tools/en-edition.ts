@@ -8,6 +8,7 @@
  */
 import { getContent, getDataDir, transitionStatus, updateContent, normalizeLegacyStatus } from "../storage/local-store.js";
 import { deriveSibling } from "../modules/lineage/lineage.js";
+import { isFrozen, readProductionDoc, ScriptFrozenError } from "../storage/production-store.js";
 import { escapeStrayQuotes } from "../modules/video/tool-args.js";
 import { verifyQuote } from "../modules/draft/verify-quote.js";
 import { enSource } from "../modules/en-edition/source.js";
@@ -50,9 +51,12 @@ async function setScript(id: string, params: Result, dataDir: string): Promise<R
   if (typeof segments === "string") return fail("invalid_params", segments);
   const prev = await readEnScript(id, dataDir);
   const script = { sourceCutHash: c.derivedFrom!.sourceCutHash, segments, ...(prev?.approval ? { approval: prev.approval } : {}) };
+  // 剪辑中正文冻结：先判，冻结时脚本和正文都不动（不留下脚本改了、正文没改的半截）
+  if (scriptBody(script) !== c.body && isFrozen(await readProductionDoc(id, dataDir))) return fail("script_frozen", new ScriptFrozenError().message);
+  // 先改正文（会被拒的写口在前），成功了再落脚本；英文脚本是模型把审过的中文成片改写成英文：来源按改写源视频记
+  try { await updateContent(id, { _provenance: { kind: "model", derivedFrom: c.derivedFrom!.contentId }, body: scriptBody(script) }, dataDir); }
+  catch (e) { return fail(e instanceof ScriptFrozenError ? "script_frozen" : "body_write_failed", `脚本没存（正文写不进去）：${e instanceof Error ? e.message : String(e)}`); }
   await writeEnScript(id, script, dataDir);
-  // 英文脚本是模型把审过的中文成片改写成英文：来源按改写源视频记（首稿卡口凭源稿 id 放行）
-  await updateContent(id, { _provenance: { kind: "model", derivedFrom: c.derivedFrom!.contentId }, body: scriptBody(script) }, dataDir);
   const moved = await toReview(id, dataDir);
   const state = await enReviewState(id, dataDir);
   const problems = "error" in state ? [state.error] : state.problems;

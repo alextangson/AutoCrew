@@ -7,7 +7,7 @@ import { getContent, type Content } from "../../storage/local-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { approveArtifact, checkArtifactApproval, type ApprovalCheck } from "../lineage/artifact-approval.js";
 import { staleReason } from "../lineage/lineage.js";
-import { readEnScript, SCRIPT_ARTIFACT, scriptHash, scriptProblems, writeEnScript, type EnScript } from "./script.js";
+import { readEnScript, SCRIPT_ARTIFACT, scriptBody, scriptHash, scriptProblems, writeEnScript, type EnScript } from "./script.js";
 import { writeEnPreview } from "./preview.js";
 
 export interface EnReviewState {
@@ -38,7 +38,9 @@ export async function enReviewState(contentId: string, dataDir: string, opts: { 
   const hash = scriptHash(script);
   const stale = await staleReason(content, dataDir, opts);
   const drift = script.sourceCutHash !== content.derivedFrom!.sourceCutHash ? ["脚本是按另一版成片写的：按当前成片重写"] : [];
-  const problems = [...(stale ? [stale] : []), ...drift, ...scriptProblems(script, evidence)];
+  // 正文必须就是脚本的英文：别的写口改过正文，认稿 / 配音 / 发布包读的就不是同一份了
+  const bodyDrift = (content.body ?? "") === scriptBody(script) ? [] : ["稿件正文和英文脚本对不上（正文被别的写口改过）：重新 set_script，让正文按脚本重生成"];
+  const problems = [...(stale ? [stale] : []), ...drift, ...bodyDrift, ...scriptProblems(script, evidence)];
   return { content, script, evidence, problems, hash, approval: checkArtifactApproval(script.approval, hash), stale };
 }
 

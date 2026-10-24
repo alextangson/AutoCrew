@@ -35,7 +35,7 @@ import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, videoTitleLimit } from "../modules/publish/video-kit.js";
 import { capsOf, countTitleChars, languageOf, titleCountNote, type PlatformId } from "../modules/publish/platform-caps.js";
 import { validateEnKit } from "../modules/publish/en-kit.js";
-import { enKitContext } from "../modules/en-edition/kit-context.js";
+import { enKitContext, enKitStaleRefusal } from "../modules/en-edition/kit-context.js";
 import { derivedPublishRefusal, derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
 import { allowedKitPlatforms } from "../modules/profile/platform-lines.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
@@ -103,9 +103,12 @@ export const prePublishSchema = Type.Object({
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id；check、video_kit 必填，title_methods 不需要。" })),
   platform: Type.Optional(Type.String({ description: "video_kit 必填：要发的视频平台。同一条视频发多平台共用一条稿，每个平台各交一份包、各跑一次 check（check 不带时按稿件平台）；文字稿只能是稿件平台。" })),
   kit: Type.Optional(Type.Object({
-    post_title: Type.String({ description: "平台发布标题，独立于口播稿标题，按平台习惯重拟、自带钩子。" }),
-    caption: Type.String({ description: "平台发布简介，可直接粘贴；是让刷到的人停下的文案，不是口播稿摘要。" }),
-    cover_text: Type.String({ description: "封面大字。" }),
+    post_title: Type.Optional(Type.String({ description: "平台发布标题（中文平台、youtube），独立于口播稿标题，按平台习惯重拟、自带钩子。" })),
+    caption: Type.Optional(Type.String({ description: "平台发布简介 / youtube 描述，可直接粘贴；不是口播稿摘要。" })),
+    cover_text: Type.Optional(Type.String({ description: "封面大字（中文平台）。" })),
+    post_text: Type.Optional(Type.String({ description: "x：帖子正文。" })),
+    tags: Type.Optional(Type.Unknown({ description: "youtube：英文 tags 数组。" })),
+    chapters: Type.Optional(Type.Unknown({ description: "youtube：[{at:\"0:00\", title}]。" })),
     hashtags: Type.Optional(Type.Array(Type.String(), {
       description: "话题标签（不带空格）。caption 里还没有的会并到 caption 末尾，字数按合并后的简介算。",
     })),
@@ -113,7 +116,7 @@ export const prePublishSchema = Type.Object({
       description: "3 个四平台通用标题候选 [{title, method, reason}]，分属方法库 3 个不同类（方法库见 action=title_methods）。",
     })),
     title_method: Type.Optional(Type.String({ description: `本平台 post_title 用的方法 id；创始人自己写的填「${SELF_WRITTEN}」。` })),
-  }, { description: `video_kit 必填。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
+  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
   claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（pack 或 autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
 });
 
@@ -284,9 +287,9 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
     };
   }
   // 英文平台（youtube / x）按自己的 kitFields 校验（Phase 3）；中文四平台照旧
-  const en = languageOf(platform) === "en"
-    ? validateEnKit(params.kit, platform as PlatformId, await enKitContext(contentId, getDataDir(dataDir)))
-    : null;
+  const enPre = languageOf(platform) === "en" ? await enKitContext(contentId, getDataDir(dataDir)) : null;
+  if (enPre && "no" in enPre) return enPre.no;
+  const en = enPre ? validateEnKit(params.kit, platform as PlatformId, enPre.ctx) : null;
   const { failures, fields, title } = en
     ? { ...en, title: null }
     : validateKit(params.kit, platform, await activeTitleMethods(dataDir));
@@ -296,7 +299,7 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
   const gate = await gatePublishWrite(params, contentId, dataDir);
   if ("denied" in gate) return gate.denied;
   const kit: VideoKit = {
-    platform, coverText: "", ...fields, ...(title ? { titleMethod: title.method, titleCandidates: title.candidates } : {}), storyboard: [], coverPrompt: "",
+    platform, coverText: "", ...fields, ...(title ? { titleMethod: title.method, titleCandidates: title.candidates } : {}), ...(enPre ? enPre.binding : {}), storyboard: [], coverPrompt: "",
     generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content), ...kitRegisterHash(content),
   };
   // 指纹与落盘同锁核对：读稿到写包之间稿件被改，就不能把旧稿的指纹钉到新稿上
@@ -354,6 +357,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   const ontologyGated = params._ontologyGated === true && coverRequired(platform) && (await ontologyApplies(content, getDataDir(dataDir)));
   const stale = ontologyGated ? null : staleKit(content, platform);
   if (stale) return stale;
+  const enStale = await enKitStaleRefusal(content, platform, getDataDir(dataDir));
+  if (enStale) return enStale;
   const surface = publishSurface(content, platform);
   const checks: CheckItem[] = [];
 

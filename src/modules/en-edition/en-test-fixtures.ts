@@ -1,5 +1,5 @@
 /**
- * 英文版测试共用：本体启用、成片已批并登记了 4 条字幕的源视频，和一份对得上的三段脚本。
+ * 英文版测试共用：本体启用、成片已批并登记了 4 条字幕的源视频，一份对得上的三段脚本，假 ElevenLabs，批脚本。
  */
 import path from "node:path";
 import { expect } from "vitest";
@@ -7,6 +7,10 @@ import { readProductionDoc } from "../../storage/production-store.js";
 import { founderDecision } from "../production/decisions.js";
 import { founderApprove, makeEnv, put, record, videoContent, waiveSliverCheck, type Env } from "../production/testkit.js";
 import { initProfile, updateProfile } from "../profile/creator-profile.js";
+import { readInbox } from "../production/inbox-read.js";
+import { decideItem } from "../production/inbox-decide.js";
+import { setDurationProbe } from "./dub.js";
+import { setElevenLabsFetch } from "../voice/elevenlabs.js";
 
 export const EN_SRT = [
   "1\n00:00:00,000 --> 00:00:04,000\n说实话，任务越难越想开最大",
@@ -35,4 +39,36 @@ export async function enSourceVideo(platforms: string[]): Promise<{ env: Env; id
   await waiveSliverCheck(env, c.id, sha);
   expect(await founderDecision(c.id, "approve_cut", { fact_id: cut.fact_id, sha256: sha }, env.dir)).toMatchObject({ ok: true });
   return { env, id: c.id };
+}
+
+/** 逐字符的假时间戳（每字 0.05 秒） */
+export function fakeAlignment(text: string) {
+  const chars = [...text];
+  return { characters: chars, character_start_times_seconds: chars.map((_, i) => i * 0.05), character_end_times_seconds: chars.map((_, i) => i * 0.05 + 0.04) };
+}
+
+export interface FakeCall { url: string; text: string; key: string }
+
+/**
+ * 假 ElevenLabs：按文字回 mp3 字节 + 时间戳。respond(text, 第几次调用) 返回 Response 就用它（失败、坏时间戳…），
+ * 返回 undefined 走正常回复。durations 控制每段测到的时长。
+ */
+export function fakeElevenLabs(durations: number[], respond?: (text: string, n: number) => Response | undefined): FakeCall[] {
+  const calls: FakeCall[] = [];
+  let probes = 0;
+  setDurationProbe(async () => durations[Math.min(probes++, durations.length - 1)]);
+  setElevenLabsFetch((async (url: string, init: RequestInit) => {
+    const text = String((JSON.parse(String(init.body)) as { text: string }).text);
+    calls.push({ url, text, key: String((init.headers as Record<string, string>)["xi-api-key"]) });
+    const custom = respond?.(text, calls.length);
+    if (custom) return custom;
+    return new Response(JSON.stringify({ audio_base64: Buffer.from(`mp3:${text}`).toString("base64"), alignment: fakeAlignment(text) }), { status: 200 });
+  }) as typeof fetch);
+  return calls;
+}
+
+/** 认稿那件批脚本（和创始人在对话里说「没问题」同一条路） */
+export async function approveEnScript(env: Env, id: string): Promise<Record<string, unknown>> {
+  const d = (await readInbox(env.dir, { withDrafts: true })).items.find((i) => i.type === "draft" && i.content_id === id)!;
+  return decideItem({ item_id: d.item_id, gen: d.gen, action: "approve_script", content_id: id }, env.dir);
 }

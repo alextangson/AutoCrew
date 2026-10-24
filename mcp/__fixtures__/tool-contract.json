@@ -2543,6 +2543,7 @@
        "caption": {
         "type": "string"
        },
+       "chapters": {},
        "cover_text": {
         "type": "string"
        },
@@ -2552,9 +2553,13 @@
         },
         "type": "array"
        },
+       "post_text": {
+        "type": "string"
+       },
        "post_title": {
         "type": "string"
        },
+       "tags": {},
        "title_candidates": {
         "items": {},
         "type": "array"
@@ -2563,11 +2568,6 @@
         "type": "string"
        }
       },
-      "required": [
-       "post_title",
-       "caption",
-       "cover_text"
-      ],
       "type": "object"
      },
      "platform": {
@@ -5432,6 +5432,7 @@
        "caption": {
         "type": "string"
        },
+       "chapters": {},
        "cover_text": {
         "type": "string"
        },
@@ -5441,9 +5442,13 @@
         },
         "type": "array"
        },
+       "post_text": {
+        "type": "string"
+       },
        "post_title": {
         "type": "string"
        },
+       "tags": {},
        "title_candidates": {
         "items": {},
         "type": "array"
@@ -5452,11 +5457,6 @@
         "type": "string"
        }
       },
-      "required": [
-       "post_title",
-       "caption",
-       "cover_text"
-      ],
       "type": "object"
      },
      "platform": {

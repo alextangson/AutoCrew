@@ -310,6 +310,10 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
+    // 英文版的正文 = 双语脚本的英文（唯一来源）：只能经 en_edition set_script 改
+    if (oldContent.derivedFrom?.kind === "en_edition" && typeof params.body === "string" && params.body !== oldContent.body) {
+      return { ok: false, code: "en_script_is_source", error: "英文版的正文由双语脚本生成，不能直接改：用 autocrew_content en_edition set_script 改对应的段" };
+    }
     const platformLock = platformLockCheck(params, dataDir);
     if (platformLock && await platformLock(oldContent)) return { ok: false, code: "platform_locked", error: PLATFORM_LOCKED_ERROR };
     // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动

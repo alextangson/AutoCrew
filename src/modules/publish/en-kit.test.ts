@@ -1,13 +1,20 @@
 /**
  * Phase 3 验收（三）：youtube / x 发布包按自己的 kitFields 和上限校验（按字符计），中文四平台的包校验不变。
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { chapterProblems, parseTimestamp, validateEnKit } from "./en-kit.js";
 import { executeEnEdition } from "../../tools/en-edition.js";
-import { executePrePublishTool } from "../../tools/pre-publish.js";
-import { enSourceVideo } from "../en-edition/en-test-fixtures.js";
+import { executePrePublish, executePrePublishTool } from "../../tools/pre-publish.js";
+import { approveEnScript, enSourceVideo, fakeElevenLabs, SEGMENTS } from "../en-edition/en-test-fixtures.js";
+import { dubDir, setDurationProbe } from "../en-edition/dub.js";
+import { setElevenLabsFetch, setKeychainReader } from "../voice/elevenlabs.js";
+import { getContent } from "../../storage/local-store.js";
 import { png, put, type Env } from "../production/testkit.js";
+
+beforeEach(() => { process.env.ELEVENLABS_API_KEY = "sk-test"; process.env.ELEVENLABS_VOICE_ID = "v"; setKeychainReader(async () => null); });
+afterEach(() => { setElevenLabsFetch(null); setDurationProbe(null); setKeychainReader(null); delete process.env.ELEVENLABS_API_KEY; delete process.env.ELEVENLABS_VOICE_ID; });
 
 const OK_CTX = { thumbnailProblem: null, durationS: 120 };
 const YT = {
@@ -41,6 +48,8 @@ describe("youtube 发布包", () => {
     expect(chapterProblems(ch([["0:00", "a"], ["0:05", "b"], ["1:00", "c"]]), 120)).toEqual(expect.arrayContaining([expect.stringMatching(/不到 10 秒/)]));
     expect(chapterProblems(ch([["0:00", "a"], ["0:30", "b"], ["2:10", "c"]]), 120)).toEqual(expect.arrayContaining([expect.stringMatching(/超过片长/)]));
     expect(parseTimestamp("1:02:03")).toBe(3723);
+    // P2-7：片长未知（清单缺 / 坏）不能悄悄跳过章节核对
+    expect(chapterProblems(ch([["0:00", "a"], ["0:30", "b"], ["1:00", "c"]]), null)).toEqual([expect.stringMatching(/片长未知/)]);
   });
 });
 
@@ -65,11 +74,28 @@ describe("经 autocrew_pre_publish video_kit 交包", () => {
     const d = await executeEnEdition({ _dataDir: env.dir, op: "derive", content_id: src.id });
     const id = String(d.content_id);
     const kit = (platform: string, k: unknown) => executePrePublishTool({ _dataDir: env!.dir, action: "video_kit", content_id: id, platform, kit: k });
+    const X = { post_text: "Max effort is not a free upgrade.", hashtags: ["AI"] };
     expect(await kit("youtube", YT)).toMatchObject({ ok: false, code: "platform_required" });
     expect(await kit("douyin", YT)).toMatchObject({ ok: false, code: "platform_required" });
+    // P2-5：脚本没批 / 没配音 → 不出英文包
+    expect(await kit("x", X)).toMatchObject({ ok: false, code: "no_script" });
+    await executeEnEdition({ _dataDir: env.dir, op: "set_script", content_id: id, segments: SEGMENTS });
+    expect(await kit("x", X)).toMatchObject({ ok: false, code: "script_not_approved" });
+    await approveEnScript(env, id);
+    expect(await kit("x", X)).toMatchObject({ ok: false, code: "no_dub" });
+    fakeElevenLabs([3.5, 3.5, 9]);
+    expect(await executeEnEdition({ _dataDir: env.dir, op: "dub", content_id: id })).toMatchObject({ ok: true });
     expect(await kit("x", { post_text: "a".repeat(300) })).toMatchObject({ ok: false, code: "kit_invalid" });
-    const saved = await kit("x", { post_text: "Max effort is not a free upgrade.", hashtags: ["AI"] });
+    const saved = await kit("x", X);
     expect(saved).toMatchObject({ ok: true, video_kit: { platform: "x", post_title: "Max effort is not a free upgrade.\n\n#AI" } });
+    const stored = (await getContent(id, env.dir))!.videoKits!.x;
+    expect(stored.enScriptHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored.enDubHash).toMatch(/^[0-9a-f]{64}$/);
+    // 包绑住配音：换了一版配音（清单变了），check 按过期拦
+    fakeElevenLabs([3.6, 3.5, 9]);
+    await fs.rm(path.join(dubDir(id, env.dir)), { recursive: true });
+    await executeEnEdition({ _dataDir: env.dir, op: "dub", content_id: id });
+    expect(await executePrePublish({ action: "check", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "kit_stale" });
   });
 
   it("缩略图要 16:9（按像素认）", async () => {

@@ -261,6 +261,9 @@ export interface VideoKit {
   tags?: string[];
   /** 英文平台（Phase 3）：YouTube 章节（已并进 caption，这里留结构给发布手册核对） */
   chapters?: Array<{ at: string; startS: number; title: string }>;
+  /** 英文平台：做包时批过的英文脚本指纹、配音清单指纹（任何一样变了包就过期） */
+  enScriptHash?: string;
+  enDubHash?: string;
 }
 
 export interface AdoptionRecord {
