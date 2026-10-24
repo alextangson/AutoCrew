@@ -124,8 +124,15 @@ async function generateImages(id: string, params: Result, dataDir: string): Prom
   }
 }
 
+/** 这一槽现在放的是什么图（按实际来源）：截图 / 官方图 = web，生成的 = gen，上传 / 素材库 = 原样；还没放图 = 图位类型 */
+function actualKind(e: Awaited<ReturnType<typeof getArticleImageReview>>["entries"][number]): string {
+  if (e.origin === "web") return "web";
+  if (e.origin === "generated") return "gen";
+  return e.origin ?? e.kind ?? "gen";
+}
+
 function imageSummary(entries: Awaited<ReturnType<typeof getArticleImageReview>>["entries"]): Result[] {
-  return entries.map((e) => ({ index: e.index + 1, kind: e.kind ?? "gen", status: e.status, ...(e.error ? { error: e.error } : {}), ...(e.provider ? { provider: e.provider, requested_model: e.requestedModel ?? null, model_status: e.modelStatus ?? "unverified" } : {}), ...(e.sourceUrl ? { source_url: e.sourceUrl, credit: e.credit } : {}) }));
+  return entries.map((e) => ({ index: e.index + 1, kind: actualKind(e), slot_kind: e.kind ?? "gen", status: e.status, ...(e.error ? { error: e.error } : {}), ...(e.provider ? { provider: e.provider, requested_model: e.requestedModel ?? null, model_status: e.modelStatus ?? "unverified" } : {}), ...(e.sourceUrl ? { source_url: e.sourceUrl, credit: e.credit } : {}) }));
 }
 
 async function attachWebImage(id: string, params: Result, dataDir: string): Promise<Result> {

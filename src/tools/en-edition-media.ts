@@ -19,6 +19,9 @@ import { enPackageApprovalText, writeEnPackagePreview } from "../modules/en-edit
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 
+/** 单引号包住整段路径（空格、中文、$ 都原样），内部单引号按 '\'' 转义 */
+export const shellQuote = (p: string): string => `'${p.replace(/'/g, `'\\''`)}'`;
+
 const approvedState = approvedEnState;
 const currentManifest = currentEnManifest;
 
@@ -46,7 +49,8 @@ export async function captionsOp(id: string, dataDir: string): Promise<Result> {
   await fs.writeFile(file, JSON.stringify({ scriptHash: s.hash, cues: cues.cues }, null, 2));
   const script = path.join(REPO_ROOT, "sidecars", "captions", "burn_captions.py");
   return { ok: true, captions_path: file, cues: cues.cues.length,
-    burn_command: `uv run --project ${path.dirname(script)} ${script} --cues ${file} --input <口型对齐后的成片.mp4> --output <英文成片.mp4>` };
+    burn_command: `uv run --project ${shellQuote(path.dirname(script))} ${shellQuote(script)} --cues ${shellQuote(file)} --input <口型对齐后的成片.mp4> --output <英文成片.mp4>`,
+    note: "<…> 两处换成真实路径时也要加单引号（项目路径里有空格和中文）" };
 }
 
 export async function chaptersOp(id: string, dataDir: string): Promise<Result> {

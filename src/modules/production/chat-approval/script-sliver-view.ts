@@ -3,6 +3,8 @@
  * 认稿 brief 里贴全文（创始人 10-11 定：在对话里直接看稿，不给文件链接）。
  */
 import { getContent } from "../../../storage/local-store.js";
+import { readArticlePackage } from "../../wechat-article/package.js";
+import { readEnScript } from "../../en-edition/script.js";
 import type { InboxItem } from "../inbox.js";
 
 export interface SliverPoint { key: string; start_tc?: string; frames?: number; prev_name?: string | null; next_name?: string | null; suggestion?: string | null; waived?: boolean; action?: { params?: Record<string, unknown> } }
@@ -67,13 +69,37 @@ export async function draftBrief(item: InboxItem, dataDir: string): Promise<stri
   const c = item.content_id ? await getContent(item.content_id, dataDir) : null;
   const d = item.detail;
   const behind = ((d.waiting_behind as string[] | undefined) ?? []).map((x) => BEHIND[x] ?? x);
+  const derived = c?.derivedFrom?.kind;
+  const head = derived === "wechat_article" ? await articleHead(c!.id, item.title, dataDir) : `《${item.title}》`;
+  const text = derived === "en_edition" ? await bilingualText(c!.id, dataDir) : null;
   return [
-    `《${item.title}》稿子写好了，过一眼（${String(d.platform ?? "平台未定")}，${String(d.words ?? "?")} 字）`,
+    `${head}稿子写好了，过一眼（${String(d.platform ?? "平台未定")}，${String(d.words ?? "?")} 字）`,
     ...(behind.length ? [`${behind.join("和")}已经做好了，在等这份稿认了才能审。`] : []),
     "要你判断：念起来顺不顺、有没有说错的、是不是你想说的。",
-    "———— 全文 ————",
-    c?.body?.trim() || "（正文是空的）",
+    text ? "———— 中英对照（逐段）————" : "———— 全文 ————",
+    text ?? (c?.body?.trim() || "（正文是空的）"),
     "———— 完 ————",
     "回我「稿子没问题」/「还要改：……」",
   ].join("\n");
+}
+
+/** 派生公众号文章：推送时用的是选定的标题，不是写稿时的工作标题；没选就列候选 */
+async function articleHead(id: string, workingTitle: string, dataDir: string): Promise<string> {
+  const pkg = await readArticlePackage(id, dataDir).catch(() => null);
+  if (pkg?.chosenTitle) return `《${pkg.chosenTitle}》（选定的公众号标题）`;
+  const options = pkg?.titleOptions ?? [];
+  return options.length ? `《${workingTitle}》（标题还没选，候选：${options.map((t, i) => `${i + 1}. ${t}`).join(" / ")}）` : `《${workingTitle}》（还没有标题候选）`;
+}
+
+const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}`;
+
+/** 英文版：逐段中文原句 + 英文 + 换掉的例子（他看中文判断，不只看英文） */
+async function bilingualText(id: string, dataDir: string): Promise<string | null> {
+  const script = await readEnScript(id, dataDir).catch(() => null);
+  if (!script?.segments.length) return null;
+  return script.segments.map((g) => [
+    `第 ${g.index} 段（${clock(g.startMs)}–${clock(g.endMs)}）${g.changed ? `【成片换版后有变化：${g.changed}】` : ""}`,
+    `中：${g.zh}`, `英：${g.en}`,
+    ...g.swaps.map((w) => `换例：${w.from} → ${w.to}（${w.reason}）`),
+  ].join("\n")).join("\n\n");
 }

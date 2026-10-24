@@ -27,7 +27,7 @@ export { handoffView };
 import { publishTargets, type PublishTarget } from "../modules/production/targets.js";
 import { staleReason } from "../modules/lineage/lineage.js";
 import { loadProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
-import { allowedKitPlatforms } from "../modules/profile/platform-lines.js";
+import { allowedKitPlatforms, enKitPlatforms } from "../modules/profile/platform-lines.js";
 
 export { isBeingWritten };
 
@@ -165,7 +165,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext, profile:
   if (!col) return null;
   const doc = isVideoPlatform(current.platform) ? await readProductionDoc(current.id, dataDir).catch(() => null) : null;
   return {
-    targets: publishTargets(current, doc, publish, active), noScriptApproval: exp.no_script_approval === true, round: active ? doc?.round ?? 1 : null,
+    targets: publishTargets(current, doc, publish, active, current.derivedFrom?.kind === "en_edition" ? enKitPlatforms(profile) : []), noScriptApproval: exp.no_script_approval === true, round: active ? doc?.round ?? 1 : null,
     id: current.id, title: current.title, platform: current.platform ?? null, status: current.status,
     topicId: current.topicId ?? null, ...(current.example ? { example: true } : {}), column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
     draftReadyAt: current.draftReadyAt ?? null, chars: countChars(current.body ?? ""),

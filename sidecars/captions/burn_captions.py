@@ -43,6 +43,23 @@ def runs(line: str) -> list[tuple[str, bool]]:
     return out
 
 
+def keyword_count(lines: list[str]) -> int:
+    """A keyword wrapped across the line break ([max\neffort]) is marked on both lines but counts once."""
+    flags = [[k for _, k in runs(x)] for x in lines]
+    n = sum(1 for f in flags for k in f if k)
+    if len(flags) == 2 and flags[0] and flags[1] and flags[0][-1] and flags[1][0]:
+        n -= 1
+    return n
+
+
+def has_audio(src: str) -> bool:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", src],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise CueError(f"cannot read input video: {src} ({out.stderr.strip() or 'ffprobe failed'})")
+    return bool(out.stdout.strip())
+
+
 def validate(cues: list[dict]) -> None:
     """Refuse anything outside style A instead of silently rendering it."""
     prev_end = -1.0
@@ -54,7 +71,7 @@ def validate(cues: list[dict]) -> None:
             raise CueError(f"cue {i}: start/end must be numbers with end > start")
         if s < prev_end:
             raise CueError(f"cue {i}: overlaps the previous cue")
-        if sum(1 for x in lines for _, k in runs(x) if k) > 1:
+        if keyword_count(lines) > 1:
             raise CueError(f"cue {i}: more than one yellow keyword")
         if any(len(x.replace("[", "").replace("]", "")) > LINE_MAX for x in lines):
             raise CueError(f"cue {i}: a line is longer than {LINE_MAX} characters")
@@ -111,6 +128,9 @@ def main(argv: list[str]) -> int:
         return 0
     if not a.input or not a.output:
         raise CueError("--input and --output are required unless --check")
+    if not has_audio(a.input):
+        raise CueError(f"input has no audio stream: {a.input} - the lip-synced English cut must carry the English dub; "
+                       "put the dub track back on it (export with audio) and burn again")
     with tempfile.TemporaryDirectory() as tmp:
         pngs = [os.path.join(tmp, f"cue{i:03d}.png") for i in range(len(cues))]
         for p, c in zip(pngs, cues):

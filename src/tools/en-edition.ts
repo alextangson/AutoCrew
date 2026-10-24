@@ -52,6 +52,10 @@ async function setScript(id: string, params: Result, dataDir: string): Promise<R
   if (typeof segments === "string") return fail("invalid_params", segments);
   const prev = await readEnScript(id, dataDir);
   const script = { sourceCutHash: c.derivedFrom!.sourceCutHash, segments, ...(prev?.approval ? { approval: prev.approval } : {}) };
+  // 原样重交（重试 / 双击）：什么都不动，批准照旧
+  if (prev && scriptHash(prev) === scriptHash(script) && scriptBody(script) === c.body) {
+    return { ok: true, unchanged: true, segments: segments.length, script_hash: scriptHash(script), note: "脚本和现在这份一模一样：没有改动，批准和状态都不动" };
+  }
   // 剪辑中正文冻结：先判，冻结时脚本和正文都不动（不留下脚本改了、正文没改的半截）
   if (scriptBody(script) !== c.body && isFrozen(await readProductionDoc(id, dataDir))) return fail("script_frozen", new ScriptFrozenError().message);
   // 先改正文（会被拒的写口在前），成功了再落脚本；英文脚本是模型把审过的中文成片改写成英文：来源按改写源视频记

@@ -42,6 +42,8 @@ export interface Segment {
   swaps: Swap[];
   /** 字幕里标黄的那一个词组（必须出现在 en 里）；每段最多一个 */
   keyword?: string;
+  /** 源成片换版后 rebind 标的：这段对应的中文变了 / 是新的一段（人话）；宿主按新中文重写、重交 set_script 后就没有了 */
+  changed?: string;
 }
 
 export interface EnScript {
