@@ -145,3 +145,9 @@ Raw output: `~/.cache/autocrew-yt/codex-consult/fullmedia-1023.txt`.
 - No YouTube Shorts / vertical English cut.
 - No English edition of the 公众号 article; no other languages.
 - No automatic reply/community management on X/YouTube.
+
+## 9. Founder decisions after end-to-end verification (2026-10-24)
+
+1. **Source recut → rebind, not redo.** When the Chinese cut is re-approved as a new version, a derived item offers `rebind`: keep the existing script/images/thumbnail as drafts, bind to the new cut, show a transcript diff (old vs new cut SRT). WeChat article: founder reviews the diff and re-approves. English edition: only changed segments are re-dubbed; lip-sync and captions are redone on the new cut (picture changed); script + package re-approved.
+2. **Unpicking a platform stops in-flight lines.** If the founder unpicks 公众号 / YouTube / X, items of that line can't publish anywhere (visible reason on board and exits); re-picking resumes. No auto-delete.
+3. **Legacy `twitter` no longer opens the English video line.** It keeps meaning text posts (twitter-post pack). The English line requires an explicit `x` or `youtube` pick; existing profiles with `twitter` get a visible prompt to pick X/YouTube explicitly.
