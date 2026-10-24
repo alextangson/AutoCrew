@@ -166,6 +166,15 @@ describe("Codex 审 (b) 的回归", () => {
     expect((await executePublish({ action: "ego_lite_prepare", content_id: id, _dataDir: env.dir }) as { data: { packages: Array<{ platform: string }> } }).data.packages.map((p) => p.platform)).toEqual(["youtube"]);
   });
 
+  it("verifier P3 英文发布包的 brief 直接写 YouTube 标题、章节和 X 帖子", async () => {
+    await completePackage();
+    const item = ((await listForChat(env.dir, { content_id: id })).items as Array<Record<string, unknown>>).find((i) => String(i.item_id).startsWith("enpkg:"))!;
+    const brief = String(item.brief);
+    expect(brief).toContain("YouTube 标题：Why max effort makes AI drift");
+    expect(brief).toContain("YouTube 章节：0:00 The instinct / 0:10 The test / 0:20 Instead");
+    expect(brief).toMatch(/X 帖子：Max effort is not a free upgrade\./);
+  });
+
   it("spec §9.2 两个英文平台都取消勾选：不拿空包请他重批，出口全拒；重新勾上照旧能发", async () => {
     await completePackage();
     expect(await approvePackage()).toMatchObject({ ok: true });

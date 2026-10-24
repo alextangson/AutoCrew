@@ -85,3 +85,21 @@ describe("dub failure is remembered until a dub succeeds", () => {
     }
   });
 });
+
+describe("chat briefs carry the content, not only a link", () => {
+  it("the English script brief shows zh + en per segment and the swaps", async () => {
+    const { enSourceVideo, SEGMENTS } = await import("./en-test-fixtures.js");
+    const { executeEnEdition } = await import("../../tools/en-edition.js");
+    const { listForChat } = await import("../production/chat-approval/present.js");
+    const src = await enSourceVideo(["douyin", "youtube"]);
+    try {
+      const id = String((await executeEnEdition({ _dataDir: src.env.dir, op: "derive", content_id: src.id })).content_id);
+      await executeEnEdition({ _dataDir: src.env.dir, content_id: id, op: "set_script", segments: SEGMENTS });
+      const item = ((await listForChat(src.env.dir, { content_id: id })).items as Array<Record<string, unknown>>).find((i) => String(i.item_id).startsWith("draft:"))!;
+      const brief = String(item.brief);
+      expect(brief).toContain("中：腾讯的同事刚发了一个测试");
+      expect(brief).toContain("英：Tariq, who works on Claude Code, just published a test.");
+      expect(brief).toContain("换例：腾讯的同事 → Tariq at Anthropic");
+    } finally { await src.env.cleanup(); }
+  });
+});

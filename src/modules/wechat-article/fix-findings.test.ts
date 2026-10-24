@@ -48,3 +48,17 @@ describe("any body write on an approved derived article reopens it", () => {
     expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
   });
 });
+
+describe("article brief title", () => {
+  it("lists the candidates when no title is chosen yet", async () => {
+    const { setContent } = await import("../production/testkit.js");
+    const { listForChat } = await import("../production/chat-approval/present.js");
+    const src = await enSourceVideo(["douyin", "wechat_mp"]);
+    env = src.env;
+    const id = String((await executeWechatArticle({ _dataDir: env.dir, op: "derive", content_id: src.id })).content_id);
+    await setContent(env, id, { body: "正文", status: "draft_ready" });
+    await executeWechatArticle({ _dataDir: env.dir, content_id: id, op: "set_titles", titles: ["标题一", "标题二", "标题三"] });
+    const item = ((await listForChat(env.dir, { content_id: id })).items as Array<Record<string, unknown>>).find((i) => String(i.item_id).startsWith("draft:"))!;
+    expect(String(item.brief)).toContain("标题还没选，候选：1. 标题一 / 2. 标题二 / 3. 标题三");
+  });
+});
