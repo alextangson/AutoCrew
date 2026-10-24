@@ -276,7 +276,10 @@ export async function executeWriter(
         if (!topicId) return fail("topic_id 必填");
         // 选题会闸口：选题还没有真稿 = 这次领包是在开第一篇（带 content_id 的占位稿也一样）；
         // 已有真稿的改稿、补证、重领包放行
-        const refused = await newDraftGate(topicId, {
+        // 由视频派生的公众号文章不是选题的第一篇（源视频就是），立意跟源视频走：选题会闸口不管它，
+        // 源视频在不在、底稿读不读得到由 startPack 明确报（source_missing 等）
+        const derivedArticle = str(params.content_id) ? (await getContent(str(params.content_id), dataDir))?.derivedFrom?.kind === "wechat_article" : false;
+        const refused = derivedArticle ? null : await newDraftGate(topicId, {
           ...(typeof params.platform === "string" ? { platform: params.platform } : {}),
           ...(typeof params.direction === "string" ? { direction: params.direction } : {}),
           ...(typeof params.requirements === "string" ? { requirements: params.requirements } : {}),

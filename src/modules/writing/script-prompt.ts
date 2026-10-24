@@ -33,6 +33,11 @@ export interface ScriptRequest {
   /** 宿主领包显式为host：不读取引擎配置、不自动调用补证模型。内部无人值守生成默认engine。 */
   modelExecution?: "host" | "engine";
   platform: ClipboardPlatform;
+  /**
+   * 由视频派生的公众号文章（2026-10-24）：选题简报的证据一律不注入（材料只用源视频的台账，接在 requirements 里），
+   * 只解析源视频那张生效的立意卡。
+   */
+  sourceOnlyResearch?: boolean;
   /** 调研材料（可选，RAW 注入） */
   research?: string;
   /** 调研路径：auto 默认按材料充足度调研；provided 必须携带 research；skip 必须提供用户理由。 */

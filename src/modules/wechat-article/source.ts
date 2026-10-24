@@ -75,8 +75,9 @@ async function loadFullSrt(srtPath: string): Promise<{ text: string } | { error:
   }
 }
 
+/** 源视频的条目编号加命名空间（src:<源视频 id>:<原编号>），和本文自己的 ev-1 / user-research 不会撞号 */
 function ledgerOf(src: Content): ArticleSource["ledger"] {
-  return (src.evidenceLedger?.entries ?? []).map((e) => ({ id: e.id, source: e.source, claim: e.claim, quote: e.quote, sourceUrl: e.sourceUrl }));
+  return (src.evidenceLedger?.entries ?? []).map((e) => ({ id: `src:${src.id}:${e.id}`, source: e.source, claim: e.claim, quote: e.quote, sourceUrl: e.sourceUrl }));
 }
 
 /** 写进写作要求的那一块：底稿说明 + 全文 + 台账（只有台账里的条目能当出处，新引文先过 verify_quote） */
