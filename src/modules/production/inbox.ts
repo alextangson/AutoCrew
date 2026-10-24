@@ -103,7 +103,7 @@ export interface ContentInput {
   /** 由视频派生的公众号文章：整包指纹（正文 + 标题 + 配图 + 封面 + 创作来源）进认稿那件的代次，包一变就要重新看 */
   articlePackageHash?: string;
   /** 英文版（Phase 3 方案 (b)）：英文发布包的现状——没批 / 批准失效时出「英文发布包」那件 */
-  enPackage?: { hash: string; problems: string[]; approved: boolean; reopen: string | null };
+  enPackage?: { hash: string; problems: string[]; approved: boolean; reopen: string | null; revisions: number };
 }
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
@@ -411,7 +411,8 @@ function enPackageItem(content: Content, p: NonNullable<ContentInput["enPackage"
     summary: p.reopen ? `批过的英文发布包变了（${p.reopen}），重新看一眼` : "英文发布包齐了（缩略图、文案、章节、成片），过一眼",
     actions: [{ action: "approve_en_package", label: "英文发布包没问题", role: "primary" }, { action: "revise_en_package", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：YouTube 标题再短一点" }],
     detail: { package_hash: p.hash, problems: p.problems, ...(p.reopen ? { reopened: p.reopen } : {}) },
-    snapshot: [p.hash, p.reopen ?? ""],
+    // 带上「还要改」的次数：改回之前退过的那一包也是新的一次出示，不会被当成已经处理过的代次藏掉
+    snapshot: [p.hash, p.reopen ?? "", p.revisions],
   };
 }
 

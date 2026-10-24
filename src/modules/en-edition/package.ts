@@ -12,7 +12,7 @@ import path from "node:path";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import { getContent, type Content, type VideoKit } from "../../storage/local-store.js";
-import { readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { readProductionDocOrEmpty, scriptApprovalFor } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { videoKitFor } from "../../storage/video-kits.js";
 import { approveArtifact, artifactHash, checkArtifactApproval, type ApprovalCheck, type ArtifactApproval } from "../lineage/artifact-approval.js";
@@ -61,6 +61,8 @@ const acceptedFact = (doc: ProductionDoc, kind: Fact["kind"], sha?: string) =>
 /** 英文版这条稿自己审过的成片 + 它的字幕（字节现算） */
 async function approvedCut(content: Content, dataDir: string): Promise<EnCut | string> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  // 认稿要现在仍有效：撤批 / 重开（回到待认稿）之后，哪怕各项指纹都没变也不能发
+  if (!scriptApprovalFor(doc, content.body ?? "") || content.status === "draft_ready" || content.status === "revision") return "英文脚本的认稿现在不是有效的（被撤了或重开了）：重新认稿后再批发布包";
   const cut = validCutApproval(doc, content.body ?? "");
   if (!cut?.sha256) return "英文成片还没在「等你拍板」里审过（创始人要亲耳听）";
   const root = contentRoot(content.id, dataDir);
@@ -142,9 +144,23 @@ export async function reviseEnPackage(id: string, note: string, dataDir: string)
 }
 
 /** 发布出口的唯一核对：整包批准有效（含源没过期之外的一切） */
-export async function enPublishRefusal(id: string, dataDir: string): Promise<{ code: "en_package_not_approved"; error: string } | null> {
+type NotApproved = { code: "en_package_not_approved"; error: string };
+
+/**
+ * 发布出口拿包的唯一入口：现算一次，必须已批、没有缺项、指纹就是批的那一份——三样都满足才交出这份状态。
+ * 出口只用这里交出的这一份读文件和文案，不再另读第二次（两次之间变了就会拿旧指纹放行）。
+ */
+export async function approvedEnPackage(id: string, dataDir: string): Promise<{ s: EnPackageState } | { no: NotApproved }> {
+  const no = (error: string) => ({ no: { code: "en_package_not_approved" as const, error } });
   const s = await enPackageState(id, dataDir);
-  if ("error" in s) return { code: "en_package_not_approved", error: s.error };
-  if (!s.file.approval) return { code: "en_package_not_approved", error: "英文版要先批整个英文发布包（等你拍板里的那件：缩略图、各平台文案、章节、成片），批过才能发" };
-  return s.approval.ok ? null : { code: "en_package_not_approved", error: `英文发布包的批准已失效（${s.approval.reason}）：重新批过再发` };
+  if ("error" in s) return no(s.error);
+  if (!s.file.approval) return no("英文版要先批整个英文发布包（等你拍板里的那件：缩略图、各平台文案、章节、成片），批过才能发");
+  if (s.problems.length) return no(`英文发布包的批准已失效（${s.problems[0]}）：重新批过再发`);
+  if (!s.approval.ok || s.hash !== s.file.approval.hash) return no(`英文发布包的批准已失效（${s.approval.ok ? "包变了" : s.approval.reason}）：重新批过再发`);
+  return { s };
+}
+
+export async function enPublishRefusal(id: string, dataDir: string): Promise<NotApproved | null> {
+  const r = await approvedEnPackage(id, dataDir);
+  return "no" in r ? r.no : null;
 }

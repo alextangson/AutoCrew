@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readProductionDoc } from "../../storage/production-store.js";
+import { transitionStatus } from "../../storage/local-store.js";
+import { updateProfile } from "../profile/creator-profile.js";
 import { founderDecision } from "../production/decisions.js";
 import { png, put, record, waiveSliverCheck, type Env } from "../production/testkit.js";
 import { readInbox } from "../production/inbox-read.js";
@@ -130,6 +132,57 @@ describe("英文发布包", () => {
     expect(await decideItem({ item_id: shown.item_id, gen: shown.gen, action: "approve_en_package", content_id: id }, env.dir)).toMatchObject({ ok: false, code: "stale" });
     const it2 = (await pkgItem())!;
     expect(await decideItem({ item_id: it2.item_id, gen: it2.gen, action: "revise_en_package", content_id: id, note: "YouTube 标题再短一点" }, env.dir)).toMatchObject({ ok: true });
+  });
+});
+
+describe("Codex 审 (b) 的回归", () => {
+  it("P1-1 批过之后缩略图变了：prepare / final_check 都拒，不拿旧指纹放行", async () => {
+    await completePackage();
+    await approvePackage();
+    await fs.writeFile(String((await run({ op: "status" })).thumbnail), png(1280, 720, "swapped"));
+    const e = await exits();
+    expect(e.prepare).toMatchObject({ ok: false, code: "en_package_not_approved" });
+    expect(e.final).toMatchObject({ ok: false, code: "en_package_not_approved" });
+  });
+
+  it("P1-2 批过之后认稿被撤（回到待认稿）：各项指纹都没变也拒", async () => {
+    await completePackage();
+    await approvePackage();
+    expect(await transitionStatus(id, "draft_ready", { force: true }, env.dir)).toMatchObject({ ok: true });
+    const e = await exits();
+    for (const r of [e.prepare, e.final, e.clipboard]) expect(r).toMatchObject({ ok: false, code: "en_package_not_approved" });
+    expect(String(e.prepare.error)).toMatch(/认稿/);
+  });
+
+  it("P1-3 取消勾选 X、批一个只有 YouTube 的包：clipboard / final_check 要 x → 拒，不拿留下的旧 x 包", async () => {
+    await completePackage();
+    await updateProfile({ platforms: ["douyin", "youtube"] }, env.dir);
+    expect(await approvePackage()).toMatchObject({ ok: true });
+    expect(await executePublish({ action: "clipboard", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "platform_not_in_package" });
+    expect(await run({ op: "final_check", platform: "x" })).toMatchObject({ ok: false, code: "platform_not_in_package" });
+    expect((await executePublish({ action: "ego_lite_prepare", content_id: id, _dataDir: env.dir }) as { data: { packages: Array<{ platform: string }> } }).data.packages.map((p) => p.platform)).toEqual(["youtube"]);
+  });
+
+  it("P2-4 复制件：X 正文只出现一次标签、X 的发布页；YouTube 分标题 / 说明 / tags、YouTube 的发布页", async () => {
+    await completePackage();
+    await approvePackage();
+    const x = (await executePublish({ action: "clipboard", content_id: id, platform: "x", _dataDir: env.dir }) as { data: Record<string, string> }).data;
+    expect(x).toMatchObject({ platform: "x", copyText: "Max effort is not a free upgrade.\n\n#AI", publishUrl: "https://x.com/compose/post" });
+    const y = (await executePublish({ action: "clipboard", content_id: id, platform: "youtube", _dataDir: env.dir }) as { data: Record<string, string> }).data;
+    expect(y).toMatchObject({ platform: "youtube", formattedTitle: YT.post_title, tags: "AI, Claude", publishUrl: "https://studio.youtube.com" });
+    expect(y.formattedBody).toContain("0:10 The test");
+    expect(JSON.stringify([x, y])).not.toContain("xiaohongshu");
+  });
+
+  it("P2-5 退回 A、退回 B（要改回 A）、改回 A：那件照样出现、能批", async () => {
+    await completePackage();
+    const revise = async (note: string) => { const it = (await pkgItem())!; expect(await decideItem({ item_id: it.item_id, gen: it.gen, action: "revise_en_package", content_id: id, note }, env.dir)).toMatchObject({ ok: true }); };
+    await revise("X 文案换一句");
+    await kit("x", { post_text: "Version B of the post.", hashtags: ["AI"] });
+    await revise("还是改回原来那句");
+    await kit("x", X);
+    expect(await pkgItem()).toBeDefined();
+    expect(await approvePackage()).toMatchObject({ ok: true });
   });
 });
 
