@@ -39,6 +39,7 @@ description: >
 
 平台手册：[抖音](references/douyin.md) · [视频号](references/wechat-video.md) ·
 [小红书](references/xiaohongshu.md) · [B站](references/bilibili.md)。
+由视频派生的公众号文章（`wechat_article`）另有一条线：[公众号文章](references/wechat-mp.md)（API 推草稿 + 编辑器收尾，停在管理员二维码）。
 
 ## 本地辅助工具
 

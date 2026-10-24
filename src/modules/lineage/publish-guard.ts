@@ -2,13 +2,15 @@
  * 派生稿发布前的唯一一道核对（Codex 审 Phase 1 P1）：源视频成片换版 / 撤批 / 文件变了之后，按旧成片做的
  * 英文版、公众号文章一律不出包、不进草稿箱、不给复制——所有发布出口都调这一个函数，不各抄一份。
  * 读不出来源状态也拒（宁可拦下问一句，不放过期稿出去）。
- * 公众号文章（Phase 2a）：不过期也一律拒，等 2b 接上按整包发布（derivedArticlePublishRefusal）。
+ * 公众号文章（Phase 2b）：还要整包批准仍有效（derivedArticlePublishRefusal）；真正推送只走「按批过的整包推草稿箱」。
  */
 import { getContent, type Content } from "../../storage/local-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { staleReason } from "./lineage.js";
+import { packageApprovalCheck, readArticlePackage } from "../wechat-article/package.js";
+import { getArticleImageReview } from "../publish/article-images.js";
 
-export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "derived_article_publish_pending"; error: string };
+export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "article_not_approved"; error: string };
 
 export async function derivedPublishRefusal(content: Pick<Content, "derivedFrom"> & { id?: string }, dataDir: string): Promise<DerivedRefusal | null> {
   if (!content.derivedFrom) return null;
@@ -22,11 +24,16 @@ export async function derivedPublishRefusal(content: Pick<Content, "derivedFrom"
 }
 
 /**
- * 派生公众号文章的发布出口（唯一的钩子，Phase 2b 换成「按批过的整包推草稿箱」）。
- * 现有出口用的是稿件标题和旧封面审核，会丢掉选定标题、封面一对和 web 图署名——所以 2a 一律拒。
+ * 派生公众号文章的发布出口核对（Phase 2b 接上）：整包批准要还对得上现在的包（标题 / 正文 / 配图 / 封面主图与裁切 / 创作来源）。
+ * 推送本身由 wechat-article/push.ts 按批过的那一包做；这里只回答「能不能发」。
  */
-export async function derivedArticlePublishRefusal(_contentId: string, _dataDir: string): Promise<DerivedRefusal | null> {
-  return { code: "derived_article_publish_pending", error: "派生公众号文章要按批过的图文包发布，这一步还没接上（Phase 2b）：现在的发布出口会用错标题和封面，先不发" };
+export async function derivedArticlePublishRefusal(contentId: string, dataDir: string): Promise<DerivedRefusal | null> {
+  const content = await getContent(contentId, dataDir);
+  if (!content) return null;
+  const pkg = await readArticlePackage(contentId, dataDir);
+  if (!pkg.approval) return { code: "article_not_approved", error: "派生公众号文章要先批整包（等你拍板里的认稿那件），再按批过的包推草稿箱" };
+  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir));
+  return check.ok ? null : { code: "article_not_approved", error: `图文包的批准已失效（${check.reason}）：重新批过再发` };
 }
 
 /** 按 id 核；稿件不存在交给各出口自己报（它们有现成的「不存在」说法） */
