@@ -4,7 +4,7 @@
 
 入口：https://studio.youtube.com （右上「创建 → 上传视频」）
 
-发的是英文版那条稿（`en_edition` 派生稿，平台 `youtube`）：成片 = 英文版登记的成片，缩略图 = `edition:{op:"set_thumbnail"}` 登记的那张 16:9，文案 = `youtube` 发布包（标题、描述含章节行和标签、tags）。默认时段：**北京时间 21:00–23:00（美国上午）**，不跟中文时段。
+发的是英文版那条稿（`en_edition` 派生稿）。英文版不走中文登记：只按**批过的英文发布包**发。先调 `autocrew_publish {action:"ego_lite_prepare", content_id:<英文版>}`（不带 check_ids），回执里每个平台的 `video_path` / `thumbnail_path` / 文案就是要上传和粘贴的东西，记下 `package_hash`；回 `en_package_not_approved` 就停下，请创始人在「等你拍板」里批英文发布包（批过之后改过也会回到那里，原因写在那件里）。YouTube 用 `platform:"youtube"` 那一项：`title`、`description`（已含章节行和标签）、`tags`、`video_path`、`thumbnail_path`。默认时段：**北京时间 21:00–23:00（美国上午）**，不跟中文时段。
 
 | 步骤 | 动作 | 成功条件 / 已知故障 |
 |---|---|---|
@@ -16,6 +16,7 @@
 | 更多选项 | 「标签」逐个粘 tags；语言选 English | 标签都在框里 |
 | 视频元素 / 检查 | 结束画面、卡片不加；等版权检查结果 | 有版权提示就停下报原文 |
 | 公开范围 | 选「安排时间」，日期时间设到计划的时段（时区按页面显示核对，换算成北京时间读回） | 读回日期、时间和时区；**不选「公开」立即发** |
+| 最后核对 | 点「安排」前调 `autocrew_content {action:"en_edition", content_id, edition:{op:"final_check", platform:"youtube"}}` | 回 `ok:true` 且 `package_hash` 和出包时一致才往下；不一致或被拒就停，不点 |
 | 提交 | 保存发布记录后点一次「安排」 | 弹出「视频已安排发布」和视频链接 |
 | 回执 | 记视频链接（`youtu.be/<id>`）、安排时间、状态「已安排」 | 内容页里本条显示为「已安排」 |
 

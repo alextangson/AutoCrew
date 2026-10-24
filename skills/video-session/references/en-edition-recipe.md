@@ -17,7 +17,8 @@
 4. **口型对齐**：ChatCut `submit_lipsync`，模式 `preserve-video`，参考视频 = 第 3 步那份，音频 = 第 1 步排好的英文配音。只对 A-roll 口播段；先报价，创始人确认后再提交。
 5. **MG / 字卡**：中文字的 MG 卡按英文重做（ChatCut MG 是代码）；B-roll 里的中文截图保留，加英文说明条。
 6. **字幕（style A）**：`edition:{op:"captions"}` 生成 cues（文字只取批过的脚本，时间取配音的字级时间戳），再按回执的 `burn_command` 跑 `sidecars/captions/burn_captions.py`：Avenir Next Demi Bold 54px、白字、柔和深色阴影、底部居中最多两行、每条最多一个黄色关键词、整条一起出一起收。脚本拒绝的 cue（三行、两个关键词、重叠、超长）不要手改 JSON 绕过，回去改脚本或分条。
-7. **登记与审片**：英文成片和中文成片走同一套审片——对英文版这条稿 `autocrew_content record kind:cut`（字幕 `kind:srt` 绑这版成片）、`mark_ready`，再 `autocrew_review_inbox list` 把成片那件给创始人看。**他必须亲耳听**：克隆声音是最大风险，嘴型（牙齿、糊）也在这里抓。
+7. **登记与审片**：英文成片和中文成片走同一套审片——对英文版这条稿 `autocrew_content record kind:cut`（字幕 `kind:srt` 绑这版成片）、`mark_ready`，再 `autocrew_review_inbox list` 把成片那件给创始人看。**他必须亲耳听**：克隆声音是最大风险，嘴型（牙齿、糊）也在这里抓。登记口型对齐用的参考视频时记成这条稿的 `kind:aroll`（制作段要它）。
+8. **英文发布包**：成片审过、缩略图和各平台发布包都齐了以后，由创始人在「等你拍板」里批一次英文发布包，见 SKILL.md 英文版第 7 步。
 
 ## 记下来的坑
 

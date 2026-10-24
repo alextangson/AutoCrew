@@ -92,7 +92,8 @@ Codex 交来封面或成片（它说做完了、或你看到这条稿有了新�
 3. `op:"status"` 看还差什么，齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把中英对照审阅页给用户——他看中文判断。他说没问题再 decide approve_script；之后任何一段改了都要重批。
 4. 缩略图：派 Codex 按 cover-generator 的「英文版 16:9 缩略图」出图，交回后 `op:"set_thumbnail"{path}` 登记。
 5. 配音：`op:"dub"`（只按批过的脚本，ElevenLabs 克隆声音，每段一次）。然后按 [英文版制作做法](references/en-edition-recipe.md) 在**前台**做口型对齐和字幕——不派后台 Codex。
-6. 发布包：`op:"chapters"` 拿段起点，按第 6 节交 `video_kit`：youtube 包 `{post_title ≤100, caption, tags, chapters:[{at:"0:00", title}…], hashtags?}`，x 包 `{post_text ≤280, hashtags?}`，按字符计、只收英文。默认排在北京时间 21:00–23:00（美国上午）。发布按 publish-content 的 YouTube / X 手册。
+6. 发布包：`op:"chapters"` 拿段起点，按第 6 节交 `video_kit`：youtube 包 `{post_title ≤100, caption, tags, chapters:[{at:"0:00", title}…], hashtags?}`，x 包 `{post_text ≤280, hashtags?}`，按字符计、只收英文。默认排在北京时间 21:00–23:00（美国上午）。
+7. 英文发布包：英文成片在英文版这条稿上审过（record kind:cut + kind:srt，approve_cut）、缩略图登记了、各平台的包交齐后，`op:"package_status"` 看还差什么；齐了「等你拍板」里会出「英文发布包」那件，把审阅页（缩略图、各平台文案、章节、成片）给用户，他说没问题再 decide approve_en_package——这也是缩略图的批准。之后任何一样变了，那件会带着原因重新出现，要重批。英文版不走中文的登记（不要 3:4 + 4:3 封面）。发布按 publish-content 的 YouTube / X 手册。
 
 撤回只凭用户一句话：由当前持有认领的会话携带有效令牌调 `autocrew_video {action:"revoke", content_id, claim_token}`。状态回 `draft_ready`，这一代永久作废；之后改稿、重录、重交都是新一代。
 
