@@ -18,6 +18,7 @@ import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/c
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { kitPlatformsFor } from "../modules/publish/platform-caps.js";
 import { derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
+import { isDerivedArticleId, pushApprovedArticle } from "../modules/wechat-article/push.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
@@ -128,6 +129,10 @@ export async function executePublish(
   if (action === "clipboard" || action === "ego_lite_prepare" || action === "wechat_mp_draft") {
     const derived = await derivedPublishRefusalById(params.content_id, dataDir);
     if (derived) return { ok: false, ...derived };
+    // 派生公众号文章只按批过的整包推草稿箱（Phase 2b）：不出复制件、不走视频平台的浏览器包
+    if (action !== "wechat_mp_draft" && await isDerivedArticleId(params.content_id, dataDir)) {
+      return { ok: false, code: "derived_article_api_only", error: "派生公众号文章只按批过的整包推草稿箱：用 autocrew_content wechat_article {op:\"push_draft\"}，不出复制粘贴件" };
+    }
   }
 
   // --- check: 发布前把关（只写检查留档，不改业务状态）；propose_preference: 只记提议，创始人在网页确认 ---
@@ -283,6 +288,8 @@ export async function executePublish(
 
   const publishImpl = deps?.publishImpl ?? publishWechatMpDraft;
   const contentId = params.content_id as string | undefined;
+  // 派生公众号文章（含桌面端推送按钮）一律走按批过整包推送的那一条路：选定标题、主图 + 裁切、web 图署名都在包里
+  if (await isDerivedArticleId(contentId, dataDir)) return pushApprovedArticle(String(contentId).trim(), dataDir, { publishImpl }, { force: Boolean(params.force) });
   let articlePath: string;
   let gateText: string;
   let preparedImages: string[] | undefined;
