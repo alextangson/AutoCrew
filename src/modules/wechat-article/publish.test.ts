@@ -25,6 +25,7 @@ import { centeredCrop, cropParam, parseCrop } from "./cover.js";
 import { planSlot, hostSlot } from "./slot.js";
 import { readPublishState } from "./publish-state.js";
 import { resolveContentProject } from "../../storage/content-project.js";
+import { readProductionDoc, readProductionDocOrEmpty, writeProductionDoc } from "../../storage/production-store.js";
 
 const genMock = vi.mocked(generateWechatImageAsset);
 const NOW = new Date("2026-10-24T10:00:00+08:00");
@@ -217,6 +218,14 @@ describe("编辑器收尾：视频号、排期、扫码、结果不明", () => {
     expect(await run({ op: "begin_editor" })).toMatchObject({ ok: false, code: "video_not_live", phase: "waiting_video_live", slot: null });
     await videoChannel("published", "2026-10-24T09:00:00+08:00");
     expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true, phase: "editor_finishing", slot: { at: "2026-10-24T12:00:00+08:00" }, creation_source: "内容由AI生成", title: "标题二" });
+  });
+
+  it("发布台计划停在 overdue，但资料库里已认可视频号发布回执（老视频）→ 按已公开算，按回执时间排", async () => {
+    await videoChannel("overdue");
+    const doc = await readProductionDocOrEmpty(srcId, env.dir);
+    const fact = { id: "fact-pub-wv", kind: "publish", round: doc.round, state: "accepted", availability: "present", source: "host", at: "2026-10-24T09:00:00+08:00", platform: "wechat_video", published_at: "2026-10-24T09:00:00+08:00" };
+    await writeProductionDoc(srcId, env.dir, { ...doc, facts: [...doc.facts, fact as never] }, (await readProductionDoc(srcId, env.dir))?.revision ?? 0);
+    expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true, phase: "editor_finishing", slot: { at: "2026-10-24T12:00:00+08:00" } });
   });
 
   it("读不到视频号时间 → 要创始人给时间；给的时间要带时区、在 +6 天内、整分钟", async () => {
