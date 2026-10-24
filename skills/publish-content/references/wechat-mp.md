@@ -14,13 +14,13 @@
 
 | 步骤 | 动作 | 成功条件 / 停在哪 |
 |---|---|---|
-| 1 推草稿 | `op:"push_draft"` | 回 `media_id`。同一包再调回 `reused:true`，不会多一份。回 `superseded_draft` 时把 `superseded_note` 原样告诉创始人（旧草稿删不删由他在后台自己做，你不删）。回 `push_failed`：把 `error` 和 `raw` 原样给创始人（token、IP 白名单、额度），修好再推；不改用复制粘贴 |
+| 1 推草稿 | `op:"push_draft"`（想先看推什么就带 `dry_run:true`：不调公众号、不改状态） | 回 `media_id` 和 `pushed_at`。回 `push_unknown`：请求可能已经到了公众号，按下面「结果不明」先去草稿箱核对，不重推。同一包再调回 `reused:true`，不会多一份。回 `superseded_draft` 时把 `superseded_note` 原样告诉创始人（旧草稿删不删由他在后台自己做，你不删）。回 `push_failed`：把 `error` 和 `raw` 原样给创始人（token、IP 白名单、额度），修好再推；不改用复制粘贴 |
 | 2 进编辑器之前 | `op:"begin_editor"` | 核视频号原片已公开并排好定时（`slot`、`slot_basis`）。回 `video_not_live`：视频号卡片只能插已公开的视频，停下，等原片公开后再调，不排定时。回 `slot_required`：读不到视频号时间，请创始人定时间，带 `slot`（带时区，精确到分钟）+ `founder_quote` 再调 |
-| 3 打开草稿 | ego lite 打开 mp.weixin.qq.com → 内容管理 → 草稿箱，按标题找到这篇，进编辑 | 核对登录的是目标公众号；标题、封面、正文图与包一致 |
+| 3 打开草稿 | ego lite 打开 mp.weixin.qq.com → 内容管理 → 草稿箱。用 `begin_editor` 回执的 `draft_identity` 认：标题相同、更新时间与 `updated_at` 同一分钟（页面能看到 media_id / appmsgid 时以它为准） | 只有一份对得上才继续；**两份以上或一份都没有就停，问创始人**，不凭标题猜。进编辑后核对正文第一段、最后一段的开头与 `first_paragraph` / `last_paragraph` 一致，封面和正文图与审阅页一致；核对登录的是目标公众号 |
 | 4 创作来源 | 文末「创作来源」选 `begin_editor` 回执里的 `creation_source`（公众号原选项，一字不改） | 读回已选值。**绝不点「无需声明并发表」**——那会跳过声明直接发 |
 | 5 视频号卡片 | 工具栏「视频号」→ 选目标视频号账号 → 选这条视频（必须已公开）→ 插入到正文合适位置 | 卡片出现在正文里且是这条视频。列表里找不到 → 停下，`record_unknown` 写清看到了什么，不插别的视频 |
 | 6 定时 | 点「发表」打开发表弹窗 → 保持「群发通知」开着 → 打开「定时发表」→ 日期（今天到 +6 天）和时间（分钟）填 `slot` | 读回弹窗里的日期时间与 `slot` 一致。弹窗显示「今天还有0次通知次数」或额度不够：停下，告诉创始人，换天要他原话，重新 `begin_editor` 带 `slot` |
-| 7 点发表 | 点弹窗里的「发表」一次 | 出现管理员扫码二维码。**到这里停**：`op:"mark_editor_done", scheduled_for:<slot>`，然后 `task.handOff()` 交给创始人扫码 |
+| 7 点发表 | 点之前先 `op:"final_check"`：回 `may_click_publish:true` 才点弹窗里的「发表」一次；不过（批准失效、源视频换版、草稿不是批过那一包、那天额度被占、时间已过）就关掉弹窗停下，照原因告诉创始人 | 出现管理员扫码二维码。**到这里停**：`op:"mark_editor_done", scheduled_for:<slot>`，然后 `task.handOff()` 交给创始人扫码 |
 | 8 扫码后核对 | 创始人说扫了 → 恢复空间 → 去「发表记录」/「定时列表」找到这篇 | 看到这篇和定时时间后 `op:"record_scheduled", scheduled_at:<看到的时间，带 +08:00>, founder_quote:<他说扫了的原话>`；已经直接发出就加 `published:true` |
 
 ## 结果不明（先核对，再重试）
@@ -28,8 +28,9 @@
 - 任何一步结果说不清（扫码后页面没回、点发表没反应、推送脚本没报 media_id）：`op:"record_unknown", raw:<照实写看到了什么>`。
   状态变 `unknown` 后，`push_draft` / `begin_editor` / `mark_editor_done` 一律拒。
 - 下一步只能是去编辑器核对：草稿箱、发表记录、定时列表三处都看。
-  - 看到这篇已定时 / 已发：`record_scheduled`（带创始人原话）。
-  - 三处都没有：`op:"record_absent", raw:<在哪几处核过>`；只在草稿箱里看到（推送结果不明时）加 `found_draft:true`。之后按 `next_step` 继续。
+  - 看到这篇已定时 / 已发：`record_scheduled`（带创始人原话）；推送结果不明、AutoCrew 里还没有 media_id 时必须带核到的草稿身份：`media_id`（看得到的话），或 `draft_title` + `draft_updated_at`。
+  - 三处都没有：`op:"record_absent", raw:<在哪几处核过>`（草稿身份会清掉，之后 push_draft 真推一份）；只在草稿箱里看到就加 `found_draft:true` 并带上同样的草稿身份。之后按 `next_step` 继续。
+- 已定时的文章到点发出后，`record_scheduled` 带 `published:true` 再记一次。
 - 已定时之后包又被改、要换一版：先请创始人在后台取消那次定时（发表了就撤不了），你核到取消后 `record_absent`，再重批、重推。
 
 ## 纪律

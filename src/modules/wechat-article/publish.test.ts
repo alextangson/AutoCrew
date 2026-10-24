@@ -15,6 +15,9 @@ import { readInbox } from "../production/inbox-read.js";
 import { decideItem } from "../production/inbox-decide.js";
 import { executeWechatArticle } from "../../tools/wechat-article.js";
 import { executePublish } from "../../tools/publish.js";
+import { getContent } from "../../storage/local-store.js";
+import { parseShanghai } from "./slot.js";
+import { writePublishState } from "./publish-state.js";
 import { readArticlePackage, writeArticlePackage } from "./package.js";
 import { centeredCrop, cropParam, parseCrop } from "./cover.js";
 import { planSlot, hostSlot } from "./slot.js";
@@ -143,8 +146,10 @@ describe("推草稿箱：只推批过的那一包", () => {
     expect(r).toMatchObject({ ok: true, reused: false, media_id: "MID-1", phase: "pushed_draft" });
     const o = pushes[0] as WechatMpDraftOptions & { articleText: string };
     expect(o).toMatchObject({ title: "标题二", coverCrops: { crop235: "0_0_1_1", crop11: "0.287234_0_0.712766_1" }, author: "", strictImages: true, skipImages: true });
-    expect(o.coverPath).toBe((await readArticlePackage(id, env.dir)).cover!.path);
+    expect(o.coverPath).toMatch(/wechat-push/);
+    expect(await fs.readFile(o.coverPath!)).toEqual(await fs.readFile((await readArticlePackage(id, env.dir)).cover!.path));
     expect(o.preparedImages).toHaveLength(2);
+    expect(o.preparedImages!.every((p) => p.startsWith(path.dirname(o.articlePath)))).toBe(true);
     expect(o.articleText).toMatch(/^# 标题二\n/);
     expect(o.articleText).toMatch(/\[IMAGE: web: OpenAI 定价页截图\]\n\n\*图源：OpenAI 官网\*/);
     expect(o.articleText).not.toMatch(/概念示意\]\n\n\*/);
@@ -163,10 +168,10 @@ describe("推草稿箱：只推批过的那一包", () => {
     await complete();
     await approve();
     await run({ op: "push_draft" });
-    await run({ op: "choose_title", index: 3, founder_quote: "还是第三个" });
+    expect(await run({ op: "choose_title", index: 3, founder_quote: "还是第三个" })).toMatchObject({ ok: true, reopened_for_review: expect.stringMatching(/退回「等你拍板」/) });
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
     expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "article_not_approved" });
     expect((await run({ op: "publish_status" })).publish_blocked).toMatch(/批准已失效/);
-    await setContent(env, id, { status: "draft_ready" }); // 重开认稿（重批要回到待认稿）
     expect(await approve()).toMatchObject({ ok: true });
     expect((await run({ op: "publish_status" })).draft_is_current_package).toBe(false);
     expect(await run({ op: "begin_editor" })).toMatchObject({ ok: false, code: "draft_superseded" });
@@ -195,7 +200,9 @@ describe("推草稿箱：只推批过的那一包", () => {
     nextResult = { mediaId: undefined, stdout: "发布成功!" };
     expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "push_unknown", phase: "unknown" });
     expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "reconcile_first" });
-    expect(await run({ op: "record_absent", raw: "草稿箱里看到了这篇", found_draft: "true" })).toMatchObject({ ok: true, phase: "pushed_draft" });
+    expect(await run({ op: "record_absent", raw: "草稿箱里看到了这篇", found_draft: "true" })).toMatchObject({ ok: false, code: "draft_identity_required" });
+    expect(await run({ op: "record_absent", raw: "草稿箱里看到了这篇", found_draft: "true", draft_title: "标题二", draft_updated_at: "2026-10-24 10:00" })).toMatchObject({ ok: true, phase: "pushed_draft" });
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, reused: true });
     expect(publishImpl).toHaveBeenCalledTimes(1);
   });
 });
@@ -215,7 +222,7 @@ describe("编辑器收尾：视频号、排期、扫码、结果不明", () => {
     expect(await run({ op: "begin_editor" })).toMatchObject({ ok: false, code: "slot_required" });
     expect(await run({ op: "begin_editor", slot: "2026-10-25T21:00:00+08:00" })).toMatchObject({ ok: false, code: "founder_words_required" });
     expect(await run({ op: "begin_editor", slot: "2026-11-05T21:00:00+08:00", founder_quote: "下月发" })).toMatchObject({ ok: false, code: "invalid_slot" });
-    expect(await run({ op: "begin_editor", slot: "2026-10-25T21:00:00", founder_quote: "明晚九点" })).toMatchObject({ ok: false, code: "invalid_slot" });
+    expect(await run({ op: "begin_editor", slot: "明晚九点", founder_quote: "明晚九点" })).toMatchObject({ ok: false, code: "invalid_slot" });
     expect(await run({ op: "begin_editor", slot: "2026-10-25T21:00:00+08:00", founder_quote: "明晚九点" })).toMatchObject({ ok: true, slot: { at: "2026-10-25T21:00:00+08:00", founderWords: "明晚九点" } });
   });
 
@@ -224,6 +231,7 @@ describe("编辑器收尾：视频号、排期、扫码、结果不明", () => {
     await run({ op: "begin_editor" });
     expect(await run({ op: "record_scheduled", scheduled_at: "2026-10-24T12:00:00+08:00", founder_quote: "扫了" })).toMatchObject({ ok: false, code: "wrong_phase" });
     expect(await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T13:00:00+08:00" })).toMatchObject({ ok: false, code: "slot_mismatch" });
+    expect(await run({ op: "final_check" })).toMatchObject({ ok: true, may_click_publish: true });
     expect(await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T04:00:00Z" })).toMatchObject({ ok: true, phase: "scheduled_waiting_scan", hand_off: expect.stringMatching(/handOff/) });
     expect(await run({ op: "record_scheduled", scheduled_at: "2026-10-24T12:00:00+08:00" })).toMatchObject({ ok: false, code: "founder_words_required" });
     const r = await run({ op: "record_scheduled", scheduled_at: "2026-10-24T12:00:00+08:00", founder_quote: "扫好了" });
@@ -258,12 +266,135 @@ describe("排期规则", () => {
   it("晚 3 小时、不过 22:30；已过就挪到最近一天同一时刻；被占就顺延；超出 +6 天拒", () => {
     const n = t("2026-10-24T08:00:00+08:00");
     expect(planSlot(t("2026-10-24T18:00:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-24T21:00:00+08:00" });
-    expect(planSlot(t("2026-10-24T21:00:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-24T22:30:00+08:00" });
+    expect(planSlot(t("2026-10-24T19:30:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-24T22:30:00+08:00" });
+    expect(planSlot(t("2026-10-24T23:45:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-25T20:00:00+08:00", basis: expect.stringMatching(/第二天晚上 20:00/) });
+    expect(planSlot(t("2026-10-24T21:00:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-25T20:00:00+08:00" });
     expect(planSlot(t("2026-10-22T18:00:00+08:00"), n, new Set())).toMatchObject({ at: "2026-10-24T21:00:00+08:00" });
     expect(planSlot(t("2026-10-24T18:00:00+08:00"), n, new Set(["2026-10-24", "2026-10-25"]))).toMatchObject({ at: "2026-10-26T21:00:00+08:00" });
     const full = new Set(Array.from({ length: 7 }, (_, i) => `2026-10-${24 + i}`));
     expect(planSlot(t("2026-10-24T18:00:00+08:00"), n, full)).toMatchObject({ error: expect.stringMatching(/超出/) });
     expect(hostSlot("2026-10-24T21:00:30+08:00", "x", n, new Set())).toMatchObject({ error: expect.stringMatching(/分钟/) });
     expect(hostSlot("2026-10-24T21:00:00+08:00", "x", n, new Set(["2026-10-24"]))).toMatchObject({ error: expect.stringMatching(/群发通知/) });
+  });
+});
+
+describe("Codex 审 2b 回归", () => {
+  beforeEach(async () => { await complete(); await approve(); });
+
+  it("P1-1 每次推送一个新暂存目录，只装这一包的文件", async () => {
+    await run({ op: "push_draft" });
+    await run({ op: "set_cover", path: await put(path.join(env.outside, "cover2.png"), png(2350, 1000, "m2")) });
+    await approve();
+    await run({ op: "push_draft" });
+    const [a, b] = pushes.map((o) => path.dirname(o.articlePath));
+    expect(a).not.toBe(b);
+    expect((await fs.readdir(path.join(b, "src"))).sort()).toEqual(["cover.png", "img-01.png", "img-02.png"]);
+    expect(await fs.readdir(b)).not.toContain("images");
+  });
+
+  it("P1-2 dry_run 不调公众号、不改状态，回给要推的内容", async () => {
+    const r = await executePublish({ action: "wechat_mp_draft", content_id: id, dry_run: true, _dataDir: env.dir }, { publishImpl });
+    expect(r).toMatchObject({ ok: true, dry_run: true, title: "标题二", crop_235: "0_0_1_1" });
+    expect(publishImpl).not.toHaveBeenCalled();
+    expect((await readPublishState(id, env.dir)).phase).toBeUndefined();
+  });
+
+  it("P1-3 调脚本前落 in_flight；上次中断留下的 in_flight → unknown，先核对", async () => {
+    publishImpl.mockImplementationOnce(async (o) => {
+      expect((await readPublishState(id, env.dir)).inFlight).toMatchObject({ startedAt: expect.any(String) });
+      return { ok: true, articlePath: o.articlePath, publishInput: o.articlePath, coverPath: "", imageCount: 2, generatedImages: [], mediaId: "MID-X" };
+    });
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, media_id: "MID-X" });
+    expect((await readPublishState(id, env.dir)).inFlight).toBeUndefined();
+    const st = await readPublishState(id, env.dir);
+    await writePublishState(id, { ...st, mediaId: undefined, packageHash: undefined, phase: undefined, inFlight: { packageHash: "h", startedAt: "2026-10-24T01:00:00Z" } }, env.dir);
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "reconcile_first" });
+    expect((await readPublishState(id, env.dir)).phase).toBe("unknown");
+  });
+
+  it("P1-4 超时 / 进程异常 → unknown；token 失败、明确 errcode → failed", async () => {
+    nextResult = { ok: false, mediaId: undefined, error: "公众号推送失败：requests.exceptions.ReadTimeout: Read timed out" };
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "push_unknown", phase: "unknown" });
+    await run({ op: "record_absent", raw: "三处都没有" });
+    nextResult = { ok: false, mediaId: undefined, error: "公众号推送失败：错误: 推送草稿箱失败 (errcode=45009: reach max api daily quota limit)" };
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "push_failed" });
+    publishImpl.mockImplementationOnce(async () => { throw new Error("socket hang up"); });
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "push_unknown" });
+  });
+
+  it("P1-5 结果不明后记定时要带草稿身份；之后已定时就拦新推送（没有 media_id 也拦）", async () => {
+    nextResult = { mediaId: undefined, stdout: "?" };
+    await run({ op: "push_draft" });
+    expect(await run({ op: "record_scheduled", scheduled_at: "2026-10-24T21:00:00+08:00", founder_quote: "扫了" })).toMatchObject({ ok: false, code: "draft_identity_required" });
+    expect(await run({ op: "record_scheduled", scheduled_at: "2026-10-24T21:00:00+08:00", founder_quote: "扫了", draft_title: "标题二", draft_updated_at: "2026-10-24 10:00" })).toMatchObject({ ok: true, phase: "scheduled" });
+    expect((await readPublishState(id, env.dir)).foundDraft).toEqual({ title: "标题二", updatedAt: "2026-10-24 10:00" });
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, reused: true });
+    await run({ op: "choose_title", index: 1, founder_quote: "换回第一个" });
+    await approve();
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "already_committed" });
+  });
+
+  it("P1-6 begin_editor 给出草稿身份：media_id、更新时间、首末段", async () => {
+    await run({ op: "push_draft" });
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    const r = await run({ op: "begin_editor" });
+    expect(r.draft_identity).toMatchObject({ media_id: "MID-1", updated_at: "2026-10-24T10:00:00+08:00", first_paragraph: expect.stringMatching(/^字+$/), last_paragraph: "官方页面长这样" });
+  });
+
+  it("P1-7 编辑器收尾期间包变了：final_check 不许点发表；mark_editor_done 复核不过进 unknown", async () => {
+    await run({ op: "push_draft" });
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    await run({ op: "begin_editor" });
+    await run({ op: "choose_title", index: 1, founder_quote: "换第一个" });
+    expect(await run({ op: "final_check" })).toMatchObject({ ok: false, may_click_publish: false, code: "article_not_approved" });
+    expect(await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T12:00:00+08:00" })).toMatchObject({ ok: false, phase: "unknown" });
+    expect((await readPublishState(id, env.dir)).phase).toBe("unknown");
+  });
+
+  it("P2-8 record_absent 确认草稿也不在 → 清掉身份，再推真推一份", async () => {
+    await run({ op: "push_draft" });
+    await run({ op: "record_unknown", raw: "草稿箱里找不到" });
+    await run({ op: "record_absent", raw: "三处都没有" });
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, reused: false, media_id: "MID-2" });
+  });
+
+  it("P2-9 已定时 → 到点后记已发表", async () => {
+    await run({ op: "push_draft" });
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    await run({ op: "begin_editor" });
+    await run({ op: "final_check" });
+    await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T12:00:00+08:00" });
+    await run({ op: "record_scheduled", scheduled_at: "2026-10-24T12:00:00+08:00", founder_quote: "扫了" });
+    expect(await run({ op: "record_scheduled", scheduled_at: "2026-10-24T12:00:00+08:00", founder_quote: "发出来了", published: "true" })).toMatchObject({ ok: true, phase: "published" });
+  });
+
+  it("P2-10 别的文章结果不明也占着那天", async () => {
+    await run({ op: "push_draft" });
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    const other = await videoContent(env, "另一条", "draft_ready", "x", { topicId: "topic-3-abc" });
+    await setContent(env, other.id, { videoDone: { renderedRevision: 1, at: new Date().toISOString() } });
+    const a2 = String((await executeWechatArticle({ _dataDir: env.dir, op: "derive", content_id: other.id })).content_id);
+    await writePublishState(a2, { phase: "unknown", slot: { at: "2026-10-24T20:00:00+08:00", basis: "x" }, superseded: [], attempts: [] }, env.dir);
+    expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true, slot: { at: "2026-10-25T12:00:00+08:00" } });
+  });
+
+  it("P2-11 不带时区的时间按北京时间解释（本机时区是 UTC 也一样）", async () => {
+    const tz = process.env.TZ;
+    process.env.TZ = "UTC";
+    try {
+      expect(parseShanghai("2026-10-24T09:00:00")).toBe(Date.parse("2026-10-24T09:00:00+08:00"));
+      expect(parseShanghai("2026-10-24 09:00")).toBe(Date.parse("2026-10-24T09:00:00+08:00"));
+      await run({ op: "push_draft" });
+      await videoChannel("published", "2026-10-24T09:00:00");
+      expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true, slot: { at: "2026-10-24T12:00:00+08:00" } });
+    } finally { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; }
+  });
+
+  it("批后改封面 / 创作来源 → 退回等你拍板，认稿那件重新出现并写明原因", async () => {
+    const r = await run({ op: "set_creation_source", creation_source: "个人观点，仅供参考", founder_quote: "改成个人观点" });
+    expect(r).toMatchObject({ ok: true, reopened_for_review: expect.any(String) });
+    const item = (await readInbox(env.dir, { withDrafts: true })).items.find((i) => i.type === "draft" && i.content_id === id);
+    expect(item).toBeTruthy();
+    expect(await approve()).toMatchObject({ ok: true });
   });
 });

@@ -7,13 +7,10 @@
  * 已定时 / 等扫码 / 已发 → 不重推（先请创始人在后台取消再 record_absent）。结果不明 → 先核对。
  * 推送失败 → 原始报错照给，状态 failed；不退回复制粘贴。
  */
-import { contentFile, resolveContentProject } from "../../storage/content-project.js";
-import { projectMarkdownExport } from "../../storage/project-record.js";
-import { writeTextAtomic } from "../../storage/json-atomic.js";
 import { publishWechatMpDraft, type WechatMpDraftResult } from "../publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../publish/wechat-config.js";
 import { scanText } from "../filter/sensitive-words.js";
-import type { ArticleImageEntry } from "../publish/article-images.js";
+import { stagePackage, type Staged } from "./push-stage.js";
 import { cropParam } from "./cover.js";
 import { withArticleLock } from "./package.js";
 import { getContent } from "../../storage/local-store.js";
@@ -45,82 +42,111 @@ export async function approvedArticle(contentId: string, dataDir: string): Promi
   return { state: s };
 }
 
-/** 推送用的 markdown：标题 + 正文；web 图位后面跟一行斜体署名，排版脚本把它变成图下说明 */
-export function articleMarkdown(title: string, body: string, entries: ArticleImageEntry[]): string {
-  let k = 0;
-  const withCredits = body.replace(/\[IMAGE:\s*(.+?)\]/g, (marker) => {
-    const n = k++;
-    const e = entries.find((x) => x.index === n);
-    const web = e && (e.kind === "web" || e.origin === "web") && e.credit;
-    return web ? `${marker}\n\n*${e.credit!.replace(/\*/g, "")}*` : marker;
-  });
-  return `# ${title}\n\n${withCredits}\n`;
-}
+export interface PushOpts { force?: boolean; dryRun?: boolean }
 
-export async function pushApprovedArticle(contentId: string, dataDir: string, deps: PushDeps = {}, opts: { force?: boolean } = {}): Promise<Result> {
+export async function pushApprovedArticle(contentId: string, dataDir: string, deps: PushDeps = {}, opts: PushOpts = {}): Promise<Result> {
   return withArticleLock(contentId, async () => {
     const a = await approvedArticle(contentId, dataDir);
     if ("refusal" in a) return a.refusal;
     const s = a.state;
-    const st = await readPublishState(contentId, dataDir);
-    if (st.phase === "unknown") return fail("reconcile_first", nextStep(st), { phase: st.phase });
-    if (st.mediaId && st.packageHash === s.hash) return { ok: true, reused: true, media_id: st.mediaId, phase: st.phase, next_step: nextStep(st), note: "这一包已经在草稿箱里了，没有再推第二份" };
-    if (st.mediaId && st.phase && COMMITTED.has(st.phase)) {
-      return fail("already_committed", `旧版已经${st.phase === "published" ? "发表" : "定时 / 在等扫码"}（草稿 ${st.mediaId}）：包改过了也不能再推一份。请创始人先在公众号后台取消那次定时（发表了就不能撤），再 record_absent，之后才能推新包`, { phase: st.phase });
-    }
+    const now = deps.now?.() ?? new Date();
+    let st = await readPublishState(contentId, dataDir);
+    if (st.inFlight) st = await interrupted(contentId, st, dataDir, now);
+    const guard = pushGuard(st, s.hash);
+    if (guard) return guard;
     const scan = await scanText(`${s.pkg.chosenTitle}\n\n${s.content.body ?? ""}`, "wechat_mp", dataDir);
     const violations = scan.hits.map((h) => h.word);
     if (violations.length && !opts.force) return fail("sensitive_words", `审核员阻断推送：命中违禁词「${violations.join("、")}」。改稿（改完要重批）后再推`, { violations });
-    return runPush(contentId, s, superseded(st, deps.now?.() ?? new Date()), dataDir, deps);
+    let staged: Staged;
+    try { staged = await stagePackage(contentId, s, dataDir, now); } catch (e) {
+      return fail("stage_failed", `推送前暂存这一包失败（没有调公众号）：${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (opts.dryRun) return dryRunResult(s, staged, st);
+    return runPush(contentId, s, staged, superseded(st, now), dataDir, deps, now);
   });
+}
+
+/** 上次推送调了脚本却没落结果（进程中断）：草稿可能已经建了，进 unknown 先核对 */
+async function interrupted(contentId: string, st: ArticlePublishState, dataDir: string, now: Date): Promise<ArticlePublishState> {
+  const raw = `上次推送 ${st.inFlight!.startedAt} 开始后没有结果（进程中断），草稿可能已经建了`;
+  const next = withAttempt({ ...st, phase: "unknown", unknownFrom: st.phase ?? "pushed_draft", unknownRaw: raw, inFlight: undefined }, { action: "push_draft", ok: false, raw }, now);
+  return writePublishState(contentId, next, dataDir);
+}
+
+/** 不能推的情况：结果不明、已交到平台手里（不管有没有 media_id）、同一包已经有草稿 */
+function pushGuard(st: ArticlePublishState, hash: string): Result | null {
+  if (st.phase === "unknown") return fail("reconcile_first", nextStep(st), { phase: st.phase });
+  const draft = st.mediaId ?? st.foundDraft?.mediaId ?? null;
+  if (st.phase && COMMITTED.has(st.phase)) {
+    if (st.packageHash === hash) return { ok: true, reused: true, media_id: draft, phase: st.phase, next_step: nextStep(st), note: "这一包已经定时 / 发表了，没有再推" };
+    return fail("already_committed", `旧版已经${st.phase === "published" ? "发表" : "定时 / 在等扫码"}（草稿 ${draft ?? "身份见 found_draft"}）：包改过了也不能再推一份。请创始人先在公众号后台取消那次定时（发表了就不能撤），再 record_absent，之后才能推新包`, { phase: st.phase });
+  }
+  if ((st.mediaId || st.foundDraft) && st.packageHash === hash) return { ok: true, reused: true, media_id: draft, found_draft: st.foundDraft ?? null, pushed_at: st.pushedAt, phase: st.phase, next_step: nextStep(st), note: "这一包已经在草稿箱里了，没有再推第二份" };
+  return null;
+}
+
+function dryRunResult(s: ArticleReviewState, staged: Staged, st: ArticlePublishState): Result {
+  const c = s.pkg.cover!;
+  return {
+    ok: true, dry_run: true, note: "预演：没有调公众号，也没有改发布状态", title: s.pkg.chosenTitle, article_path: staged.articlePath, cover: staged.coverPath,
+    crop_235: cropParam(c.crops["2.35:1"]), crop_1_1: cropParam(c.crops["1:1"]), images: staged.images.filter(Boolean), digest: s.content.digest ?? null,
+    would_supersede: st.mediaId && st.packageHash !== s.hash ? st.mediaId : null,
+  };
 }
 
 /** 旧草稿（别的包）记为 superseded；不删 */
 function superseded(st: ArticlePublishState, now: Date): ArticlePublishState {
-  if (!st.mediaId || !st.packageHash) return st;
-  const old = { mediaId: st.mediaId, packageHash: st.packageHash, account: st.account ?? "?", pushedAt: st.pushedAt ?? "?", supersededAt: now.toISOString() };
-  return { ...st, superseded: [...st.superseded, old], mediaId: undefined, packageHash: undefined, pushedAt: undefined, slot: undefined, receipt: undefined, phase: undefined };
+  const id = st.mediaId ?? st.foundDraft?.mediaId ?? (st.foundDraft ? `标题「${st.foundDraft.title}」更新于 ${st.foundDraft.updatedAt}` : undefined);
+  if (!id || !st.packageHash) return st;
+  const old = { mediaId: id, packageHash: st.packageHash, account: st.account ?? "?", pushedAt: st.pushedAt ?? "?", supersededAt: now.toISOString() };
+  return { ...st, superseded: [...st.superseded, old], mediaId: undefined, packageHash: undefined, pushedAt: undefined, slot: undefined, receipt: undefined, foundDraft: undefined, phase: undefined };
 }
 
-async function runPush(contentId: string, s: ArticleReviewState, st: ArticlePublishState, dataDir: string, deps: PushDeps): Promise<Result> {
-  const now = deps.now?.() ?? new Date();
-  const project = resolveContentProject(contentId, dataDir);
-  const articlePath = contentFile(contentId, dataDir, "wechat-article-export.md");
-  const md = articleMarkdown(s.pkg.chosenTitle!, s.content.body ?? "", s.images.entries);
-  await writeTextAtomic(articlePath, project ? projectMarkdownExport(md, project.project_root) : md);
+async function runPush(contentId: string, s: ArticleReviewState, staged: Staged, st0: ArticlePublishState, dataDir: string, deps: PushDeps, now: Date): Promise<Result> {
   const cfg = await loadWechatMpConfig(dataDir);
-  const cover = s.pkg.cover!;
-  const paths: string[] = [];
-  for (const e of s.images.entries) if (e.imagePath) paths[e.index] = e.imagePath;
+  const c = s.pkg.cover!;
+  const st = await writePublishState(contentId, { ...st0, inFlight: { packageHash: s.hash, startedAt: now.toISOString() } }, dataDir);
   let r: WechatMpDraftResult;
   try {
     r = await (deps.publishImpl ?? publishWechatMpDraft)({
-      articlePath, title: s.pkg.chosenTitle!, coverPath: cover.path, coverCrops: { crop235: cropParam(cover.crops["2.35:1"]), crop11: cropParam(cover.crops["1:1"]) },
-      preparedImages: paths, skipImages: true, strictImages: true, digest: s.content.digest, author: cfg.author || "",
+      articlePath: staged.articlePath, title: s.pkg.chosenTitle!, coverPath: staged.coverPath, coverCrops: { crop235: cropParam(c.crops["2.35:1"]), crop11: cropParam(c.crops["1:1"]) },
+      preparedImages: staged.images, skipImages: true, strictImages: true, digest: s.content.digest, author: cfg.author || "",
       wechatAppId: cfg.wechatAppId, wechatAppSecret: cfg.wechatAppSecret, openComment: cfg.openComment, theme: cfg.theme || "newspaper",
       wechatPublishScript: cfg.wechatPublishScript, apiProxy: cfg.apiProxy,
     });
   } catch (e) {
-    r = { ok: false, articlePath, publishInput: articlePath, coverPath: cover.path, imageCount: 0, generatedImages: [], error: e instanceof Error ? e.message : String(e) };
+    r = { ok: false, articlePath: staged.articlePath, publishInput: staged.articlePath, coverPath: staged.coverPath, imageCount: 0, generatedImages: [], error: `推送进程异常：${e instanceof Error ? e.message : String(e)}` };
   }
-  return recordPush(contentId, s.hash, st, r, cfg.wechatAppId ?? "未配置 AppID", dataDir, now);
+  return recordPush(contentId, s.hash, { ...st, inFlight: undefined }, r, cfg.wechatAppId ?? "未配置 AppID", dataDir, now);
+}
+
+/**
+ * 明确没到「建草稿」那一步的失败（Codex 审 2b P1-4）：凭证 / token、本地文件与环境、标题超限、图片上传失败、
+ * draft/add 明确回了 errcode。其余（超时、连接断开、进程异常、说不清的退出）都可能已经建了草稿 → unknown。
+ */
+const PRE_SEND = /获取 access_token 失败|未配置公众号|Article not found|script not found|uv 未安装|标题过长|上传封面图失败|封面上传失败|所有图片上传失败|--strict-images|推送草稿箱失败 \(errcode=|必须有封面图/;
+
+export function classifyPush(r: WechatMpDraftResult): "ok" | "failed" | "unknown" {
+  if (r.ok && r.mediaId) return "ok";
+  if (r.ok) return "unknown";
+  return PRE_SEND.test([r.error, r.stdout, r.stderr].filter(Boolean).join("\n")) ? "failed" : "unknown";
 }
 
 async function recordPush(contentId: string, hash: string, st: ArticlePublishState, r: WechatMpDraftResult, account: string, dataDir: string, now: Date): Promise<Result> {
-  const raw = [r.error, r.stderr?.trim().slice(-800)].filter(Boolean).join("\n");
+  const raw = [r.error, r.stdout?.trim().slice(-600), r.stderr?.trim().slice(-600)].filter(Boolean).join("\n");
   const old = st.superseded.at(-1);
   const supersededNote = old && old.packageHash !== hash && old.supersededAt === now.toISOString()
     ? { superseded_draft: old.mediaId, superseded_note: `旧草稿 ${old.mediaId} 是旧版图文包，已标为作废；草稿箱里删不删由你在公众号后台自己处理（这里从不删草稿）` } : {};
-  if (r.ok && r.mediaId) {
+  const kind = classifyPush(r);
+  if (kind === "ok") {
     const next = withAttempt({ ...st, phase: "pushed_draft", account, mediaId: r.mediaId, packageHash: hash, pushedAt: now.toISOString() }, { action: "push_draft", ok: true, mediaId: r.mediaId }, now);
     await writePublishState(contentId, next, dataDir);
-    return { ok: true, reused: false, media_id: r.mediaId, account, phase: next.phase, next_step: nextStep(next), ...supersededNote };
+    return { ok: true, reused: false, media_id: r.mediaId, pushed_at: next.pushedAt, account, phase: next.phase, next_step: nextStep(next), ...supersededNote };
   }
-  if (r.ok) {
-    const out = (r.stdout ?? "").trim().slice(-800);
-    const next = withAttempt({ ...st, phase: "unknown", unknownFrom: "pushed_draft", unknownRaw: out, account, packageHash: hash }, { action: "push_draft", ok: false, raw: `脚本成功退出但没报出草稿 media_id：${out}` }, now);
+  if (kind === "unknown") {
+    const next = withAttempt({ ...st, phase: "unknown", unknownFrom: "pushed_draft", unknownRaw: raw, account, packageHash: hash }, { action: "push_draft", ok: false, raw }, now);
     await writePublishState(contentId, next, dataDir);
-    return fail("push_unknown", `推送脚本退出了但没有报出草稿 media_id，草稿可能已经建了：${nextStep(next)}`, { raw: out, phase: "unknown", ...supersededNote });
+    return fail("push_unknown", `推送结果不明，草稿可能已经建了：${nextStep(next)}`, { raw, phase: "unknown", ...supersededNote });
   }
   const next = withAttempt({ ...st, phase: "failed", account }, { action: "push_draft", ok: false, raw }, now);
   await writePublishState(contentId, next, dataDir);

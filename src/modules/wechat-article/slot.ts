@@ -12,6 +12,7 @@ const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 export const SLOT_DELAY_HOURS = 3;
 const LATEST_MINUTE = 22 * 60 + 30;
+const DEFAULT_EVENING_MINUTE = 20 * 60;
 
 /** 北京时间的日期 YYYY-MM-DD */
 export const localDate = (t: number) => new Date(t + TZ_MS).toISOString().slice(0, 10);
@@ -21,6 +22,15 @@ const atLocal = (date: string, minute: number) => Date.parse(`${date}T00:00:00+0
 /** 北京时间的 ISO（带 +08:00，精确到分钟） */
 export function isoLocal(t: number): string {
   return `${new Date(Math.floor(t / 60_000) * 60_000 + TZ_MS).toISOString().slice(0, 16)}:00+08:00`;
+}
+
+/** 时间字符串 → 毫秒。不带时区的一律按北京时间解释（Codex 审 2b P2-11），不随本机时区漂；读不出 = null */
+export function parseShanghai(raw: string | null | undefined): number | null {
+  const v = (raw ?? "").trim();
+  if (!v) return null;
+  const withZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(v) ? v : /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00+08:00` : `${v.replace(" ", "T")}+08:00`;
+  const t = Date.parse(withZone);
+  return Number.isFinite(t) ? t : null;
 }
 
 export interface VideoLive { live: boolean; at: number | null; raw: string }
@@ -34,8 +44,8 @@ export async function videoChannelState(sourceId: string, dataDir: string, now =
   const p = record.platforms.find((x) => x.platform === "wechat_video");
   if (!p) return { live: false, at: null, raw: record.kind === "unreadable" ? record.reason : "发布记录里没有视频号" };
   const t = p.publishedAt ?? p.time;
-  const at = t ? Date.parse(t) : null;
-  return { live: p.state === "public" || p.state === "manual", at: Number.isFinite(at) ? at : null, raw: `视频号：${p.state}${t ? ` ${t}` : ""}` };
+  const at = parseShanghai(t);
+  return { live: p.state === "public" || p.state === "manual", at, raw: `视频号：${p.state}${t ? ` ${t}` : ""}` };
 }
 
 /** 别的派生文章已占的群发日（已进编辑器排了时间 / 等扫码 / 已定时 / 已发） */
@@ -44,17 +54,25 @@ export async function occupiedDays(selfId: string, dataDir: string): Promise<Set
   for (const c of await listContents(dataDir)) {
     if (c.id === selfId || c.derivedFrom?.kind !== "wechat_article") continue;
     const s = await readPublishState(c.id, dataDir);
-    const t = s.receipt?.scheduledAt ?? (s.phase === "editor_finishing" || s.phase === "scheduled_waiting_scan" ? s.slot?.at : undefined);
-    if (t && Number.isFinite(Date.parse(t))) days.add(localDate(Date.parse(t)));
+    // 结果不明的也占着那天，直到核对清楚（Codex 审 2b P2-10）
+    const holds = s.phase === "editor_finishing" || s.phase === "scheduled_waiting_scan" || s.phase === "unknown";
+    const t = parseShanghai(s.receipt?.scheduledAt ?? (holds ? s.slot?.at : undefined));
+    if (t !== null) days.add(localDate(t));
   }
   return days;
 }
 
-/** 视频号时间之后 3 小时、当天 22:30 之前；已过去就挪到最近一个还来得及的同一时刻；占了就顺延；超出 +6 天就拒 */
+/**
+ * 视频号时间之后 3 小时；那个时间过了当天 22:30（Codex 审 2b P2-12），就排第二天的默认晚间 20:00 并说明；
+ * 已过去就挪到最近一个还来得及的同一时刻；占了就顺延；超出 +6 天就拒
+ */
 export function planSlot(videoAt: number, now: number, occupied: Set<string>): PlannedSlot | { error: string } {
   let t = videoAt + SLOT_DELAY_HOURS * HOUR;
-  if (localDate(t) !== localDate(videoAt) || localMinute(t) > LATEST_MINUTE) t = Math.max(atLocal(localDate(videoAt), LATEST_MINUTE), videoAt + HOUR / 2);
-  const notes = [`视频号 ${isoLocal(videoAt)} 发出，默认晚 ${SLOT_DELAY_HOURS} 小时、当天晚上`];
+  const notes = [`视频号 ${isoLocal(videoAt)} 发出，默认晚 ${SLOT_DELAY_HOURS} 小时`];
+  if (localDate(t) !== localDate(videoAt) || localMinute(t) > LATEST_MINUTE) {
+    t = atLocal(localDate(videoAt + DAY), DEFAULT_EVENING_MINUTE);
+    notes.push(`晚 ${SLOT_DELAY_HOURS} 小时会过当天 22:30，改排第二天晚上 20:00`);
+  } else notes.push("当天晚上");
   if (t < now + 15 * 60_000) {
     while (t < now + 15 * 60_000) t += DAY;
     notes.push("那个时间已经过了，挪到最近一天的同一时刻");
@@ -77,8 +95,8 @@ export function windowError(t: number, now: number): string | null {
 
 /** 宿主带创始人原话给的时间：要带时区、精确到分钟、在窗口内、当天群发额度没被占 */
 export function hostSlot(raw: string, founderWords: string, now: number, occupied: Set<string>): PlannedSlot | { error: string } {
-  if (!/(Z|[+-]\d{2}:?\d{2})$/.test(raw) || !Number.isFinite(Date.parse(raw))) return { error: `slot 要带时区的时间，如 2026-10-25T21:00:00+08:00（收到 ${raw || "空"}）` };
-  const t = Date.parse(raw);
+  const t = parseShanghai(raw);
+  if (t === null) return { error: `slot 要是时间，如 2026-10-25T21:00:00+08:00（不带时区按北京时间；收到 ${raw || "空"}）` };
   if (t % 60_000 !== 0) return { error: "编辑器的定时精确到分钟：slot 的秒要是 0" };
   const w = windowError(t, now);
   if (w) return { error: w };

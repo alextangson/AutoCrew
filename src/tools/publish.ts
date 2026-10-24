@@ -289,7 +289,7 @@ export async function executePublish(
   const publishImpl = deps?.publishImpl ?? publishWechatMpDraft;
   const contentId = params.content_id as string | undefined;
   // 派生公众号文章（含桌面端推送按钮）一律走按批过整包推送的那一条路：选定标题、主图 + 裁切、web 图署名都在包里
-  if (await isDerivedArticleId(contentId, dataDir)) return pushApprovedArticle(String(contentId).trim(), dataDir, { publishImpl }, { force: Boolean(params.force) });
+  if (await isDerivedArticleId(contentId, dataDir)) return pushApprovedArticle(String(contentId).trim(), dataDir, { publishImpl }, { force: Boolean(params.force), dryRun: Boolean(params.dry_run) });
   let articlePath: string;
   let gateText: string;
   let preparedImages: string[] | undefined;

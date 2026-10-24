@@ -3,7 +3,9 @@
  * 之后正文、标题、任何一张图、封面、创作来源变了，批准就失效（status / 审阅页写明是哪一包变了）；2b 的发布会按批准的那一包核。
  */
 import { articleReviewState } from "./review.js";
-import { approvePackage, readArticlePackage, writeArticlePackage } from "./package.js";
+import { approvePackage, packageApprovalCheck, readArticlePackage, writeArticlePackage } from "./package.js";
+import { getArticleImageReview } from "../publish/article-images.js";
+import { getContent, transitionStatus } from "../../storage/local-store.js";
 
 export type GateResult = { ok: true; hash: string } | { ok: false; code: string; error: string };
 
@@ -20,4 +22,20 @@ export async function articleApproveGate(contentId: string, dataDir: string, exp
 export async function recordArticleApproval(contentId: string, hash: string, dataDir: string): Promise<void> {
   const pkg = await readArticlePackage(contentId, dataDir);
   await writeArticlePackage(contentId, approvePackage(pkg, hash), dataDir);
+}
+
+/**
+ * 批过之后包又变了（标题 / 封面 / 配图 / 创作来源 / 篇幅放行）：和改正文一样退回「等你拍板」的认稿，原因写明。
+ * 只在稿件还停在 approved 时做；发布状态那边自己按指纹拦（已定时的不会被重推）。
+ */
+export async function reopenIfApprovalBroken(contentId: string, dataDir: string): Promise<string | null> {
+  const content = await getContent(contentId, dataDir);
+  if (!content || content.status !== "approved") return null;
+  const pkg = await readArticlePackage(contentId, dataDir);
+  if (!pkg.approval) return null;
+  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir));
+  if (check.ok) return null;
+  const r = await transitionStatus(contentId, "draft_ready", { force: true }, dataDir);
+  if (!r.ok) throw new Error(`包改了、批准失效，但退回认稿失败：${r.error ?? "没有原因"}`);
+  return `批过的图文包改了（${check.reason}），已退回「等你拍板」重新认稿`;
 }

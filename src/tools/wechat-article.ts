@@ -18,6 +18,7 @@ import { articleSource } from "../modules/wechat-article/source.js";
 import { centeredCrop, cropParam, parseCrop, readMaster, type ArticleCoverRatio, type CropBox } from "../modules/wechat-article/cover.js";
 import { isPublishOp, PUBLISH_OPS, runPublishOp, WECHAT_ARTICLE_PUBLISH_DOC } from "./wechat-article-publish.js";
 import type { PushDeps } from "../modules/wechat-article/push.js";
+import { reopenIfApprovalBroken } from "../modules/wechat-article/approve.js";
 import { approvalText, articleReviewState, isDerivedArticle, renderReviewPage } from "../modules/wechat-article/review.js";
 
 type Result = Record<string, unknown>;
@@ -200,7 +201,11 @@ export async function executeWechatArticle(raw: Result, deps: PushDeps = {}): Pr
   // 发布段各自加锁（推送要在锁里跑完），不能再套进下面的改包锁
   if (isPublishOp(op)) return runPublishOp(op, id, params, dataDir, deps);
   // 改包的动作和认稿共用一把锁：批的那一刻包不会被改掉
-  return withArticleLock(id, () => mutate(op, id, params, dataDir));
+  return withArticleLock(id, async () => {
+    const r = await mutate(op, id, params, dataDir);
+    const reopened = r.ok === false ? null : await reopenIfApprovalBroken(id, dataDir);
+    return reopened ? { ...r, reopened_for_review: reopened } : r;
+  });
 }
 
 function mutate(op: (typeof OPS)[number], id: string, params: Result, dataDir: string): Promise<Result> {

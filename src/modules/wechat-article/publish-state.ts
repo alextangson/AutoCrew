@@ -20,6 +20,10 @@ export interface PublishAttempt { at: string; action: string; ok: boolean; raw?:
 export interface SupersededDraft { mediaId: string; packageHash: string; account: string; pushedAt: string; supersededAt: string }
 export interface PlannedSlot { at: string; basis: string; founderWords?: string }
 export interface ScheduleReceipt { scheduledAt: string; founderWords: string; published: boolean; at: string }
+/** 结果不明之后宿主在编辑器里核到的草稿身份（没有 media_id 时用标题 + 更新时间认） */
+export interface FoundDraft { mediaId?: string; title?: string; updatedAt?: string }
+/** 调推送脚本之前先落盘（Codex 审 2b P1-3）：脚本跑到一半进程没了，下一次看到它就进 unknown，不重推 */
+export interface InFlight { packageHash: string; startedAt: string }
 
 export interface ArticlePublishState {
   phase?: PublishPhase;
@@ -27,7 +31,10 @@ export interface ArticlePublishState {
   account?: string;
   mediaId?: string;
   packageHash?: string;
+  /** 推送成功的时刻 = 草稿箱里这份草稿的「更新时间」（编辑器里按它和首末段认草稿） */
   pushedAt?: string;
+  inFlight?: InFlight;
+  foundDraft?: FoundDraft;
   slot?: PlannedSlot;
   receipt?: ScheduleReceipt;
   /** phase = unknown 时：从哪一步进的、原始说法 */
@@ -74,7 +81,7 @@ export function nextStep(s: ArticlePublishState): string {
     case "failed": return "照原始报错修好（凭证 / IP 白名单 / 额度），再 push_draft；不改用复制粘贴";
     case "pushed_draft": return "begin_editor：核视频号原片是否已公开，排定时，再按 publish-content 的公众号手册进编辑器";
     case "waiting_video_live": return "视频号原片还没公开：等它公开后再 begin_editor；不排定时";
-    case "editor_finishing": return `编辑器里：设创作来源、插视频号卡片、定时 ${s.slot?.at ?? "?"}、点发表停在管理员二维码，然后 mark_editor_done 并交给创始人扫码`;
+    case "editor_finishing": return `编辑器里：按 media_id / 更新时间 + 首末段认准草稿，设创作来源、插视频号卡片、定时 ${s.slot?.at ?? "?"}；点发表之前 final_check，过了才点，停在管理员二维码后 mark_editor_done 并交给创始人扫码`;
     case "scheduled_waiting_scan": return "等创始人扫码；他说扫了之后去 发表记录 / 定时列表 核到这篇，再 record_scheduled（带他的原话）";
     case "scheduled": return `已定时 ${s.receipt?.scheduledAt ?? ""}：到点后核是否已发表`;
     case "published": return "已发表";
