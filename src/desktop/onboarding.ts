@@ -4,6 +4,7 @@
  * 看板留「补全画像」提醒（O18），写稿照常。
  */
 import { loadProfile, initProfile, updateProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
+import { legacyTwitterPrompt } from "../modules/profile/platform-lines.js";
 
 const MAX_REFERENCE_WORKS = 2;
 
@@ -31,6 +32,8 @@ export async function getOnboardingStatus(payload: Record<string, unknown>): Pro
         // O18：看板「补全画像」提醒的依据
         personaComplete: personaComplete(profile),
         personaSkipped: Boolean(profile?.personaSkippedAt),
+        // spec §9.3：只勾了旧 twitter、没勾 X / YouTube → 看板提示明确选一次（关掉只记在这台浏览器）
+        legacyTwitterPrompt: legacyTwitterPrompt(profile),
       },
     };
   } catch (err) {

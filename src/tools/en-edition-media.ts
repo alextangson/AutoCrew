@@ -9,6 +9,7 @@ import { enKitPlatforms } from "../modules/profile/platform-lines.js";
 import type { EnReviewState } from "../modules/en-edition/review.js";
 import { approvedEnState, currentEnManifest } from "../modules/en-edition/approved.js";
 import { dubApprovedScript, dubDir, readDubManifest } from "../modules/en-edition/dub.js";
+import { readDubFailure, recordDubFailure } from "../modules/en-edition/dub-failure.js";
 import { buildCues } from "../modules/en-edition/captions.js";
 import { readEnThumbnail, setEnThumbnail, thumbnailProblem } from "../modules/en-edition/thumbnail.js";
 import { chaptersFromManifest, EN_PUBLISH_WINDOW } from "../modules/publish/en-kit.js";
@@ -19,6 +20,9 @@ import { enPackageApprovalText, writeEnPackagePreview } from "../modules/en-edit
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 
+/** 单引号包住整段路径（空格、中文、$ 都原样），内部单引号按 '\'' 转义 */
+export const shellQuote = (p: string): string => `'${p.replace(/'/g, `'\\''`)}'`;
+
 const approvedState = approvedEnState;
 const currentManifest = currentEnManifest;
 
@@ -27,7 +31,11 @@ export async function dubOp(id: string, dataDir: string): Promise<Result> {
   if ("no" in a) return a.no;
   const s = a.s;
   const r = await dubApprovedScript(id, s.script, s.hash, dataDir);
-  if (!r.ok) return { ok: false, code: r.code, error: r.error, ...(r.path ? { manifest_path: r.path } : {}) };
+  if (!r.ok) {
+    await recordDubFailure(id, dataDir, { reason: r.error, code: r.code, at: new Date().toISOString(), scriptHash: s.hash });
+    return { ok: false, code: r.code, error: r.error, ...(r.path ? { manifest_path: r.path } : {}) };
+  }
+  await recordDubFailure(id, dataDir, null);
   const m = r.manifest;
   return { ok: true, manifest_path: r.path, lines: m.lines.length, dub_end_s: m.dubEndS, source_end_s: m.sourceEndS, overrun_s: m.overrunS, tail_slowdown: Math.round(m.tailSlowdown * 1000) / 1000, slow_from_s: m.slowFromS,
     next_action: "前台会话按 video-session 的英文版做法：按清单摆音轨、从 slow_from_s 起把画面放慢 tail_slowdown 倍、做口型对齐参考视频，再 op:\"captions\"" };
@@ -46,7 +54,8 @@ export async function captionsOp(id: string, dataDir: string): Promise<Result> {
   await fs.writeFile(file, JSON.stringify({ scriptHash: s.hash, cues: cues.cues }, null, 2));
   const script = path.join(REPO_ROOT, "sidecars", "captions", "burn_captions.py");
   return { ok: true, captions_path: file, cues: cues.cues.length,
-    burn_command: `uv run --project ${path.dirname(script)} ${script} --cues ${file} --input <口型对齐后的成片.mp4> --output <英文成片.mp4>` };
+    burn_command: `uv run --project ${shellQuote(path.dirname(script))} ${shellQuote(script)} --cues ${shellQuote(file)} --input <口型对齐后的成片.mp4> --output <英文成片.mp4>`,
+    note: "<…> 两处换成真实路径时也要加单引号（项目路径里有空格和中文）" };
 }
 
 export async function chaptersOp(id: string, dataDir: string): Promise<Result> {
@@ -69,7 +78,8 @@ export async function thumbnailOp(id: string, file: string, dataDir: string): Pr
 /** status 里的媒体部分：配音清单、缩略图、要出包的平台、默认发布时段 */
 export async function mediaStatus(id: string, s: EnReviewState, dataDir: string): Promise<Result> {
   const m = await readDubManifest(id, dataDir).catch(() => null);
-  const dub = !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown.toFixed(3)}×`;
+  const failed = await readDubFailure(id, dataDir);
+  const dub = failed ? `配音失败：${failed.reason}（${failed.at}）` : !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown.toFixed(3)}×`;
   const thumb = await readEnThumbnail(id, dataDir);
   return { dub, thumbnail: thumb?.path ?? null, thumbnail_problem: await thumbnailProblem(thumb), kit_platforms: enKitPlatforms(await loadProfile(dataDir)), publish_window: EN_PUBLISH_WINDOW };
 }

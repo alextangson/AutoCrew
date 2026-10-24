@@ -40,6 +40,8 @@ export interface ArticlePublishState {
   /** phase = unknown 时：从哪一步进的、原始说法 */
   unknownFrom?: PublishPhase;
   unknownRaw?: string;
+  /** final_check 时宿主确认过：编辑器视频号选择框里这条原片还列着（那一刻） */
+  channelsCardConfirmedAt?: string;
   superseded: SupersededDraft[];
   attempts: PublishAttempt[];
 }

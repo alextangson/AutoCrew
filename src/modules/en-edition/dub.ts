@@ -13,7 +13,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
-import { checkAlignment, keyFormatProblem, readElevenLabsConfig, redactKey, resolveElevenLabsKey, synthesize, type Alignment, type ElevenLabsConfig } from "../voice/elevenlabs.js";
+import { checkAlignment, keyFormatProblem, SETTINGS_PLACE, readElevenLabsConfig, redactKey, resolveElevenLabsKey, synthesize, type Alignment, type ElevenLabsConfig } from "../voice/elevenlabs.js";
 import { planTiming, slowdownRefusal, type TimingPlan } from "../voice/timing.js";
 import type { EnScript, Segment } from "./script.js";
 
@@ -46,13 +46,13 @@ export async function readDubManifest(contentId: string, dataDir: string): Promi
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
 }
 
-/** 字级时间：ElevenLabs 按字符给，按空白切词 */
-export function wordsFromAlignment(a: Alignment, offsetS: number): WordTime[] {
+/** 字级时间：ElevenLabs 按字符给，按空白切词；时间戳不超过这段音频的实际时长（真服务会给出比 mp3 还长的结尾） */
+export function wordsFromAlignment(a: Alignment, offsetS: number, maxS = Infinity): WordTime[] {
   const out: WordTime[] = [];
   let cur: WordTime | null = null;
   a.characters.forEach((ch, i) => {
     if (/\s/.test(ch)) { if (cur) out.push(cur); cur = null; return; }
-    const s = a.character_start_times_seconds[i] + offsetS, e = a.character_end_times_seconds[i] + offsetS;
+    const s = Math.min(a.character_start_times_seconds[i], maxS) + offsetS, e = Math.min(a.character_end_times_seconds[i], maxS) + offsetS;
     cur = cur ? { ...cur, word: cur.word + ch, endS: e } : { word: ch, startS: s, endS: e };
   });
   if (cur) out.push(cur);
@@ -88,7 +88,7 @@ async function voiceSegment(seg: Segment, dir: string, key: string, cfg: ElevenL
 function toManifest(voiced: Voiced[], plan: TimingPlan, scriptHash: string, cfg: ElevenLabsConfig): DubManifest {
   const lines = plan.lines.map((l) => {
     const v = voiced.find((x) => x.seg.index === l.index)!;
-    return { index: l.index, file: v.file, sha256: v.sha256, cacheKey: v.cacheKey, durationS: l.durationS, startS: l.startS, endS: l.endS, slotStartS: l.slotStartS, slotEndS: l.slotEndS, words: wordsFromAlignment(v.alignment, l.startS) };
+    return { index: l.index, file: v.file, sha256: v.sha256, cacheKey: v.cacheKey, durationS: l.durationS, startS: l.startS, endS: l.endS, slotStartS: l.slotStartS, slotEndS: l.slotEndS, words: wordsFromAlignment(v.alignment, l.startS, v.durationS) };
   });
   const { sourceEndS, dubEndS, overrunS, slowFromS, tailSlowdown } = plan;
   const refused = slowdownRefusal(plan);
@@ -100,8 +100,8 @@ export type DubResult = { ok: true; manifest: DubManifest; path: string } | { ok
 /** script 必须是已批准且指纹对得上的那份（调用方核过） */
 export async function dubApprovedScript(contentId: string, script: EnScript, scriptHash: string, dataDir: string): Promise<DubResult> {
   const [{ key }, cfg] = await Promise.all([resolveElevenLabsKey(), readElevenLabsConfig()]);
-  if (!key) return { ok: false, code: "elevenlabs_key_missing", error: "没配 ElevenLabs 密钥：设置里填，或设环境变量 ELEVENLABS_API_KEY（autocrew doctor 会查）" };
-  if (!cfg.voiceId) return { ok: false, code: "elevenlabs_voice_missing", error: "没配 ElevenLabs 声音 id（创始人的克隆声音）：写进设置 elevenlabs.json 的 voiceId，或设 ELEVENLABS_VOICE_ID" };
+  if (!key) return { ok: false, code: "elevenlabs_key_missing", error: `没配 ElevenLabs 密钥：到「${SETTINGS_PLACE}」里填（或设环境变量 ELEVENLABS_API_KEY；autocrew doctor 会查）` };
+  if (!cfg.voiceId) return { ok: false, code: "elevenlabs_voice_missing", error: `没配 ElevenLabs 声音 id（创始人的克隆声音）：到「${SETTINGS_PLACE}」里填 Voice ID（或设环境变量 ELEVENLABS_VOICE_ID）` };
   const badKey = keyFormatProblem(key);
   if (badKey) return { ok: false, code: "elevenlabs_key_invalid", error: badKey };
   const dir = dubDir(contentId, dataDir);

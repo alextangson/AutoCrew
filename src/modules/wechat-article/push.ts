@@ -7,6 +7,8 @@
  * 已定时 / 等扫码 / 已发 → 不重推（先请创始人在后台取消再 record_absent）。结果不明 → 先核对。
  * 推送失败 → 原始报错照给，状态 failed；不退回复制粘贴。
  */
+import { loadProfile } from "../profile/creator-profile.js";
+import { lineStoppedReason } from "../profile/platform-lines.js";
 import { publishWechatMpDraft, type WechatMpDraftResult } from "../publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../publish/wechat-config.js";
 import { scanText } from "../filter/sensitive-words.js";
@@ -35,6 +37,8 @@ export async function approvedArticle(contentId: string, dataDir: string): Promi
   const s = await articleReviewState(contentId, dataDir, { fresh: true });
   const no = (code: string, error: string): Approved => ({ refusal: { ok: false, code, error } });
   if ("error" in s) return no(s.code, s.error);
+  const stopped = lineStoppedReason(await loadProfile(dataDir), "wechat_article");
+  if (stopped) return no("line_unpicked", stopped);
   if (s.stale) return no("derived_stale", `这条派生稿过期了，不能发：${s.stale}`);
   if (!s.pkg.approval) return no("article_not_approved", "图文包还没批：先在「等你拍板」的认稿那件里批整包，再推草稿箱");
   if (!s.approval.ok) return no("article_not_approved", `批准已失效（${s.approval.reason}）：重新给创始人看审阅页并批过，再推`);

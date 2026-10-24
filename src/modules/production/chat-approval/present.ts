@@ -62,7 +62,7 @@ async function present(item: InboxItem, n: number | string | null, dataDir: stri
   const doc = await readProductionDocOrEmpty(item.content_id!, dataDir);
   const sel = input.item_id === item.item_id ? input : {};
   const article = (await articleDraftView(item, dataDir, input.item_id === item.item_id)) ?? (await enDraftView(item, dataDir, input.item_id === item.item_id)) ?? (await enPackageView(item, dataDir, input.item_id === item.item_id));
-  const brief = [await briefOf(item, doc, dataDir, sel), ...(article?.lines ?? [])].join("\n");
+  const brief = [await briefOf(item, doc, dataDir, sel), ...(article?.lines ?? [])].filter((l) => l !== "").join("\n");
   const shown = item.type === "cover_pick" ? { group_id: pickedGroup(item, sel.group_id)?.group_id }
     : item.type === "cut_review" ? { fact_id: pickedVersion(item, sel.fact_id)?.fact_id } : {};
   const key = { content_id: item.content_id!, item_id: item.item_id };

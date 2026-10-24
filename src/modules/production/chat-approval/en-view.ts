@@ -2,7 +2,7 @@
  * 认稿那件对「由视频派生的英文版」多给的东西（Phase 3）：中英对照审阅页（网页）+ 还差什么 / 批准状态。
  * 和公众号文章一样：只在单看这一件（list 带 item_id）时用默认浏览器打开。
  */
-import { getContent } from "../../../storage/local-store.js";
+import { getContent, type VideoKit } from "../../../storage/local-store.js";
 import { missingAsNull } from "../../publish/review-gate/plan.js";
 import type { InboxItem } from "../inbox.js";
 import { enBriefLines, enReviewState, isEnEdition, renderEnReviewPage } from "../../en-edition/review.js";
@@ -30,9 +30,23 @@ export async function enPackageView(item: InboxItem, dataDir: string, openIt: bo
   const file = await writeEnPackagePreview(s, enPackageApprovalText(s), dataDir);
   const page = openIt ? await openPage(file) : { path: file, opened: false, reason: "没打开；要看就 list{item_id} 单看这一件，会用默认浏览器打开它" };
   const lines = [
+    `《${item.title}》英文发布包`,
+    ...kitLines(s.kits),
     `英文发布包审阅页（缩略图、YouTube 标题 / 描述 / 章节、X 帖子、成片文件）：${file}`,
     ...(item.detail.reopened ? [`重新出现的原因：批过之后变了——${String(item.detail.reopened)}`] : []),
     s.problems.length ? `还不能批：\n${s.problems.map((p, i) => `  ${i + 1}) ${p}`).join("\n")}` : "都齐了：他说「没问题」就批，批的是这一整包（也就是缩略图的批准）。",
   ];
   return { lines, page: { name: "英文发布包", ...page } };
+}
+
+/** 各平台文案直接写进 brief（不只给链接）：YouTube 标题 + 章节，X 帖子正文 */
+function kitLines(kits: Record<string, VideoKit>): string[] {
+  const out: string[] = [];
+  const yt = kits.youtube, x = kits.x;
+  if (yt) {
+    out.push(`YouTube 标题：${yt.postTitle || "（没写）"}`);
+    if (yt.chapters?.length) out.push(`YouTube 章节：${yt.chapters.map((c) => `${c.at} ${c.title}`).join(" / ")}`);
+  }
+  if (x) out.push(`X 帖子：${x.caption || x.postTitle || "（没写）"}`);
+  return out;
 }

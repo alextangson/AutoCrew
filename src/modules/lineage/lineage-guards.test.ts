@@ -97,7 +97,7 @@ describe("P2 幂等", () => {
 
 describe("P2 英文版只给勾了的平台", () => {
   it("只勾 X：英文版落在 x，发布包不收 youtube，看板只列 x", async () => {
-    const src = await legacySource(["douyin", "twitter"]);
+    const src = await legacySource(["douyin", "x"]);
     const en = await derived(src.id, "en_edition");
     expect(en.platform).toBe("x");
     const r = await executePrePublishTool({ action: "video_kit", content_id: en.id, platform: "youtube", _dataDir: env.dir });

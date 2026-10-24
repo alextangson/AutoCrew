@@ -23,27 +23,50 @@ export function chunkWords<T extends { word: string }>(words: T[]): T[][] {
   return out;
 }
 
-/** 词 → 行（贪心，每行 ≤ 42）；两行时尽量平衡 */
-export function wrap(words: string[]): string[] {
+/** 词 → 行（每行 ≤ 42）；两行时尽量平衡，且尽量不把关键词拆到两行（keep = 关键词所在的词序号区间） */
+export function wrap(words: string[], keep?: [number, number]): string[] {
   const text = words.join(" ");
   if (text.length <= LINE_MAX) return [text];
-  let best: string[] | null = null;
+  let best: string[] | null = null, bestCuts = true;
   for (let i = 1; i < words.length; i++) {
     const a = words.slice(0, i).join(" "), b = words.slice(i).join(" ");
     if (a.length > LINE_MAX || b.length > LINE_MAX) continue;
-    if (!best || Math.abs(a.length - b.length) < Math.abs(best[0].length - best[1].length)) best = [a, b];
+    const cuts = !!keep && i > keep[0] && i <= keep[1];
+    const better = !best || (bestCuts && !cuts) || (bestCuts === cuts && Math.abs(a.length - b.length) < Math.abs(best[0].length - best[1].length));
+    if (better) { best = [a, b]; bestCuts = cuts; }
   }
-  return best ?? [text.slice(0, LINE_MAX), text.slice(LINE_MAX)].concat(text.length > LINE_MAX * 2 ? ["…"] : []);
+  // 一个词就超过一行（buildCues 已先拒）：原样一行，不截断、不加省略号
+  return best ?? [text];
 }
 
-/** 把关键词包成 [..]（只标第一次出现，每条最多一个） */
-function markKeyword(lines: string[], keyword: string | undefined): string[] {
-  if (!keyword) return lines;
-  let done = false;
-  return lines.map((l) => {
-    if (done || !l.includes(keyword)) return l;
-    done = true;
-    return l.replace(keyword, `[${keyword}]`);
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 关键词在这组词里的位置（整词、不分大小写，可跨多个词）；没有 = null */
+export function keywordSpan(words: string[], keyword: string | undefined): [number, number] | null {
+  const kw = keyword?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (!kw.length) return null;
+  const re = kw.map((k, j) => new RegExp(`${j === 0 ? "^[^A-Za-z0-9]*" : "^"}${escapeRe(k)}${j === kw.length - 1 ? "(?![A-Za-z0-9])" : "$"}`, "i"));
+  for (let i = 0; i + kw.length <= words.length; i++) {
+    if (re.every((r, j) => r.test(words[i + j]))) return [i, i + kw.length - 1];
+  }
+  return null;
+}
+
+/** 把关键词包成 [..]（整词匹配、只标第一次出现）；跨行时两行各包一半，算同一个关键词 */
+function markKeyword(lines: string[], span: [number, number] | null): string[] {
+  if (!span) return lines;
+  const perLine = lines.map((l) => l.split(" "));
+  let at = 0;
+  return perLine.map((ws) => {
+    const from = at; at += ws.length;
+    const a = Math.max(span[0], from) - from, b = Math.min(span[1], at - 1) - from;
+    if (a > b) return ws.join(" ");
+    const out = [...ws];
+    const lead = out[a].match(/^[^A-Za-z0-9]*/)![0];
+    out[a] = `${lead}[${out[a].slice(lead.length)}`;
+    const m = out[b].match(/^(.*?[A-Za-z0-9])([^A-Za-z0-9]*)$/);
+    out[b] = m ? `${m[1]}]${m[2]}` : `${out[b]}]`;
+    return out.join(" ");
   });
 }
 
@@ -72,12 +95,14 @@ export function buildCues(manifest: DubManifest, script: EnScript): CueResult {
     if (!seg) return { ok: false, error: `配音清单第 ${line.index} 段在批过的脚本里找不到：重新配音` };
     const words = alignApproved(seg.en, line.words);
     if (typeof words === "string") return { ok: false, error: `第 ${line.index} 段字幕对不上：${words}。重新配这一段再出字幕` };
+    const long = words.find((w) => w.word.length > LINE_MAX);
+    if (long) return { ok: false, error: `第 ${line.index} 段有一个词「${long.word}」超过 ${LINE_MAX} 个字符，一行字幕放不下：把这段改短（比如网址改成口头说法）重交脚本、重新批准，不在字幕里截断批过的文字` };
     let keywordLeft = seg.keyword;
     for (const group of chunkWords(words)) {
-      const lines = wrap(group.map((w) => w.word));
-      const marked = markKeyword(lines, keywordLeft);
-      if (marked.join("\n") !== lines.join("\n")) keywordLeft = undefined;
-      cues.push({ start: group[0].startS, end: group.at(-1)!.endS, lines: marked });
+      const ws = group.map((w) => w.word);
+      const span = keywordSpan(ws, keywordLeft);
+      if (span) keywordLeft = undefined;
+      cues.push({ start: group[0].startS, end: group.at(-1)!.endS, lines: markKeyword(wrap(ws, span ?? undefined), span) });
     }
   }
   return { ok: true, cues };

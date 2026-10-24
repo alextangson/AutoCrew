@@ -336,6 +336,8 @@ export interface DerivedFrom {
   /** 派生那一刻源稿审过的成片身份（见 lineage.approvedCutIdentity） */
   sourceCutHash: string;
   at: string;
+  /** 源成片换版后 rebind 过（spec §9.1）：从哪一版换过来、什么时候；逐句对比在派生稿项目的 rebind-diff.json */
+  rebound?: { fromCutHash: string; at: string };
 }
 
 export interface Content {

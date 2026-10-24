@@ -81,9 +81,10 @@ describe("只有勾了的平台才开线（创始人 2026-10-23 增补）", () =
     expect((await listContents(env.dir)).filter((c) => c.derivedFrom)).toHaveLength(0);
   });
 
-  it("旧档案的 twitter 当 X：英文版线开着", async () => {
+  // spec §9.3（创始人 2026-10-24）：旧 twitter 只管图文推，不再打开英文视频线
+  it("旧档案只有 twitter：英文版线不开，要明确勾 X / YouTube", async () => {
     const src = await legacyApproved(1, ["douyin", "twitter"]);
-    expect(await deriveSibling(src.id, "en_edition", env.dir)).toMatchObject({ ok: true, created: true });
+    expect(await deriveSibling(src.id, "en_edition", env.dir)).toMatchObject({ ok: false, code: "line_not_enabled" });
   });
 
   it("之后取消勾选不删已派生的稿；再派生拿回原来那条，新的派生被拒", async () => {

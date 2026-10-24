@@ -1,6 +1,7 @@
 """Run: uv run --project sidecars/captions python -m unittest discover -s sidecars/captions"""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,22 @@ class Validate(unittest.TestCase):
 
     def test_accepts_style_a(self):
         b.validate([{"start": 0, "end": 1.2, "lines": ["Be honest."]}, {"start": 1.3, "end": 4, "lines": ["The harder the task,", "the more you want [max effort]."]}])
+
+    def test_keyword_wrapped_across_the_line_break_counts_once(self):
+        b.validate([{"start": 0, "end": 2, "lines": ["The harder the task, the more you want [max]", "[effort] on it."]}])
+        with self.assertRaises(b.CueError):
+            b.validate([{"start": 0, "end": 2, "lines": ["[a] then", "[b] again"]}])
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe") and os.path.exists(b.DEFAULT_FONT), "ffmpeg / font missing")
+    def test_input_without_audio_fails_with_a_clear_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, cues = os.path.join(tmp, "silent.mp4"), os.path.join(tmp, "c.json")
+            subprocess.check_call(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=320x180:d=1", "-y", src])
+            with open(cues, "w") as f:
+                json.dump({"cues": [{"start": 0, "end": 0.5, "lines": ["hi"]}]}, f)
+            r = subprocess.run([sys.executable, b.__file__, "--cues", cues, "--input", src, "--output", os.path.join(tmp, "o.mp4")], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("no audio stream", r.stdout)
 
     def test_ffmpeg_chain_enables_each_cue_in_its_window(self):
         args = b.ffmpeg_args("in.mp4", "out.mp4", ["a.png", "b.png"], [{"start": 0, "end": 1}, {"start": 1.5, "end": 2}])

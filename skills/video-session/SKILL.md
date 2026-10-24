@@ -76,7 +76,7 @@ Codex 交来封面或成片（它说做完了、或你看到这条稿有了新�
 
 成片在「等你拍板」里审过（approve_cut 成功）后，和封面并行开公众号文章，不等封面：
 
-1. `autocrew_content {action:"wechat_article", content_id:<这条视频>, article:{op:"derive"}}`。回 `line_not_enabled`（没勾公众号）就跳过这一节；`no_approved_cut` / `source_deleted` 把原因照说。重复调用拿回同一篇。
+1. `autocrew_content {action:"wechat_article", content_id:<这条视频>, article:{op:"derive"}}`。回 `line_not_enabled`（没勾公众号）就跳过这一节；`no_approved_cut` / `source_deleted` 把原因照说。重复调用拿回同一篇；回执带 `stale`（源视频成片换版了）就按 `next_action` 走 `op:"rebind"`（草稿留着、给逐句对比、批准撤掉重审），不删稿重派生。
 2. 按回执的 `next_action` 领写作包（`autocrew_writer pack`，带 `content_id`）：底稿自动是成片的登记字幕 + 这条视频的调研台账，用长文包（2500–4000 字）。回执或 `article:{op:"source"}` 的 `note` 说底稿退回了定稿正文，就把原因告诉用户。要补材料走 `autocrew_scout`，新引文先过 verify_quote。写完照常交稿、审稿。
 3. 交稿后 `op:"set_titles"`（3–5 个标题），按编号给用户挑；配图：`op:"generate_images"` 出 `[IMAGE: gen: …]` 图位（失败的那张照原因告诉用户，不换图顶），`[IMAGE: web: …]` 图位用 ego-browser 截官方页面或找官方图，`op:"attach_web_image"{index,path,url,credit}` 登记（只用官方来源和我们自己截的公开页面，没有链接不登记）。
 4. 封面：派 Codex 按 cover-generator 的「公众号文章封面」出一张居中安全的横幅主图，交回后 `op:"set_cover"` 登记一次（2.35:1 与 1:1 从主图裁）。
@@ -87,7 +87,7 @@ Codex 交来封面或成片（它说做完了、或你看到这条稿有了新�
 
 和封面、公众号文章并行，不等它们：
 
-1. `autocrew_content {action:"en_edition", content_id:<这条视频>, edition:{op:"derive"}}`。回 `line_not_enabled` 就跳过这一节；`no_approved_cut` / `source_deleted` 照说原因。重复调用拿回同一条；英文版只出用户勾了的那几个英文平台的包。
+1. `autocrew_content {action:"en_edition", content_id:<这条视频>, edition:{op:"derive"}}`。回 `line_not_enabled` 就跳过这一节；`no_approved_cut` / `source_deleted` 照说原因。重复调用拿回同一条；回执带 `stale` 就走 `edition:{op:"rebind"}`（见[英文版制作做法](references/en-edition-recipe.md)的 rebind 一节）。英文版只出用户明确勾了的 YouTube / X（旧档案里的「推特」只管图文推，不算 X）。
 2. `edition:{op:"source"}` 拿成片字幕的时间槽，写英文脚本：轻本地化（骨架不动，西方观众不认识的例子 / 产品换掉），英文比中文长 5–25%，写紧、守每段时间槽。`op:"set_script"{segments:[{cues:"1-2", en, swaps?, keyword?}]}`：中文原句和时间由字幕给，不能改；每处换例写 `{from, to, reason}`，替换例带事实就 `factual:true` 并先 `op:"verify_quote"{url, quote}` 拿 `evidence_id` 填上，不编事实；每段最多一个字幕标黄词 `keyword`。
 3. `op:"status"` 看还差什么，齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把中英对照审阅页给用户——他看中文判断。他说没问题再 decide approve_script；之后任何一段改了都要重批。
 4. 缩略图：派 Codex 按 cover-generator 的「英文版 16:9 缩略图」出图，交回后 `op:"set_thumbnail"{path}` 登记。

@@ -56,13 +56,15 @@ export interface ScriptEditPlan {
 /** 正文要变之前：冻结就拒；有认稿就按改稿人定重绑 / 作废 */
 export async function planScriptEdit(
   id: string, dataDir: string | undefined,
-  existing: { status: ContentStatus; platform?: string; body: string },
+  existing: { status: ContentStatus; platform?: string; body: string; derivedFrom?: { kind: string } },
   nextBody: string, editor: Editor,
 ): Promise<ScriptEditPlan> {
   const none: ScriptEditPlan = { rebind: null, status: null };
   if (nextBody === existing.body) return none;
   const doc = await readProductionDoc(id, dataDir);
   if (isFrozen(doc)) throw new ScriptFrozenError();
+  // 派生公众号文章批的是整包（含正文）：不管谁从哪个写口改了正文，批准都失效，退回「等你拍板」重新认（创始人改的也一样）
+  if (existing.derivedFrom?.kind === "wechat_article") return { rebind: null, status: existing.status === "approved" ? "draft_ready" : null };
   if (!doc || !isVideoPlatform(existing.platform)) return none;
   const d = latestScriptDecision(doc);
   if (d?.type !== "script_approval" || d.body_hash !== bodyHash(existing.body)) return none;

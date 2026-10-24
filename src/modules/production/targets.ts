@@ -49,12 +49,13 @@ function planPlatforms(record: PublishRecord | null): PlatformPublication[] {
  * 视频稿的平台标签。active = 按本体走：状态只认本轮回执槽（计划只给平台清单与「未发 / 读不到」）；
  * 未启用（影子 / 被排除）按发布计划给状态，动作留空（走旧流转）。
  */
-export function publishTargets(content: Pick<Content, "platform">, doc: ProductionDoc | null, record: PublishRecord | null, active: boolean): PublishTarget[] {
+export function publishTargets(content: Pick<Content, "platform">, doc: ProductionDoc | null, record: PublishRecord | null, active: boolean, picked: readonly string[] = []): PublishTarget[] {
   if (!isVideoPlatform(content.platform)) return [];
   const plan = planPlatforms(record);
   const slots = active && doc ? receiptsOfRound(doc) : { live: [], rejected: [], pending: [] };
   const bySlot = new Map([...slots.live, ...slots.rejected, ...slots.pending].map((s) => [s.platform, s]));
-  const order = [...new Set([...plan.map((p) => canonPlatform(p.platform)), ...bySlot.keys()])];
+  // picked：英文版要发的平台（勾了的 YouTube / X），没进计划也列出来；中文视频不传
+  const order = [...new Set([...plan.map((p) => canonPlatform(p.platform)), ...bySlot.keys(), ...picked.map(canonPlatform)])];
   if (!order.length) order.push(canonPlatform(content.platform!));
   return order.map((platform) => {
     const slot = bySlot.get(platform);

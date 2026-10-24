@@ -282,7 +282,7 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
     profile.audiencePersona = normalizeAudiencePersona(profile.audiencePersona);
     profile.writingRules = normalizeRules(profile.writingRules ?? []);
     profile.revision ??= 0; // 读出来的档案总带 revision，整份保存时据此做 CAS
-    profile.platforms = normalizeProfilePlatforms(profile.platforms); // 旧 twitter → x（platform-lines）
+    profile.platforms = normalizeProfilePlatforms(profile.platforms); // 去重、字符串化数组（platform-lines）
     return profile;
   } catch {
     return null;

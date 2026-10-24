@@ -8,6 +8,7 @@ import { firstPublishTime, readPublishRecord, type PublishRecord } from "../../s
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { PublishEvidence } from "./derive.js";
 import { explain, type Explanation } from "./explain.js";
+import { withEnNeeds } from "../en-edition/en-explain.js";
 
 const STATE_BADGE: Record<string, string> = {
   scheduled: "已定时", overdue: "应已公开", public: "已公开", reviewing: "审核中", manual: "你标了已发布", unknown: "已投出",
@@ -54,7 +55,9 @@ export async function explainContent(content: Content, dataDir: string, ctx?: Ex
   const active = c.enabled && !excluded;
   // 按本体走的稿只认本轮回执（§6）；影子 / 旧行为照旧读发布记录给旧列
   const publish = active && isVideoPlatform(content.platform) ? { verified: false } : await publishEvidenceOf(content, dataDir, record, doc?.round_started_at);
-  const exp = explain({ content, doc, enabled: active, publish });
+  const raw = explain({ content, doc, enabled: active, publish });
+  // 英文版按自己的需要（缩略图 + 英文发布包）说还差什么，不按中文封面对
+  const exp = active ? await withEnNeeds(content, raw, dataDir) : raw;
   // 启用时被排除的稿：照旧行为，卡片上标出来（从不静默跳过）
   const alerts = [...exp.alerts, ...(excluded ? ["未纳入本体（启用时对账失败，已排除）"] : []), ...(error ? [`制作记录读不了：${error}`] : [])];
   return { ...exp, alerts, ...(error ? { error } : {}) };

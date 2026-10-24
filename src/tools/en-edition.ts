@@ -17,19 +17,24 @@ import { readEnScript, scriptBody, scriptHash, segmentBudget, withEnLock, writeE
 import { enApprovalText, enReviewState, isEnEdition, renderEnReviewPage } from "../modules/en-edition/review.js";
 import { captionsOp, chaptersOp, dubOp, mediaStatus, packageStatusOp, thumbnailOp } from "./en-edition-media.js";
 import { enFinalCheck } from "../modules/en-edition/publish-out.js";
+import { rebindEnEditionLocked } from "../modules/en-edition/rebind.js";
+import { staleReason } from "../modules/lineage/lineage.js";
 
 type Result = Record<string, unknown>;
-const OPS = ["derive", "source", "set_script", "verify_quote", "status", "dub", "captions", "chapters", "set_thumbnail", "package_status", "final_check"] as const;
+const OPS = ["derive", "rebind", "source", "set_script", "verify_quote", "status", "dub", "captions", "chapters", "set_thumbnail", "package_status", "final_check"] as const;
 type Op = (typeof OPS)[number];
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 const str = (v: unknown) => (typeof v === "string" ? v.trim().replace(/^"+|"+$/g, "").trim() : "");
 
 export const EN_EDITION_ACTION_DOC =
-  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / captions / chapters / set_thumbnail{path} / package_status（英文发布包审阅页） / final_check{platform}（点安排 / 发帖前必调）";
+  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / rebind（源视频成片换版后绑到新成片：没变的段留着、变了的标出来，批准撤掉重审） / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / captions / chapters / set_thumbnail{path} / package_status（英文发布包审阅页） / final_check{platform}（点安排 / 发帖前必调）";
 
 async function derive(params: Result, dataDir: string): Promise<Result> {
   const r = await deriveSibling(str(params.content_id ?? params.id), "en_edition", dataDir);
   if (!r.ok) return { ok: false, code: r.code, error: r.error };
+  // 已有的那条是按旧成片做的：不另建，指路 rebind
+  const stale = r.created ? null : await staleReason(r.content, dataDir);
+  if (stale) return { ok: true, created: false, content_id: r.content.id, title: r.content.title, platform: r.content.platform, stale, next_action: { tool: "autocrew_content", params: { action: "en_edition", content_id: r.content.id, edition: { op: "rebind" } } } };
   return {
     ok: true, created: r.created, content_id: r.content.id, title: r.content.title, platform: r.content.platform,
     next_action: { tool: "autocrew_content", params: { action: "en_edition", content_id: r.content.id, edition: { op: "source" } }, message: "读成片字幕的时间槽，按 §3.3 写逐段英文（轻本地化、每段守时间预算），再 set_script" },
@@ -52,6 +57,10 @@ async function setScript(id: string, params: Result, dataDir: string): Promise<R
   if (typeof segments === "string") return fail("invalid_params", segments);
   const prev = await readEnScript(id, dataDir);
   const script = { sourceCutHash: c.derivedFrom!.sourceCutHash, segments, ...(prev?.approval ? { approval: prev.approval } : {}) };
+  // 原样重交（重试 / 双击）：什么都不动，批准照旧
+  if (prev && scriptHash(prev) === scriptHash(script) && scriptBody(script) === c.body) {
+    return { ok: true, unchanged: true, segments: segments.length, script_hash: scriptHash(script), note: "脚本和现在这份一模一样：没有改动，批准和状态都不动" };
+  }
   // 剪辑中正文冻结：先判，冻结时脚本和正文都不动（不留下脚本改了、正文没改的半截）
   if (scriptBody(script) !== c.body && isFrozen(await readProductionDoc(id, dataDir))) return fail("script_frozen", new ScriptFrozenError().message);
   // 先改正文（会被拒的写口在前），成功了再落脚本；英文脚本是模型把审过的中文成片改写成英文：来源按改写源视频记
@@ -120,6 +129,7 @@ export async function executeEnEdition(raw: Result): Promise<Result> {
   if (op === "chapters") return chaptersOp(c.id, dataDir);
   if (op === "package_status") return packageStatusOp(c.id, dataDir);
   if (op === "final_check") return enFinalCheck(c.id, str(params.platform), dataDir);
+  if (op === "rebind") return rebindEnEditionLocked(c.id, dataDir);
   return withEnLock(c.id, () => mutate(op, c.id, params, dataDir));
 }
 

@@ -33,6 +33,7 @@ import {
   type SubmitPayload,
 } from "../modules/writing/script-payload.js";
 import { submitDepsFor } from "../modules/writing/generate-script.js";
+import { seedLedgerFromSourceTranscript } from "../modules/wechat-article/transcript-evidence.js";
 import { restoreEvidenceLedger, type EvidenceLedger } from "../modules/research/evidence-ledger.js";
 import {
   getContent,
@@ -394,6 +395,8 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
 
   // 三道门：与内部写手**同一份代码、同一本账、同一组开关**（G4）
   const ledger = restoreEvidenceLedger(pack.ledger, pack.ledgerBudget);
+  // 派生公众号文章：底稿（源视频审过的成片字幕）里逐字有的数字算有出处，记成「成片字幕原句」
+  await seedLedgerFromSourceTranscript(content, ledger, dataDir);
   const { failures, needsHumanNumbers } = runAllGates(payload, packGate(pack), submitDepsFor(ledger));
   const gates: GateOutcome = { payload, failures, needsHuman: needsHumanNumbers, ledger };
   const hard = failures.filter((f) => HARD_GATE_CHECKS.has(f.check));

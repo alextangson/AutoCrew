@@ -42,6 +42,8 @@ export interface Segment {
   swaps: Swap[];
   /** 字幕里标黄的那一个词组（必须出现在 en 里）；每段最多一个 */
   keyword?: string;
+  /** 源成片换版后 rebind 标的：这段对应的中文变了 / 是新的一段（人话）；宿主按新中文重写、重交 set_script 后就没有了 */
+  changed?: string;
 }
 
 export interface EnScript {
@@ -100,6 +102,7 @@ export function scriptProblems(script: EnScript, evidence: ReadonlySet<string>):
   if (!script.segments.length) out.push("脚本是空的：先 set_script");
   for (const s of script.segments) {
     const at = `第 ${s.index} 段`;
+    if (s.changed) out.push(`${at}${s.changed}：按新中文核一遍英文，重交 set_script（没改的段原样交）`);
     if (!s.en.trim()) out.push(`${at}没有英文`);
     if (/[一-鿿]/.test(s.en)) out.push(`${at}英文里夹着中文：配音会念错，改成英文`);
     if (s.keyword && !s.en.includes(s.keyword)) out.push(`${at}的标黄词「${s.keyword}」不在英文里`);
@@ -115,7 +118,11 @@ export function scriptProblems(script: EnScript, evidence: ReadonlySet<string>):
 
 const locks = new Map<string, Promise<unknown>>();
 
-/** 同一条英文版的脚本改动、配音与批准排队执行：批的那一刻脚本不会被另一个调用改掉 */
+/**
+ * 同一条英文版的脚本改动、配音与批准排队执行：批的那一刻脚本不会被另一个调用改掉。
+ * 锁顺序（全库固定，见 storage/file-ownership.ts）：文件归属事务 → 英文版锁 / 公众号文章锁 → 稿件写锁。
+ * 要在锁里做文件归属事务（重开一轮、record）的，先拿文件归属再拿这把锁，绝不反过来（反过来和「等你拍板」的认稿互相等死）。
+ */
 export function withEnLock<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(contentId) ?? Promise.resolve();
   const run = prev.catch(() => undefined).then(fn);
