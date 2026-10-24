@@ -79,9 +79,9 @@ Codex 交来封面或成片（它说做完了、或你看到这条稿有了新�
 1. `autocrew_content {action:"wechat_article", content_id:<这条视频>, article:{op:"derive"}}`。回 `line_not_enabled`（没勾公众号）就跳过这一节；`no_approved_cut` / `source_deleted` 把原因照说。重复调用拿回同一篇。
 2. 按回执的 `next_action` 领写作包（`autocrew_writer pack`，带 `content_id`）：底稿自动是成片的登记字幕 + 这条视频的调研台账，用长文包（2500–4000 字）。回执或 `article:{op:"source"}` 的 `note` 说底稿退回了定稿正文，就把原因告诉用户。要补材料走 `autocrew_scout`，新引文先过 verify_quote。写完照常交稿、审稿。
 3. 交稿后 `op:"set_titles"`（3–5 个标题），按编号给用户挑；配图：`op:"generate_images"` 出 `[IMAGE: gen: …]` 图位（失败的那张照原因告诉用户，不换图顶），`[IMAGE: web: …]` 图位用 ego-browser 截官方页面或找官方图，`op:"attach_web_image"{index,path,url,credit}` 登记（只用官方来源和我们自己截的公开页面，没有链接不登记）。
-4. 封面：派 Codex 按 cover-generator 的「公众号文章封面」出 2.35:1 + 1:1，交回后 `op:"set_cover"` 各登记一次。
+4. 封面：派 Codex 按 cover-generator 的「公众号文章封面」出一张居中安全的横幅主图，交回后 `op:"set_cover"` 登记一次（2.35:1 与 1:1 从主图裁）。
 5. 用户的原话才能定的三样：选标题 `op:"choose_title"{index,founder_quote}`；创作来源 `op:"set_creation_source"{creation_source,founder_quote}`（有生成图时建议「内容由AI生成」，绝不替他选「无需声明」）；篇幅不在 2500–4000 时他说可以才 `op:"override_length"{founder_quote}`。
-6. `op:"status"` 看还差什么；齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把图文审阅页（preview.pages）给用户看，他说没问题再 decide approve_script——批的是整包，之后正文、标题、图、封面、创作来源任何一样变了都要重批。草稿箱推送、定时群发、视频号卡片、声明勾选是下一步（Phase 2b），这里不做。
+6. `op:"status"` 看还差什么；齐了 `autocrew_review_inbox list{item_id:<认稿那件>}` 把图文审阅页（preview.pages）给用户看，他说没问题再 decide approve_script——批的是整包，之后正文、标题、图、封面、创作来源任何一样变了都要重批。批过之后的发布（推草稿箱、创作来源、视频号卡片、定时群发、停在二维码交创始人扫码）按 publish-content 的 [公众号文章手册](../publish-content/references/wechat-mp.md) 走，状态用 `op:"publish_status"` 看。
 
 撤回只凭用户一句话：由当前持有认领的会话携带有效令牌调 `autocrew_video {action:"revoke", content_id, claim_token}`。状态回 `draft_ready`，这一代永久作废；之后改稿、重录、重交都是新一代。
 
