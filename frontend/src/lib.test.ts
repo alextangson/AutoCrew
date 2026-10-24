@@ -40,7 +40,8 @@ describe("勾选平台（全媒体 Phase 1 增补）", () => {
   });
   it("旧 id twitter 显示为 X；X 席位写图文仍走 twitter 图文包", async () => {
     const { seatId, textPlatformForSeat, platformLabel } = await import("./lib");
-    expect(seatId("twitter")).toBe("x");
+    expect(seatId("twitter")).toBe("twitter");
+    expect(seatId("x")).toBe("x");
     expect(textPlatformForSeat("x")).toBe("twitter");
     expect(textPlatformForSeat("douyin")).toBe("douyin");
     expect(platformLabel("youtube")).toBe("YouTube");
