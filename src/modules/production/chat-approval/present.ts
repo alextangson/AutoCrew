@@ -13,6 +13,7 @@ import { factPath } from "./files.js";
 import { placePreview, sweepPreview, type PreviewFile } from "./preview.js";
 import { askAttachments } from "./ask-view.js";
 import { articleDraftView } from "./article-view.js";
+import { enDraftView, enPackageView } from "./en-view.js";
 import { publishView } from "./publish-view.js";
 import { chatDecidable, chatItem } from "./view.js";
 import { ruleBrief } from "./rule-decide.js";
@@ -60,7 +61,7 @@ async function present(item: InboxItem, n: number | string | null, dataDir: stri
   }
   const doc = await readProductionDocOrEmpty(item.content_id!, dataDir);
   const sel = input.item_id === item.item_id ? input : {};
-  const article = await articleDraftView(item, dataDir, input.item_id === item.item_id);
+  const article = (await articleDraftView(item, dataDir, input.item_id === item.item_id)) ?? (await enDraftView(item, dataDir, input.item_id === item.item_id)) ?? (await enPackageView(item, dataDir, input.item_id === item.item_id));
   const brief = [await briefOf(item, doc, dataDir, sel), ...(article?.lines ?? [])].join("\n");
   const shown = item.type === "cover_pick" ? { group_id: pickedGroup(item, sel.group_id)?.group_id }
     : item.type === "cut_review" ? { fact_id: pickedVersion(item, sel.fact_id)?.fact_id } : {};
@@ -83,7 +84,7 @@ const NEXT = [
   "写作规则（writing_rule）：他说哪几条要就 approve_rule，不要就 reject_rule，替换就 replace_rule 带 target_rule_id；只说「你定 / 都行」不算，问他要哪条。",
   "体裁手册改动（playbook_change）：brief 里的改前改后原样给他看；他说批就 approve_playbook，不要就 reject_playbook；只说「你定 / 都行」不算，问他。回 stale 说明手册之后改过，这份作废。",
   "改稿意见升级（writing_promotion）：brief 原样给他看；批 = approve_promotion（范文出新版本；写法出补丁，显示「已批，等发布」），不要 = reject_promotion；只说「你定 / 都行」不算。",
-  "认稿（draft）：brief 里是稿子全文，原样贴给他，别缩写；他说没问题就 approve_script，要改就 revise_script 带 note。waiting_behind 有值时说清成片 / 封面在等这份稿。由视频派生的公众号文章：把 preview.pages 里的图文审阅页给他，brief 里「还不能批」的项先补齐（标题、创作来源、篇幅放行都要他的原话，用 autocrew_content wechat_article 记），齐了他说没问题才 approve_script——批的是整包。",
+  "认稿（draft）：brief 里是稿子全文，原样贴给他，别缩写；他说没问题就 approve_script，要改就 revise_script 带 note。waiting_behind 有值时说清成片 / 封面在等这份稿。由视频派生的公众号文章：把 preview.pages 里的图文审阅页给他，brief 里「还不能批」的项先补齐（标题、创作来源、篇幅放行都要他的原话，用 autocrew_content wechat_article 记），齐了他说没问题才 approve_script——批的是整包。英文版（YouTube / X）同理：把中英对照审阅页给他，他看中文判断，「还不能批」先补齐（换例缺出处就 verify_quote），批的是整份双语脚本。英文发布包（en_package）：把审阅页给他（缩略图、各平台文案、章节、成片），他说没问题就 approve_en_package，要改就 revise_en_package 带 note；detail.reopened 有值时先说清是批过之后哪儿变了。",
   "画面闪帧（sliver）：brief 原样转述。他说「不查了」= waive_sliver_check（只在 decisions 里有时）；「第 N 处是故意的」= waive_sliver 带 facts.points 里第 N 处的 sliver_key；「都是故意的」= 对 points 里每一处各 decide 一次 waive_sliver（同一句原话、各自的 request_id）；「去改：……」= reject_cut 带 note。",
   "他一句话同时管闪帧和成片（比如「不查了，用」）：先 decide 闪帧那件，再 list 一次拿成片那件新的 gen，用同一句原话 decide approve_cut。",
   "他想看更早的一组 / 一版：list{item_id, group_id 或 fact_id, preview_dir} 只放那一个。chat_decidable:false 的给 board_link。",

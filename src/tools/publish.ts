@@ -18,6 +18,7 @@ import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/c
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { kitPlatformsFor } from "../modules/publish/platform-caps.js";
 import { derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
+import { enClipboard, prepareEnPublish } from "../modules/en-edition/publish-out.js";
 import { isDerivedArticleId, pushApprovedArticle } from "../modules/wechat-article/push.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
@@ -130,6 +131,13 @@ export async function executePublish(
     const derived = await derivedPublishRefusalById(params.content_id, dataDir);
     if (derived) return { ok: false, ...derived };
     // 派生公众号文章只按批过的整包推草稿箱（Phase 2b）：不出复制件、不走视频平台的浏览器包
+    // 英文版（Phase 3 方案 (b)）：浏览器上传件只按批过的英文发布包出，不走中文登记
+    if (typeof params.content_id === "string" && (await getContent(params.content_id, dataDir))?.derivedFrom?.kind === "en_edition") {
+      if (action === "ego_lite_prepare") return prepareEnPublish(params.content_id, dataDir);
+      // 复制件也只给批过的包里的平台、用包里的文案（不退回脚本正文，不借小红书的排版）
+      if (action === "clipboard") return enClipboard(params.content_id, typeof params.platform === "string" ? params.platform.trim() : "", dataDir);
+      return { ok: false, code: "not_for_en_edition", error: "英文版只发 YouTube / X：用 ego_lite_prepare 或 clipboard" };
+    }
     if (action !== "wechat_mp_draft" && await isDerivedArticleId(params.content_id, dataDir)) {
       return { ok: false, code: "derived_article_api_only", error: "派生公众号文章只按批过的整包推草稿箱：用 autocrew_content wechat_article {op:\"push_draft\"}，不出复制粘贴件" };
     }
@@ -161,6 +169,8 @@ export async function executePublish(
     const asked = typeof params.platform === "string" ? params.platform.trim() : "";
     const sameLanguage = VIDEO_PLATFORMS.has(content.platform ?? "") && (kitPlatformsFor(content.platform) as string[]).includes(asked);
     const platform = (sameLanguage ? asked : content.platform || "xiaohongshu") as ClipboardPlatform;
+    // 英文平台的复制件只按英文发布包出（上面已分流）；走到这里说明不是英文版，不借小红书的排版顶上
+    if ((platform as string) === "x" || (platform as string) === "youtube") return { ok: false, code: "en_package_only", error: "YouTube / X 的复制件只按批过的英文发布包出" };
     const hashtags = (params.hashtags as string[] | undefined) || content.hashtags || [];
     // V5.4b:视频平台有发布件 → 发的是发布件(平台标题+发布文案,已含标签),不是口播稿截断
     const kit = VIDEO_PLATFORMS.has(platform) ? videoKitFor(content, platform) : undefined;

@@ -179,7 +179,8 @@
        "ask",
        "answer_ask",
        "withdraw_ask",
-       "wechat_article"
+       "wechat_article",
+       "en_edition"
       ],
       "type": "string"
      },
@@ -220,6 +221,7 @@
      "distinct_video": {
       "type": "boolean"
      },
+     "edition": {},
      "fact_id": {
       "type": "string"
      },
@@ -1427,7 +1429,9 @@
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
-       "revise_script"
+       "revise_script",
+       "approve_en_package",
+       "revise_en_package"
       ],
       "type": "string"
      },
@@ -2541,6 +2545,7 @@
        "caption": {
         "type": "string"
        },
+       "chapters": {},
        "cover_text": {
         "type": "string"
        },
@@ -2550,9 +2555,13 @@
         },
         "type": "array"
        },
+       "post_text": {
+        "type": "string"
+       },
        "post_title": {
         "type": "string"
        },
+       "tags": {},
        "title_candidates": {
         "items": {},
         "type": "array"
@@ -2561,11 +2570,6 @@
         "type": "string"
        }
       },
-      "required": [
-       "post_title",
-       "caption",
-       "cover_text"
-      ],
       "type": "object"
      },
      "platform": {
@@ -3198,7 +3202,8 @@
        "ask",
        "answer_ask",
        "withdraw_ask",
-       "wechat_article"
+       "wechat_article",
+       "en_edition"
       ],
       "type": "string"
      },
@@ -3239,6 +3244,7 @@
      "distinct_video": {
       "type": "boolean"
      },
+     "edition": {},
      "fact_id": {
       "type": "string"
      },
@@ -4446,7 +4452,9 @@
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
-       "revise_script"
+       "revise_script",
+       "approve_en_package",
+       "revise_en_package"
       ],
       "type": "string"
      },
@@ -5428,6 +5436,7 @@
        "caption": {
         "type": "string"
        },
+       "chapters": {},
        "cover_text": {
         "type": "string"
        },
@@ -5437,9 +5446,13 @@
         },
         "type": "array"
        },
+       "post_text": {
+        "type": "string"
+       },
        "post_title": {
         "type": "string"
        },
+       "tags": {},
        "title_candidates": {
         "items": {},
         "type": "array"
@@ -5448,11 +5461,6 @@
         "type": "string"
        }
       },
-      "required": [
-       "post_title",
-       "caption",
-       "cover_text"
-      ],
       "type": "object"
      },
      "platform": {

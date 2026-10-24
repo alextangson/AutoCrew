@@ -1,0 +1,10 @@
+[project]
+name = "autocrew-captions"
+version = "0.1.0"
+description = "AutoCrew English caption burner (style A, Pillow + ffmpeg overlay; full-media spec §3.3)"
+requires-python = ">=3.10"
+dependencies = ["pillow>=10.0"]
+
+[tool.uv]
+# 一组依赖 + 一个脚本，不是要安装的库：uv run 直接进 venv 跑 burn_captions.py
+package = false

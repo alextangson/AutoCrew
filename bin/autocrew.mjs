@@ -692,6 +692,11 @@ switch (command) {
     const egoResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "ego-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
     try { ego = JSON.parse((egoResult.stdout || "").trim().split("\n").pop() || "{}"); } catch {}
 
+    // 英文版（YouTube / X，全媒体 Phase 3）：ElevenLabs 密钥 / 声音 id、字幕烧录脚本与字体；密钥值不打印。可选项，不影响退出码
+    let en = { elevenLabsKey: false, voiceId: false, captionScript: false, captionFont: false, hints: ["英文版检查脚本没跑成"] };
+    const enResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "en-edition-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { en = JSON.parse((enResult.stdout || "").trim().split("\n").pop() || "{}"); } catch {}
+
     // 宿主接没接（与 autocrew connect --list 同一套检测，不花额度）；查不了就如实写「查不了」
     let hosts = [];
     let hostsError = "";
@@ -733,6 +738,10 @@ switch (command) {
       egoLiteReachable: ego.reachable === true,
       codexReview: codexReview.loggedIn,
       ytDlp: ytdlpVersion,
+      elevenLabsKey: en.elevenLabsKey === true,
+      elevenLabsVoiceId: en.voiceId === true,
+      enCaptionScript: en.captionScript === true,
+      enCaptionFont: en.captionFont === true,
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -761,6 +770,7 @@ switch (command) {
         : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")
       + (ego.reachable ? "" : `\n  → 数据自动回流需要 ego lite：${ego.reason}。${ego.fix}`)
       + (codexReview.loggedIn ? "" : codexReview.installed ? "\n  → 抖音口播初稿的 Codex 审稿需要登录：在终端跑 codex login（不登录也能写稿定稿，只是没有审稿意见）" : "\n  → 抖音口播初稿的 Codex 审稿需要 Codex CLI：npm i -g @openai/codex 后 codex login（不装也能写稿定稿）")
+      + (en.hints ?? []).map((h) => `\n  → ${h}`).join("")
       + (ytdlpVersion ? "" : "\n  → （可选）抓对标视频做拆解要 yt-dlp：brew install yt-dlp（不装照样写稿）")
       + (checks.asrModelReady
         ? ""

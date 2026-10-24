@@ -33,7 +33,9 @@ import { executeReview } from "./review.js";
 import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, videoTitleLimit } from "../modules/publish/video-kit.js";
-import { capsOf, countTitleChars, titleCountNote } from "../modules/publish/platform-caps.js";
+import { capsOf, countTitleChars, languageOf, titleCountNote, type PlatformId } from "../modules/publish/platform-caps.js";
+import { validateEnKit } from "../modules/publish/en-kit.js";
+import { enKitContext, enKitStaleRefusal } from "../modules/en-edition/kit-context.js";
 import { derivedPublishRefusal, derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
 import { allowedKitPlatforms } from "../modules/profile/platform-lines.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
@@ -101,9 +103,12 @@ export const prePublishSchema = Type.Object({
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id；check、video_kit 必填，title_methods 不需要。" })),
   platform: Type.Optional(Type.String({ description: "video_kit 必填：要发的视频平台。同一条视频发多平台共用一条稿，每个平台各交一份包、各跑一次 check（check 不带时按稿件平台）；文字稿只能是稿件平台。" })),
   kit: Type.Optional(Type.Object({
-    post_title: Type.String({ description: "平台发布标题，独立于口播稿标题，按平台习惯重拟、自带钩子。" }),
-    caption: Type.String({ description: "平台发布简介，可直接粘贴；是让刷到的人停下的文案，不是口播稿摘要。" }),
-    cover_text: Type.String({ description: "封面大字。" }),
+    post_title: Type.Optional(Type.String({ description: "平台发布标题（中文平台、youtube），独立于口播稿标题，按平台习惯重拟、自带钩子。" })),
+    caption: Type.Optional(Type.String({ description: "平台发布简介 / youtube 描述，可直接粘贴；不是口播稿摘要。" })),
+    cover_text: Type.Optional(Type.String({ description: "封面大字（中文平台）。" })),
+    post_text: Type.Optional(Type.String({ description: "x：帖子正文。" })),
+    tags: Type.Optional(Type.Unknown({ description: "youtube：英文 tags 数组。" })),
+    chapters: Type.Optional(Type.Unknown({ description: "youtube：[{at:\"0:00\", title}]。" })),
     hashtags: Type.Optional(Type.Array(Type.String(), {
       description: "话题标签（不带空格）。caption 里还没有的会并到 caption 末尾，字数按合并后的简介算。",
     })),
@@ -111,7 +116,7 @@ export const prePublishSchema = Type.Object({
       description: "3 个四平台通用标题候选 [{title, method, reason}]，分属方法库 3 个不同类（方法库见 action=title_methods）。",
     })),
     title_method: Type.Optional(Type.String({ description: `本平台 post_title 用的方法 id；创始人自己写的填「${SELF_WRITTEN}」。` })),
-  }, { description: `video_kit 必填。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
+  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
   claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（pack 或 autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
 });
 
@@ -281,14 +286,20 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
       next_action: { tool: "autocrew_content", params: { action: "get", id: contentId }, message: "只看 content 状态与 video.final 判断成片是否登记；未登记就继续等，不出发布包。" },
     };
   }
-  const { failures, fields, title } = validateKit(params.kit, platform, await activeTitleMethods(dataDir));
+  // 英文平台（youtube / x）按自己的 kitFields 校验（Phase 3）；中文四平台照旧
+  const enPre = languageOf(platform) === "en" ? await enKitContext(contentId, getDataDir(dataDir)) : null;
+  if (enPre && "no" in enPre) return enPre.no;
+  const en = enPre ? validateEnKit(params.kit, platform as PlatformId, enPre.ctx) : null;
+  const { failures, fields, title } = en
+    ? { ...en, title: null }
+    : validateKit(params.kit, platform, await activeTitleMethods(dataDir));
   if (failures.length > 0) {
     return { ok: false, code: "kit_invalid", error: `发布包有 ${failures.length} 处要改：按 failures 逐条改完整包重交`, failures };
   }
   const gate = await gatePublishWrite(params, contentId, dataDir);
   if ("denied" in gate) return gate.denied;
   const kit: VideoKit = {
-    platform, ...fields, titleMethod: title.method, titleCandidates: title.candidates, storyboard: [], coverPrompt: "",
+    platform, coverText: "", ...fields, ...(title ? { titleMethod: title.method, titleCandidates: title.candidates } : {}), ...(enPre ? enPre.binding : {}), storyboard: [], coverPrompt: "",
     generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content), ...kitRegisterHash(content),
   };
   // 指纹与落盘同锁核对：读稿到写包之间稿件被改，就不能把旧稿的指纹钉到新稿上
@@ -316,7 +327,7 @@ export async function executePrePublishTool(params: Record<string, unknown>): Pr
   if (history) return history;
   if (params.action === "title_methods") return titleMethodsAction(params);
   if (params.action === "video_kit") {
-    const derived = await derivedPublishRefusalById(params.content_id, getDataDir((params._dataDir as string) || undefined));
+    const derived = await derivedPublishRefusalById(params.content_id, getDataDir((params._dataDir as string) || undefined), { exit: "kit" });
     if (derived) return { ok: false, ...derived };
   }
   return params.action === "video_kit" ? saveHostVideoKit(params) : executePrePublish(params);
@@ -346,8 +357,11 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   const ontologyGated = params._ontologyGated === true && coverRequired(platform) && (await ontologyApplies(content, getDataDir(dataDir)));
   const stale = ontologyGated ? null : staleKit(content, platform);
   if (stale) return stale;
+  const enStale = await enKitStaleRefusal(content, platform, getDataDir(dataDir));
+  if (enStale) return enStale;
   const surface = publishSurface(content, platform);
   const checks: CheckItem[] = [];
+  const enEdition = content.derivedFrom?.kind === "en_edition";
 
   // --- Check 1: Content review ---
   try {
@@ -385,8 +399,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   // --- Check 2: Cover review (all video platforms) ---
   // 启用本体的稿出包（_ontologyGated，只由 ToolRunner 内部带）：封面由登记记录 + 发布前把关（槽位 / 登记那一对）核，旧封面审核不再适用
-  if (ontologyGated) {
-    checks.push({ name: "封面审核", status: "skip", detail: "本体稿：封面由登记记录与发布前把关核对" });
+  if (ontologyGated || enEdition) {
+    checks.push({ name: "封面审核", status: "skip", detail: enEdition ? "英文版：16:9 缩略图随英文发布包一起批" : "本体稿：封面由登记记录与发布前把关核对" });
   } else if (coverRequired(platform)) {
     const coverReview = await getCoverReview(contentId, dataDir);
     if (coverReview && (coverReview.status === "approved" || coverReview.status === "publish_ready") && coverReview.approvedLabel) {
@@ -421,7 +435,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   checks.push(ontologyGated ? byPlan("正文字数") : lengthCheck(surface, platform));
 
   // --- Check 6b: 发布出口（本体 §5）：按本体走的视频稿只发当前有效登记记录里的成片与封面 ---
-  const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
+  // 英文版（方案 (b)）：发布出口是批过的英文发布包（上面 derivedPublishRefusal 已核），不走中文登记
+  if (enEdition) checks.push({ name: "英文发布包（发布出口）", status: "pass", detail: "发批过的英文发布包里的成片、缩略图和文案" });
+  const gated = isVideoPlatform(platform) && !enEdition ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
   if (gated) checks.push(gated.ok
     ? { name: "登记（发布出口）", status: "pass", detail: `发当前登记的成片与封面（${gated.files.registration.id}）` }
     : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在对话里调 autocrew_review_inbox list，把缺的批准给创始人定；批准齐了登记会自动完成" });
@@ -437,7 +453,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // 真要推进才过令牌门（P6 §3.8）：推进是写，只读的预检谁都能跑
   const current = normalizeLegacyStatus(content.status);
   let grant: { claim_token?: string } = {};
-  if (checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
+  // 英文版的「能不能发」只看英文发布包批准，不推中文的阶段状态
+  if (!enEdition && checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
     const gate = params._readOnly === true ? null : await gatePublishWrite(params, contentId, dataDir);
     if (gate && "denied" in gate) return gate.denied;
     grant = gate?.grant ?? {};

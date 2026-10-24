@@ -10,6 +10,9 @@
 import { isDerivedArticle } from "../wechat-article/review.js";
 import { articleApproveGate, recordArticleApproval } from "../wechat-article/approve.js";
 import { withArticleLock } from "../wechat-article/package.js";
+import { enScriptApproveGate, isEnEdition, recordEnScriptApproval } from "../en-edition/review.js";
+import { withEnLock } from "../en-edition/script.js";
+import { approveEnPackage, reviseEnPackage } from "../en-edition/package.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { provenanceFields } from "./decision-provenance.js";
@@ -147,19 +150,22 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
   }
   // 由视频派生的公众号文章：批的是给他看的那一整包（Phase 2a）；核包、认稿、记批准在同一把锁里，中间改不了包
   if (isDerivedArticle(c)) return withArticleLock(c.id, () => approveScript(ctx, String(ctx.item.detail.package_hash ?? "")));
+  // 英文版：批的是给他看的那份双语脚本（Phase 3），同样在锁里核、批、记
+  if (isEnEdition(c)) return withEnLock(c.id, () => approveScript(ctx, String(ctx.item.detail.package_hash ?? ""), "en"));
   return approveScript(ctx, null);
 }
 
-async function approveScript(ctx: Ctx, expectedPackage: string | null): Promise<Result> {
+async function approveScript(ctx: Ctx, expectedPackage: string | null, kind: "article" | "en" = "article"): Promise<Result> {
   const c = ctx.content!;
-  const article = expectedPackage !== null ? await articleApproveGate(c.id, ctx.dataDir, expectedPackage || undefined) : null;
+  const gate = kind === "en" ? enScriptApproveGate : articleApproveGate;
+  const article = expectedPackage !== null ? await gate(c.id, ctx.dataDir, expectedPackage || undefined) : null;
   if (article && !article.ok) return fail(article.code, article.error);
   // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
   // 页面交来的是它屏幕上那份正文的哈希（整分支审 5 P1）；没带就用代次对上那一刻读到的正文
   const shown = str(ctx.params.expected_body_hash);
   const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: shown || bodyHash(c.body) }) as Result;
   if (!t.ok) return fail("transition_failed", String(t.error ?? "认稿没成"));
-  if (article?.ok) await recordArticleApproval(c.id, article.hash, ctx.dataDir);
+  if (article?.ok) await (kind === "en" ? recordEnScriptApproval : recordArticleApproval)(c.id, article.hash, ctx.dataDir);
   return { ok: true, status: "approved" };
 }
 
@@ -193,6 +199,9 @@ async function run(ctx: Ctx): Promise<Result> {
     }
     case "publish_check_override": return publishOverride(ctx);
     case "approve_script": return scriptDecision(ctx, true);
+    // 英文发布包（Phase 3 方案 (b)）：批的是出示时那一包（detail.package_hash）
+    case "approve_en_package": return withEnLock(c!.id, () => approveEnPackage(c!.id, String(item.detail.package_hash ?? ""), dataDir));
+    case "revise_en_package": return noteOf(ctx) ? withEnLock(c!.id, () => reviseEnPackage(c!.id, noteOf(ctx), dataDir)) : fail("note_required", "写一句要改哪里");
     case "revise_script": return scriptDecision(ctx, false);
     case "reject_cut": {
       const v = chosenVersion();
