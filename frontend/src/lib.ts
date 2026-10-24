@@ -369,9 +369,9 @@ export function kitPlatformsFor(platform: string | null | undefined): string[] {
 /** 有数据回流的中文视频平台，按表顺序（抖音、视频号、小红书、B站）：数据页的固定平台顺序 */
 export const METRIC_VIDEO_ORDER = PLATFORM_IDS.filter((p) => PLATFORM_CAPS[p].kind === "video" && PLATFORM_CAPS[p].language === "zh" && PLATFORM_CAPS[p].metrics !== "unsupported");
 
-/** 档案里的旧 id：twitter 就是 X（后端 platform-lines 同一张映射） */
+/** 档案里的平台 id 原样当席位（spec §9.3：旧的 twitter 只管图文推，不再算勾了 X；要开英文线须明确勾 X / YouTube） */
 export function seatId(p: string): string {
-  return p === "twitter" ? "x" : p;
+  return p;
 }
 
 /** 席位 X 写图文时用的是 twitter 图文包（稿件平台 twitter）；其余席位原样 */
