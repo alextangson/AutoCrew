@@ -127,6 +127,25 @@ describe("staleness（本体：成片批准所绑文件的 sha256）", () => {
     return sha;
   }
 
+  it("旧流程导入的老视频（有成片事实、没审片决定、有 videoDone）按旧标记派生；真审过一次后换成文件指纹", async () => {
+    env = await makeEnv({ enabled: true });
+    await pickPlatforms(["douyin", "wechat_mp"]);
+    const c = await videoContent(env, "深度思考开到 max");
+    await founderApprove(env, c.id);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "深度思考-原片.mov"), "raw"), request_id: "a" });
+    await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "深度思考.mp4"), "cut-v1"), request_id: "c0" });
+    await setContent(env, c.id, { videoDone: { renderedRevision: 1, at: new Date().toISOString() } });
+    const source = (await getContent(c.id, env.dir))!;
+    expect(await approvedCutIdentity(source, env.dir)).toEqual({ id: "legacy-rev:1" });
+    const r = await deriveSibling(c.id, "wechat_article", env.dir);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.content.derivedFrom?.sourceCutHash).toBe("legacy-rev:1");
+
+    const sha = await approveCut(c.id, "深度思考-v2.mp4", "cut-v2", "c2");
+    expect(await approvedCutIdentity((await getContent(c.id, env.dir))!, env.dir)).toEqual({ id: `sha256:${sha}` });
+    expect(await isStale(r.content, env.dir)).toBe(true);
+  });
+
   it("换批新一版成片 → 过期；撤批 → 过期", async () => {
     env = await makeEnv({ enabled: true });
     await pickPlatforms(["douyin", "wechat_mp"]);
