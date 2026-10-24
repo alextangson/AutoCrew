@@ -257,6 +257,10 @@ export interface VideoKit {
   titleMethod?: string;
   /** 交包时的 3 个四平台通用候选（各带方法 id 和理由） */
   titleCandidates?: Array<{ title: string; method: string; reason: string }>;
+  /** 英文平台（Phase 3）：YouTube tags */
+  tags?: string[];
+  /** 英文平台（Phase 3）：YouTube 章节（已并进 caption，这里留结构给发布手册核对） */
+  chapters?: Array<{ at: string; startS: number; title: string }>;
 }
 
 export interface AdoptionRecord {

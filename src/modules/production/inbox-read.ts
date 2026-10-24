@@ -29,6 +29,7 @@ import { paragraphDiff } from "../playbook/diff.js";
 import { promotionItems } from "./chat-approval/promotion-decide.js";
 import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
 import { articleReviewState, isDerivedArticle } from "../wechat-article/review.js";
+import { enReviewState, isEnEdition } from "../en-edition/review.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 import { DELETED_CONTENT, lessonQuestion, mergeKeyOf, wordsLine } from "./lesson-view.js";
 
@@ -86,6 +87,12 @@ async function articlePackageHashOf(id: string, dataDir: string): Promise<string
   return "hash" in s ? s.hash : `unreadable:${s.error}`;
 }
 
+/** 英文版的脚本指纹（认稿那件批的是这份脚本，Phase 3）；读不出同上 */
+async function enScriptHashOf(id: string, dataDir: string): Promise<string> {
+  const s = await enReviewState(id, dataDir).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+  return "hash" in s ? s.hash : `unreadable:${s.error}`;
+}
+
 async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType<typeof explainContext>>): Promise<ContentInput> {
   const video = isVideoPlatform(c.platform);
   const active = video && ctx.enabled && !ctx.excluded.has(c.id);
@@ -101,7 +108,8 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
     if (await arollOwnerElsewhere(dataDir, f.sha256!, c.id).catch(() => null)) ownedElsewhere.add(f.id);
   }
   const handoffCoverText = doc ? await confirmedCoverText(c, dataDir) : "";
-  const articlePackageHash = isDerivedArticle(c) && c.status === "draft_ready" ? await articlePackageHashOf(c.id, dataDir) : undefined;
+  const articlePackageHash = c.status !== "draft_ready" ? undefined
+    : isDerivedArticle(c) ? await articlePackageHashOf(c.id, dataDir) : isEnEdition(c) ? await enScriptHashOf(c.id, dataDir) : undefined;
   return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere,
     ...(handoffCoverText ? { handoffCoverText } : {}), ...(articlePackageHash ? { articlePackageHash } : {}) };
 }

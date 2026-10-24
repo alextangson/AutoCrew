@@ -33,7 +33,9 @@ import { executeReview } from "./review.js";
 import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, videoTitleLimit } from "../modules/publish/video-kit.js";
-import { capsOf, countTitleChars, titleCountNote } from "../modules/publish/platform-caps.js";
+import { capsOf, countTitleChars, languageOf, titleCountNote, type PlatformId } from "../modules/publish/platform-caps.js";
+import { validateEnKit } from "../modules/publish/en-kit.js";
+import { enKitContext } from "../modules/en-edition/kit-context.js";
 import { derivedPublishRefusal, derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
 import { allowedKitPlatforms } from "../modules/profile/platform-lines.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
@@ -281,14 +283,20 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
       next_action: { tool: "autocrew_content", params: { action: "get", id: contentId }, message: "只看 content 状态与 video.final 判断成片是否登记；未登记就继续等，不出发布包。" },
     };
   }
-  const { failures, fields, title } = validateKit(params.kit, platform, await activeTitleMethods(dataDir));
+  // 英文平台（youtube / x）按自己的 kitFields 校验（Phase 3）；中文四平台照旧
+  const en = languageOf(platform) === "en"
+    ? validateEnKit(params.kit, platform as PlatformId, await enKitContext(contentId, getDataDir(dataDir)))
+    : null;
+  const { failures, fields, title } = en
+    ? { ...en, title: null }
+    : validateKit(params.kit, platform, await activeTitleMethods(dataDir));
   if (failures.length > 0) {
     return { ok: false, code: "kit_invalid", error: `发布包有 ${failures.length} 处要改：按 failures 逐条改完整包重交`, failures };
   }
   const gate = await gatePublishWrite(params, contentId, dataDir);
   if ("denied" in gate) return gate.denied;
   const kit: VideoKit = {
-    platform, ...fields, titleMethod: title.method, titleCandidates: title.candidates, storyboard: [], coverPrompt: "",
+    platform, coverText: "", ...fields, ...(title ? { titleMethod: title.method, titleCandidates: title.candidates } : {}), storyboard: [], coverPrompt: "",
     generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content), ...kitRegisterHash(content),
   };
   // 指纹与落盘同锁核对：读稿到写包之间稿件被改，就不能把旧稿的指纹钉到新稿上

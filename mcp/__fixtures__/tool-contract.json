@@ -179,7 +179,8 @@
        "ask",
        "answer_ask",
        "withdraw_ask",
-       "wechat_article"
+       "wechat_article",
+       "en_edition"
       ],
       "type": "string"
      },
@@ -220,6 +221,7 @@
      "distinct_video": {
       "type": "boolean"
      },
+     "edition": {},
      "fact_id": {
       "type": "string"
      },
@@ -3198,7 +3200,8 @@
        "ask",
        "answer_ask",
        "withdraw_ask",
-       "wechat_article"
+       "wechat_article",
+       "en_edition"
       ],
       "type": "string"
      },
@@ -3239,6 +3242,7 @@
      "distinct_video": {
       "type": "boolean"
      },
+     "edition": {},
      "fact_id": {
       "type": "string"
      },
