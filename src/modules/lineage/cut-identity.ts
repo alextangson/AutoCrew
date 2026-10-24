@@ -22,6 +22,11 @@ export async function approvedCutIdentity(content: Content, dataDir: string, opt
     return content.videoDone ? { id: `legacy-rev:${content.videoDone.renderedRevision}` } : { id: null, reason: "源视频还没有审过的成片（或重开了剪辑）" };
   }
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  // 从旧流程导入的老视频：有导入的成片事实、但从没在本体里审过片（没有任何 cut 决定）→ 沿用旧流程的成片完成标记。
+  // 以后在本体里真审过一次，身份就换成文件指纹，之前派生的稿会如实报过期（走 rebind）。
+  if (content.videoDone && !doc.decisions.some((d) => d.type === "cut_approval" || d.type === "cut_reject")) {
+    return { id: `legacy-rev:${content.videoDone.renderedRevision}` };
+  }
   const approval = validCutApproval(doc, content.body);
   if (!approval?.sha256) return { id: null, reason: "源视频的成片现在没有有效的审片通过（撤批、打回或重开了剪辑）" };
   const fact = doc.facts.find((f) => f.kind === "cut" && f.sha256 === approval.sha256 && !f.replaced_at);
