@@ -66,8 +66,12 @@ async function stillPublishable(id: string, st: ArticlePublishState, dataDir: st
   return null;
 }
 
-/** 点「发表」之前最后一道核对：过了才能点（手册规定），不过就停 */
-export function finalCheck(id: string, dataDir: string, now?: () => Date): Promise<Result> {
+/**
+ * 点「发表」之前最后一道核对：过了才能点（手册规定），不过就停。
+ * 视频号原片还在不在，代码只看得到本机记录（先当第一道筛）；真正的确认要宿主在编辑器的视频号选择框里亲眼看到这条原片还列着，
+ * 带 channels_card_visible:true 回来（Codex 审 P2）——不带就拒，回执里写明要确认什么。
+ */
+export function finalCheck(id: string, dataDir: string, now?: () => Date, input: { channelsCardVisible?: boolean } = {}): Promise<Result> {
   return withArticleLock(id, async () => {
     const st = await readPublishState(id, dataDir);
     const bad = wrongPhase(st, ["editor_finishing"], "final_check");
@@ -75,10 +79,12 @@ export function finalCheck(id: string, dataDir: string, now?: () => Date): Promi
     const t = nowOf(now);
     const refused = await stillPublishable(id, st, dataDir, t.getTime());
     if (refused) return { ...refused, may_click_publish: false };
-    // 视频号原片在 begin_editor 之后可能被删 / 设成私密：点发表前再核一次（卡片插的就是它）
     const video = await videoChannelState((await getContent(id, dataDir))!.derivedFrom!.contentId, dataDir, t.getTime());
     if (!video.live) return fail("video_not_live", `视频号原片现在不是公开状态（${video.raw}）：不要点发表，先确认原片还在、已公开，再重新 begin_editor`, { may_click_publish: false, video: video.raw });
-    const r = await save(id, st, "final_check", dataDir, t);
+    if (input.channelsCardVisible !== true) {
+      return fail("confirm_channels_card", "点发表前要你亲眼确认：在编辑器的视频号卡片选择框里，这条原片现在还列着（没被删、没设私密）。看到了再带 channels_card_visible:true 调 final_check；没看到就停下告诉创始人", { may_click_publish: false, required_confirmation: "channels_card_visible", video: video.raw });
+    }
+    const r = await save(id, { ...st, channelsCardConfirmedAt: t.toISOString() }, "final_check", dataDir, t);
     return { ...r, may_click_publish: true, slot: st.slot, note: "可以点一次「发表」，停在管理员二维码后 mark_editor_done" };
   });
 }

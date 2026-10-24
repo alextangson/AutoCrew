@@ -64,8 +64,23 @@ export async function writeElevenLabsKey(key: string, machineDir?: string): Prom
   if (!k || keyFormatProblem(k)) throw new Error("ElevenLabs 密钥不能为空，也不能含空白：重新粘一遍");
   const file = elevenLabsKeyFile(machineDir);
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  await fs.writeFile(file, k, { mode: 0o600 });
-  await fs.chmod(file, 0o600);
+  await fs.chmod(path.dirname(file), 0o700);
+  await writeSecretFile(file, k);
+}
+
+/**
+ * 密钥落盘：同目录新建临时文件（独占创建、一开始就是 0600）→ 写 → fsync → rename 盖过去。
+ * 不在已有文件上直接写（旧文件若是 0644，写入和 chmod 之间密钥是别人可读的）。
+ */
+export async function writeSecretFile(file: string, content: string): Promise<void> {
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  const h = await fs.open(tmp, "wx", 0o600);
+  try {
+    await h.writeFile(content);
+    await h.sync();
+  } finally { await h.close(); }
+  try { await fs.rename(tmp, file); }
+  catch (e) { await fs.rm(tmp, { force: true }); throw e; }
 }
 
 /** 设置页写声音 id：并进本机 elevenlabs.json（模型、声音参数原样留着） */
@@ -77,7 +92,7 @@ export async function writeElevenLabsVoiceId(voiceId: string, machineDir?: strin
   try { raw = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>; }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`ElevenLabs 设置读不出来（${(e as Error).message}），没改：先修好 ${file}`); }
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, JSON.stringify({ ...raw, voiceId: v }, null, 2) + "\n", { mode: 0o600 });
+  await writeSecretFile(file, JSON.stringify({ ...raw, voiceId: v }, null, 2) + "\n");
 }
 
 /** 设置页 / doctor 看的状态：密钥只回来源，声音 id 只回掩码和来源 */

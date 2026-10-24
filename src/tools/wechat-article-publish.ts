@@ -13,7 +13,7 @@ export const PUBLISH_OPS = ["push_draft", "begin_editor", "final_check", "mark_e
 export type PublishOp = (typeof PUBLISH_OPS)[number];
 
 export const WECHAT_ARTICLE_PUBLISH_DOC =
-  "；发布（批过整包之后，按 publish-content 的公众号手册）：push_draft（只推批过的那一包，同一包重复调不会多推）/ begin_editor{slot?,founder_quote?}（核视频号原片已公开、排定时）/ final_check（点「发表」前必调，过了才点）/ mark_editor_done{scheduled_for}（点了发表、停在二维码）/ record_scheduled{scheduled_at,founder_quote,published?,media_id?|draft_title+draft_updated_at} / record_unknown{raw} / record_absent{raw,found_draft?,media_id?|draft_title+draft_updated_at}；push_draft{dry_run?} 预演不调公众号 / publish_status";
+  "；发布（批过整包之后，按 publish-content 的公众号手册）：push_draft（只推批过的那一包，同一包重复调不会多推）/ begin_editor{slot?,founder_quote?}（核视频号原片已公开、排定时）/ final_check{channels_card_visible}（点「发表」前必调：先在编辑器视频号选择框里看到原片还列着，带 channels_card_visible:true；过了才点）/ mark_editor_done{scheduled_for}（点了发表、停在二维码）/ record_scheduled{scheduled_at,founder_quote,published?,media_id?|draft_title+draft_updated_at} / record_unknown{raw} / record_absent{raw,found_draft?,media_id?|draft_title+draft_updated_at}；push_draft{dry_run?} 预演不调公众号 / publish_status";
 
 const s = (v: unknown) => (typeof v === "string" ? v.trim().replace(/^"+|"+$/g, "").trim() : "");
 const bool = (v: unknown) => v === true || (typeof v === "string" && /^(true|1|yes)$/i.test(v.trim()));
@@ -37,7 +37,7 @@ export function runPublishOp(op: PublishOp, id: string, p: Result, dataDir: stri
     case "push_draft": return pushApprovedArticle(id, dataDir, deps, { force: bool(p.force), dryRun: bool(p.dry_run) });
     case "begin_editor": return beginEditor(id, dataDir, { slot: s(p.slot) || undefined, founderWords: words(p) || undefined }, deps.now);
     case "mark_editor_done": return markEditorDone(id, dataDir, { scheduledFor: s(p.scheduled_for ?? p.scheduled_at) }, deps.now);
-    case "final_check": return finalCheck(id, dataDir, deps.now);
+    case "final_check": return finalCheck(id, dataDir, deps.now, { channelsCardVisible: bool(p.channels_card_visible) });
     case "record_scheduled": return recordScheduled(id, dataDir, { scheduledAt: s(p.scheduled_at), founderWords: words(p), published: bool(p.published), draft: draftOf(p) }, deps.now);
     case "record_unknown": return recordUnknown(id, dataDir, s(p.raw), deps.now);
     case "record_absent": return recordAbsent(id, dataDir, { raw: s(p.raw), foundDraft: bool(p.found_draft), draft: draftOf(p) }, deps.now);

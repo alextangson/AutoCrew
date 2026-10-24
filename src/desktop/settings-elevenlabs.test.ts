@@ -43,3 +43,16 @@ it("env still wins over the settings file", async () => {
   process.env.ELEVENLABS_API_KEY = "sk-env";
   expect(await resolveElevenLabsKey()).toEqual({ key: "sk-env", source: "env" });
 });
+
+it("rotating the key over an existing 0644 file never leaves the new key world-readable; secrets dir is 0700", async () => {
+  const secrets = path.join(dir, "secrets");
+  await fs.mkdir(secrets, { recursive: true, mode: 0o755 });
+  const file = path.join(secrets, "elevenlabs-api-key");
+  await fs.writeFile(file, "sk-old", { mode: 0o644 });
+  await fs.chmod(file, 0o644);
+  expect(await setPublishSettings({ _dataDir: dir, elevenlabs_api_key: "sk-new-rotated" })).toMatchObject({ ok: true });
+  expect(await fs.readFile(file, "utf8")).toBe("sk-new-rotated");
+  expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+  expect((await fs.stat(secrets)).mode & 0o777).toBe(0o700);
+  expect((await fs.readdir(secrets)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+});
