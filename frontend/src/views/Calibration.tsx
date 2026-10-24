@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { authedFetch, invoke } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
-import { SEAT_CHOICES, seatId } from "../lib";
+import { routeHash } from "../routes";
 import { dateLabel } from "../time-format";
 
 type RuleStatus = "pending" | "active" | "rejected" | "disabled";
@@ -59,7 +59,6 @@ function parseKeywords(raw: string): string[] {
 export function Calibration() {
   const [industry, setIndustry] = useState("");
   const [focusKeywords, setFocusKeywords] = useState("");
-  const [seats, setSeats] = useState<string[]>([]);
   const [persona, setPersona] = useState<{ summary: string; calibrated: boolean; tiers: Persona | null }>({ summary: "", calibrated: false, tiers: null });
   const [proposal, setProposal] = useState<Persona | null>(null);
   const [basis, setBasis] = useState("");
@@ -83,7 +82,6 @@ export function Calibration() {
       data?: { industry?: string; platforms?: string[]; focusKeywords?: string[] };
     };
     setIndustry(o.industry ?? o.data?.industry ?? "");
-    setSeats([...new Set((o.platforms ?? o.data?.platforms ?? []).map(seatId))]);
     const kws = o.focusKeywords ?? o.data?.focusKeywords ?? [];
     setFocusKeywords(kws.join("、"));
     return kws;
@@ -106,15 +104,6 @@ export function Calibration() {
     const saved = await load();
     if (saved.length !== list.length || saved.some((k, i) => k !== list[i])) return toast("保存未生效——引擎没接收雷达关键词");
     toast(list.length ? `雷达关键词已更新(${list.length} 个)——下一轮粗筛按它匹配` : "已清空——粗筛回落到定位派生");
-  };
-
-  const toggleSeat = async (id: string) => {
-    const next = seats.includes(id) ? seats.filter((x) => x !== id) : [...seats, id];
-    if (next.length === 0) return toast("至少保留一个平台席位");
-    const r = await invoke("profile:update", { platforms: next });
-    if (!r.ok) return toast(r.error ?? "保存失败");
-    setSeats(next);
-    toast("席位已更新——写稿矩阵即刻生效");
   };
 
   const generatePersona = async () => {
@@ -220,13 +209,8 @@ export function Calibration() {
       <p className="muted">雷达粗筛按这些词匹配候选(标题/摘要命中就加分),留空则从定位里派生——定位是散文,派生出的长词常常一条都命中不了。</p>
 
       <div className="ed-section">
-        <span className="mono muted">席位：</span>
-        {SEAT_CHOICES.map((c) => (
-          <button key={c.id} className={"chip" + (seats.includes(c.id) ? " chip-pub" : "")} onClick={() => void toggleSeat(c.id)}>
-            {seats.includes(c.id) ? "✓ " : ""}
-            {c.label}
-          </button>
-        ))}
+        <span className="muted">运营平台在 设置 → 运营平台 里选</span>
+        <a className="button" href={routeHash({ view: "settings", tab: "platforms" })}>去选平台</a>
       </div>
 
       <h3 className="serif calib-h3">受众画像（审稿标准）</h3>
