@@ -3,7 +3,7 @@
  * 边界：选题已有另一个平台的调研任务 → 照领包、源任务原样；源视频没调研 → 照领包并写明；
  * 非派生稿照旧走写前准备；旧流程导入的老视频底稿说明说人话。
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { makeEnv, setContent, videoContent, type Env } from "../production/testkit.js";
@@ -21,6 +21,8 @@ import { buildWritingContext } from "../writing/generate-script.js";
 import { HUMAN_WRITE } from "../../storage/first-body-guard.js";
 import { NO_RESEARCH_NOTE } from "./writer-request.js";
 import { articleSource, LEGACY_IMPORT_NOTE } from "./source.js";
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 let env: Env;
 afterEach(async () => { await env.cleanup(); });

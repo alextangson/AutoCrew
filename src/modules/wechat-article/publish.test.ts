@@ -7,6 +7,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 vi.mock("../publish/wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn(), publishWechatMpDraft: vi.fn() }));
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 import { generateWechatImageAsset, type WechatMpDraftOptions, type WechatMpDraftResult } from "../publish/wechat-mp.js";
 import { makeEnv, png, put, setContent, videoContent, type Env } from "../production/testkit.js";
@@ -439,5 +441,93 @@ describe("verifier fixes: final_check re-checks 视频号; unpicking 公众号 s
     const done = await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T12:00:00+08:00" });
     expect(done).toMatchObject({ ok: false, phase: "unknown" });
     expect(String(done.error)).toMatch(reason);
+  });
+});
+
+describe("排版主题进批准包", () => {
+  const setTheme = async (theme: string) => {
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme } }));
+  };
+
+  it("批的时候记下设置里的主题；推送用包里记的主题", async () => {
+    await setTheme("claude-scroll");
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("claude-scroll");
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, media_id: "MID-1" });
+    expect(pushes[0]!.theme).toBe("claude-scroll");
+  });
+
+  it("批后改了设置里的主题 → 批准失效、说清从哪个改成哪个、推送拒并退回认稿", async () => {
+    await setTheme("claude-scroll");
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    await setTheme("newspaper");
+    expect((await run({ op: "status" })).approval).toMatch(/排版主题从 claude-scroll 改成了 newspaper/);
+    const r = await run({ op: "push_draft" });
+    expect(r).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(String(r.error)).toMatch(/退回「等你拍板」/);
+    expect(publishImpl).not.toHaveBeenCalled();
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
+  });
+
+  it("没配主题时按 newspaper 记，审阅页写明主题", async () => {
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("newspaper");
+    const html = await fs.readFile(String((await run({ op: "status" })).preview_page), "utf8");
+    expect(html).toContain("推送时的排版（主题 newspaper）");
+    expect(html).toContain("<p>排版后的正文</p>");
+  });
+});
+
+describe("Codex 审 P2：主题身份 = 名字 + 主题文件", () => {
+  const vendorDir = async () => {
+    const root = path.join(env.outside, "vendor-wx");
+    await put(path.join(root, "scripts", "publish.py"), "");
+    await put(path.join(root, "scripts", "format.py"), "");
+    await put(path.join(root, "themes", "mine.json"), "{\"v\":1}");
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme: "mine", wechatPublishScript: path.join(root, "scripts", "publish.py") } }));
+    return root;
+  };
+
+  it("批后同名主题文件被改 → 批准失效、原因写明、推送拒并退回认稿", async () => {
+    const root = await vendorDir();
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme).toMatchObject({ name: "mine", sha: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    await put(path.join(root, "themes", "mine.json"), "{\"v\":2}");
+    expect((await run({ op: "status" })).approval).toMatch(/主题文件在批准后改过了/);
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(publishImpl).not.toHaveBeenCalled();
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
+  });
+
+  it("批准那一刻的竞态：指纹按 A 算、包里却记成了 B → 也算失效，不按 B 推", async () => {
+    await vendorDir();
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    const pkg = await readArticlePackage(id, env.dir);
+    await writeArticlePackage(id, { ...pkg, theme: { name: "newspaper", sha: "other" } }, env.dir);
+    expect((await run({ op: "status" })).approval).toMatch(/排版主题从 newspaper 改成了 mine/);
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(publishImpl).not.toHaveBeenCalled();
+  });
+
+  it("记批准只用闸门那一次读到的 hash 和主题，不再另读设置", async () => {
+    await vendorDir();
+    await complete();
+    const { articleApproveGate, recordArticleApproval } = await import("./approve.js");
+    const { articleReviewState } = await import("./review.js");
+    const s = await articleReviewState(id, env.dir);
+    if ("error" in s) throw new Error(s.error);
+    const gate = await articleApproveGate(id, env.dir, s.hash);
+    if (!gate.ok) throw new Error(gate.error);
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme: "newspaper" } }));
+    await recordArticleApproval(id, gate, env.dir);
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("mine");
   });
 });

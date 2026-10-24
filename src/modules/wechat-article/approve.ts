@@ -5,9 +5,10 @@
 import { articleReviewState } from "./review.js";
 import { approvePackage, packageApprovalCheck, readArticlePackage, writeArticlePackage } from "./package.js";
 import { getArticleImageReview } from "../publish/article-images.js";
+import { currentThemeId, type ThemeId } from "./theme-id.js";
 import { getContent, transitionStatus } from "../../storage/local-store.js";
 
-export type GateResult = { ok: true; hash: string } | { ok: false; code: string; error: string };
+export type GateResult = { ok: true; hash: string; theme: ThemeId } | { ok: false; code: string; error: string };
 
 /** expected = 给创始人看的那一包的指纹（认稿那件的 detail.package_hash）；现在的包对不上就拒，不拿他的话批另一包 */
 export async function articleApproveGate(contentId: string, dataDir: string, expected: string | undefined): Promise<GateResult> {
@@ -16,12 +17,13 @@ export async function articleApproveGate(contentId: string, dataDir: string, exp
   if (!expected || expected !== s.hash) return { ok: false, code: "stale", error: "图文包在给你看之后变了（标题 / 配图 / 封面 / 创作来源 / 正文）：重新看一眼审阅页再批" };
   if (s.stale) return { ok: false, code: "derived_stale", error: `这条派生稿过期了，不能批：${s.stale}` };
   if (s.problems.length) return { ok: false, code: "article_not_ready", error: `图文还不能批：\n${s.problems.map((p, i) => `${i + 1}) ${p}`).join("\n")}` };
-  return { ok: true, hash: s.hash };
+  return { ok: true, hash: s.hash, theme: s.theme };
 }
 
-export async function recordArticleApproval(contentId: string, hash: string, dataDir: string): Promise<void> {
+/** hash 与 theme 都来自同一次 articleApproveGate 的读取（在文章锁里），不再另读设置 */
+export async function recordArticleApproval(contentId: string, gate: { hash: string; theme: ThemeId }, dataDir: string): Promise<void> {
   const pkg = await readArticlePackage(contentId, dataDir);
-  await writeArticlePackage(contentId, approvePackage(pkg, hash), dataDir);
+  await writeArticlePackage(contentId, approvePackage(pkg, gate.hash, gate.theme), dataDir);
 }
 
 /**
@@ -33,7 +35,7 @@ export async function reopenIfApprovalBroken(contentId: string, dataDir: string)
   if (!content || content.status !== "approved") return null;
   const pkg = await readArticlePackage(contentId, dataDir);
   if (!pkg.approval) return null;
-  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir));
+  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir), await currentThemeId(dataDir));
   if (check.ok) return null;
   const r = await transitionStatus(contentId, "draft_ready", { force: true }, dataDir);
   if (!r.ok) throw new Error(`包改了、批准失效，但退回认稿失败：${r.error ?? "没有原因"}`);

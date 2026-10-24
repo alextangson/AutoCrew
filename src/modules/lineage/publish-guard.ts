@@ -4,6 +4,7 @@
  * 读不出来源状态也拒（宁可拦下问一句，不放过期稿出去）。
  * 公众号文章（Phase 2b）：还要整包批准仍有效（derivedArticlePublishRefusal）；真正推送只走「按批过的整包推草稿箱」。
  */
+import { currentThemeId } from "../wechat-article/theme-id.js";
 import { getContent, type Content } from "../../storage/local-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { staleReason } from "./lineage.js";
@@ -42,7 +43,7 @@ export async function derivedArticlePublishRefusal(contentId: string, dataDir: s
   if (!content) return null;
   const pkg = await readArticlePackage(contentId, dataDir);
   if (!pkg.approval) return { code: "article_not_approved", error: "派生公众号文章要先批整包（等你拍板里的认稿那件），再按批过的包推草稿箱" };
-  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir));
+  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir), await currentThemeId(dataDir));
   return check.ok ? null : { code: "article_not_approved", error: `图文包的批准已失效（${check.reason}）：重新批过再发` };
 }
 

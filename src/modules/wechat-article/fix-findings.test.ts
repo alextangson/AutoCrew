@@ -1,5 +1,5 @@
 /** builder 修 verifier 发现时补的回归测试（公众号文章线） */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEvidenceLedger } from "../research/evidence-ledger.js";
 import { verifyNumbers } from "../writing/number-gate.js";
 import { getContent } from "../../storage/local-store.js";
@@ -7,6 +7,8 @@ import { enSourceVideo, EN_SRT } from "../en-edition/en-test-fixtures.js";
 import type { Env } from "../production/testkit.js";
 import { executeWechatArticle } from "../../tools/wechat-article.js";
 import { seedLedgerFromSourceTranscript, TRANSCRIPT_CLAIM } from "./transcript-evidence.js";
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 let env: Env;
 afterEach(async () => { await env?.cleanup(); });

@@ -8,7 +8,7 @@
  * 找不到条目的动作（撤销批准、纠正发布、挂原片…）不在列表里，直接交给创始人决定。
  */
 import { isDerivedArticle } from "../wechat-article/review.js";
-import { articleApproveGate, recordArticleApproval } from "../wechat-article/approve.js";
+import { articleApproveGate, recordArticleApproval, type GateResult } from "../wechat-article/approve.js";
 import { withArticleLock } from "../wechat-article/package.js";
 import { enScriptApproveGate, isEnEdition, recordEnScriptApproval } from "../en-edition/review.js";
 import { withEnLock } from "../en-edition/script.js";
@@ -157,15 +157,18 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
 
 async function approveScript(ctx: Ctx, expectedPackage: string | null, kind: "article" | "en" = "article"): Promise<Result> {
   const c = ctx.content!;
-  const gate = kind === "en" ? enScriptApproveGate : articleApproveGate;
-  const article = expectedPackage !== null ? await gate(c.id, ctx.dataDir, expectedPackage || undefined) : null;
+  const expected = expectedPackage || undefined;
+  const article = expectedPackage === null ? null : kind === "en" ? await enScriptApproveGate(c.id, ctx.dataDir, expected) : await articleApproveGate(c.id, ctx.dataDir, expected);
   if (article && !article.ok) return fail(article.code, article.error);
   // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
   // 页面交来的是它屏幕上那份正文的哈希（整分支审 5 P1）；没带就用代次对上那一刻读到的正文
   const shown = str(ctx.params.expected_body_hash);
   const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: shown || bodyHash(c.body) }) as Result;
   if (!t.ok) return fail("transition_failed", String(t.error ?? "认稿没成"));
-  if (article?.ok) await (kind === "en" ? recordEnScriptApproval : recordArticleApproval)(c.id, article.hash, ctx.dataDir);
+  if (article?.ok) {
+    if (kind === "article") await recordArticleApproval(c.id, article as Extract<GateResult, { ok: true }>, ctx.dataDir);
+    else await recordEnScriptApproval(c.id, article.hash, ctx.dataDir);
+  }
   return { ok: true, status: "approved" };
 }
 

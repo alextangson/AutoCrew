@@ -15,6 +15,7 @@ import type { Content } from "../../storage/local-store.js";
 import { approveArtifact, artifactHash, checkArtifactApproval, type ApprovalCheck, type ArtifactApproval } from "../lineage/artifact-approval.js";
 import type { ArticleImageEntry, ArticleImageReview } from "../publish/article-images.js";
 import { ARTICLE_COVER_RATIOS, cropParam, type ArticleMasterCover } from "./cover.js";
+import { sameTheme, type ThemeId } from "./theme-id.js";
 
 export { ARTICLE_COVER_RATIOS, type ArticleCoverRatio } from "./cover.js";
 
@@ -47,6 +48,8 @@ export interface ArticlePackage {
   rebindPending?: { toCut: string; at: string };
   /** 写作包用的底稿从哪来（成片字幕 / 退回定稿正文的原因）：领包时记下，审阅页照显示；不进指纹 */
   sourceNote?: string;
+  /** 批准那一刻设置里的排版主题；推送只用它（不跟后来改的设置走）。主题本身按「当时设置」进指纹，所以改主题会让批准失效 */
+  theme?: ThemeId;
 }
 
 const EMPTY: ArticlePackage = { titleOptions: [] };
@@ -143,8 +146,8 @@ async function fileSha(p: string | undefined): Promise<string> {
   try { return createHash("sha256").update(await fs.readFile(p)).digest("hex"); } catch { return "missing"; }
 }
 
-/** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面主图（文件字节）+ 两个裁切、创作来源 */
-export async function packageHash(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<string> {
+/** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面主图（文件字节）+ 两个裁切、创作来源、排版主题（设置里现在的） */
+export async function packageHash(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">, theme: ThemeId): Promise<string> {
   const images = [];
   for (const e of review.entries) images.push({ index: e.index, kind: e.kind ?? "gen", sha: await fileSha(e.imagePath), sourceUrl: e.sourceUrl, credit: e.credit });
   const c = pkg.cover;
@@ -152,15 +155,29 @@ export async function packageHash(content: Pick<Content, "body" | "derivedFrom">
   const legacy = pkg.covers?.length ? pkg.covers.map((x) => x.sha256) : null;
   // rebind 过的稿把源成片身份也算进指纹：绑定一换，旧批准一定失效（哪怕撤批准那一步没落盘）。从没 rebind 过的不带，已有批准不受影响
   const sourceCut = content.derivedFrom?.rebound ? { sourceCut: content.derivedFrom.sourceCutHash } : {};
-  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, cover, legacy, creationSource: pkg.creationSource?.value ?? null, ...sourceCut });
+  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, cover, legacy, creationSource: pkg.creationSource?.value ?? null, theme: theme.name, themeSha: theme.sha, ...sourceCut });
 }
 
-export function approvePackage(pkg: ArticlePackage, hash: string, now = new Date()): ArticlePackage {
-  return { ...pkg, approval: approveArtifact(APPROVAL_ARTIFACT, hash, now) };
+/** hash 和 theme 必须出自同一次读取（同一个 ArticleReviewState），不能分两次读设置 */
+export function approvePackage(pkg: ArticlePackage, hash: string, theme: ThemeId, now = new Date()): ArticlePackage {
+  return { ...pkg, theme, approval: approveArtifact(APPROVAL_ARTIFACT, hash, now) };
 }
 
-export async function packageApprovalCheck(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<ApprovalCheck> {
-  return checkArtifactApproval(pkg.approval, await packageHash(content, pkg, review));
+export async function packageApprovalCheck(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">, theme: ThemeId): Promise<ApprovalCheck> {
+  const check = checkArtifactApproval(pkg.approval, await packageHash(content, pkg, review, theme));
+  const why = themeChangeReason(pkg, theme);
+  // 指纹对上但包里记的主题（推送用它）和现在的不一样：批准那一刻的竞态，也算失效
+  if (check.ok) return why ? { ok: false, code: "artifact_changed", reason: why } : check;
+  return check.code !== "artifact_changed" ? check : { ...check, reason: why ?? check.reason };
+}
+
+/** 批过之后设置里的排版主题改了：说清从哪个改成哪个 */
+export function themeChangeReason(pkg: ArticlePackage, theme: ThemeId): string | null {
+  if (!pkg.approval || sameTheme(pkg.theme, theme)) return null;
+  const was = pkg.theme;
+  if (!was || typeof was !== "object") return `批准时没记排版主题（旧批准），现在主题是 ${theme.name}：重新看审阅页再批`;
+  if (was.name !== theme.name) return `排版主题从 ${was.name} 改成了 ${theme.name}`;
+  return `排版主题 ${theme.name} 的主题文件在批准后改过了`;
 }
 
 const locks = new Map<string, Promise<unknown>>();
