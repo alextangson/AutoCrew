@@ -3,7 +3,7 @@
  * 认稿 brief 里贴全文（创始人 10-11 定：在对话里直接看稿，不给文件链接）。
  */
 import { getContent } from "../../../storage/local-store.js";
-import { readArticlePackage } from "../../wechat-article/package.js";
+import { articleChars, readArticlePackage } from "../../wechat-article/package.js";
 import { readEnScript } from "../../en-edition/script.js";
 import { diffBriefLines, readRebindDiff } from "../../lineage/rebind-diff.js";
 import type { InboxItem } from "../inbox.js";
@@ -74,8 +74,10 @@ export async function draftBrief(item: InboxItem, dataDir: string): Promise<stri
   const head = derived === "wechat_article" ? await articleHead(c!.id, item.title, dataDir) : `《${item.title}》`;
   const text = derived === "en_edition" ? await bilingualText(c!.id, dataDir) : null;
   const diff = c?.derivedFrom?.rebound ? await readRebindDiff(c.id, dataDir).catch(() => null) : null;
+  // 派生公众号文章：和发布包 / 篇幅门同一口径（只数汉字，不含配图标记），不用全字符数
+  const words = derived === "wechat_article" ? articleChars(c!.body ?? "") : d.words ?? "?";
   return [
-    `${head}稿子写好了，过一眼（${String(d.platform ?? "平台未定")}，${String(d.words ?? "?")} 字）`,
+    `${head}稿子写好了，过一眼（${String(d.platform ?? "平台未定")}，${String(words)} 字）`,
     ...(diff ? diffBriefLines(diff) : []),
     ...(behind.length ? [`${behind.join("和")}已经做好了，在等这份稿认了才能审。`] : []),
     "要你判断：念起来顺不顺、有没有说错的、是不是你想说的。",
