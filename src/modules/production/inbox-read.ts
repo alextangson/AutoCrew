@@ -30,6 +30,7 @@ import { promotionItems } from "./chat-approval/promotion-decide.js";
 import type { PlaybookEntry, PlaybookProposal } from "../playbook/types.js";
 import { articleReviewState, isDerivedArticle } from "../wechat-article/review.js";
 import { enReviewState, isEnEdition } from "../en-edition/review.js";
+import { enPackageState, reopenReason } from "../en-edition/package.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 import { DELETED_CONTENT, lessonQuestion, mergeKeyOf, wordsLine } from "./lesson-view.js";
 
@@ -93,6 +94,13 @@ async function enScriptHashOf(id: string, dataDir: string): Promise<string> {
   return "hash" in s ? s.hash : `unreadable:${s.error}`;
 }
 
+/** 英文发布包现状（批过之后进了制作段才算）；读不出来照样出那件，原因写进 problems */
+async function enPackageOf(id: string, dataDir: string): Promise<ContentInput["enPackage"]> {
+  const s = await enPackageState(id, dataDir).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+  if ("error" in s) return { hash: `unreadable:${s.error}`, problems: [s.error], approved: false, reopen: s.error };
+  return { hash: s.hash, problems: s.problems, approved: s.approval.ok, reopen: reopenReason(s) };
+}
+
 async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType<typeof explainContext>>): Promise<ContentInput> {
   const video = isVideoPlatform(c.platform);
   const active = video && ctx.enabled && !ctx.excluded.has(c.id);
@@ -111,7 +119,8 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
   const articlePackageHash = c.status !== "draft_ready" ? undefined
     : isDerivedArticle(c) ? await articlePackageHashOf(c.id, dataDir) : isEnEdition(c) ? await enScriptHashOf(c.id, dataDir) : undefined;
   return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere,
-    ...(handoffCoverText ? { handoffCoverText } : {}), ...(articlePackageHash ? { articlePackageHash } : {}) };
+    ...(handoffCoverText ? { handoffCoverText } : {}), ...(articlePackageHash ? { articlePackageHash } : {}),
+    ...(isEnEdition(c) && exp?.phase === "production" ? { enPackage: await enPackageOf(c.id, dataDir) } : {}) };
 }
 
 /** 创始人交接时确认的封面字：只认创始人来源、且对得上当前定稿的决定 */

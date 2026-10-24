@@ -25,7 +25,7 @@ import { NON_OVERRIDABLE } from "../publish/review-gate/types.js";
 
 export type InboxType =
   | "ask" | "ask_reported" | "cut_review" | "cover_pick" | "candidate" | "sliver"
-  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "writing_rule" | "playbook_change" | "writing_promotion" | "other";
+  | "register_blocked" | "publish_check" | "published_ask" | "publish_claim" | "draft" | "en_package" | "writing_rule" | "playbook_change" | "writing_promotion" | "other";
 
 /** 按钮：主（黑底，每件最多一个）/ 次（白底细边）/ 少用（灰字）；带 note 的动作就地展开输入框 */
 export interface InboxAction {
@@ -102,6 +102,8 @@ export interface ContentInput {
   handoffCoverText?: string;
   /** 由视频派生的公众号文章：整包指纹（正文 + 标题 + 配图 + 封面 + 创作来源）进认稿那件的代次，包一变就要重新看 */
   articlePackageHash?: string;
+  /** 英文版（Phase 3 方案 (b)）：英文发布包的现状——没批 / 批准失效时出「英文发布包」那件 */
+  enPackage?: { hash: string; problems: string[]; approved: boolean; reopen: string | null };
 }
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
@@ -401,6 +403,18 @@ function draftItem(content: Content, behindDoc: ProductionDoc | null = null, pac
   };
 }
 
+/** 英文发布包那件：齐了没批 → 请他批；批过又变了 → 重新出现、写明哪儿变了 */
+function enPackageItem(content: Content, p: NonNullable<ContentInput["enPackage"]>): Draft | null {
+  if (p.approved || (p.problems.length && !p.reopen)) return null;
+  return {
+    item_id: `enpkg:${content.id}`, type: "en_package", waiting: null, agent_waiting: false, since: content.updatedAt, rank: 2,
+    summary: p.reopen ? `批过的英文发布包变了（${p.reopen}），重新看一眼` : "英文发布包齐了（缩略图、文案、章节、成片），过一眼",
+    actions: [{ action: "approve_en_package", label: "英文发布包没问题", role: "primary" }, { action: "revise_en_package", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：YouTube 标题再短一点" }],
+    detail: { package_hash: p.hash, problems: p.problems, ...(p.reopen ? { reopened: p.reopen } : {}) },
+    snapshot: [p.hash, p.reopen ?? ""],
+  };
+}
+
 // ---- 汇总 ----
 
 /** 一条稿的全部条目（已消费的代次去掉） */
@@ -418,7 +432,9 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere), ...sliverItems(doc, content));
-    for (const x of [cutItem(doc, content), coverItem(doc, content, input.handoffCoverText), registerItem(doc, content, exp)]) if (x) drafts.push(x);
+    // 英文版不走中文登记（3:4+4:3 封面对）：不出封面 / 登记卡住，改出英文发布包那件
+    const en = content.derivedFrom?.kind === "en_edition";
+    for (const x of [cutItem(doc, content), en ? null : coverItem(doc, content, input.handoffCoverText), en ? null : registerItem(doc, content, exp), en && input.enPackage ? enPackageItem(content, input.enPackage) : null]) if (x) drafts.push(x);
   } else if (doc) {
     // 写稿段也可能有候选（认稿前发现的疑似原片）和请示
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere));

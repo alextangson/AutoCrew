@@ -13,7 +13,7 @@ import { attachInbox, listInbox } from "../modules/production/intake.js";
 import { runSweep, sweepHealth } from "../modules/production/sweep.js";
 
 const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync"] as const;
-const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule", "approve_playbook", "reject_playbook", "playbook_batch", "approve_promotion", "reject_promotion", "waive_sliver_check", "waive_sliver", "approve_script", "revise_script"] as const;
+const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule", "approve_playbook", "reject_playbook", "playbook_batch", "approve_promotion", "reject_promotion", "waive_sliver_check", "waive_sliver", "approve_script", "revise_script", "approve_en_package", "revise_en_package"] as const;
 
 export const reviewInboxSchema = Type.Object({
   action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke | inbox_list | inbox_attach | sync" }),

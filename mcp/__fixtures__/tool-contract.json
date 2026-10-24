@@ -1429,7 +1429,9 @@
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
-       "revise_script"
+       "revise_script",
+       "approve_en_package",
+       "revise_en_package"
       ],
       "type": "string"
      },
@@ -4450,7 +4452,9 @@
        "waive_sliver_check",
        "waive_sliver",
        "approve_script",
-       "revise_script"
+       "revise_script",
+       "approve_en_package",
+       "revise_en_package"
       ],
       "type": "string"
      },

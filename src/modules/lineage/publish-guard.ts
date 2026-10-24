@@ -9,14 +9,20 @@ import { missingAsNull } from "../publish/review-gate/plan.js";
 import { staleReason } from "./lineage.js";
 import { packageApprovalCheck, readArticlePackage } from "../wechat-article/package.js";
 import { getArticleImageReview } from "../publish/article-images.js";
+import { enPublishRefusal } from "../en-edition/package.js";
 
-export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "article_not_approved"; error: string };
+export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "article_not_approved" | "en_package_not_approved"; error: string };
 
-export async function derivedPublishRefusal(content: Pick<Content, "derivedFrom"> & { id?: string }, dataDir: string): Promise<DerivedRefusal | null> {
+/**
+ * opts.exit = "kit"：交发布包（autocrew_pre_publish video_kit）只核源没过期——英文发布包本身要等各平台的包交齐才批得了。
+ * 英文版（Phase 3 方案 (b)）的其余出口都要整个英文发布包的批准仍有效。
+ */
+export async function derivedPublishRefusal(content: Pick<Content, "derivedFrom"> & { id?: string }, dataDir: string, opts: { exit?: "kit" } = {}): Promise<DerivedRefusal | null> {
   if (!content.derivedFrom) return null;
   try {
     const reason = await staleReason(content, dataDir, { fresh: true });
     if (reason) return { code: "derived_stale", error: `这条派生稿过期了，不能发：${reason}` };
+    if (content.derivedFrom.kind === "en_edition") return content.id && opts.exit !== "kit" ? await enPublishRefusal(content.id, dataDir) : null;
     return content.derivedFrom.kind === "wechat_article" && content.id ? await derivedArticlePublishRefusal(content.id, dataDir) : null;
   } catch (e) {
     return { code: "derived_source_unreadable", error: `来源状态读不出来，先不发：${e instanceof Error ? e.message : String(e)}` };
@@ -37,8 +43,8 @@ export async function derivedArticlePublishRefusal(contentId: string, dataDir: s
 }
 
 /** 按 id 核；稿件不存在交给各出口自己报（它们有现成的「不存在」说法） */
-export async function derivedPublishRefusalById(contentId: unknown, dataDir: string): Promise<DerivedRefusal | null> {
+export async function derivedPublishRefusalById(contentId: unknown, dataDir: string, opts: { exit?: "kit" } = {}): Promise<DerivedRefusal | null> {
   if (typeof contentId !== "string" || !contentId.trim()) return null;
   const content = await getContent(contentId.trim(), dataDir).catch(missingAsNull);
-  return content ? derivedPublishRefusal(content, dataDir) : null;
+  return content ? derivedPublishRefusal(content, dataDir, opts) : null;
 }

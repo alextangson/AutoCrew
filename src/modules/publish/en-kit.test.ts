@@ -95,7 +95,9 @@ describe("经 autocrew_pre_publish video_kit 交包", () => {
     fakeElevenLabs([3.6, 3.5, 9]);
     await fs.rm(path.join(dubDir(id, env.dir)), { recursive: true });
     await executeEnEdition({ _dataDir: env.dir, op: "dub", content_id: id });
-    expect(await executePrePublish({ action: "check", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "kit_stale" });
+    // 方案 (b)：check 先要英文发布包批准；包里也把这份 x 包标成按旧配音做的
+    expect(await executePrePublish({ action: "check", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "en_package_not_approved" });
+    expect((await executeEnEdition({ _dataDir: env.dir, op: "package_status", content_id: id })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/x 的发布包是按旧的脚本 \/ 配音做的/)]));
   });
 
   it("缩略图要 16:9（按像素认）", async () => {

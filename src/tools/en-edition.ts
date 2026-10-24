@@ -15,16 +15,17 @@ import { enSource } from "../modules/en-edition/source.js";
 import { buildSegments } from "../modules/en-edition/script-input.js";
 import { readEnScript, scriptBody, scriptHash, segmentBudget, withEnLock, writeEnScript } from "../modules/en-edition/script.js";
 import { enApprovalText, enReviewState, isEnEdition, renderEnReviewPage } from "../modules/en-edition/review.js";
-import { captionsOp, chaptersOp, dubOp, mediaStatus, thumbnailOp } from "./en-edition-media.js";
+import { captionsOp, chaptersOp, dubOp, mediaStatus, packageStatusOp, thumbnailOp } from "./en-edition-media.js";
+import { enFinalCheck } from "../modules/en-edition/publish-out.js";
 
 type Result = Record<string, unknown>;
-const OPS = ["derive", "source", "set_script", "verify_quote", "status", "dub", "captions", "chapters", "set_thumbnail"] as const;
+const OPS = ["derive", "source", "set_script", "verify_quote", "status", "dub", "captions", "chapters", "set_thumbnail", "package_status", "final_check"] as const;
 type Op = (typeof OPS)[number];
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 const str = (v: unknown) => (typeof v === "string" ? v.trim().replace(/^"+|"+$/g, "").trim() : "");
 
 export const EN_EDITION_ACTION_DOC =
-  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / captions / chapters / set_thumbnail{path}";
+  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / captions / chapters / set_thumbnail{path} / package_status（英文发布包审阅页） / final_check{platform}（点安排 / 发帖前必调）";
 
 async function derive(params: Result, dataDir: string): Promise<Result> {
   const r = await deriveSibling(str(params.content_id ?? params.id), "en_edition", dataDir);
@@ -117,6 +118,8 @@ export async function executeEnEdition(raw: Result): Promise<Result> {
   if (op === "source") return source(c.id, dataDir);
   if (op === "status") return status(c.id, dataDir);
   if (op === "chapters") return chaptersOp(c.id, dataDir);
+  if (op === "package_status") return packageStatusOp(c.id, dataDir);
+  if (op === "final_check") return enFinalCheck(c.id, str(params.platform), dataDir);
   return withEnLock(c.id, () => mutate(op, c.id, params, dataDir));
 }
 

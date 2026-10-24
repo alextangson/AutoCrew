@@ -327,7 +327,7 @@ export async function executePrePublishTool(params: Record<string, unknown>): Pr
   if (history) return history;
   if (params.action === "title_methods") return titleMethodsAction(params);
   if (params.action === "video_kit") {
-    const derived = await derivedPublishRefusalById(params.content_id, getDataDir((params._dataDir as string) || undefined));
+    const derived = await derivedPublishRefusalById(params.content_id, getDataDir((params._dataDir as string) || undefined), { exit: "kit" });
     if (derived) return { ok: false, ...derived };
   }
   return params.action === "video_kit" ? saveHostVideoKit(params) : executePrePublish(params);
@@ -361,6 +361,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   if (enStale) return enStale;
   const surface = publishSurface(content, platform);
   const checks: CheckItem[] = [];
+  const enEdition = content.derivedFrom?.kind === "en_edition";
 
   // --- Check 1: Content review ---
   try {
@@ -398,8 +399,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   // --- Check 2: Cover review (all video platforms) ---
   // 启用本体的稿出包（_ontologyGated，只由 ToolRunner 内部带）：封面由登记记录 + 发布前把关（槽位 / 登记那一对）核，旧封面审核不再适用
-  if (ontologyGated) {
-    checks.push({ name: "封面审核", status: "skip", detail: "本体稿：封面由登记记录与发布前把关核对" });
+  if (ontologyGated || enEdition) {
+    checks.push({ name: "封面审核", status: "skip", detail: enEdition ? "英文版：16:9 缩略图随英文发布包一起批" : "本体稿：封面由登记记录与发布前把关核对" });
   } else if (coverRequired(platform)) {
     const coverReview = await getCoverReview(contentId, dataDir);
     if (coverReview && (coverReview.status === "approved" || coverReview.status === "publish_ready") && coverReview.approvedLabel) {
@@ -434,7 +435,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   checks.push(ontologyGated ? byPlan("正文字数") : lengthCheck(surface, platform));
 
   // --- Check 6b: 发布出口（本体 §5）：按本体走的视频稿只发当前有效登记记录里的成片与封面 ---
-  const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
+  // 英文版（方案 (b)）：发布出口是批过的英文发布包（上面 derivedPublishRefusal 已核），不走中文登记
+  if (enEdition) checks.push({ name: "英文发布包（发布出口）", status: "pass", detail: "发批过的英文发布包里的成片、缩略图和文案" });
+  const gated = isVideoPlatform(platform) && !enEdition ? await registeredPackage(content, getDataDir(dataDir), { fresh: true }) : null;
   if (gated) checks.push(gated.ok
     ? { name: "登记（发布出口）", status: "pass", detail: `发当前登记的成片与封面（${gated.files.registration.id}）` }
     : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在对话里调 autocrew_review_inbox list，把缺的批准给创始人定；批准齐了登记会自动完成" });
@@ -450,7 +453,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // 真要推进才过令牌门（P6 §3.8）：推进是写，只读的预检谁都能跑
   const current = normalizeLegacyStatus(content.status);
   let grant: { claim_token?: string } = {};
-  if (checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
+  // 英文版的「能不能发」只看英文发布包批准，不推中文的阶段状态
+  if (!enEdition && checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
     const gate = params._readOnly === true ? null : await gatePublishWrite(params, contentId, dataDir);
     if (gate && "denied" in gate) return gate.denied;
     grant = gate?.grant ?? {};

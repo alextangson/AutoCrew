@@ -12,6 +12,7 @@ import { articleApproveGate, recordArticleApproval } from "../wechat-article/app
 import { withArticleLock } from "../wechat-article/package.js";
 import { enScriptApproveGate, isEnEdition, recordEnScriptApproval } from "../en-edition/review.js";
 import { withEnLock } from "../en-edition/script.js";
+import { approveEnPackage, reviseEnPackage } from "../en-edition/package.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { provenanceFields } from "./decision-provenance.js";
@@ -198,6 +199,9 @@ async function run(ctx: Ctx): Promise<Result> {
     }
     case "publish_check_override": return publishOverride(ctx);
     case "approve_script": return scriptDecision(ctx, true);
+    // 英文发布包（Phase 3 方案 (b)）：批的是出示时那一包（detail.package_hash）
+    case "approve_en_package": return withEnLock(c!.id, () => approveEnPackage(c!.id, String(item.detail.package_hash ?? ""), dataDir));
+    case "revise_en_package": return noteOf(ctx) ? withEnLock(c!.id, () => reviseEnPackage(c!.id, noteOf(ctx), dataDir)) : fail("note_required", "写一句要改哪里");
     case "revise_script": return scriptDecision(ctx, false);
     case "reject_cut": {
       const v = chosenVersion();

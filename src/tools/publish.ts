@@ -18,6 +18,7 @@ import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/c
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { kitPlatformsFor } from "../modules/publish/platform-caps.js";
 import { derivedPublishRefusalById } from "../modules/lineage/publish-guard.js";
+import { prepareEnPublish } from "../modules/en-edition/publish-out.js";
 import { isDerivedArticleId, pushApprovedArticle } from "../modules/wechat-article/push.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
@@ -130,6 +131,10 @@ export async function executePublish(
     const derived = await derivedPublishRefusalById(params.content_id, dataDir);
     if (derived) return { ok: false, ...derived };
     // 派生公众号文章只按批过的整包推草稿箱（Phase 2b）：不出复制件、不走视频平台的浏览器包
+    // 英文版（Phase 3 方案 (b)）：浏览器上传件只按批过的英文发布包出，不走中文登记
+    if (action === "ego_lite_prepare" && typeof params.content_id === "string" && (await getContent(params.content_id, dataDir))?.derivedFrom?.kind === "en_edition") {
+      return prepareEnPublish(params.content_id, dataDir);
+    }
     if (action !== "wechat_mp_draft" && await isDerivedArticleId(params.content_id, dataDir)) {
       return { ok: false, code: "derived_article_api_only", error: "派生公众号文章只按批过的整包推草稿箱：用 autocrew_content wechat_article {op:\"push_draft\"}，不出复制粘贴件" };
     }

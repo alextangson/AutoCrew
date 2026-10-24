@@ -13,6 +13,8 @@ import { buildCues } from "../modules/en-edition/captions.js";
 import { readEnThumbnail, setEnThumbnail, thumbnailProblem } from "../modules/en-edition/thumbnail.js";
 import { chaptersFromManifest, EN_PUBLISH_WINDOW } from "../modules/publish/en-kit.js";
 import { REPO_ROOT } from "../modules/video/proc.js";
+import { enPackageState } from "../modules/en-edition/package.js";
+import { enPackageApprovalText, writeEnPackagePreview } from "../modules/en-edition/package-preview.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
@@ -70,4 +72,13 @@ export async function mediaStatus(id: string, s: EnReviewState, dataDir: string)
   const dub = !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown.toFixed(3)}×`;
   const thumb = await readEnThumbnail(id, dataDir);
   return { dub, thumbnail: thumb?.path ?? null, thumbnail_problem: await thumbnailProblem(thumb), kit_platforms: enKitPlatforms(await loadProfile(dataDir)), publish_window: EN_PUBLISH_WINDOW };
+}
+
+/** 英文发布包：审阅页 + 还差什么 + 批准状态（批在「等你拍板」的「英文发布包」那件） */
+export async function packageStatusOp(id: string, dataDir: string): Promise<Result> {
+  const s = await enPackageState(id, dataDir);
+  if ("error" in s) return fail(s.code, s.error);
+  const page = await writeEnPackagePreview(s, enPackageApprovalText(s), dataDir);
+  return { ok: true, review_page: page, problems: s.problems, ready_to_approve: s.problems.length === 0, approval: enPackageApprovalText(s), package_hash: s.hash, platforms: s.platforms,
+    next_action: s.problems.length ? "按 problems 补齐" : "autocrew_review_inbox list 把「英文发布包」那件给创始人看，他说没问题再 decide approve_en_package" };
 }
