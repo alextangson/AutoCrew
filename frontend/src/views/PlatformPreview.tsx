@@ -45,7 +45,7 @@ function PreviewBody({ load, mock, retry }: { load: Load; mock: Mock; retry: () 
   if (load.state === "loading") return <p className="muted">正在读账号资料…</p>;
   if (load.state === "error") return <p className="pb-warn">账号资料读不出来：{load.error} <button className="pb-link" onClick={retry}>重试</button></p>;
   const sections = previewSections(load.platforms);
-  if (sections.length === 0) return <p>账号资料里没勾选视频平台。<a href={routeHash({ view: "calibration" })}>去品牌校准里勾选</a></p>;
+  if (sections.length === 0) return <p>账号资料里没勾选视频平台。<a href={routeHash({ view: "settings", tab: "platforms" })}>去「设置 → 运营平台」勾选</a></p>;
   return <PlatformTabs sections={sections} mock={mock} />;
 }
 

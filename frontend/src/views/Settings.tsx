@@ -1,6 +1,7 @@
 /**
  * 设置中心（P2 spec §5.3 重排）——两个标签，一条分界线：
  *
+ *   「运营平台」= 勾哪些平台、开哪几条生产线（默认标签）；
  *   「模型」= 必填的那把钥匙（端点表 / 主端点 / 备用 / 岗位）+ 工作区 + 知识库；
  *   「接入更多」= 全部可选接入，各自写明解锁什么、不配会怎样、现在什么状态；
  *   「数据回流」= 导入 CSV / 公众号拉取 / 自动回流开关（数据页规格 §G.42 从数据页挪来）。
@@ -22,11 +23,13 @@ import { SettingsPublishGate } from "./SettingsPublishGate";
 import { SettingsVoice } from "./SettingsVoice";
 import { SettingsData } from "./SettingsData";
 import { SettingsUpdate } from "./SettingsUpdate";
+import { SettingsPlatforms } from "./SettingsPlatforms";
 import type { Route } from "../routes";
 
-export type SettingsTab = "models" | "integrations" | "data";
+export type SettingsTab = "platforms" | "models" | "integrations" | "data";
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: "platforms", label: "运营平台" },
   { id: "models", label: "模型" },
   { id: "integrations", label: "接入更多" },
   { id: "data", label: "数据回流" },
@@ -51,7 +54,7 @@ function MorePages(props: { nav: (route: Route) => void }) {
 }
 
 export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) => void; nav?: (route: Route) => void }) {
-  const [local, setLocal] = useState<SettingsTab>(props.tab ?? "models");
+  const [local, setLocal] = useState<SettingsTab>(props.tab ?? "platforms");
   const tab = props.tab ?? local;
   const setTab = (next: SettingsTab) => {
     setLocal(next);
@@ -83,6 +86,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
         ))}
       </nav>
 
+      {tab === "platforms" && <SettingsPlatforms />}
       {tab === "data" && <SettingsData />}
       {tab === "integrations" && <><Integrations /><SettingsPublishGate /><SettingsVoice /></>}
       {tab === "models" && (

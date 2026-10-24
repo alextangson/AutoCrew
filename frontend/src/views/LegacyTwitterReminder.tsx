@@ -1,6 +1,6 @@
 /**
  * 看板上的「推特 ≠ X 英文视频」提示（全媒体 spec §9.3）：档案里只勾了旧的「推特」、没勾 X / YouTube 时出现一次。
- * 推特只管图文推；要发英文版视频得到校准页明确勾 X 或 YouTube。勾了就自动消失；「知道了」只记在这台浏览器（同引擎提醒的做法）。
+ * 推特只管图文推；要发英文版视频得到「设置 → 运营平台」明确勾 X 或 YouTube。勾了就自动消失；「知道了」只记在这台浏览器（同引擎提醒的做法）。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
@@ -24,7 +24,7 @@ export function LegacyTwitterReminder() {
   return <div className="pref-banner" role="status">
     <div className="pref-banner-row">
       <span>{text}</span>
-      <a className="button primary" href="#/calibration">去勾选</a>
+      <a className="button primary" href="#/settings?tab=platforms">去勾选</a>
       <button onClick={dismiss}>知道了</button>
     </div>
   </div>;
