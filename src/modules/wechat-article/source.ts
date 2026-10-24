@@ -25,6 +25,8 @@ export interface ArticleSource {
   ledger: Array<Pick<LedgerEntry, "id" | "source" | "claim" | "quote" | "sourceUrl">>;
 }
 
+export const LEGACY_IMPORT_NOTE = "这条老视频没登记成片字幕，底稿用的是定稿正文；成片剪辑时删改过的内容可能还在";
+
 export type SourceResult = { ok: true; source: ArticleSource; sourceId: string } | { ok: false; code: string; error: string };
 
 export async function articleSource(article: Pick<Content, "derivedFrom">, dataDir: string): Promise<SourceResult> {
@@ -37,7 +39,7 @@ export async function articleSource(article: Pick<Content, "derivedFrom">, dataD
   const ledger = ledgerOf(src);
   if (full && "text" in full) return { ok: true, sourceId: src.id, source: { kind: "srt", text: full.text, note: "底稿 = 源视频审过的成片的登记字幕", ledger } };
   const reason = full && "error" in full ? `登记字幕读不了（${full.error}）` : why ?? "没有登记字幕";
-  return { ok: true, sourceId: src.id, source: { kind: "script", text: src.body ?? "", note: `底稿 = 源视频的定稿正文（不是成片转写）：${reason}`, ledger } };
+  return { ok: true, sourceId: src.id, source: { kind: "script", text: src.body ?? "", note: reason === LEGACY_IMPORT_NOTE ? reason : `底稿 = 源视频的定稿正文（不是成片转写）：${reason}`, ledger } };
 }
 
 /**
@@ -48,6 +50,8 @@ async function registeredSrt(src: Content, dataDir: string): Promise<{ srt: stri
   if (!(await ontologyApplies(src, dataDir))) return { srt: null, why: "源视频走的是旧流程，没有登记字幕" };
   const doc = await readProductionDocOrEmpty(src.id, dataDir);
   const cut = validCutApproval(doc, src.body ?? "");
+  // 从旧流程导入的老视频（有 videoDone、本体里从没审过片）：本来就没登记过成片字幕，照实说
+  if (!cut?.sha256 && src.videoDone && !doc.decisions.some((d) => d.type === "cut_approval" || d.type === "cut_reject")) return { srt: null, why: LEGACY_IMPORT_NOTE };
   if (!cut?.sha256) return { srt: null, why: "源视频的成片现在没有有效的审片通过" };
   const fact = srtFor(doc, cut.sha256);
   if (!fact?.path) return { srt: null, why: "审过的这版成片没有登记字幕" };

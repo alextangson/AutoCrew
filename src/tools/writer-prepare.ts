@@ -52,7 +52,8 @@ import {
   type ReadyPack,
   type WritingPackFile,
 } from "./writer-pack.js";
-import { derivedArticleRequest } from "../modules/wechat-article/writer-request.js";
+import { derivedArticleReadiness, derivedArticleRequest } from "../modules/wechat-article/writer-request.js";
+import { articleSource } from "../modules/wechat-article/source.js";
 import {
   countPoll,
   packView,
@@ -268,7 +269,8 @@ export async function startPack(
   }
   // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
   // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
-  const readiness = await inspectWritingReadiness(params.topicId, req, dataDir, warn);
+  // 派生文章不走选题的写前准备：复用源视频的调研台账，绝不新开或替换选题上的调研任务
+  const readiness = derived ? derivedArticleReadiness(params.topicId, req, derived.researchNote) : await inspectWritingReadiness(params.topicId, req, dataDir, warn);
   if (!readiness.ready) return writingReadinessFailure(readiness);
   // Persist the same original task as research, even when the host only supplies topic/platform.
   req = inheritCreativeTask(req, readiness.creativeTask);
@@ -391,7 +393,11 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
     if (args.req.modelExecution === "host") {
       const evidence = await loadHostEvidence(args.contentId, dataDir);
       for (const entry of evidence) built.inputs.ledger.add(entry);
-
+    }
+    // 派生文章：源视频的调研台账只读并进本包的账，正文引用它的编号能过数字门
+    if (source?.derivedFrom?.kind === "wechat_article") {
+      const s = await articleSource(source, dataDir);
+      if (s.ok) for (const entry of s.source.ledger) built.inputs.ledger.add(entry);
     }
     if (built.experiment) {
       const { hypothesisId } = built.experiment;
@@ -466,14 +472,17 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string, 
     if (!base) return;
     // Preparation is asynchronous. Never label a pack with a readiness snapshot
     // from one brief while its actual prompts/ledger came from another.
+    const content = await getContent(args.contentId, dataDir);
+    const derived = content?.derivedFrom?.kind === "wechat_article";
     const actual = built.inputs.attribution;
-    if ((args.readiness.research.briefHash ?? "") !== (actual.usedBriefHash ?? "") ||
+    if (!derived && (args.readiness.research.briefHash ?? "") !== (actual.usedBriefHash ?? "") ||
         (args.readiness.angle.selectedAngleHash ?? "") !== (actual.usedAngle?.hash ?? "")) {
       throw new Error("写作包准备期间调研或立意已变化，准备状态与实际材料不一致；请带原始要求和 force:true 重新 pack。");
     }
-    const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
+    // 派生文章的准备不看选题简报（见 derivedArticleReadiness），不拿选题的写前检查复核
+    const latest = derived ? args.readiness : await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
     const topic = await getTopic(args.req.topicId!, dataDir);
-    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), args.req.platform, await getContent(args.contentId, dataDir));
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), args.req.platform, content);
     if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
         latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
         !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||
