@@ -9,6 +9,7 @@ import { checkArtifactApproval, type ApprovalCheck } from "../lineage/artifact-a
 import { staleReason } from "../lineage/lineage.js";
 import { articleChars, packageHash, packageProblems, readArticlePackage, suggestedCreationSource, type ArticlePackage } from "./package.js";
 import { writeArticlePreview } from "./preview.js";
+import { readRebindDiff } from "../lineage/rebind-diff.js";
 
 export interface ArticleReviewState {
   content: Content;
@@ -44,6 +45,7 @@ export async function renderReviewPage(s: ArticleReviewState, dataDir: string): 
     contentId: s.content.id, title: s.content.title, body: s.content.body ?? "", pkg: s.pkg, entries: s.images.entries,
     chars: articleChars(s.content.body ?? ""), problems: s.problems, suggestedSource: suggestedCreationSource(s.images),
     approval: approvalText(s), ...(s.pkg.sourceNote ? { sourceNote: s.pkg.sourceNote } : {}),
+    rebindDiff: s.content.derivedFrom?.rebound ? await readRebindDiff(s.content.id, dataDir) : null,
   }, dataDir);
 }
 

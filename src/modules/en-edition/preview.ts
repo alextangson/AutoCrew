@@ -7,8 +7,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
 import { segmentBudget, wordCount, type EnScript, type Swap } from "./script.js";
+import { diffHtml, type RebindDiff } from "../lineage/rebind-diff.js";
 
-export interface EnPreviewInput { contentId: string; title: string; script: EnScript; problems: string[]; approval: string; evidence: ReadonlySet<string> }
+export interface EnPreviewInput { contentId: string; title: string; script: EnScript; problems: string[]; approval: string; evidence: ReadonlySet<string>; rebindDiff?: RebindDiff | null }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const t = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 100))}`;
@@ -23,7 +24,8 @@ function rowHtml(s: EnScript["segments"][number], evidence: ReadonlySet<string>)
   const en = s.keyword ? esc(s.en).replace(esc(s.keyword), `<mark>${esc(s.keyword)}</mark>`) : esc(s.en);
   const budget = `${b.slotS.toFixed(1)}s 槽 · 约 ${b.estimatedS.toFixed(1)}s（${wordCount(s.en)} 词）${b.over ? ' <span class="bad">可能超时</span>' : ""}`;
   const swaps = s.swaps.length ? `<ul>${s.swaps.map((w) => swapHtml(w, evidence)).join("")}</ul>` : "";
-  return `<tr><td class="n">${s.index}<br><small>${t(s.startMs)}–${t(s.endMs)}<br>字幕 ${s.cueFrom}–${s.cueTo}</small></td><td>${esc(s.zh)}</td><td>${en}${swaps}<p class="budget">${budget}</p></td></tr>`;
+  const changed = s.changed ? `<p class="bad">成片换版：${esc(s.changed)}</p>` : "";
+  return `<tr><td class="n">${s.index}<br><small>${t(s.startMs)}–${t(s.endMs)}<br>字幕 ${s.cueFrom}–${s.cueTo}</small></td><td>${esc(s.zh)}${changed}</td><td>${en}${swaps}<p class="budget">${budget}</p></td></tr>`;
 }
 
 const CSS = `body{font-family:-apple-system,"PingFang SC",sans-serif;margin:0;background:#f4f4f4;color:#222}main{max-width:1100px;margin:0 auto;background:#fff;padding:24px}
@@ -37,6 +39,7 @@ export function renderEnPreview(i: EnPreviewInput): string {
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>英文版脚本｜${esc(i.title)}</title><style>${CSS}</style></head><body><main>
 <h1>英文版脚本：${esc(i.title)}</h1>
 <section class="meta"><p>${i.script.segments.length} 段，换了 ${swaps} 处例子。英文通常比中文长 5–25%，每段下面是时间预算。</p><p>批准状态：${esc(i.approval)}</p><h3>还差什么</h3>${problems}</section>
+${diffHtml(i.rebindDiff ?? null)}
 <table><thead><tr><th>段 / 时间</th><th>中文原句（成片字幕）</th><th>英文（标黄 = 字幕关键词）</th></tr></thead><tbody>
 ${rows}
 </tbody></table></main></body></html>`;

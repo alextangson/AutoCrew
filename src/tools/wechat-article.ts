@@ -19,16 +19,18 @@ import { centeredCrop, cropParam, parseCrop, readMaster, type ArticleCoverRatio,
 import { isPublishOp, PUBLISH_OPS, runPublishOp, WECHAT_ARTICLE_PUBLISH_DOC } from "./wechat-article-publish.js";
 import type { PushDeps } from "../modules/wechat-article/push.js";
 import { reopenIfApprovalBroken } from "../modules/wechat-article/approve.js";
+import { rebindArticle } from "../modules/wechat-article/rebind.js";
+import { staleReason } from "../modules/lineage/lineage.js";
 import { approvalText, articleReviewState, isDerivedArticle, renderReviewPage } from "../modules/wechat-article/review.js";
 
 type Result = Record<string, unknown>;
-const OPS = ["derive", "source", "set_titles", "choose_title", "set_creation_source", "override_length", "generate_images", "attach_web_image", "set_cover", "status", ...PUBLISH_OPS] as const;
+const OPS = ["derive", "rebind", "source", "set_titles", "choose_title", "set_creation_source", "override_length", "generate_images", "attach_web_image", "set_cover", "status", ...PUBLISH_OPS] as const;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 const str = (v: unknown) => (typeof v === "string" ? v.trim().replace(/^"+|"+$/g, "").trim() : "");
 const now = () => new Date().toISOString();
 
 export const WECHAT_ARTICLE_ACTION_DOC =
-  "'wechat_article' 视频派生公众号长文，content_id + article{op, …}，op: derive{content_id:源视频} / source / set_titles{titles:3-5 个} / generate_images{index?} / attach_web_image{index,path,url,credit} / set_cover{path:一张主图, crop_235?, crop_1_1?} / choose_title{title|index,founder_quote} / set_creation_source{creation_source,founder_quote} / override_length{founder_quote} / status（审阅页+还差什么）" + WECHAT_ARTICLE_PUBLISH_DOC;
+  "'wechat_article' 视频派生公众号长文，content_id + article{op, …}，op: derive{content_id:源视频} / rebind（源视频成片换版后绑到新成片，草稿留着、批准撤掉重审） / source / set_titles{titles:3-5 个} / generate_images{index?} / attach_web_image{index,path,url,credit} / set_cover{path:一张主图, crop_235?, crop_1_1?} / choose_title{title|index,founder_quote} / set_creation_source{creation_source,founder_quote} / override_length{founder_quote} / status（审阅页+还差什么）" + WECHAT_ARTICLE_PUBLISH_DOC;
 
 async function articleOrFail(params: Result, dataDir: string): Promise<{ id: string } | Result> {
   const id = str(params.content_id ?? params.id);
@@ -46,6 +48,9 @@ async function derive(params: Result, dataDir: string): Promise<Result> {
   const pack = a.topicId
     ? { tool: "autocrew_writer", params: { action: "pack", topic_id: a.topicId, platform: "wechat_mp", content_id: a.id } }
     : null;
+  // 已有的那条是按旧成片做的：不另建，指路 rebind（草稿留着、按逐句对比重审）
+  const stale = r.created ? null : await staleReason(a, dataDir);
+  if (stale) return { ok: true, created: false, content_id: a.id, title: a.title, platform: a.platform, stale, next_action: { tool: "autocrew_content", params: { action: "wechat_article", content_id: a.id, article: { op: "rebind" } } } };
   return {
     ok: true, created: r.created, content_id: a.id, title: a.title, platform: a.platform,
     ...(pack ? { next_action: pack } : { warning: "源视频没有选题，写作包领不了：请创始人先给源视频挂上选题" }),
@@ -204,6 +209,7 @@ export async function executeWechatArticle(raw: Result, deps: PushDeps = {}): Pr
   if (!("id" in a) || typeof a.id !== "string") return a;
   const id = a.id;
   if (op === "source") return source(id, dataDir);
+  if (op === "rebind") return rebindArticle(id, dataDir);
   if (op === "status") return status(id, dataDir);
   // 发布段各自加锁（推送要在锁里跑完），不能再套进下面的改包锁
   if (isPublishOp(op)) return runPublishOp(op, id, params, dataDir, deps);

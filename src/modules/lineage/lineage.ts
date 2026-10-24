@@ -14,6 +14,7 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { checkArtifactApproval, shortHash } from "./artifact-approval.js";
 import { approvedCutIdentity } from "./cut-identity.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
+import { STILL_SETTLING } from "../production/hash-cache.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { enKitPlatforms, lineRefusal } from "../profile/platform-lines.js";
 
@@ -115,9 +116,11 @@ export async function staleReason(item: Pick<Content, "derivedFrom">, dataDir: s
   const current = await approvedCutIdentity(source, dataDir, opts);
   const check = checkArtifactApproval({ artifact: "源视频成片", hash: from.sourceCutHash, approvedAt: from.at }, current.id);
   if (check.ok) return null;
+  // 成片文件一分钟内刚写过：哈希先不算，不是换了版（verifier P3）
+  if (current.id === null && current.reason.includes(STILL_SETTLING)) return "成片文件刚写完，等一分钟再判断（先不发）";
   return current.id === null
-    ? `${current.reason}：这条是按旧成片做的，等新成片审过后要重做`
-    : `源视频换了一版成片（派生时 ${shortHash(from.sourceCutHash)}，现在 ${shortHash(current.id)}）：这条是按旧成片做的，要按新成片重做`;
+    ? `${current.reason}：这条是按旧成片做的，等新成片审过后用 rebind 绑到新成片（草稿都留着）`
+    : `源视频换了一版成片（派生时 ${shortHash(from.sourceCutHash)}，现在 ${shortHash(current.id)}）：这条是按旧成片做的，用 rebind 绑到新成片（草稿都留着，按变化重审）`;
 }
 
 export async function isStale(item: Pick<Content, "derivedFrom">, dataDir: string, opts: { fresh?: boolean } = {}): Promise<boolean> {

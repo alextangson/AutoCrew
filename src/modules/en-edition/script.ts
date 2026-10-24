@@ -102,6 +102,7 @@ export function scriptProblems(script: EnScript, evidence: ReadonlySet<string>):
   if (!script.segments.length) out.push("脚本是空的：先 set_script");
   for (const s of script.segments) {
     const at = `第 ${s.index} 段`;
+    if (s.changed) out.push(`${at}${s.changed}：按新中文核一遍英文，重交 set_script（没改的段原样交）`);
     if (!s.en.trim()) out.push(`${at}没有英文`);
     if (/[一-鿿]/.test(s.en)) out.push(`${at}英文里夹着中文：配音会念错，改成英文`);
     if (s.keyword && !s.en.includes(s.keyword)) out.push(`${at}的标黄词「${s.keyword}」不在英文里`);

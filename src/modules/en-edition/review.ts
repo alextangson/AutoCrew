@@ -9,6 +9,7 @@ import { approveArtifact, checkArtifactApproval, type ApprovalCheck } from "../l
 import { staleReason } from "../lineage/lineage.js";
 import { readEnScript, SCRIPT_ARTIFACT, scriptBody, scriptHash, scriptProblems, writeEnScript, type EnScript } from "./script.js";
 import { writeEnPreview } from "./preview.js";
+import { readRebindDiff } from "../lineage/rebind-diff.js";
 
 export interface EnReviewState {
   content: Content;
@@ -49,8 +50,9 @@ export function enApprovalText(s: Pick<EnReviewState, "script" | "approval">): s
   return s.script.approval ? `批准已失效：${s.approval.reason}` : "还没批";
 }
 
-export function renderEnReviewPage(s: EnReviewState, dataDir: string): Promise<string> {
-  return writeEnPreview({ contentId: s.content.id, title: s.content.title, script: s.script, problems: s.problems, approval: enApprovalText(s), evidence: s.evidence }, dataDir);
+export async function renderEnReviewPage(s: EnReviewState, dataDir: string): Promise<string> {
+  const rebindDiff = s.content.derivedFrom?.rebound ? await readRebindDiff(s.content.id, dataDir) : null;
+  return writeEnPreview({ contentId: s.content.id, title: s.content.title, script: s.script, problems: s.problems, approval: enApprovalText(s), evidence: s.evidence, rebindDiff }, dataDir);
 }
 
 export function enBriefLines(s: EnReviewState, page: string): string[] {

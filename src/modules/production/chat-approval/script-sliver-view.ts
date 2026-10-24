@@ -5,6 +5,7 @@
 import { getContent } from "../../../storage/local-store.js";
 import { readArticlePackage } from "../../wechat-article/package.js";
 import { readEnScript } from "../../en-edition/script.js";
+import { diffBriefLines, readRebindDiff } from "../../lineage/rebind-diff.js";
 import type { InboxItem } from "../inbox.js";
 
 export interface SliverPoint { key: string; start_tc?: string; frames?: number; prev_name?: string | null; next_name?: string | null; suggestion?: string | null; waived?: boolean; action?: { params?: Record<string, unknown> } }
@@ -72,8 +73,10 @@ export async function draftBrief(item: InboxItem, dataDir: string): Promise<stri
   const derived = c?.derivedFrom?.kind;
   const head = derived === "wechat_article" ? await articleHead(c!.id, item.title, dataDir) : `《${item.title}》`;
   const text = derived === "en_edition" ? await bilingualText(c!.id, dataDir) : null;
+  const diff = c?.derivedFrom?.rebound ? await readRebindDiff(c.id, dataDir).catch(() => null) : null;
   return [
     `${head}稿子写好了，过一眼（${String(d.platform ?? "平台未定")}，${String(d.words ?? "?")} 字）`,
+    ...(diff ? diffBriefLines(diff) : []),
     ...(behind.length ? [`${behind.join("和")}已经做好了，在等这份稿认了才能审。`] : []),
     "要你判断：念起来顺不顺、有没有说错的、是不是你想说的。",
     text ? "———— 中英对照（逐段）————" : "———— 全文 ————",

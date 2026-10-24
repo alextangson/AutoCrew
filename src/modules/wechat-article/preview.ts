@@ -3,6 +3,7 @@
  * 图下来源 / 生成说明、封面主图与两个裁切、创作来源、篇幅与没过的项。创始人从「等你拍板」的认稿那件打开它。
  * 只读：不改包。图片用 file:// 绝对路径，本机浏览器直接打开。
  */
+import { diffHtml, type RebindDiff } from "../lineage/rebind-diff.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,6 +20,8 @@ export interface PreviewInput {
   entries: ArticleImageEntry[];
   chars: number;
   problems: string[];
+  /** 源成片换版 rebind 过：旧 / 新成片字幕的逐句对比（审阅页顶上给他看） */
+  rebindDiff?: RebindDiff | null;
   suggestedSource: string | null;
   approval: string;
   sourceNote?: string;
@@ -95,6 +98,7 @@ function headerHtml(i: PreviewInput): string {
     `<p>创作来源：${source}</p><p>正文 ${i.chars} 字${i.pkg.lengthOverride ? `（篇幅已放行：「${esc(i.pkg.lengthOverride.founderWords)}」）` : ""}</p>`,
     i.sourceNote ? `<p>底稿：${esc(i.sourceNote)}</p>` : "",
     `<p>批准状态：${esc(i.approval)}</p><h3>还差什么</h3>${problems}</section>`,
+    diffHtml(i.rebindDiff ?? null),
   ].join("\n");
 }
 
