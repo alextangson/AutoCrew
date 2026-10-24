@@ -19,6 +19,7 @@ import { SettingsArollSources } from "./SettingsArollSources";
 import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
 import { SettingsPublishGate } from "./SettingsPublishGate";
+import { SettingsVoice } from "./SettingsVoice";
 import { SettingsData } from "./SettingsData";
 import { SettingsUpdate } from "./SettingsUpdate";
 import type { Route } from "../routes";
@@ -83,7 +84,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
       </nav>
 
       {tab === "data" && <SettingsData />}
-      {tab === "integrations" && <><Integrations /><SettingsPublishGate /></>}
+      {tab === "integrations" && <><Integrations /><SettingsPublishGate /><SettingsVoice /></>}
       {tab === "models" && (
         <>
           {props.nav && <MorePages nav={props.nav} />}

@@ -42,3 +42,46 @@ describe("shellQuote", () => {
     expect(out).toBe(p);
   });
 });
+
+describe("dub timestamps + missing voice", () => {
+  it("word times past the measured mp3 end are clamped to the audio duration", async () => {
+    const { wordsFromAlignment } = await import("./dub.js");
+    const chars = [..."ok go"];
+    const words = wordsFromAlignment({ characters: chars, character_start_times_seconds: [0, 0.1, 0.2, 5.7, 5.8], character_end_times_seconds: [0.1, 0.2, 0.3, 5.8, 5.84] }, 10, 5.76);
+    expect(words.at(-1)!.endS).toBe(15.76);
+    expect(words.every((w) => w.endS >= w.startS)).toBe(true);
+  });
+});
+
+describe("dub failure is remembered until a dub succeeds", () => {
+  it("status says 配音失败 after a failed dub, and a missing voice id points at the settings page", async () => {
+    const { enSourceVideo, SEGMENTS, approveEnScript, fakeElevenLabs, EN_SRT_40S } = await import("./en-test-fixtures.js");
+    const { executeEnEdition } = await import("../../tools/en-edition.js");
+    const { setElevenLabsFetch, setKeychainReader } = await import("../voice/elevenlabs.js");
+    const { setDurationProbe } = await import("./dub.js");
+    const src = await enSourceVideo(["douyin", "youtube"], EN_SRT_40S);
+    const env = src.env;
+    const before = { k: process.env.ELEVENLABS_API_KEY, v: process.env.ELEVENLABS_VOICE_ID, l: process.env.AUTOCREW_LOCAL_DIR };
+    process.env.AUTOCREW_LOCAL_DIR = env.outside;
+    try {
+      process.env.ELEVENLABS_API_KEY = "sk-test"; delete process.env.ELEVENLABS_VOICE_ID;
+      setKeychainReader(async () => null);
+      const id = String((await executeEnEdition({ _dataDir: env.dir, op: "derive", content_id: src.id })).content_id);
+      const run = (p: Record<string, unknown>) => executeEnEdition({ _dataDir: env.dir, content_id: id, ...p });
+      await run({ op: "set_script", segments: SEGMENTS });
+      expect(await approveEnScript(env, id)).toMatchObject({ ok: true });
+      const noVoice = await run({ op: "dub" });
+      expect(noVoice).toMatchObject({ ok: false, code: "elevenlabs_voice_missing" });
+      expect(String(noVoice.error)).toContain("设置 → 接入更多 → 英文版配音");
+      expect(String((await run({ op: "status" })).dub)).toMatch(/^配音失败：没配 ElevenLabs 声音 id/);
+      process.env.ELEVENLABS_VOICE_ID = "v";
+      fakeElevenLabs([9, 9, 19]);
+      expect(await run({ op: "dub" })).toMatchObject({ ok: true });
+      expect(String((await run({ op: "status" })).dub)).toMatch(/^已配音/);
+    } finally {
+      setElevenLabsFetch(null); setDurationProbe(null); setKeychainReader(null);
+      for (const [k, v] of [["ELEVENLABS_API_KEY", before.k], ["ELEVENLABS_VOICE_ID", before.v], ["AUTOCREW_LOCAL_DIR", before.l]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      await env.cleanup();
+    }
+  });
+});

@@ -58,6 +58,40 @@ export async function resolveElevenLabsKey(machineDir?: string): Promise<{ key: 
   return k ? { key: k, source: "keychain" } : { key: null, source: null };
 }
 
+/** 设置页写密钥：和 TypeSafe 一样单独一个本机文件，600 权限，永不回显；空的 / 带空白的拒收 */
+export async function writeElevenLabsKey(key: string, machineDir?: string): Promise<void> {
+  const k = key.trim();
+  if (!k || keyFormatProblem(k)) throw new Error("ElevenLabs 密钥不能为空，也不能含空白：重新粘一遍");
+  const file = elevenLabsKeyFile(machineDir);
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  await fs.writeFile(file, k, { mode: 0o600 });
+  await fs.chmod(file, 0o600);
+}
+
+/** 设置页写声音 id：并进本机 elevenlabs.json（模型、声音参数原样留着） */
+export async function writeElevenLabsVoiceId(voiceId: string, machineDir?: string): Promise<void> {
+  const v = voiceId.trim();
+  if (!v || /[\s/]/.test(v)) throw new Error("ElevenLabs 声音 id 不能为空，也不能含空白或斜杠：在 ElevenLabs 的 Voices 里复制 Voice ID");
+  const file = elevenLabsConfigFile(machineDir);
+  let raw: Record<string, unknown> = {};
+  try { raw = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`ElevenLabs 设置读不出来（${(e as Error).message}），没改：先修好 ${file}`); }
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ ...raw, voiceId: v }, null, 2) + "\n", { mode: 0o600 });
+}
+
+/** 设置页 / doctor 看的状态：密钥只回来源，声音 id 只回掩码和来源 */
+export async function elevenLabsStatus(machineDir?: string): Promise<{ keySource: KeySource | "unreadable" | null; voiceIdMasked: string | null; voiceSource: "env" | "settings" | null }> {
+  const key = await resolveElevenLabsKey(machineDir).then((r) => r.source).catch(() => "unreadable" as const);
+  const cfg = await readElevenLabsConfig(machineDir).catch(() => null);
+  const id = cfg?.voiceId ?? null;
+  const mask = (x: string) => (x.length <= 8 ? "****" : `${x.slice(0, 4)}…${x.slice(-4)}`);
+  return { keySource: key, voiceIdMasked: id ? mask(id) : null, voiceSource: !id ? null : process.env.ELEVENLABS_VOICE_ID?.trim() ? "env" : "settings" };
+}
+
+/** 缺配置时告诉人去哪配（设置页的真实位置） */
+export const SETTINGS_PLACE = "AutoCrew 设置 → 接入更多 → 英文版配音（ElevenLabs）";
+
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : d);
 
 export async function readElevenLabsConfig(machineDir?: string): Promise<ElevenLabsConfig> {
