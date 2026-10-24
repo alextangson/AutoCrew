@@ -322,6 +322,11 @@ async function resolveResearch(
     const snapshot = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), warn);
     if (!snapshot) return { hasCards: false, ...found };
     const { brief } = snapshot;
+    if (req.sourceOnlyResearch) {
+      // 派生文章：不注入选题简报的证据；只认源视频选中的立意卡（卡上的简报证据也不带）
+      const card = req.direction?.trim() || !topic ? null : activeAngleCard(topic.selectedAngle, brief, topicHashOf(topic.title, topic.description));
+      return { hasCards: false, ...(card ? { angle: { card, evidence: [], tensions: [] } } : {}), ...found };
+    }
     const task = createCreativeTask(req, brief.creativeTask);
     if ((brief.creativeTask || req.researchMode === "provided" || req.researchMode === "skip") && !creativeTaskMatches(task, brief.creativeTask)) {
       warn("当前创作任务与旧简报不一致，旧研究和角度不注入本稿；请按本次任务准备材料。");
