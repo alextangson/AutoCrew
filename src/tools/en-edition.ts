@@ -17,7 +17,7 @@ import { readEnScript, scriptBody, scriptHash, segmentBudget, withEnLock, writeE
 import { enApprovalText, enReviewState, isEnEdition, renderEnReviewPage } from "../modules/en-edition/review.js";
 import { captionsOp, chaptersOp, dubOp, mediaStatus, packageStatusOp, thumbnailOp } from "./en-edition-media.js";
 import { enFinalCheck } from "../modules/en-edition/publish-out.js";
-import { rebindEnEdition } from "../modules/en-edition/rebind.js";
+import { rebindEnEditionLocked } from "../modules/en-edition/rebind.js";
 import { staleReason } from "../modules/lineage/lineage.js";
 
 type Result = Record<string, unknown>;
@@ -129,7 +129,7 @@ export async function executeEnEdition(raw: Result): Promise<Result> {
   if (op === "chapters") return chaptersOp(c.id, dataDir);
   if (op === "package_status") return packageStatusOp(c.id, dataDir);
   if (op === "final_check") return enFinalCheck(c.id, str(params.platform), dataDir);
-  if (op === "rebind") return withEnLock(c.id, () => rebindEnEdition(c.id, dataDir));
+  if (op === "rebind") return rebindEnEditionLocked(c.id, dataDir);
   return withEnLock(c.id, () => mutate(op, c.id, params, dataDir));
 }
 

@@ -43,6 +43,8 @@ export interface ArticlePackage {
   cover?: ArticleMasterCover;
   covers?: LegacyArticleCover[];
   approval?: ArtifactApproval;
+  /** rebind 进行到一半（批准已撤、还没收尾）：绑到哪一版成片；重试 rebind 按它收尾，不当成「不用 rebind」 */
+  rebindPending?: { toCut: string; at: string };
   /** 写作包用的底稿从哪来（成片字幕 / 退回定稿正文的原因）：领包时记下，审阅页照显示；不进指纹 */
   sourceNote?: string;
 }
@@ -142,26 +144,28 @@ async function fileSha(p: string | undefined): Promise<string> {
 }
 
 /** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面主图（文件字节）+ 两个裁切、创作来源 */
-export async function packageHash(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<string> {
+export async function packageHash(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<string> {
   const images = [];
   for (const e of review.entries) images.push({ index: e.index, kind: e.kind ?? "gen", sha: await fileSha(e.imagePath), sourceUrl: e.sourceUrl, credit: e.credit });
   const c = pkg.cover;
   const cover = c ? { sha: await fileSha(c.path), crops: ARTICLE_COVER_RATIOS.map((r) => `${r}=${cropParam(c.crops[r])}`) } : null;
   const legacy = pkg.covers?.length ? pkg.covers.map((x) => x.sha256) : null;
-  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, cover, legacy, creationSource: pkg.creationSource?.value ?? null });
+  // rebind 过的稿把源成片身份也算进指纹：绑定一换，旧批准一定失效（哪怕撤批准那一步没落盘）。从没 rebind 过的不带，已有批准不受影响
+  const sourceCut = content.derivedFrom?.rebound ? { sourceCut: content.derivedFrom.sourceCutHash } : {};
+  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, cover, legacy, creationSource: pkg.creationSource?.value ?? null, ...sourceCut });
 }
 
 export function approvePackage(pkg: ArticlePackage, hash: string, now = new Date()): ArticlePackage {
   return { ...pkg, approval: approveArtifact(APPROVAL_ARTIFACT, hash, now) };
 }
 
-export async function packageApprovalCheck(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<ApprovalCheck> {
+export async function packageApprovalCheck(content: Pick<Content, "body" | "derivedFrom">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<ApprovalCheck> {
   return checkArtifactApproval(pkg.approval, await packageHash(content, pkg, review));
 }
 
 const locks = new Map<string, Promise<unknown>>();
 
-/** 同一篇文章的包改动与批准排队执行：批的那一刻包不会被另一个调用改掉 */
+/** 同一篇文章的包改动与批准排队执行：批的那一刻包不会被另一个调用改掉。锁顺序：文件归属事务 → 这把锁 → 稿件写锁（见 en-edition/script.ts withEnLock） */
 export function withArticleLock<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(contentId) ?? Promise.resolve();
   const run = prev.catch(() => undefined).then(fn);

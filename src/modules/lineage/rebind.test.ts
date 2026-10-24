@@ -159,3 +159,59 @@ describe("stale wording right after the source cut is written", () => {
     } finally { setSettleMs(null); }
   });
 });
+
+describe("Codex P1: wechat rebind interrupted after switching the binding", () => {
+  it("a retry finishes the job (back to review, marker cleared) and the old approval can't pass under the new cut", async () => {
+    const { planRebind, commitRebind } = await import("./rebind.js");
+    const { packageApprovalCheck } = await import("../wechat-article/package.js");
+    const { getArticleImageReview } = await import("../publish/article-images.js");
+    const src = await enSourceVideo(["douyin", "wechat_mp"], EN_SRT_40S);
+    env = src.env;
+    const id = String((await executeWechatArticle({ _dataDir: env.dir, op: "derive", content_id: src.id })).content_id);
+    await setContent(env, id, { body: "正文草稿", status: "approved" });
+    const pkg = await readArticlePackage(id, env.dir);
+    const { packageHash } = await import("../wechat-article/package.js");
+    const hash = await packageHash((await getContent(id, env.dir))!, pkg, await getArticleImageReview(id, env.dir));
+    await writeArticlePackage(id, approvePackage(pkg, hash), env.dir);
+    await recut(src.id);
+    // 模拟崩在 ② 之后：绑定换了，批准还在（撤批准那一步没写成），状态还是 approved
+    const plan = await planRebind((await getContent(id, env.dir))!, env.dir);
+    if ("ok" in plan || plan.noop) throw new Error("expected a rebind plan");
+    await commitRebind(id, plan, env.dir);
+    const c = (await getContent(id, env.dir))!;
+    expect((await packageApprovalCheck(c, await readArticlePackage(id, env.dir), await getArticleImageReview(id, env.dir))).ok).toBe(false);
+    // 带着 rebindPending 再调：收尾，而不是回「不用 rebind」
+    await writeArticlePackage(id, { ...(await readArticlePackage(id, env.dir)), rebindPending: { toCut: plan.to, at: "x" } }, env.dir);
+    expect(await executeWechatArticle({ _dataDir: env.dir, op: "rebind", content_id: id })).toMatchObject({ ok: true, rebound: true, resumed: true });
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
+    const after = await readArticlePackage(id, env.dir);
+    expect(after.rebindPending).toBeUndefined();
+    expect(after.approval).toBeUndefined();
+  });
+});
+
+describe("Codex P1/P2: en rebind lock order and script approval", () => {
+  it("rebind racing the founder's inbox approval finishes (no deadlock), and an approved script with no production facts loses its production approval", async () => {
+    const { scriptApprovalFor } = await import("../../storage/production-store.js");
+    const src = await enSourceVideo(["douyin", "youtube"], EN_SRT_40S);
+    env = src.env;
+    const id = String((await executeEnEdition({ _dataDir: env.dir, op: "derive", content_id: src.id })).content_id);
+    const run = (p: Record<string, unknown>) => executeEnEdition({ _dataDir: env.dir, content_id: id, ...p });
+    await run({ op: "set_script", segments: SEGMENTS });
+    expect(await approveEnScript(env, id)).toMatchObject({ ok: true });
+    await recut(src.id);
+    await run({ op: "set_script", segments: SEGMENTS.map((s) => ({ ...s, en: `${s.en} ` + "Again." })) }).catch(() => null);
+    // 认稿那条路的锁序：先文件归属、再英文版锁（inbox-decide）。它先拿到文件归属、过一会儿再要英文版锁
+    const { withFileOwnership } = await import("../production/mutex.js");
+    const { withEnLock } = await import("../en-edition/script.js");
+    const approval = withFileOwnership(async () => { await new Promise((r) => setTimeout(r, 150)); return withEnLock(id, async () => "approved"); });
+    const race = Promise.all([approval, run({ op: "rebind" })]);
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("deadlock: rebind and approval waited on each other")), 5000));
+    await Promise.race([race, timeout]);
+    const after = await run({ op: "rebind" });
+    expect(after).toMatchObject({ ok: true });
+    const c = (await getContent(id, env.dir))!;
+    expect(scriptApprovalFor((await readProductionDoc(id, env.dir))!, c.body ?? "")).toBeFalsy();
+    expect(c.status).toBe("draft_ready");
+  }, 15_000);
+});

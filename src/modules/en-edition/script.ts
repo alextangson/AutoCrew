@@ -118,7 +118,11 @@ export function scriptProblems(script: EnScript, evidence: ReadonlySet<string>):
 
 const locks = new Map<string, Promise<unknown>>();
 
-/** 同一条英文版的脚本改动、配音与批准排队执行：批的那一刻脚本不会被另一个调用改掉 */
+/**
+ * 同一条英文版的脚本改动、配音与批准排队执行：批的那一刻脚本不会被另一个调用改掉。
+ * 锁顺序（全库固定，见 storage/file-ownership.ts）：文件归属事务 → 英文版锁 / 公众号文章锁 → 稿件写锁。
+ * 要在锁里做文件归属事务（重开一轮、record）的，先拿文件归属再拿这把锁，绝不反过来（反过来和「等你拍板」的认稿互相等死）。
+ */
 export function withEnLock<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(contentId) ?? Promise.resolve();
   const run = prev.catch(() => undefined).then(fn);

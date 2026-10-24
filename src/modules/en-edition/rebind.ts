@@ -5,12 +5,13 @@
  * 英文版这条稿的制作轮次结束（旧的英文成片、参考片转入历史），重新配音只会配英文变了的段（按段缓存）。
  */
 import { getContent, updateContent } from "../../storage/local-store.js";
-import { isOntologyActive, readProductionDoc } from "../../storage/production-store.js";
+import { isOntologyActive, latestScriptDecision, readProductionDoc } from "../../storage/production-store.js";
 import { backToReview, commitRebind, noopResult, planRebind } from "../lineage/rebind.js";
 import { cutSrtText, diffBriefLines, matchCues } from "../lineage/rebind-diff.js";
 import { reopenScript } from "../production/reopen.js";
+import { withFileOwnership } from "../production/mutex.js";
 import { parseTimedSrt, type SourceCue } from "./source.js";
-import { readEnScript, scriptBody, writeEnScript, type Segment } from "./script.js";
+import { readEnScript, scriptBody, withEnLock, writeEnScript, type Segment } from "./script.js";
 
 type Result = Record<string, unknown>;
 
@@ -58,7 +59,12 @@ export function remapSegments(segs: Segment[], oldCues: SourceCue[], newCues: So
   return { segments: out, dropped };
 }
 
-export async function rebindEnEdition(id: string, dataDir: string): Promise<Result> {
+/** 锁顺序同全库：文件归属事务 → 英文版锁（见 withEnLock）。重开一轮要文件归属，所以先拿它 */
+export function rebindEnEditionLocked(id: string, dataDir: string): Promise<Result> {
+  return withFileOwnership(() => withEnLock(id, () => rebindEnEdition(id, dataDir)));
+}
+
+async function rebindEnEdition(id: string, dataDir: string): Promise<Result> {
   const c = (await getContent(id, dataDir))!;
   const plan = await planRebind(c, dataDir);
   if ("ok" in plan) return plan;
@@ -85,7 +91,9 @@ export async function rebindEnEdition(id: string, dataDir: string): Promise<Resu
 /** 画面换了：英文版这一轮的英文成片 / 参考片都作废，结束本轮（解冻正文，旧的转入历史）；还没进制作段就不用 */
 async function endProductionRound(id: string, dataDir: string): Promise<Result | null> {
   const doc = await readProductionDoc(id, dataDir).catch(() => null);
-  const hasRound = doc && (doc.frozen || doc.facts.some((f) => f.round === doc.round && f.state === "accepted"));
+  // 批过的认稿也要结束（Codex 审 P2）：只撤 en-script.json 的批准不够，留着本轮的 script_approval，对账会把状态投影回「已认稿」
+  const approved = doc ? latestScriptDecision(doc)?.type === "script_approval" : false;
+  const hasRound = doc && (approved || doc.frozen || doc.facts.some((f) => f.round === doc.round && f.state === "accepted"));
   if (!hasRound || !(await isOntologyActive(dataDir, id))) return null;
   const r = await reopenScript(id, dataDir, "源视频成片换版（rebind）：英文成片要在新成片上重做口型对齐和字幕", doc.round);
   return r.ok ? null : { ok: false, code: r.code ?? "reopen_failed", error: `源成片换版，英文版这一轮的英文成片要作废重做，但没能结束这一轮：${r.error ?? "没有原因"}` };
