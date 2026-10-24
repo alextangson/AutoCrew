@@ -5,6 +5,7 @@
 import { articleReviewState } from "./review.js";
 import { approvePackage, packageApprovalCheck, readArticlePackage, writeArticlePackage } from "./package.js";
 import { getArticleImageReview } from "../publish/article-images.js";
+import { wechatTheme } from "../publish/wechat-config.js";
 import { getContent, transitionStatus } from "../../storage/local-store.js";
 
 export type GateResult = { ok: true; hash: string } | { ok: false; code: string; error: string };
@@ -21,7 +22,8 @@ export async function articleApproveGate(contentId: string, dataDir: string, exp
 
 export async function recordArticleApproval(contentId: string, hash: string, dataDir: string): Promise<void> {
   const pkg = await readArticlePackage(contentId, dataDir);
-  await writeArticlePackage(contentId, approvePackage(pkg, hash), dataDir);
+  // 记下批准这一刻的主题；hash 是按同一刻设置算的。两者之间设置被改 → 下次核对指纹对不上，照样退回重批
+  await writeArticlePackage(contentId, approvePackage(pkg, hash, await wechatTheme(dataDir)), dataDir);
 }
 
 /**
@@ -33,7 +35,7 @@ export async function reopenIfApprovalBroken(contentId: string, dataDir: string)
   if (!content || content.status !== "approved") return null;
   const pkg = await readArticlePackage(contentId, dataDir);
   if (!pkg.approval) return null;
-  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir));
+  const check = await packageApprovalCheck(content, pkg, await getArticleImageReview(contentId, dataDir), await wechatTheme(dataDir));
   if (check.ok) return null;
   const r = await transitionStatus(contentId, "draft_ready", { force: true }, dataDir);
   if (!r.ok) throw new Error(`包改了、批准失效，但退回认稿失败：${r.error ?? "没有原因"}`);

@@ -6,6 +6,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 vi.mock("../publish/wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn(), publishWechatMpDraft: vi.fn() }));
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("../wechat-article/preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 import { getContent } from "../../storage/local-store.js";
 import { readProductionDoc } from "../../storage/production-store.js";
@@ -51,7 +53,7 @@ describe("wechat_article rebind", () => {
     const id = String((await executeWechatArticle({ _dataDir: env.dir, op: "derive", content_id: src.id })).content_id);
     await setContent(env, id, { body: "正文草稿", status: "approved" });
     const pkg = await readArticlePackage(id, env.dir);
-    await writeArticlePackage(id, approvePackage({ ...pkg, titleOptions: ["一", "二", "三"], chosenTitle: "二" }, "h"), env.dir);
+    await writeArticlePackage(id, approvePackage({ ...pkg, titleOptions: ["一", "二", "三"], chosenTitle: "二" }, "h", "newspaper"), env.dir);
     expect(await executeWechatArticle({ _dataDir: env.dir, op: "rebind", content_id: id })).toMatchObject({ ok: true, rebound: false });
     await recut(src.id);
     const stale = await staleReason((await getContent(id, env.dir))!, env.dir, { fresh: true });
@@ -171,15 +173,15 @@ describe("Codex P1: wechat rebind interrupted after switching the binding", () =
     await setContent(env, id, { body: "正文草稿", status: "approved" });
     const pkg = await readArticlePackage(id, env.dir);
     const { packageHash } = await import("../wechat-article/package.js");
-    const hash = await packageHash((await getContent(id, env.dir))!, pkg, await getArticleImageReview(id, env.dir));
-    await writeArticlePackage(id, approvePackage(pkg, hash), env.dir);
+    const hash = await packageHash((await getContent(id, env.dir))!, pkg, await getArticleImageReview(id, env.dir), "newspaper");
+    await writeArticlePackage(id, approvePackage(pkg, hash, "newspaper"), env.dir);
     await recut(src.id);
     // 模拟崩在 ② 之后：绑定换了，批准还在（撤批准那一步没写成），状态还是 approved
     const plan = await planRebind((await getContent(id, env.dir))!, env.dir);
     if ("ok" in plan || plan.noop) throw new Error("expected a rebind plan");
     await commitRebind(id, plan, env.dir);
     const c = (await getContent(id, env.dir))!;
-    expect((await packageApprovalCheck(c, await readArticlePackage(id, env.dir), await getArticleImageReview(id, env.dir))).ok).toBe(false);
+    expect((await packageApprovalCheck(c, await readArticlePackage(id, env.dir), await getArticleImageReview(id, env.dir), "newspaper")).ok).toBe(false);
     // 带着 rebindPending 再调：收尾，而不是回「不用 rebind」
     await writeArticlePackage(id, { ...(await readArticlePackage(id, env.dir)), rebindPending: { toCut: plan.to, at: "x" } }, env.dir);
     expect(await executeWechatArticle({ _dataDir: env.dir, op: "rebind", content_id: id })).toMatchObject({ ok: true, rebound: true, resumed: true });

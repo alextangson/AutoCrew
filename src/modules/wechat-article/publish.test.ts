@@ -7,6 +7,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 vi.mock("../publish/wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn(), publishWechatMpDraft: vi.fn() }));
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 import { generateWechatImageAsset, type WechatMpDraftOptions, type WechatMpDraftResult } from "../publish/wechat-mp.js";
 import { makeEnv, png, put, setContent, videoContent, type Env } from "../production/testkit.js";
@@ -439,5 +441,43 @@ describe("verifier fixes: final_check re-checks 视频号; unpicking 公众号 s
     const done = await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T12:00:00+08:00" });
     expect(done).toMatchObject({ ok: false, phase: "unknown" });
     expect(String(done.error)).toMatch(reason);
+  });
+});
+
+describe("排版主题进批准包", () => {
+  const setTheme = async (theme: string) => {
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme } }));
+  };
+
+  it("批的时候记下设置里的主题；推送用包里记的主题", async () => {
+    await setTheme("claude-scroll");
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme).toBe("claude-scroll");
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, media_id: "MID-1" });
+    expect(pushes[0]!.theme).toBe("claude-scroll");
+  });
+
+  it("批后改了设置里的主题 → 批准失效、说清从哪个改成哪个、推送拒并退回认稿", async () => {
+    await setTheme("claude-scroll");
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    await setTheme("newspaper");
+    expect((await run({ op: "status" })).approval).toMatch(/排版主题从 claude-scroll 改成了 newspaper/);
+    const r = await run({ op: "push_draft" });
+    expect(r).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(String(r.error)).toMatch(/退回「等你拍板」/);
+    expect(publishImpl).not.toHaveBeenCalled();
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
+  });
+
+  it("没配主题时按 newspaper 记，审阅页写明主题", async () => {
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme).toBe("newspaper");
+    const html = await fs.readFile(String((await run({ op: "status" })).preview_page), "utf8");
+    expect(html).toContain("推送时的排版（主题 newspaper）");
+    expect(html).toContain("<p>排版后的正文</p>");
   });
 });

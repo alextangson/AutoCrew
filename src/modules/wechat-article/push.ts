@@ -15,6 +15,7 @@ import { scanText } from "../filter/sensitive-words.js";
 import { stagePackage, type Staged } from "./push-stage.js";
 import { cropParam } from "./cover.js";
 import { withArticleLock } from "./package.js";
+import { reopenIfApprovalBroken } from "./approve.js";
 import { getContent } from "../../storage/local-store.js";
 import { articleReviewState, isDerivedArticle, type ArticleReviewState } from "./review.js";
 import { COMMITTED, nextStep, readPublishState, withAttempt, writePublishState, type ArticlePublishState } from "./publish-state.js";
@@ -41,7 +42,12 @@ export async function approvedArticle(contentId: string, dataDir: string): Promi
   if (stopped) return no("line_unpicked", stopped);
   if (s.stale) return no("derived_stale", `这条派生稿过期了，不能发：${s.stale}`);
   if (!s.pkg.approval) return no("article_not_approved", "图文包还没批：先在「等你拍板」的认稿那件里批整包，再推草稿箱");
-  if (!s.approval.ok) return no("article_not_approved", `批准已失效（${s.approval.reason}）：重新给创始人看审阅页并批过，再推`);
+  if (!s.approval.ok) {
+    // 批后改了设置里的东西（排版主题）不经过改包的工具：在这儿退回认稿，让它重新出现在「等你拍板」
+    const reopened = await reopenIfApprovalBroken(contentId, dataDir);
+    return no("article_not_approved", `批准已失效（${s.approval.reason}）：重新给创始人看审阅页并批过，再推${reopened ? `；${reopened}` : ""}`);
+  }
+  if (!s.pkg.theme) return no("article_not_approved", "批准里没记排版主题：重新给创始人看审阅页并批过，再推");
   if (s.problems.length) return no("article_not_ready", `图文包有问题，不能推：${s.problems.join("；")}`);
   return { state: s };
 }
@@ -115,7 +121,7 @@ async function runPush(contentId: string, s: ArticleReviewState, staged: Staged,
     r = await (deps.publishImpl ?? publishWechatMpDraft)({
       articlePath: staged.articlePath, title: s.pkg.chosenTitle!, coverPath: staged.coverPath, coverCrops: { crop235: cropParam(c.crops["2.35:1"]), crop11: cropParam(c.crops["1:1"]) },
       preparedImages: staged.images, skipImages: true, strictImages: true, digest: s.content.digest, author: cfg.author || "",
-      wechatAppId: cfg.wechatAppId, wechatAppSecret: cfg.wechatAppSecret, openComment: cfg.openComment, theme: cfg.theme || "newspaper",
+      wechatAppId: cfg.wechatAppId, wechatAppSecret: cfg.wechatAppSecret, openComment: cfg.openComment, theme: s.pkg.theme!,
       wechatPublishScript: cfg.wechatPublishScript, apiProxy: cfg.apiProxy,
     });
   } catch (e) {

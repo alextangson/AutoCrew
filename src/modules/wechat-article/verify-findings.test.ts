@@ -7,6 +7,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 vi.mock("../publish/wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn() }));
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 import { generateWechatImageAsset } from "../publish/wechat-mp.js";
 import { getContent } from "../../storage/local-store.js";

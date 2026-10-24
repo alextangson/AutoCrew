@@ -5,10 +5,13 @@
 import { getContent, type Content } from "../../storage/local-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { getArticleImageReview, type ArticleImageReview } from "../publish/article-images.js";
-import { checkArtifactApproval, type ApprovalCheck } from "../lineage/artifact-approval.js";
+import type { ApprovalCheck } from "../lineage/artifact-approval.js";
+import { loadWechatMpConfig, wechatTheme } from "../publish/wechat-config.js";
+import { contentRoot, projectFile } from "../../storage/content-project.js";
 import { staleReason } from "../lineage/lineage.js";
-import { articleChars, packageHash, packageProblems, readArticlePackage, suggestedCreationSource, type ArticlePackage } from "./package.js";
+import { articleChars, packageApprovalCheck, packageHash, packageProblems, readArticlePackage, suggestedCreationSource, type ArticlePackage } from "./package.js";
 import { writeArticlePreview } from "./preview.js";
+import { formatArticleBodyCached } from "./preview-format.js";
 import { readRebindDiff } from "../lineage/rebind-diff.js";
 
 export interface ArticleReviewState {
@@ -19,6 +22,8 @@ export interface ArticleReviewState {
   hash: string;
   approval: ApprovalCheck;
   stale: string | null;
+  /** 设置里现在的排版主题（进指纹；审阅页按它排） */
+  theme: string;
 }
 
 export const isDerivedArticle = (c: Pick<Content, "derivedFrom"> | null | undefined): boolean => c?.derivedFrom?.kind === "wechat_article";
@@ -28,10 +33,11 @@ export async function articleReviewState(contentId: string, dataDir: string, opt
   if (!content) return { code: "not_found", error: `稿件不存在：${contentId}` };
   if (!isDerivedArticle(content)) return { code: "not_derived_article", error: "这条不是由视频派生的公众号文章" };
   const [pkg, images] = await Promise.all([readArticlePackage(contentId, dataDir), getArticleImageReview(contentId, dataDir)]);
-  const hash = await packageHash(content, pkg, images);
+  const theme = await wechatTheme(dataDir);
+  const hash = await packageHash(content, pkg, images, theme);
   const stale = await staleReason(content, dataDir, opts);
   const problems = [...(stale ? [stale] : []), ...(await packageProblems(content, pkg, images))];
-  return { content, pkg, images, problems, hash, approval: checkArtifactApproval(pkg.approval, hash), stale };
+  return { content, pkg, images, problems, hash, approval: await packageApprovalCheck(content, pkg, images, theme), stale, theme };
 }
 
 export function approvalText(s: Pick<ArticleReviewState, "pkg" | "approval">): string {
@@ -41,7 +47,12 @@ export function approvalText(s: Pick<ArticleReviewState, "pkg" | "approval">): s
 
 /** 写审阅页，返回绝对路径 */
 export async function renderReviewPage(s: ArticleReviewState, dataDir: string): Promise<string> {
-  return writeArticlePreview({
+  const cfg = await loadWechatMpConfig(dataDir);
+  const formatted = await formatArticleBodyCached({
+    title: s.pkg.chosenTitle ?? s.pkg.titleOptions[0] ?? s.content.title, body: s.content.body ?? "", entries: s.images.entries, theme: s.theme,
+    dir: projectFile(contentRoot(s.content.id, dataDir), "wechat-preview-format"), publishScript: cfg.wechatPublishScript,
+  });
+  return writeArticlePreview({ formatted,
     contentId: s.content.id, title: s.content.title, body: s.content.body ?? "", pkg: s.pkg, entries: s.images.entries,
     chars: articleChars(s.content.body ?? ""), problems: s.problems, suggestedSource: suggestedCreationSource(s.images),
     approval: approvalText(s), ...(s.pkg.sourceNote ? { sourceNote: s.pkg.sourceNote } : {}),

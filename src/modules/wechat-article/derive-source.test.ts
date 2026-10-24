@@ -2,7 +2,7 @@
  * Phase 2a 验收（一）：从审过的视频派生公众号文章、底稿从哪来、写作包怎么改写。
  * 边界：没勾公众号 / 成片没审过 / 源在回收站都拒；派生两次是同一篇；没有成片字幕时底稿退回定稿正文并写明原因。
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { founderDecision } from "../production/decisions.js";
@@ -12,6 +12,8 @@ import { articleArgs, executeWechatArticle } from "../../tools/wechat-article.js
 import { derivedArticleRequest, stripSourceBlock } from "./writer-request.js";
 import { readArticlePackage } from "./package.js";
 import { SOURCE_BLOCK_HEAD } from "./source.js";
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 let env: Env;
 afterEach(async () => { await env.cleanup(); });

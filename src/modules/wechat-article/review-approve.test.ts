@@ -6,6 +6,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 vi.mock("../publish/wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn() }));
+// 审阅页的真排版要 uv + 排版脚本，这里只测包与审阅页其余部分（真排版见 preview-format.test.ts）
+vi.mock("./preview-format.js", () => ({ formatArticleBodyCached: async (i: { theme: string }) => ({ ok: true, theme: i.theme, html: "<p>排版后的正文</p>" }) }));
 
 import { generateWechatImageAsset } from "../publish/wechat-mp.js";
 import { getContent } from "../../storage/local-store.js";
@@ -140,6 +142,11 @@ describe("图文审阅 = 批整包", () => {
     const item = (r.items as Array<Record<string, unknown>>).find((i) => String(i.item_id).startsWith(`draft:`))!;
     expect(String(item.brief)).toMatch(/图文审阅页/);
     expect(String(item.brief)).toMatch(/都齐了/);
+    // 认稿 brief 的字数和发布包 / 篇幅门同一口径（只数汉字），不是全字符数
+    const { articleChars } = await import("./package.js");
+    const n = articleChars(BODY(2600));
+    expect(n).toBeLessThan(BODY(2600).length);
+    expect(String(item.brief)).toContain(`，${n} 字）`);
     const page = (item.preview as { pages: Array<{ path: string; opened: boolean }> }).pages[0];
     expect(page.opened).toBe(false);
     const html = await fs.readFile(page.path, "utf8");

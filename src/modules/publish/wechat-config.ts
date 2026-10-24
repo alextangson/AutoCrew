@@ -69,3 +69,8 @@ export async function loadWechatMpConfig(dataDir?: string): Promise<WechatMpPubl
   }
   return (parsed as { wechatMp?: WechatMpPublishConfig }).wechatMp ?? {};
 }
+
+/** 公众号排版主题：设置里没配就是 newspaper（推送、审阅页、整包指纹同一口径） */
+export async function wechatTheme(dataDir?: string): Promise<string> {
+  return (await loadWechatMpConfig(dataDir)).theme?.trim() || "newspaper";
+}

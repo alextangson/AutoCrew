@@ -42,7 +42,7 @@ export async function stagePackage(contentId: string, s: ArticleReviewState, dat
   const cover = s.pkg.cover!;
   const coverPath = path.join(dir, "src", `cover${path.extname(cover.path).toLowerCase() || ".png"}`);
   await fs.copyFile(cover.path, coverPath);
-  const hash = await packageHash(s.content, { ...s.pkg, cover: { ...cover, path: coverPath } }, { entries });
+  const hash = await packageHash(s.content, { ...s.pkg, cover: { ...cover, path: coverPath } }, { entries }, s.theme);
   if (hash !== s.hash) throw new Error("暂存的副本和批过的包对不上（拷贝时文件被改了）：重新核对审阅页再推");
   const md = articleMarkdown(s.pkg.chosenTitle!, s.content.body ?? "", entries);
   const project = resolveContentProject(contentId, dataDir);
