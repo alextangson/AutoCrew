@@ -27,7 +27,8 @@ export { handoffView };
 import { publishTargets, type PublishTarget } from "../modules/production/targets.js";
 import { staleReason } from "../modules/lineage/lineage.js";
 import { loadProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
-import { allowedKitPlatforms, enKitPlatforms } from "../modules/profile/platform-lines.js";
+import { allowedKitPlatforms, enKitPlatforms, lineStoppedReason } from "../modules/profile/platform-lines.js";
+import { videoKitsOf } from "../storage/video-kits.js";
 
 export { isBeingWritten };
 
@@ -175,11 +176,21 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext, profile:
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
     active, writing: isBeingWritten(current), derivedStale: await boardStale(current, dataDir), kitPlatforms: allowedKitPlatforms(current.platform, profile), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
-    missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
+    missing: exp.missing, badges: exp.badges, alerts: [...exp.alerts, ...stoppedAlerts(current, profile)], reason: exp.reason, candidates: exp.candidates,
     ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
     // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）
     ...(draftRef(current) ? { draftRef: draftRef(current)! } : {}),
   };
+}
+
+/** 取消勾选停掉的派生线（spec §9.2）：整条线停了 / 英文版某一路停了（交过包的那一路才提）；和出口拒收用同一句话 */
+function stoppedAlerts(c: Content, profile: CreatorProfile | null): string[] {
+  const kind = c.derivedFrom?.kind;
+  if (!kind) return [];
+  const whole = lineStoppedReason(profile, kind);
+  if (whole) return [whole];
+  if (kind !== "en_edition") return [];
+  return Object.keys(videoKitsOf(c)).map((p) => lineStoppedReason(profile, kind, p)).filter((x): x is string => Boolean(x));
 }
 
 /** 看板读源状态（走哈希缓存，不现算）；一条读坏不拖垮整板，卡上照样标出来 */

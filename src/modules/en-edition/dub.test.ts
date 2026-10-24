@@ -75,7 +75,8 @@ describe("ElevenLabs 配音", () => {
     expect(r).toMatchObject({ ok: false, code: "tts_failed" });
     expect(String(r.error)).toContain('ElevenLabs HTTP 401: {"detail":{"status":"invalid_api_key"}}');
     expect(calls).toHaveLength(1);
-    expect((await run({ op: "status" })).dub).toBe("还没配音");
+    // verifier P3：失败要一直看得见（以前这里是「还没配音」，失败在下一轮就没了）
+    expect(String((await run({ op: "status" })).dub)).toMatch(/^配音失败：第 1 段配音失败：ElevenLabs HTTP 401/);
   });
 
   it("尾段要放慢 > 1.15× → 拒，叫宿主把脚本写短；字幕 / 章节也不给", async () => {

@@ -19,7 +19,7 @@ import { approveArtifact, artifactHash, checkArtifactApproval, type ApprovalChec
 import { fileOf } from "../production/publish-gate.js";
 import { srtFor, validCutApproval } from "../production/derive.js";
 import { loadProfile } from "../profile/creator-profile.js";
-import { enKitPlatforms } from "../profile/platform-lines.js";
+import { enKitPlatforms, lineStoppedReason } from "../profile/platform-lines.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { enKitBinding } from "./kit-context.js";
 import { readEnThumbnail, thumbnailProblem, type EnThumbnail } from "./thumbnail.js";
@@ -101,7 +101,8 @@ export async function enPackageState(id: string, dataDir: string): Promise<EnPac
   const cut = await approvedCut(content, dataDir);
   const thumb = await thumbnailProblem(thumbnail);
   const k = kitProblems(content, platforms, binding);
-  const problems = [...("no" in b ? [b.no.error] : []), ...(typeof cut === "string" ? [cut] : []), ...(thumb ? [thumb] : []), ...k.problems];
+  const stopped = lineStoppedReason(profile, "en_edition");
+  const problems = [...(stopped ? [stopped] : []), ...("no" in b ? [b.no.error] : []), ...(typeof cut === "string" ? [cut] : []), ...(thumb ? [thumb] : []), ...k.problems];
   const hash = artifactHash({
     cut: typeof cut === "string" ? null : { sha: cut.sha256, srt: cut.srtSha }, thumbnail: thumbnail?.sha256 ?? null, binding,
     kits: Object.fromEntries(Object.entries(k.kits).map(([p, x]) => [p, kitView(x)])),

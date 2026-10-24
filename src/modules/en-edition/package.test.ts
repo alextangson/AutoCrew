@@ -17,6 +17,7 @@ import { listForChat } from "../production/chat-approval/present.js";
 import { executeEnEdition } from "../../tools/en-edition.js";
 import { executePrePublish, executePrePublishTool } from "../../tools/pre-publish.js";
 import { executePublish } from "../../tools/publish.js";
+import { boardData } from "../../desktop/board-data.js";
 import { setDurationProbe } from "./dub.js";
 import { setElevenLabsFetch, setKeychainReader } from "../voice/elevenlabs.js";
 import { approveEnScript, EN_SRT_40S, enSourceVideo, fakeElevenLabs, SEGMENTS } from "./en-test-fixtures.js";
@@ -158,9 +159,22 @@ describe("Codex 审 (b) 的回归", () => {
     await completePackage();
     await updateProfile({ platforms: ["douyin", "youtube"] }, env.dir);
     expect(await approvePackage()).toMatchObject({ ok: true });
-    expect(await executePublish({ action: "clipboard", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "platform_not_in_package" });
-    expect(await run({ op: "final_check", platform: "x" })).toMatchObject({ ok: false, code: "platform_not_in_package" });
+    // spec §9.2：取消勾选的那一路说清是「你取消了勾选」，和看板同一句话
+    expect(await executePublish({ action: "clipboard", content_id: id, platform: "x", _dataDir: env.dir })).toMatchObject({ ok: false, code: "line_unpicked", error: expect.stringMatching(/你取消了勾选「X/) });
+    expect(await run({ op: "final_check", platform: "x" })).toMatchObject({ ok: false, code: "line_unpicked" });
+    expect((await boardData(env.dir)).items.find((i) => i.id === id)!.alerts.join("\n")).toMatch(/你取消了勾选「X/);
     expect((await executePublish({ action: "ego_lite_prepare", content_id: id, _dataDir: env.dir }) as { data: { packages: Array<{ platform: string }> } }).data.packages.map((p) => p.platform)).toEqual(["youtube"]);
+  });
+
+  it("spec §9.2 两个英文平台都取消勾选：不拿空包请他重批，出口全拒；重新勾上照旧能发", async () => {
+    await completePackage();
+    expect(await approvePackage()).toMatchObject({ ok: true });
+    await updateProfile({ platforms: ["douyin"] }, env.dir);
+    expect(await pkgItem()).toBeUndefined();
+    expect(await run({ op: "final_check", platform: "youtube" })).toMatchObject({ ok: false, error: expect.stringMatching(/你取消了勾选 YouTube 和 X/) });
+    expect(await executePublish({ action: "ego_lite_prepare", content_id: id, _dataDir: env.dir })).toMatchObject({ ok: false, code: "line_unpicked" });
+    await updateProfile({ platforms: ["douyin", "youtube", "x"] }, env.dir);
+    expect(await run({ op: "final_check", platform: "youtube" })).toMatchObject({ ok: true });
   });
 
   it("P2-4 复制件：X 正文只出现一次标签、X 的发布页；YouTube 分标题 / 说明 / tags、YouTube 的发布页", async () => {

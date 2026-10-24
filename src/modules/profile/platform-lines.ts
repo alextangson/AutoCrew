@@ -7,7 +7,7 @@
  * 英文线要用户明确勾 `x` 或 `youtube`；只勾了 twitter 的档案在看板上出一次提示，让他自己选。
  */
 import type { DerivationKind } from "../../storage/local-store.js";
-import { kitPlatformsFor, languageOf, videoPlatformsFor, type PlatformId } from "../publish/platform-caps.js";
+import { kitPlatformsFor, languageOf, PLATFORM_CAPS, videoPlatformsFor, type PlatformId } from "../publish/platform-caps.js";
 
 /** 档案里的平台列表归一：去空、去重保序；字符串化的数组也认（模型参数的老毛病）。不改名：twitter 就是 twitter */
 export function normalizeProfilePlatforms(raw: unknown): string[] {
@@ -57,4 +57,18 @@ export function legacyTwitterPrompt(profile: { platforms?: unknown } | null | un
   const on = enabledPlatforms(profile);
   if (!on.includes("twitter") || on.includes("x") || on.includes("youtube")) return null;
   return "你勾的「推特」现在只管图文推。要把视频做成英文版发 X 或 YouTube，到「校准 → 席位」里明确勾上 X 或 YouTube；不需要就关掉这条。";
+}
+
+const labelOf = (p: string) => PLATFORM_CAPS[p as PlatformId]?.label ?? p;
+
+/**
+ * 取消勾选 = 这条线在途的稿也停（spec §9.2）：出口一律拒、看板上写明。稿件和包一样不删，重新勾上就接着走。
+ * platform 给了（英文版的某一路）只看那个平台；不给就看整条线。线开着 = null。所有出口和看板用同一句话。
+ */
+export function lineStoppedReason(profile: { platforms?: unknown } | null | undefined, kind: DerivationKind, platform?: string): string | null {
+  const keep = "（稿件和包都留着，重新勾上就能接着发）";
+  if (kind === "wechat_article") return enabledPlatforms(profile).includes("wechat_mp") ? null : `你取消了勾选「公众号」：公众号文章这条线停了，不能发${keep}`;
+  const on = enKitPlatforms(profile) as string[];
+  if (platform) return on.includes(platform) ? null : `你取消了勾选「${labelOf(platform)}」：英文版的 ${labelOf(platform)} 这一路停了，不能发${keep}`;
+  return on.length ? null : `你取消了勾选 YouTube 和 X：英文版这条线停了，不能发${keep}`;
 }

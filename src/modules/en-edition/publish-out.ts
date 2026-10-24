@@ -7,6 +7,7 @@
  * 中文视频不走这里（照旧登记出口）。
  */
 import { approvedEnPackage, type EnPackageState } from "./package.js";
+import { lineStoppedReason } from "../profile/platform-lines.js";
 import { EN_PUBLISH_WINDOW } from "../publish/en-kit.js";
 import { PLATFORM_CAPS, type PlatformId } from "../publish/platform-caps.js";
 
@@ -32,6 +33,7 @@ export async function prepareEnPublish(id: string, dataDir: string): Promise<Res
 /** 平台必须在批过的包里（取消勾选后留下的旧包不算） */
 function inPackage(s: EnPackageState, platform: string): Result | null {
   if (s.platforms.includes(platform) && s.kits[platform]) return null;
+  if (platform === "youtube" || platform === "x") return { ok: false, code: "line_unpicked", error: lineStoppedReason({ platforms: s.platforms }, "en_edition", platform) ?? `批过的英文发布包里没有 ${platform}` };
   return { ok: false, code: "platform_not_in_package", error: `批过的英文发布包里没有 ${platform || "(空)"}：只能是 ${s.platforms.join(" / ") || "（空）"}` };
 }
 

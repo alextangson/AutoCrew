@@ -398,3 +398,37 @@ describe("Codex 审 2b 回归", () => {
     expect(await approve()).toMatchObject({ ok: true });
   });
 });
+
+describe("verifier fixes: final_check re-checks 视频号; unpicking 公众号 stops every exit (spec §9.2)", () => {
+  beforeEach(async () => { await complete(); await approve(); await run({ op: "push_draft" }); });
+
+  it("视频号原片 begin_editor 之后被撤下：final_check 不许点发表", async () => {
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true });
+    await videoChannel("scheduled");
+    expect(await run({ op: "final_check" })).toMatchObject({ ok: false, code: "video_not_live", may_click_publish: false });
+  });
+
+  it("取消勾选公众号：push / begin_editor / final_check / mark_editor_done / 复制件都拒，原因一致；重新勾上接着走", async () => {
+    await videoChannel("published", "2026-10-24T09:00:00+08:00");
+    expect(await run({ op: "begin_editor" })).toMatchObject({ ok: true });
+    await updateProfile({ platforms: ["douyin"] }, env.dir);
+    const reason = /你取消了勾选「公众号」.*重新勾上/;
+    for (const op of [{ op: "push_draft" }, { op: "final_check" }]) {
+      const r = await run(op);
+      expect(r).toMatchObject({ ok: false });
+      expect(String(r.error)).toMatch(reason);
+    }
+    const { executePrePublish } = await import("../../tools/pre-publish.js");
+    expect(await executePrePublish({ content_id: id, _dataDir: env.dir, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "line_unpicked" });
+    const { boardData } = await import("../../desktop/board-data.js");
+    expect((await boardData(env.dir)).items.find((i) => i.id === id)!.alerts.join("\n")).toMatch(reason);
+    await updateProfile({ platforms: ["douyin", "wechat_mp"] }, env.dir);
+    expect(await run({ op: "final_check" })).toMatchObject({ ok: true, may_click_publish: true });
+    // 点了发表之后才取消勾选：复核不过（进 unknown，先别扫码），原因同一句
+    await updateProfile({ platforms: ["douyin"] }, env.dir);
+    const done = await run({ op: "mark_editor_done", scheduled_for: "2026-10-24T12:00:00+08:00" });
+    expect(done).toMatchObject({ ok: false, phase: "unknown" });
+    expect(String(done.error)).toMatch(reason);
+  });
+});

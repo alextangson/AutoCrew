@@ -10,8 +10,10 @@ import { staleReason } from "./lineage.js";
 import { packageApprovalCheck, readArticlePackage } from "../wechat-article/package.js";
 import { getArticleImageReview } from "../publish/article-images.js";
 import { enPublishRefusal } from "../en-edition/package.js";
+import { loadProfile } from "../profile/creator-profile.js";
+import { lineStoppedReason } from "../profile/platform-lines.js";
 
-export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "article_not_approved" | "en_package_not_approved"; error: string };
+export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadable" | "article_not_approved" | "en_package_not_approved" | "line_unpicked"; error: string };
 
 /**
  * opts.exit = "kit"：交发布包（autocrew_pre_publish video_kit）只核源没过期——英文发布包本身要等各平台的包交齐才批得了。
@@ -20,6 +22,8 @@ export type DerivedRefusal = { code: "derived_stale" | "derived_source_unreadabl
 export async function derivedPublishRefusal(content: Pick<Content, "derivedFrom"> & { id?: string }, dataDir: string, opts: { exit?: "kit" } = {}): Promise<DerivedRefusal | null> {
   if (!content.derivedFrom) return null;
   try {
+    const stopped = lineStoppedReason(await loadProfile(dataDir), content.derivedFrom.kind);
+    if (stopped) return { code: "line_unpicked", error: stopped };
     const reason = await staleReason(content, dataDir, { fresh: true });
     if (reason) return { code: "derived_stale", error: `这条派生稿过期了，不能发：${reason}` };
     if (content.derivedFrom.kind === "en_edition") return content.id && opts.exit !== "kit" ? await enPublishRefusal(content.id, dataDir) : null;
