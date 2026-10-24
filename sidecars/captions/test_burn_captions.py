@@ -31,8 +31,9 @@ class Validate(unittest.TestCase):
     def test_ffmpeg_chain_enables_each_cue_in_its_window(self):
         args = b.ffmpeg_args("in.mp4", "out.mp4", ["a.png", "b.png"], [{"start": 0, "end": 1}, {"start": 1.5, "end": 2}])
         chain = args[args.index("-filter_complex") + 1]
-        self.assertIn("[0:v][1:v]overlay=0:0:enable='between(t,0,1)'[v0]", chain)
-        self.assertIn("[v0][2:v]overlay=0:0:enable='between(t,1.5,2)'[v1]", chain)
+        self.assertIn("[0:v][1:v]overlay=0:0:enable='gte(t,0)*lt(t,1)'[v0]", chain)
+        self.assertIn("[v0][2:v]overlay=0:0:enable='gte(t,1.5)*lt(t,2)'[v1]", chain)
+        self.assertNotIn("between(", chain)  # back-to-back cues must not both show on the boundary frame
         self.assertEqual(args[args.index("-map") + 1], "[v1]")
 
     def test_check_mode_fails_visibly_on_missing_font(self):

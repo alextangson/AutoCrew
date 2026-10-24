@@ -76,25 +76,58 @@ export async function readElevenLabsConfig(machineDir?: string): Promise<ElevenL
 }
 
 export interface Alignment { characters: string[]; character_start_times_seconds: number[]; character_end_times_seconds: number[] }
-export interface TtsResult { audio: Buffer; alignment: Alignment | null }
+export interface TtsResult { audio: Buffer; alignment: Alignment }
 
 type Fetch = typeof fetch;
 let fetchImpl: Fetch | null = null;
 /** 只给测试：替换 HTTP（测试里绝不打真的 ElevenLabs） */
 export function setElevenLabsFetch(fn: Fetch | null): void { fetchImpl = fn; }
 
-/** 一段文字 → mp3 + 字级时间戳。非 2xx 抛错，错误里是 HTTP 状态和返回原文 */
+/** 密钥格式：去掉首尾空白后不能有空白或控制字符。原因里不回显密钥 */
+export function keyFormatProblem(key: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  return /[\s\u0000-\u001f\u007f]/.test(key) ? "ElevenLabs 密钥格式不对（中间夹着换行、空格或控制字符）：重新粘一遍密钥" : null;
+}
+
+/** 任何要给人看的字符串：把密钥换成 *** */
+export function redactKey(text: string, key: string): string {
+  return key ? text.split(key).join("***") : text;
+}
+
+const finiteList = (v: unknown, n: number) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === "number" && Number.isFinite(x));
+
+/** 字级时间戳的形状：三个数组等长、时间都是有限数；不对就抛（不把坏时间戳当成能用的存下来） */
+export function checkAlignment(a: unknown): Alignment {
+  const x = a as Partial<Alignment> | null;
+  const n = Array.isArray(x?.characters) ? x!.characters.length : -1;
+  if (n <= 0 || !x!.characters!.every((c) => typeof c === "string") || !finiteList(x!.character_start_times_seconds, n) || !finiteList(x!.character_end_times_seconds, n)) {
+    throw new Error("ElevenLabs 返回的字级时间戳缺失或不完整（字符和起止时间对不上）：字幕卡不了时间，这段要重配");
+  }
+  return x as Alignment;
+}
+
+/** 一段文字 → mp3 + 字级时间戳。非 2xx 抛错，错误里是 HTTP 状态和返回原文（密钥一律打码） */
 export async function synthesize(text: string, key: string, cfg: ElevenLabsConfig): Promise<TtsResult> {
   if (!cfg.voiceId) throw new Error("没配 ElevenLabs 声音 id");
-  const res = await (fetchImpl ?? fetch)(`${API}/${encodeURIComponent(cfg.voiceId)}/with-timestamps?output_format=mp3_44100_128`, {
+  const bad = keyFormatProblem(key);
+  if (bad) throw new Error(bad);
+  try {
+    return await call(text, key, cfg);
+  } catch (e) {
+    throw new Error(redactKey(e instanceof Error ? e.message : String(e), key));
+  }
+}
+
+async function call(text: string, key: string, cfg: ElevenLabsConfig): Promise<TtsResult> {
+  const res = await (fetchImpl ?? fetch)(`${API}/${encodeURIComponent(cfg.voiceId!)}/with-timestamps?output_format=mp3_44100_128`, {
     method: "POST",
     headers: { "xi-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ text, model_id: cfg.modelId, voice_settings: cfg.voiceSettings }),
   });
   const body = await res.text();
   if (!res.ok) throw new Error(`ElevenLabs HTTP ${res.status}: ${body.slice(0, 800)}`);
-  let parsed: { audio_base64?: unknown; alignment?: Alignment | null };
+  let parsed: { audio_base64?: unknown; alignment?: unknown };
   try { parsed = JSON.parse(body) as typeof parsed; } catch { throw new Error(`ElevenLabs 返回的不是 JSON：${body.slice(0, 300)}`); }
   if (typeof parsed.audio_base64 !== "string" || !parsed.audio_base64) throw new Error(`ElevenLabs 返回里没有音频：${body.slice(0, 300)}`);
-  return { audio: Buffer.from(parsed.audio_base64, "base64"), alignment: parsed.alignment ?? null };
+  return { audio: Buffer.from(parsed.audio_base64, "base64"), alignment: checkAlignment(parsed.alignment) };
 }

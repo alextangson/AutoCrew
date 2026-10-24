@@ -85,7 +85,8 @@ def ffmpeg_args(src: str, out: str, pngs: list[str], cues: list[dict]) -> list[s
     inputs, chain, last = [], "", "0:v"
     for i, (p, c) in enumerate(zip(pngs, cues)):
         inputs += ["-i", p]
-        chain += f"[{last}][{i + 1}:v]overlay=0:0:enable='between(t,{c['start']},{c['end']})'[v{i}];"
+        # half-open [start, end): between() is inclusive at both ends, so back-to-back cues would share a frame
+        chain += f"[{last}][{i + 1}:v]overlay=0:0:enable='gte(t,{c['start']})*lt(t,{c['end']})'[v{i}];"
         last = f"v{i}"
     return ["ffmpeg", "-v", "error", "-y", "-i", src, *inputs, "-filter_complex", chain.rstrip(";"),
             "-map", f"[{last}]", "-map", "0:a", "-c:v", "libx264", "-crf", "17", "-preset", "medium",

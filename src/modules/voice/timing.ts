@@ -44,7 +44,8 @@ export function planTiming(input: TimingInput[]): TimingPlan {
   const drift = lines.find((l) => l.endS > l.slotEndS);
   if (overrunS <= 0 || !drift) return { lines, sourceEndS, dubEndS, overrunS, slowFromS: null, tailSlowdown: 1 };
   const slowFromS = drift.slotStartS;
-  const tailSlowdown = Math.round(((dubEndS - slowFromS) / (sourceEndS - slowFromS)) * 1000) / 1000;
+  // 不取整：1.1504 也是超了；取整只在给人看的地方做
+  const tailSlowdown = (dubEndS - slowFromS) / (sourceEndS - slowFromS);
   return { lines, sourceEndS, dubEndS, overrunS, slowFromS, tailSlowdown };
 }
 
@@ -53,6 +54,6 @@ export function slowdownRefusal(plan: TimingPlan): string | null {
   if (plan.tailSlowdown <= MAX_TAIL_SLOWDOWN) return null;
   const worst = [...plan.lines].sort((a, b) => (b.durationS - (b.slotEndS - b.slotStartS)) - (a.durationS - (a.slotEndS - a.slotStartS))).slice(0, 3)
     .map((l) => `第 ${l.index} 段（配音 ${l.durationS.toFixed(2)}s / 槽 ${(l.slotEndS - l.slotStartS).toFixed(2)}s）`);
-  return `英文配音比原片长 ${plan.overrunS.toFixed(2)} 秒，尾段画面要放慢 ${plan.tailSlowdown}× 才装得下，超过上限 ${MAX_TAIL_SLOWDOWN}×：` +
+  return `英文配音比原片长 ${plan.overrunS.toFixed(2)} 秒，尾段画面要放慢 ${plan.tailSlowdown.toFixed(3)}× 才装得下，超过上限 ${MAX_TAIL_SLOWDOWN}×：` +
     `把英文脚本写短（最超的是 ${worst.join("、")}），改完重新给创始人批，再配音`;
 }

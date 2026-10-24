@@ -6,8 +6,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import { enKitPlatforms } from "../modules/profile/platform-lines.js";
-import { enReviewState, type EnReviewState } from "../modules/en-edition/review.js";
-import { dubApprovedScript, dubDir, readDubManifest, type DubManifest } from "../modules/en-edition/dub.js";
+import type { EnReviewState } from "../modules/en-edition/review.js";
+import { approvedEnState, currentEnManifest } from "../modules/en-edition/approved.js";
+import { dubApprovedScript, dubDir, readDubManifest } from "../modules/en-edition/dub.js";
 import { buildCues } from "../modules/en-edition/captions.js";
 import { readEnThumbnail, setEnThumbnail, thumbnailProblem } from "../modules/en-edition/thumbnail.js";
 import { chaptersFromManifest, EN_PUBLISH_WINDOW } from "../modules/publish/en-kit.js";
@@ -16,23 +17,8 @@ import { REPO_ROOT } from "../modules/video/proc.js";
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 
-/** 批过、没过期的脚本状态；不行交拒绝 */
-async function approvedState(id: string, dataDir: string): Promise<{ s: EnReviewState } | { no: Result }> {
-  const s = await enReviewState(id, dataDir, { fresh: true });
-  if ("error" in s) return { no: fail(s.code, s.error) };
-  if (s.stale) return { no: fail("derived_stale", `这条英文版过期了：${s.stale}`) };
-  if (!s.approval.ok) return { no: fail("script_not_approved", `英文脚本${s.script.approval ? `的批准已失效：${s.approval.reason}` : "还没批"}：先在「等你拍板」里请创始人批`) };
-  return { s };
-}
-
-/** 清单要和现在批过的脚本是同一份 */
-async function currentManifest(id: string, s: EnReviewState, dataDir: string): Promise<{ m: DubManifest } | { no: Result }> {
-  const m = await readDubManifest(id, dataDir);
-  if (!m) return { no: fail("no_dub", "还没配音：先 op:\"dub\"") };
-  if (m.scriptHash !== s.hash) return { no: fail("dub_stale", "配音是按旧脚本做的（脚本批准后改过）：重新 op:\"dub\"") };
-  if (m.refused) return { no: fail("overrun_too_long", m.refused) };
-  return { m };
-}
+const approvedState = approvedEnState;
+const currentManifest = currentEnManifest;
 
 export async function dubOp(id: string, dataDir: string): Promise<Result> {
   const a = await approvedState(id, dataDir);
@@ -41,7 +27,7 @@ export async function dubOp(id: string, dataDir: string): Promise<Result> {
   const r = await dubApprovedScript(id, s.script, s.hash, dataDir);
   if (!r.ok) return { ok: false, code: r.code, error: r.error, ...(r.path ? { manifest_path: r.path } : {}) };
   const m = r.manifest;
-  return { ok: true, manifest_path: r.path, lines: m.lines.length, dub_end_s: m.dubEndS, source_end_s: m.sourceEndS, overrun_s: m.overrunS, tail_slowdown: m.tailSlowdown, slow_from_s: m.slowFromS,
+  return { ok: true, manifest_path: r.path, lines: m.lines.length, dub_end_s: m.dubEndS, source_end_s: m.sourceEndS, overrun_s: m.overrunS, tail_slowdown: Math.round(m.tailSlowdown * 1000) / 1000, slow_from_s: m.slowFromS,
     next_action: "前台会话按 video-session 的英文版做法：按清单摆音轨、从 slow_from_s 起把画面放慢 tail_slowdown 倍、做口型对齐参考视频，再 op:\"captions\"" };
 }
 
@@ -81,7 +67,7 @@ export async function thumbnailOp(id: string, file: string, dataDir: string): Pr
 /** status 里的媒体部分：配音清单、缩略图、要出包的平台、默认发布时段 */
 export async function mediaStatus(id: string, s: EnReviewState, dataDir: string): Promise<Result> {
   const m = await readDubManifest(id, dataDir).catch(() => null);
-  const dub = !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown}×`;
+  const dub = !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown.toFixed(3)}×`;
   const thumb = await readEnThumbnail(id, dataDir);
   return { dub, thumbnail: thumb?.path ?? null, thumbnail_problem: await thumbnailProblem(thumb), kit_platforms: enKitPlatforms(await loadProfile(dataDir)), publish_window: EN_PUBLISH_WINDOW };
 }
