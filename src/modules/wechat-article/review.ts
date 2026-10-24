@@ -6,7 +6,8 @@ import { getContent, type Content } from "../../storage/local-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import { getArticleImageReview, type ArticleImageReview } from "../publish/article-images.js";
 import type { ApprovalCheck } from "../lineage/artifact-approval.js";
-import { loadWechatMpConfig, wechatTheme } from "../publish/wechat-config.js";
+import { loadWechatMpConfig } from "../publish/wechat-config.js";
+import { currentThemeId, type ThemeId } from "./theme-id.js";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
 import { staleReason } from "../lineage/lineage.js";
 import { articleChars, packageApprovalCheck, packageHash, packageProblems, readArticlePackage, suggestedCreationSource, type ArticlePackage } from "./package.js";
@@ -23,7 +24,7 @@ export interface ArticleReviewState {
   approval: ApprovalCheck;
   stale: string | null;
   /** 设置里现在的排版主题（进指纹；审阅页按它排） */
-  theme: string;
+  theme: ThemeId;
 }
 
 export const isDerivedArticle = (c: Pick<Content, "derivedFrom"> | null | undefined): boolean => c?.derivedFrom?.kind === "wechat_article";
@@ -33,7 +34,7 @@ export async function articleReviewState(contentId: string, dataDir: string, opt
   if (!content) return { code: "not_found", error: `稿件不存在：${contentId}` };
   if (!isDerivedArticle(content)) return { code: "not_derived_article", error: "这条不是由视频派生的公众号文章" };
   const [pkg, images] = await Promise.all([readArticlePackage(contentId, dataDir), getArticleImageReview(contentId, dataDir)]);
-  const theme = await wechatTheme(dataDir);
+  const theme = await currentThemeId(dataDir);
   const hash = await packageHash(content, pkg, images, theme);
   const stale = await staleReason(content, dataDir, opts);
   const problems = [...(stale ? [stale] : []), ...(await packageProblems(content, pkg, images))];
@@ -49,7 +50,7 @@ export function approvalText(s: Pick<ArticleReviewState, "pkg" | "approval">): s
 export async function renderReviewPage(s: ArticleReviewState, dataDir: string): Promise<string> {
   const cfg = await loadWechatMpConfig(dataDir);
   const formatted = await formatArticleBodyCached({
-    title: s.pkg.chosenTitle ?? s.pkg.titleOptions[0] ?? s.content.title, body: s.content.body ?? "", entries: s.images.entries, theme: s.theme,
+    title: s.pkg.chosenTitle ?? s.pkg.titleOptions[0] ?? s.content.title, body: s.content.body ?? "", entries: s.images.entries, theme: s.theme.name,
     dir: projectFile(contentRoot(s.content.id, dataDir), "wechat-preview-format"), publishScript: cfg.wechatPublishScript,
   });
   return writeArticlePreview({ formatted,

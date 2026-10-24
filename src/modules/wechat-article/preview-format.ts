@@ -7,22 +7,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import type { ArticleImageEntry } from "../publish/article-images.js";
 import { articleMarkdown } from "./push-stage.js";
+import { formatScriptPath, themeSha } from "./theme-id.js";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const DEFAULT_PUBLISH_SCRIPT = path.join(REPO_ROOT, "vendor", "wechat-format", "scripts", "publish.py");
+export { formatScriptPath } from "./theme-id.js";
 
 export type FormattedBody = { ok: true; theme: string; html: string } | { ok: false; theme: string; error: string };
 
 export interface FormatInput { title: string; body: string; entries: ArticleImageEntry[]; theme: string; dir: string; publishScript?: string }
 export interface FormatDeps { uv?: string; timeoutMs?: number }
-
-/** format.py 和 publish.py 同目录：推送用哪个脚本，审阅页就用它旁边的排版脚本 */
-export function formatScriptPath(publishScript?: string): string {
-  return path.join(path.dirname(publishScript || process.env.AUTOCREW_WECHAT_PUBLISH_SCRIPT || DEFAULT_PUBLISH_SCRIPT), "format.py");
-}
 
 /** 推送用的 markdown，配图标记按顺序换成包里的本地文件（和推送时 wechat-mp 的替换同一写法） */
 async function stageMarkdown(i: FormatInput, srcDir: string): Promise<string> {
@@ -91,14 +86,28 @@ async function ensureConfig(vendorRoot: string): Promise<void> {
   try { await fs.access(cfg); } catch { await fs.copyFile(path.join(vendorRoot, "config.example.json"), cfg).catch(() => undefined); }
 }
 
-/** 缓存键：markdown 输入 + 配图字节 + 主题 */
+/** 缓存键：markdown 输入 + 配图字节 + 主题名与主题文件内容 + 排版脚本内容（同名文件改了也要重排） */
 export async function formatKey(i: Omit<FormatInput, "dir">): Promise<string> {
-  const h = createHash("sha256").update(i.theme).update("\0").update(i.title).update("\0").update(i.body);
+  const script = formatScriptPath(i.publishScript);
+  const h = createHash("sha256").update(i.theme).update("\0").update(await themeSha(i.theme, script)).update("\0").update(i.title).update("\0").update(i.body);
+  h.update("\0").update(await fs.readFile(script).catch(() => Buffer.from("missing")));
   for (const e of i.entries) {
     h.update(`\0${e.index}:${e.status}:${e.credit ?? ""}:${e.kind ?? ""}:${e.origin ?? ""}`);
     if (e.imagePath) h.update(await fs.readFile(e.imagePath).catch(() => Buffer.from("missing")));
   }
   return h.digest("hex");
+}
+
+/** 缓存的 HTML 引用的本地文件都还在、且都在这篇文章现在的排版目录里（项目挪过 / 产出被删 → 重排） */
+async function referencesIntact(html: string, dir: string): Promise<boolean> {
+  const root = path.resolve(dir) + path.sep;
+  for (const m of html.matchAll(/src=["'](file:\/\/[^"']+)["']/g)) {
+    let p: string;
+    try { p = path.resolve(fileURLToPath(m[1])); } catch { return false; }
+    if (!p.startsWith(root)) return false;
+    try { await fs.access(p); } catch { return false; }
+  }
+  return true;
 }
 
 /** 带缓存的排版：键一样且上次排成功，就复用上次的 HTML */
@@ -107,7 +116,7 @@ export async function formatArticleBodyCached(i: FormatInput, deps: FormatDeps =
   const stamp = path.join(path.dirname(i.dir), `${path.basename(i.dir)}.json`);
   try {
     const prev = JSON.parse(await fs.readFile(stamp, "utf-8")) as { key: string; html: string };
-    if (prev.key === key) return { ok: true, theme: i.theme, html: prev.html };
+    if (prev.key === key && (await referencesIntact(prev.html, i.dir))) return { ok: true, theme: i.theme, html: prev.html };
   } catch { /* 没排过 */ }
   const r = await formatArticleBody(i, deps);
   if (r.ok) await fs.writeFile(stamp, JSON.stringify({ key, html: r.html }), "utf-8");

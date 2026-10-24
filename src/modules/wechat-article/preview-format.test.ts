@@ -7,7 +7,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { formatArticleBody, formatArticleBodyCached } from "./preview-format.js";
+import { formatArticleBody, formatArticleBodyCached, formatKey } from "./preview-format.js";
+import { pathToFileURL } from "node:url";
 import { renderArticlePreview, type PreviewInput } from "./preview.js";
 import type { ArticleImageEntry } from "../publish/article-images.js";
 
@@ -69,5 +70,50 @@ describe("审阅页", () => {
     expect(html).toContain("正文排版没出来（主题 claude-scroll）");
     expect(html).toContain("uv 没装");
     expect(html).not.toContain("原始正文不该出现");
+  });
+});
+
+describe("Codex 审 P2：缓存", () => {
+  /** 一套假的推送脚本目录：scripts/publish.py + format.py + themes/t.json */
+  async function vendor() {
+    const root = await tmp();
+    await fs.mkdir(path.join(root, "scripts"), { recursive: true });
+    await fs.mkdir(path.join(root, "themes"), { recursive: true });
+    await fs.writeFile(path.join(root, "scripts", "publish.py"), "");
+    await fs.writeFile(path.join(root, "scripts", "format.py"), "v1");
+    await fs.writeFile(path.join(root, "themes", "t.json"), "{\"a\":1}");
+    return root;
+  }
+
+  it("同名主题文件或排版脚本改了 → 缓存键变", async () => {
+    const root = await vendor();
+    const i = { ...(await input("t")), publishScript: path.join(root, "scripts", "publish.py") };
+    const k1 = await formatKey(i);
+    await fs.writeFile(path.join(root, "themes", "t.json"), "{\"a\":2}");
+    const k2 = await formatKey(i);
+    await fs.writeFile(path.join(root, "scripts", "format.py"), "v2");
+    const k3 = await formatKey(i);
+    expect(new Set([k1, k2, k3]).size).toBe(3);
+  });
+
+  it("缓存命中但引用的图没了 / 不在本文排版目录里 → 重排（这里 uv 不在，重排即失败）；图都在 → 用缓存", async () => {
+    const i = await input("claude-scroll");
+    await fs.mkdir(path.join(i.dir, "out", "article", "images"), { recursive: true });
+    const inside = path.join(i.dir, "out", "article", "images", "img-01.png");
+    await fs.writeFile(inside, PNG);
+    const stamp = `${i.dir}.json`;
+    const key = await formatKey(i);
+    const put = (html: string) => fs.writeFile(stamp, JSON.stringify({ key, html }));
+    const noUv = { uv: "autocrew-no-such-uv" };
+
+    await put(`<img src="${pathToFileURL(inside).href}">`);
+    expect(await formatArticleBodyCached(i, noUv)).toMatchObject({ ok: true });
+
+    await put(`<img src="${pathToFileURL(i.entries[0]!.imagePath!).href}">`);
+    expect(await formatArticleBodyCached(i, noUv)).toMatchObject({ ok: false });
+
+    await put(`<img src="${pathToFileURL(inside).href}">`);
+    await fs.rm(inside);
+    expect(await formatArticleBodyCached(i, noUv)).toMatchObject({ ok: false });
   });
 });

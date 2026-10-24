@@ -47,6 +47,7 @@ export async function approvedArticle(contentId: string, dataDir: string): Promi
     const reopened = await reopenIfApprovalBroken(contentId, dataDir);
     return no("article_not_approved", `批准已失效（${s.approval.reason}）：重新给创始人看审阅页并批过，再推${reopened ? `；${reopened}` : ""}`);
   }
+  // approval.ok 已经核过：包里记的主题（名字 + 主题文件指纹）= 现在要推的主题
   if (!s.pkg.theme) return no("article_not_approved", "批准里没记排版主题：重新给创始人看审阅页并批过，再推");
   if (s.problems.length) return no("article_not_ready", `图文包有问题，不能推：${s.problems.join("；")}`);
   return { state: s };
@@ -121,7 +122,7 @@ async function runPush(contentId: string, s: ArticleReviewState, staged: Staged,
     r = await (deps.publishImpl ?? publishWechatMpDraft)({
       articlePath: staged.articlePath, title: s.pkg.chosenTitle!, coverPath: staged.coverPath, coverCrops: { crop235: cropParam(c.crops["2.35:1"]), crop11: cropParam(c.crops["1:1"]) },
       preparedImages: staged.images, skipImages: true, strictImages: true, digest: s.content.digest, author: cfg.author || "",
-      wechatAppId: cfg.wechatAppId, wechatAppSecret: cfg.wechatAppSecret, openComment: cfg.openComment, theme: s.pkg.theme!,
+      wechatAppId: cfg.wechatAppId, wechatAppSecret: cfg.wechatAppSecret, openComment: cfg.openComment, theme: s.pkg.theme!.name,
       wechatPublishScript: cfg.wechatPublishScript, apiProxy: cfg.apiProxy,
     });
   } catch (e) {

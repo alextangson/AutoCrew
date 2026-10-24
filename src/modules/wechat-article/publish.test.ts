@@ -454,7 +454,7 @@ describe("排版主题进批准包", () => {
     await setTheme("claude-scroll");
     await complete();
     expect(await approve()).toMatchObject({ ok: true });
-    expect((await readArticlePackage(id, env.dir)).theme).toBe("claude-scroll");
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("claude-scroll");
     expect(await run({ op: "push_draft" })).toMatchObject({ ok: true, media_id: "MID-1" });
     expect(pushes[0]!.theme).toBe("claude-scroll");
   });
@@ -475,9 +475,59 @@ describe("排版主题进批准包", () => {
   it("没配主题时按 newspaper 记，审阅页写明主题", async () => {
     await complete();
     expect(await approve()).toMatchObject({ ok: true });
-    expect((await readArticlePackage(id, env.dir)).theme).toBe("newspaper");
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("newspaper");
     const html = await fs.readFile(String((await run({ op: "status" })).preview_page), "utf8");
     expect(html).toContain("推送时的排版（主题 newspaper）");
     expect(html).toContain("<p>排版后的正文</p>");
+  });
+});
+
+describe("Codex 审 P2：主题身份 = 名字 + 主题文件", () => {
+  const vendorDir = async () => {
+    const root = path.join(env.outside, "vendor-wx");
+    await put(path.join(root, "scripts", "publish.py"), "");
+    await put(path.join(root, "scripts", "format.py"), "");
+    await put(path.join(root, "themes", "mine.json"), "{\"v\":1}");
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme: "mine", wechatPublishScript: path.join(root, "scripts", "publish.py") } }));
+    return root;
+  };
+
+  it("批后同名主题文件被改 → 批准失效、原因写明、推送拒并退回认稿", async () => {
+    const root = await vendorDir();
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    expect((await readArticlePackage(id, env.dir)).theme).toMatchObject({ name: "mine", sha: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    await put(path.join(root, "themes", "mine.json"), "{\"v\":2}");
+    expect((await run({ op: "status" })).approval).toMatch(/主题文件在批准后改过了/);
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(publishImpl).not.toHaveBeenCalled();
+    expect((await getContent(id, env.dir))!.status).toBe("draft_ready");
+  });
+
+  it("批准那一刻的竞态：指纹按 A 算、包里却记成了 B → 也算失效，不按 B 推", async () => {
+    await vendorDir();
+    await complete();
+    expect(await approve()).toMatchObject({ ok: true });
+    const pkg = await readArticlePackage(id, env.dir);
+    await writeArticlePackage(id, { ...pkg, theme: { name: "newspaper", sha: "other" } }, env.dir);
+    expect((await run({ op: "status" })).approval).toMatch(/排版主题从 newspaper 改成了 mine/);
+    expect(await run({ op: "push_draft" })).toMatchObject({ ok: false, code: "article_not_approved" });
+    expect(publishImpl).not.toHaveBeenCalled();
+  });
+
+  it("记批准只用闸门那一次读到的 hash 和主题，不再另读设置", async () => {
+    await vendorDir();
+    await complete();
+    const { articleApproveGate, recordArticleApproval } = await import("./approve.js");
+    const { articleReviewState } = await import("./review.js");
+    const s = await articleReviewState(id, env.dir);
+    if ("error" in s) throw new Error(s.error);
+    const gate = await articleApproveGate(id, env.dir, s.hash);
+    if (!gate.ok) throw new Error(gate.error);
+    const { getConfigDir } = await import("../../storage/storage-roots.js");
+    await put(path.join(getConfigDir(env.dir), "publish.json"), JSON.stringify({ wechatMp: { theme: "newspaper" } }));
+    await recordArticleApproval(id, gate, env.dir);
+    expect((await readArticlePackage(id, env.dir)).theme?.name).toBe("mine");
   });
 });
