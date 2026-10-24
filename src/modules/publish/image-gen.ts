@@ -218,6 +218,9 @@ export interface ChainImageResult {
   buf: Buffer;
   /** 实际出图的通道名 */
   provider: string;
+  /** 实际出图通道的类型与它请求的模型（codex 报不出实际模型 → 没有 model） */
+  providerKind: ImageProviderKind;
+  model?: string;
   /** 出图的不是链上第一家 */
   usedFallback: boolean;
   /** 被跳过的通道及原因(按顺序),用于告诉用户主通道怎么坏的 */
@@ -249,6 +252,7 @@ export async function generateImageViaChain(
   const failures: Array<{ provider: string; error: string }> = [];
   for (const [index, provider] of providers.entries()) {
     const isLast = index === providers.length - 1;
+    const model = provider.kind === "codex" ? undefined : provider.model || (provider.dialect === "ark" ? "doubao-seedream-4-0-250828" : "gpt-image-2");
     try {
       const buf = provider.kind === "codex"
         ? await generateImageViaCodexProvider(req)
@@ -256,12 +260,12 @@ export async function generateImageViaChain(
             ...req,
             baseUrl: provider.baseUrl ?? "",
             apiKey: provider.apiKey ?? "",
-            model: provider.model || (provider.dialect === "ark" ? "doubao-seedream-4-0-250828" : "gpt-image-2"),
+            model: model!,
             dialect: provider.dialect,
             // 还有下家就少磨两次(4 次退避要 35s);最后一家才把重试打满,因为已经无处可跳
             maxAttempts: req.maxAttempts ?? (isLast ? MAX_ATTEMPTS : 2),
           });
-      return { buf, provider: provider.name, usedFallback: failures.length > 0, skipped: failures };
+      return { buf, provider: provider.name, providerKind: provider.kind ?? "relay", ...(model ? { model } : {}), usedFallback: failures.length > 0, skipped: failures };
     } catch (err) {
       failures.push({ provider: provider.name, error: err instanceof Error ? err.message : String(err) });
     }

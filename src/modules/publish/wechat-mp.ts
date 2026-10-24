@@ -13,6 +13,9 @@ export interface ImageGenOutcome {
   stderr: string;
   /** 实际出图的通道名 */
   provider?: string;
+  /** 实际出图通道的类型、它请求的模型（codex 报不出实际模型 → 没有） */
+  providerKind?: "relay" | "codex";
+  model?: string;
   /** 非空=走了备用通道,附主通道的失败原因 */
   degraded?: string;
 }
@@ -288,6 +291,8 @@ async function generateImage(
         stdout: `native relay(${result.provider}): ${outputPath}`,
         stderr: "",
         provider: result.provider,
+        providerKind: result.providerKind,
+        ...(result.model ? { model: result.model } : {}),
         // 降级要可见:备用通道顶上了不等于主通道没坏,写进事件让人知道该去修
         degraded: result.usedFallback
           ? `主生图通道不可用,已由「${result.provider}」出图——${result.skipped.map((s) => `${s.provider}: ${s.error.slice(0, 90)}`).join("；")}`
@@ -341,9 +346,15 @@ async function generateImage(
 export async function generateWechatImageAsset(
   prompt: string,
   outputPath: string,
-  options: { dataDir?: string; size?: string } = {},
+  options: { dataDir?: string; size?: string; codexOnly?: boolean } = {},
 ): Promise<ImageGenOutcome> {
   const cfg = await loadWechatMpConfig(options.dataDir);
+  if (options.codexOnly) {
+    // 派生公众号文章的配图只走 Codex（spec：Codex Image 2.5）；Codex 失败就是失败，不落到付费中转
+    const chain = resolveImageChain(cfg.imageChain).filter((p) => p.kind === "codex");
+    if (!chain.length) return { ok: false, stdout: "", stderr: "没有配 Codex 生图通道：公众号文章配图只走 Codex（Image 2.5），不走中转。请在「设置→发布」的生图通道里加上 codex" };
+    return generateImage(prompt, outputPath, { size: options.size || "16:9", imageGeneratorScript: "", chain });
+  }
   return generateImage(prompt, outputPath, {
     size: options.size || "16:9",
     imageGeneratorScript: resolveImageGeneratorScript(cfg.imageGeneratorScript),

@@ -14,6 +14,12 @@ import { generateWechatImageAsset } from "./wechat-mp.js";
 import { enrichBodyImagePrompt } from "./body-image-prompt.js";
 
 export type ArticleImageStatus = "missing" | "generating" | "ready" | "error";
+/** 图位来源（全媒体 spec §3.2）：gen = 走生图通道链生成；web = 官方来源图 / 我们自己截的公开页面，必须带来源链接 */
+export type ArticleImageKind = "gen" | "web";
+/** 写稿时请求的生图模型（创始人定的是 Codex Image 2.5）；Codex 通道报不出实际模型，只能记「未核实」 */
+export const REQUESTED_IMAGE_MODEL = "Image 2.5";
+/** 写进 Codex 生图提示词的模型要求（与 cover-generator 技能同口径）：宿主不暴露模型选择器时如实记未核实 */
+export const REQUEST_MODEL_LINE = `目标模型为 ${REQUESTED_IMAGE_MODEL}；如果 image_gen 能选模型就选它，不能选就照常生成（不要虚构模型参数）。`;
 
 export interface ArticleImageEntry {
   id: string;
@@ -28,9 +34,20 @@ export interface ArticleImageEntry {
   error?: string;
   updatedAt?: string;
   /** 缺省视为 generated（历史条目无此字段）。research = 深调研素材导入。 */
-  origin?: "generated" | "uploaded" | "research";
+  origin?: "generated" | "uploaded" | "research" | "web";
   /** origin=research 时的来源素材 id：用来认出「这一槽已经是这张图了」，避免重复导入空转。 */
   sourceAssetId?: string;
+  /** 标记里写的图位来源；缺省 = gen（历史标记没有前缀） */
+  kind?: ArticleImageKind;
+  /** gen：实际出图的通道、请求的模型；modelStatus 如实标——codex 报不出模型 = unverified，中转出的不是 Image 2.5 = mismatch */
+  provider?: string;
+  requestedModel?: string;
+  reportedModel?: string;
+  /** unverified = 请求了但通道报不出实际模型（Codex）；configured = 中转按设置里配的模型请求，同样没有回报核实 */
+  modelStatus?: "unverified" | "configured";
+  /** web：图片来源链接与图下署名（没有链接的 web 图不能过审） */
+  sourceUrl?: string;
+  credit?: string;
 }
 
 export interface ArticleImageReview {
@@ -42,7 +59,11 @@ export interface ArticleImageReview {
 
 export interface ArticleImageMarker {
   index: number;
+  /** 标记里的原文（含 gen: / web: 前缀），用来认旧条目 */
   prompt: string;
+  kind: ArticleImageKind;
+  /** 去掉前缀后的描述 */
+  description: string;
   offset: number;
   section?: string;
 }
@@ -59,7 +80,10 @@ export function parseArticleImageMarkers(body: string): ArticleImageMarker[] {
       const before = body.slice(0, offset);
       const headings = [...before.matchAll(/^#{1,4}\s+(.+)$/gm)];
       const section = headings.at(-1)?.[1]?.trim();
-      return { index, prompt, offset, ...(section ? { section } : {}) };
+      const typed = /^(gen|web)\s*[:：]\s*/i.exec(prompt);
+      const kind: ArticleImageKind = typed?.[1]?.toLowerCase() === "web" ? "web" : "gen";
+      const description = typed ? prompt.slice(typed[0].length).trim() : prompt;
+      return { index, prompt, kind, description, offset, ...(section ? { section } : {}) };
     })
     .filter((marker) => marker.prompt.length > 0);
 }
@@ -121,14 +145,16 @@ export async function getArticleImageReview(contentId: string, dataDir?: string)
           ...old,
           bodyOffset: marker.offset,
           section: marker.section,
-          status: old.status === "generating" ? "generating" : imageStillExists ? old.status : "missing",
+          // 生成失败留着「失败 + 原因」，不在下一次读时悄悄变回「还没有图」
+          status: old.status === "generating" ? "generating" : imageStillExists ? old.status : old.status === "error" && !old.imagePath ? "error" : "missing",
           ...(imageStillExists ? {} : { imagePath: undefined, error: old.imagePath ? "图片文件已丢失，请重新生成" : old.error }),
         }
       : {
           id: `body-image-${marker.index + 1}`,
           index: marker.index,
           sourcePrompt: marker.prompt,
-          prompt: marker.prompt,
+          prompt: marker.description,
+          kind: marker.kind,
           section: marker.section,
           bodyOffset: marker.offset,
           status: "missing",
@@ -157,14 +183,16 @@ async function updateEntry(
 }
 
 export async function generateArticleImages(
-  input: { contentId: string; index?: number; prompt?: string },
+  input: { contentId: string; index?: number; prompt?: string; codexOnly?: boolean },
   dataDir?: string,
 ): Promise<{ ok: boolean; review: ArticleImageReview; generated: number; failed: number; errors?: string[]; degraded?: string[] }> {
   let review = await getArticleImageReview(input.contentId, dataDir);
   const targets = input.index === undefined
-    ? review.entries.filter((entry) => entry.status !== "ready")
+    ? review.entries.filter((entry) => entry.status !== "ready" && entry.kind !== "web")
     : review.entries.filter((entry) => entry.index === input.index);
   if (input.index !== undefined && targets.length === 0) throw new Error(`正文配图 ${input.index + 1} 不存在`);
+  // web 图位只收真图（官方来源 / 自己截的公开页面）+ 来源链接，不拿生成图顶替
+  if (targets.some((entry) => entry.kind === "web")) throw new Error(`配图 ${input.index! + 1} 是 web 图位：要截图或找官方图并带来源链接登记，不能生成`);
 
   let generated = 0;
   const errors: string[] = [];
@@ -185,7 +213,8 @@ export async function generateArticleImages(
     }, dataDir);
     const filename = `body-${String(target.index + 1).padStart(2, "0")}-r${revision}.png`;
     const outputPath = path.join(loc.assets, filename);
-    const result = await generateWechatImageAsset(enrichBodyImagePrompt(prompt), outputPath, { dataDir, size: "16:9" });
+    const sent = input.codexOnly ? `${REQUEST_MODEL_LINE}\n${enrichBodyImagePrompt(prompt)}` : enrichBodyImagePrompt(prompt);
+    const result = await generateWechatImageAsset(sent, outputPath, { dataDir, size: "16:9", ...(input.codexOnly ? { codexOnly: true } : {}) });
     if (result.ok) {
       generated += 1;
       if (result.degraded) degradations.add(result.degraded);
@@ -193,6 +222,7 @@ export async function generateArticleImages(
         status: "ready",
         imagePath: outputPath,
         origin: "generated",
+        ...genProvenance(result, input.codexOnly ? REQUESTED_IMAGE_MODEL : undefined),
         error: undefined,
         updatedAt: new Date().toISOString(),
       }, dataDir);
@@ -202,6 +232,7 @@ export async function generateArticleImages(
       review = await updateEntry(review, target.index, {
         status: "error",
         imagePath: undefined,
+        provider: undefined, reportedModel: undefined, modelStatus: undefined,
         error,
         updatedAt: new Date().toISOString(),
       }, dataDir);
@@ -217,6 +248,22 @@ export async function generateArticleImages(
   };
 }
 
+/**
+ * 谁出的图、请求的是什么模型：requestedModel 只记真正发出去的要求（提示词里写了 Image 2.5 / 中转按设置里配的模型），
+ * 通道都不回报实际模型，所以一律记未核实 / 按配置，从不记成已核实。
+ */
+function genProvenance(result: { provider?: string; providerKind?: "relay" | "codex"; model?: string }, promptModel?: string): Partial<ArticleImageEntry> {
+  const codex = result.providerKind === "codex";
+  return {
+    provider: result.provider ?? "(未知通道)",
+    requestedModel: codex ? promptModel : result.model,
+    reportedModel: undefined,
+    modelStatus: codex ? "unverified" : "configured",
+    sourceUrl: undefined,
+    credit: undefined,
+  };
+}
+
 export const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /** 扩展名以字节魔数为准——文件名只是用户给的提示，不可信。 */
@@ -228,8 +275,20 @@ function sniffImageExt(bytes: Buffer): "png" | "jpg" | null {
 
 /** 图片来源标注：用户上传（缺省）或深调研素材导入。校验对两者一视同仁。 */
 export interface ArticleImageProvenance {
-  origin: "uploaded" | "research";
+  origin: "uploaded" | "research" | "web";
   sourceAssetId?: string;
+  /** origin=web 必带：来源链接（http/https）与图下署名 */
+  sourceUrl?: string;
+  credit?: string;
+}
+
+/** web 图的来源：链接必须是 http(s)，署名不能空——缺了就拒，不留一张来路不明的图 */
+function checkWebProvenance(p: ArticleImageProvenance): void {
+  if (p.origin !== "web") return;
+  let url: URL | null = null;
+  try { url = new URL(String(p.sourceUrl ?? "").trim()); } catch { url = null; }
+  if (!url || !/^https?:$/.test(url.protocol)) throw new Error("web 图必须带来源链接（http/https 开头）");
+  if (!p.credit?.trim()) throw new Error("web 图必须带图下署名（来源名称），比如「图源：OpenAI 官网」");
 }
 
 /**
@@ -253,6 +312,7 @@ export async function attachUploadedArticleImage(
   if (bytes.length > MAX_UPLOAD_IMAGE_BYTES) throw new Error("图片超过 5MB 上限，请压缩后再传");
   const ext = sniffImageExt(bytes);
   if (!ext) throw new Error("仅支持 PNG/JPG 图片（按文件内容识别；webp 公众号推送不支持）");
+  checkWebProvenance(provenance);
 
   const loc = locations(contentId, dataDir);
   await fs.mkdir(loc.assets, { recursive: true });
@@ -269,6 +329,9 @@ export async function attachUploadedArticleImage(
     revision,
     origin: provenance.origin,
     sourceAssetId: provenance.sourceAssetId,
+    sourceUrl: provenance.origin === "web" ? provenance.sourceUrl!.trim() : undefined,
+    credit: provenance.origin === "web" ? provenance.credit!.trim() : undefined,
+    provider: undefined, requestedModel: undefined, reportedModel: undefined, modelStatus: undefined,
     error: undefined,
     updatedAt: new Date().toISOString(),
   }, dataDir);

@@ -7,6 +7,9 @@
  * 网页的旧决定路由（卡片 / 工作台）也走这里：没带代次时按页面带来的指纹找到对应条目、取它当前的代次；
  * 找不到条目的动作（撤销批准、纠正发布、挂原片…）不在列表里，直接交给创始人决定。
  */
+import { isDerivedArticle } from "../wechat-article/review.js";
+import { articleApproveGate, recordArticleApproval } from "../wechat-article/approve.js";
+import { withArticleLock } from "../wechat-article/package.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { provenanceFields } from "./decision-provenance.js";
@@ -142,11 +145,22 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
     if (!t.ok) return fail(t.staleDraft ? "stale_draft" : "transition_failed", t.staleDraft ? "稿子刚改过，重新看一眼" : `稿子没退回修改：${String(t.error ?? "")}`);
     return { ok: true, decision: await pushDecision(c.id, ctx.dataDir, { type: "script_revise", note }, "script_revise_requested") };
   }
+  // 由视频派生的公众号文章：批的是给他看的那一整包（Phase 2a）；核包、认稿、记批准在同一把锁里，中间改不了包
+  if (isDerivedArticle(c)) return withArticleLock(c.id, () => approveScript(ctx, String(ctx.item.detail.package_hash ?? "")));
+  return approveScript(ctx, null);
+}
+
+async function approveScript(ctx: Ctx, expectedPackage: string | null): Promise<Result> {
+  const c = ctx.content!;
+  const article = expectedPackage !== null ? await articleApproveGate(c.id, ctx.dataDir, expectedPackage || undefined) : null;
+  if (article && !article.ok) return fail(article.code, article.error);
   // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
   // 页面交来的是它屏幕上那份正文的哈希（整分支审 5 P1）；没带就用代次对上那一刻读到的正文
   const shown = str(ctx.params.expected_body_hash);
   const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: shown || bodyHash(c.body) }) as Result;
-  return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
+  if (!t.ok) return fail("transition_failed", String(t.error ?? "认稿没成"));
+  if (article?.ok) await recordArticleApproval(c.id, article.hash, ctx.dataDir);
+  return { ok: true, status: "approved" };
 }
 
 async function run(ctx: Ctx): Promise<Result> {
