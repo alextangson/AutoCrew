@@ -1,8 +1,8 @@
 /**
- * 公众号文章的发布包（全媒体 spec §3.2、Phase 2a）：标题候选与选定、创作来源声明、篇幅放行、封面对、批准。
+ * 公众号文章的发布包（全媒体 spec §3.2、Phase 2a/2b）：标题候选与选定、创作来源声明、篇幅放行、封面（一张主图 + 两个裁切）、批准。
  *
  * 落在内容项目里的 `article-package.json`。批准 = 整包指纹（正文 + 选定标题 + 每张配图的文件和来源 +
- * 封面两张 + 创作来源），用 Phase 1 的 artifact-approval；批准之后任何一样变了，批准就失效，原因说得出是哪一包。
+ * 封面主图与两个裁切 + 创作来源），用 Phase 1 的 artifact-approval；批准之后任何一样变了，批准就失效，原因说得出是哪一包。
  * 只管由视频派生的公众号文章（derivedFrom.kind = wechat_article）；普通公众号稿不读这个文件。
  */
 import fs from "node:fs/promises";
@@ -14,6 +14,9 @@ import { bodyHash } from "../../storage/production-store.js";
 import type { Content } from "../../storage/local-store.js";
 import { approveArtifact, artifactHash, checkArtifactApproval, type ApprovalCheck, type ArtifactApproval } from "../lineage/artifact-approval.js";
 import type { ArticleImageEntry, ArticleImageReview } from "../publish/article-images.js";
+import { ARTICLE_COVER_RATIOS, cropParam, type ArticleMasterCover } from "./cover.js";
+
+export { ARTICLE_COVER_RATIOS, type ArticleCoverRatio } from "./cover.js";
 
 /** 公众号「创作来源」的原选项，一字不改（spec §7a） */
 export const CREATION_SOURCES = [
@@ -22,14 +25,13 @@ export const CREATION_SOURCES = [
 ] as const;
 export type CreationSource = (typeof CREATION_SOURCES)[number];
 
-export const ARTICLE_COVER_RATIOS = ["2.35:1", "1:1"] as const;
-export type ArticleCoverRatio = (typeof ARTICLE_COVER_RATIOS)[number];
 export const ARTICLE_MIN_CHARS = 2500;
 export const ARTICLE_MAX_CHARS = 4000;
 export const APPROVAL_ARTIFACT = "公众号图文发布包";
 
 export interface FounderWords { founderWords: string; at: string }
-export interface ArticleCover { ratio: ArticleCoverRatio; path: string; sha256: string }
+/** 2a 的旧形状（两张独立封面）：公众号只收一张封面，读到就拒，要求重登一张主图，不替他挑一张 */
+export interface LegacyArticleCover { ratio: string; path: string; sha256: string }
 
 export interface ArticlePackage {
   titleOptions: string[];
@@ -38,13 +40,14 @@ export interface ArticlePackage {
   creationSource?: FounderWords & { value: CreationSource };
   /** 篇幅超出 2500–4000 时创始人的原话放行；只对放行那一刻的正文有效 */
   lengthOverride?: FounderWords & { bodyHash: string; chars: number };
-  covers: ArticleCover[];
+  cover?: ArticleMasterCover;
+  covers?: LegacyArticleCover[];
   approval?: ArtifactApproval;
   /** 写作包用的底稿从哪来（成片字幕 / 退回定稿正文的原因）：领包时记下，审阅页照显示；不进指纹 */
   sourceNote?: string;
 }
 
-const EMPTY: ArticlePackage = { titleOptions: [], covers: [] };
+const EMPTY: ArticlePackage = { titleOptions: [] };
 
 function file(contentId: string, dataDir?: string): string {
   return projectFile(contentRoot(contentId, dataDir), "article-package.json");
@@ -53,7 +56,7 @@ function file(contentId: string, dataDir?: string): string {
 export async function readArticlePackage(contentId: string, dataDir?: string): Promise<ArticlePackage> {
   try {
     const raw = JSON.parse(await fs.readFile(file(contentId, dataDir), "utf-8")) as Partial<ArticlePackage>;
-    return { ...EMPTY, ...raw, titleOptions: raw.titleOptions ?? [], covers: raw.covers ?? [] };
+    return { ...EMPTY, ...raw, titleOptions: raw.titleOptions ?? [] };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return { ...EMPTY };
     throw new Error(`公众号发布包读不出来（${(e as Error).message}）`);
@@ -111,14 +114,13 @@ function declarationProblems(pkg: ArticlePackage, review: Pick<ArticleImageRevie
   return [];
 }
 
+export const LEGACY_COVER_PAIR = "包里还是 2a 的两张独立封面：公众号只收一张封面加两个裁切，请按 cover-generator 公众号段重出一张居中安全的主图，再 set_cover 登记一张主图（不会替你从两张里挑一张）";
+
 async function coverProblems(pkg: ArticlePackage): Promise<string[]> {
-  const out: string[] = [];
-  for (const ratio of ARTICLE_COVER_RATIOS) {
-    const c = pkg.covers.find((x) => x.ratio === ratio);
-    if (!c) out.push(`缺 ${ratio} 封面`);
-    else if ((await fileSha(c.path)) !== c.sha256) out.push(`${ratio} 封面文件不见了或在登记后被改过（${c.path}）：重新 set_cover`);
-  }
-  return out;
+  if (pkg.covers?.length) return [LEGACY_COVER_PAIR];
+  if (!pkg.cover) return ["缺封面主图（一张，2.35:1 和 1:1 从它裁）"];
+  if ((await fileSha(pkg.cover.path)) !== pkg.cover.sha256) return [`封面主图不见了或在登记后被改过（${pkg.cover.path}）：重新 set_cover`];
+  return [];
 }
 
 async function imageProblems(entries: ArticleImageEntry[]): Promise<string[]> {
@@ -139,13 +141,14 @@ async function fileSha(p: string | undefined): Promise<string> {
   try { return createHash("sha256").update(await fs.readFile(p)).digest("hex"); } catch { return "missing"; }
 }
 
-/** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面两张（文件字节）、创作来源 */
+/** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面主图（文件字节）+ 两个裁切、创作来源 */
 export async function packageHash(content: Pick<Content, "body">, pkg: ArticlePackage, review: Pick<ArticleImageReview, "entries">): Promise<string> {
   const images = [];
   for (const e of review.entries) images.push({ index: e.index, kind: e.kind ?? "gen", sha: await fileSha(e.imagePath), sourceUrl: e.sourceUrl, credit: e.credit });
-  const covers = [];
-  for (const ratio of ARTICLE_COVER_RATIOS) covers.push({ ratio, sha: await fileSha(pkg.covers.find((c) => c.ratio === ratio)?.path) });
-  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, covers, creationSource: pkg.creationSource?.value ?? null });
+  const c = pkg.cover;
+  const cover = c ? { sha: await fileSha(c.path), crops: ARTICLE_COVER_RATIOS.map((r) => `${r}=${cropParam(c.crops[r])}`) } : null;
+  const legacy = pkg.covers?.length ? pkg.covers.map((x) => x.sha256) : null;
+  return artifactHash({ body: content.body ?? "", title: pkg.chosenTitle ?? null, images, cover, legacy, creationSource: pkg.creationSource?.value ?? null });
 }
 
 export function approvePackage(pkg: ArticlePackage, hash: string, now = new Date()): ArticlePackage {

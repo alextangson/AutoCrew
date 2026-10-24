@@ -51,7 +51,7 @@ Data (revised after Codex consult, §7 #1): the English edition is a **separate 
 4. **Images**, each marked in the draft as one of:
    - `web`: real material (official screenshots, product pages, charts from a cited source) — fetched/screenshot via ego-lite, saved with source URL, caption credits the source;
    - `gen`: Codex Image 2.5, prompt + reported model recorded;
-   - cover: Codex, 2.35:1 + 1:1.
+   - cover: Codex, one center-safe master; 2.35:1 + 1:1 are crop regions of it (WeChat takes one thumb + pic_crop_235_1 / pic_crop_1_1; corrected in 2b).
 5. **Founder review**: a rendered illustrated HTML preview (approximates WeChat layout) opened from the review inbox; approve / revise in chat as today.
 6. **Publish**: push to draft box via API (existing) → ego-lite opens mp.weixin.qq.com → insert 视频号 card → set 定时群发 at the planned slot → stops at the admin QR → founder scans → receipt recorded.
 

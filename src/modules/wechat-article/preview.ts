@@ -1,6 +1,6 @@
 /**
  * 图文审阅页（全媒体 spec §3.2 第 5 条）：近似公众号版式的本地 HTML——标题候选、正文配图就位、
- * 图下来源 / 生成说明、封面一对、创作来源、篇幅与没过的项。创始人从「等你拍板」的认稿那件打开它。
+ * 图下来源 / 生成说明、封面主图与两个裁切、创作来源、篇幅与没过的项。创始人从「等你拍板」的认稿那件打开它。
  * 只读：不改包。图片用 file:// 绝对路径，本机浏览器直接打开。
  */
 import fs from "node:fs/promises";
@@ -8,7 +8,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
 import type { ArticleImageEntry } from "../publish/article-images.js";
-import type { ArticlePackage } from "./package.js";
+import { LEGACY_COVER_PAIR, type ArticlePackage } from "./package.js";
+import { cropParam, type ArticleCoverRatio, type ArticleMasterCover } from "./cover.js";
 
 export interface PreviewInput {
   contentId: string;
@@ -67,14 +68,30 @@ function bodyHtml(body: string, entries: ArticleImageEntry[]): string {
   return html.join("\n");
 }
 
+/** 按归一化裁切框，把主图的那一块画成目标比例的框：背景图放大到「框宽 / 裁切宽」，再平移到裁切左上 */
+export function cropHtml(c: ArticleMasterCover, ratio: ArticleCoverRatio, boxWidth: number): string {
+  const k = c.crops[ratio];
+  const bgW = boxWidth / (k.x2 - k.x1);
+  const bgH = (bgW * c.height) / c.width;
+  const boxH = Math.round((k.y2 - k.y1) * bgH);
+  const style = `width:${boxWidth}px;height:${boxH}px;background:url('${img(c.path)}') no-repeat;background-size:${bgW.toFixed(1)}px ${bgH.toFixed(1)}px;background-position:-${(k.x1 * bgW).toFixed(1)}px -${(k.y1 * bgH).toFixed(1)}px`;
+  return `<figure class="cover"><div class="crop" style="${style}"></div><p class="cap">${ratio}（${cropParam(k)}）</p></figure>`;
+}
+
+function coversHtml(pkg: ArticlePackage): string {
+  if (pkg.covers?.length) return `<p class="bad">${esc(LEGACY_COVER_PAIR)}</p>`;
+  const c = pkg.cover;
+  if (!c) return "<p class='bad'>还没有封面主图</p>";
+  return `<div class="covers">${cropHtml(c, "2.35:1", 300)}${cropHtml(c, "1:1", 128)}</div><p class="cap">主图 ${c.width}×${c.height}</p>`;
+}
+
 function headerHtml(i: PreviewInput): string {
   const titles = i.pkg.titleOptions.map((t, k) => `<li${t === i.pkg.chosenTitle ? ' class="chosen"' : ""}>${k + 1}. ${esc(t)}${t === i.pkg.chosenTitle ? "（已选）" : ""}</li>`).join("");
-  const covers = i.pkg.covers.map((c) => `<figure class="cover r${c.ratio === "1:1" ? "sq" : "wide"}"><img src="${img(c.path)}"><p class="cap">${c.ratio}</p></figure>`).join("");
   const source = i.pkg.creationSource ? `${esc(i.pkg.creationSource.value)}（创始人确认：「${esc(i.pkg.creationSource.founderWords)}」）` : `未确认${i.suggestedSource ? `（建议：${esc(i.suggestedSource)}）` : ""}`;
   const problems = i.problems.length ? `<ul class="bad">${i.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : `<p>都齐了，可以批。</p>`;
   return [
     `<section class="meta"><h3>标题候选</h3><ol>${titles || "<li>还没有</li>"}</ol>`,
-    `<h3>封面（2.35:1 + 1:1）</h3><div class="covers">${covers || "<p class='bad'>还没有封面</p>"}</div>`,
+    `<h3>封面（一张主图，裁出 2.35:1 + 1:1）</h3>${coversHtml(i.pkg)}`,
     `<p>创作来源：${source}</p><p>正文 ${i.chars} 字${i.pkg.lengthOverride ? `（篇幅已放行：「${esc(i.pkg.lengthOverride.founderWords)}」）` : ""}</p>`,
     i.sourceNote ? `<p>底稿：${esc(i.sourceNote)}</p>` : "",
     `<p>批准状态：${esc(i.approval)}</p><h3>还差什么</h3>${problems}</section>`,
@@ -83,7 +100,7 @@ function headerHtml(i: PreviewInput): string {
 
 const CSS = `body{background:#ededed;margin:0;font-family:-apple-system,"PingFang SC",sans-serif}main{max-width:600px;margin:0 auto;background:#fff;padding:24px 20px;color:#333;line-height:1.85;font-size:16px}
 h1{font-size:22px;line-height:1.4}h2{font-size:18px;margin-top:2em}figure{margin:1.2em 0}img{max-width:100%;display:block}.cap{font-size:12px;color:#888;text-align:center;margin:.4em 0}
-.bad{color:#c0392b}.meta{background:#f7f7f7;padding:12px 16px;font-size:14px;margin-bottom:24px}.chosen{font-weight:600}.covers{display:flex;gap:12px;align-items:flex-end}.rwide img{width:300px}.rsq img{width:128px}`;
+.bad{color:#c0392b}.meta{background:#f7f7f7;padding:12px 16px;font-size:14px;margin-bottom:24px}.chosen{font-weight:600}.covers{display:flex;gap:12px;align-items:flex-end}.crop{border:1px solid #ddd}`;
 
 export function renderArticlePreview(i: PreviewInput): string {
   const title = i.pkg.chosenTitle ?? i.pkg.titleOptions[0] ?? i.title;

@@ -216,7 +216,7 @@ def replace_all_images(html, article_dir, token):
     return html, replaced, failed
 
 
-def push_draft(token, title, content, thumb_media_id, author="小互", source_url="", digest=""):
+def push_draft(token, title, content, thumb_media_id, author="小互", source_url="", digest="", crop_235="", crop_11=""):
     """推送文章到草稿箱"""
     url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={token}"
 
@@ -234,6 +234,11 @@ def push_draft(token, title, content, thumb_media_id, author="小互", source_ur
             }
         ]
     }
+    # 封面裁切（归一化 X1_Y1_X2_Y2）：一张封面图裁出消息列表 2.35:1 与分享卡 1:1；不传就不写这两个字段
+    if crop_235:
+        data["articles"][0]["pic_crop_235_1"] = crop_235
+    if crop_11:
+        data["articles"][0]["pic_crop_1_1"] = crop_11
 
     # 必须用 ensure_ascii=False，否则中文被转义为 \uXXXX 导致微信计算标题长度错误
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -305,6 +310,12 @@ def main():
                         help="原文链接（content_source_url，公众号文末「阅读原文」按钮指向）")
     parser.add_argument("--digest", default="",
                         help="公众号摘要（≤20 字，显示在分享卡/列表标题下方）；空则微信自动截取正文前 54 字")
+    parser.add_argument("--crop-235", default="",
+                        help="封面 2.35:1 裁切区域，归一化 X1_Y1_X2_Y2（pic_crop_235_1）")
+    parser.add_argument("--crop-11", default="",
+                        help="封面 1:1 裁切区域，归一化 X1_Y1_X2_Y2（pic_crop_1_1）")
+    parser.add_argument("--strict-images", action="store_true",
+                        help="任何一张正文图片上传失败都中止（批过的图文包必须原样推送）")
     parser.add_argument("--dry-run", action="store_true",
                         help="只做排版和图片上传，不推送草稿箱（用于测试）")
     parser.add_argument("--yes", "-y", action="store_true",
@@ -417,6 +428,9 @@ def main():
         if failed > 0 and replaced == 0:
             print("  错误: 所有图片上传失败，中止发布（不推空图草稿）")
             sys.exit(1)
+        elif failed > 0 and args.strict_images:
+            print(f"  错误: {failed} 张正文图片上传失败，--strict-images 要求整包原样推送，中止（不推缺图草稿）")
+            sys.exit(1)
         elif failed > 0:
             print("  警告: 部分图片上传失败，文章中对应位置可能显示空白")
             if args.yes:
@@ -457,12 +471,13 @@ def main():
         return
 
     print(f"\n推送到草稿箱...")
-    media_id = push_draft(token, title, html, thumb_media_id, author, args.source_url, args.digest)
+    media_id = push_draft(token, title, html, thumb_media_id, author, args.source_url, args.digest, args.crop_235, args.crop_11)
 
     if media_id:
         print(f"\n{'='*40}")
         print(f"  发布成功!")
         print(f"  草稿 media_id: {media_id}")
+        print(f"AUTOCREW_DRAFT_MEDIA_ID={media_id}")
         print(f"  → 请到微信公众号后台 → 草稿箱 查看和发布")
         print(f"{'='*40}")
     else:

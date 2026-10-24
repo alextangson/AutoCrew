@@ -63,6 +63,12 @@ export interface WechatMpDraftOptions {
   digest?: string;
   /** 稿件页已审核/生成的正文配图，按 [IMAGE:] 出现顺序复用。 */
   preparedImages?: string[];
+  /** 显式标题（派生公众号文章 = 创始人选定的标题）；不给 = 脚本从正文首个标题取 */
+  title?: string;
+  /** 封面裁切（归一化 X1_Y1_X2_Y2）：一张封面裁出 2.35:1 / 1:1；不给 = 草稿不带裁切字段 */
+  coverCrops?: { crop235: string; crop11: string };
+  /** 任何一张正文图上传失败都中止（批过的包必须原样推） */
+  strictImages?: boolean;
 }
 
 export type WechatMpDraftResult = {
@@ -73,6 +79,8 @@ export type WechatMpDraftResult = {
   imageCount: number;
   generatedImages: string[];
   command?: string;
+  /** 草稿 media_id（脚本成功时打印的 AUTOCREW_DRAFT_MEDIA_ID 行） */
+  mediaId?: string;
   stdout?: string;
   stderr?: string;
   error?: string;
@@ -218,6 +226,10 @@ function extractPublishFailure(stdout: string, stderr: string): string {
   const meaningful = lines.filter((line) => /错误|errcode|白名单|失败|未配置|→/.test(line));
   const picked = (meaningful.length ? meaningful : lines).slice(-3).join("；");
   return picked ? `公众号推送失败：${picked}` : "公众号推送失败（脚本无输出）";
+}
+
+export function draftMediaId(stdout: string): string | undefined {
+  return /^AUTOCREW_DRAFT_MEDIA_ID=(\S+)\s*$/m.exec(stdout)?.[1];
 }
 
 async function runCommand(
@@ -494,6 +506,9 @@ export async function publishWechatMpDraft(
     options.author || "",
     "--yes",
     ...(options.digest ? ["--digest", options.digest] : []),
+    ...(options.title ? ["--title", options.title] : []),
+    ...(options.coverCrops ? ["--crop-235", options.coverCrops.crop235, "--crop-11", options.coverCrops.crop11] : []),
+    ...(options.strictImages ? ["--strict-images"] : []),
   ];
   const displayCommand = `uv run ${wechatPublishScript} ${scriptArgs.join(" ")}`;
 
@@ -565,6 +580,7 @@ export async function publishWechatMpDraft(
     stdout: publishResult.stdout,
     stderr: publishResult.stderr,
     command: displayCommand,
+    ...(draftMediaId(publishResult.stdout) ? { mediaId: draftMediaId(publishResult.stdout) } : {}),
     error: publishResult.code === 0
       ? undefined
       : extractPublishFailure(publishResult.stdout, publishResult.stderr),

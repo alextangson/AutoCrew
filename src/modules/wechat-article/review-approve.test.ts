@@ -53,9 +53,7 @@ async function complete() {
   expect(await run({ op: "generate_images" })).toMatchObject({ ok: true, generated: 1 });
   const shot = await put(path.join(env.outside, "shot.png"), png(1200, 800, "web"));
   expect(await run({ op: "attach_web_image", index: 2, path: shot, url: "https://openai.com/pricing", credit: "图源：OpenAI 官网" })).toMatchObject({ ok: true });
-  for (const [ratio, seed] of [["2.35:1", "w"], ["1:1", "s"]]) {
-    expect(await run({ op: "set_cover", ratio, path: await put(path.join(env.outside, `cover-${seed}.png`), png(235, 100, seed)) })).toMatchObject({ ok: true });
-  }
+  expect(await run({ op: "set_cover", path: await put(path.join(env.outside, "cover.png"), png(2350, 1000, "m")) })).toMatchObject({ ok: true });
   expect(await run({ op: "set_creation_source", creation_source: "内容由AI生成", founder_quote: "就选 AI 生成" })).toMatchObject({ ok: true });
 }
 
@@ -148,20 +146,17 @@ describe("图文审阅 = 批整包", () => {
     for (const s of ["标题二（已选）", "https://openai.com/pricing", "图源：OpenAI 官网", "内容由AI生成", "model unverified", "2.35:1", "1:1", "<img src=\"file://"]) expect(html).toContain(s);
   });
 
-  it("补齐后批 → 记整包批准；但 2b 接上之前所有发布出口都拒（不按旧标题旧封面发）", async () => {
+  it("补齐后批 → 记整包批准；发布核对放行，但复制件 / 浏览器包出口仍拒（只走按整包推草稿箱）", async () => {
     await complete();
+    expect(await derivedPublishRefusal((await getContent(id, env.dir))!, env.dir)).toMatchObject({ code: "article_not_approved" });
     expect(await approve()).toMatchObject({ ok: true });
     expect((await readArticlePackage(id, env.dir)).approval?.artifact).toBe("公众号图文发布包");
     expect((await getContent(id, env.dir))!.status).toBe("approved");
-    expect(await derivedPublishRefusal((await getContent(id, env.dir))!, env.dir)).toMatchObject({ code: "derived_article_publish_pending" });
+    expect(await derivedPublishRefusal((await getContent(id, env.dir))!, env.dir)).toBeNull();
     const { executePublish } = await import("../../tools/publish.js");
-    for (const action of ["clipboard", "ego_lite_prepare", "wechat_mp_draft"]) {
-      const r = await executePublish({ action, content_id: id, _dataDir: env.dir }) as Record<string, unknown>;
-      expect(r, action).toMatchObject({ ok: false, code: "derived_article_publish_pending" });
-      expect(String(r.error)).toMatch(/2b/);
+    for (const action of ["clipboard", "ego_lite_prepare"]) {
+      expect(await executePublish({ action, content_id: id, _dataDir: env.dir }), action).toMatchObject({ ok: false, code: "derived_article_api_only" });
     }
-    const { executePrePublish } = await import("../../tools/pre-publish.js");
-    expect(await executePrePublish({ action: "check", content_id: id, _dataDir: env.dir })).toMatchObject({ ok: false });
   });
 
   it("出示之后包被改（绕过代次的竞态）：批准带着出示时的包指纹，对不上就拒", async () => {
@@ -199,8 +194,8 @@ describe("图文审阅 = 批整包", () => {
 
   it("封面文件被删 → 不能批，原因写明", async () => {
     await complete();
-    await fs.rm((await readArticlePackage(id, env.dir)).covers[1].path);
-    expect((await run({ op: "status" })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/1:1 封面文件不见了/)]));
+    await fs.rm((await readArticlePackage(id, env.dir)).cover!.path);
+    expect((await run({ op: "status" })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/封面主图不见了/)]));
     expect(await approve()).toMatchObject({ ok: false, code: "article_not_ready" });
   });
 
@@ -209,7 +204,7 @@ describe("图文审阅 = 批整包", () => {
     await approve();
     const content = async () => (await getContent(id, env.dir))!;
     const pkg = await readArticlePackage(id, env.dir);
-    await fs.writeFile(pkg.covers[0].path, png(235, 100, "changed"));
+    await fs.writeFile(pkg.cover!.path, png(2350, 1000, "changed"));
     void content;
     expect((await run({ op: "status" })).approval).toMatch(/批准已失效：公众号图文发布包在批准之后变了/);
   });
