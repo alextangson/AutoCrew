@@ -50,6 +50,10 @@ export const IPC_CHANNELS = [
   "settings:open_config",
   // 配置面的反馈闭环：拿**已保存的**配置真发一次极小调用，回耗时与上游实际回的模型名
   "settings:test_route",
+  // 缺线路时的第三方中转推荐（spec 2026-10-25 §4）：只认预设地址读模型列表 / 服务端追加端点 / 本机推荐偏好
+  "settings:list_models",
+  "settings:engine_attach_preset",
+  "settings:offer_set",
   // 线路健康只读通道（P2 spec §4.1）：每个端点最近一次探针 + 最近一次真实调用的结果。
   // 不轮询——变更时服务端发既有 `engine` SSE 事件（kind:"engine_health"），前端据此重拉
   "engine:health",

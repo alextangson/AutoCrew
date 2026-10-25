@@ -16,6 +16,7 @@ import { toast } from "../ui";
 import { Field, Section } from "./settings-kit";
 import { slugProviderId } from "./provider-id";
 import { useEngineHealth } from "./EngineBanner";
+import { EmptyStateOffer, OfferSwitch, useOfferState } from "./TokenCamelConnect";
 import { ProviderTable, TestButton, TestLine, type TestState } from "./SettingsProviders";
 import {
   ROLE_KEYS,
@@ -99,6 +100,8 @@ export function EngineSection() {
   const [errors, setErrors] = useState<string[]>([]);
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [configured, setConfigured] = useState(false);
+  // 推荐偏好单独一份快照：拨开关只重读它，绝不重载上面这张还没保存的表单
+  const offerSnap = useOfferState();
   const { health, reload: reloadHealth } = useEngineHealth();
 
   const load = async () => {
@@ -225,6 +228,7 @@ export function EngineSection() {
         onDelete={deleteProvider}
         onTest={(slot, id, model) => void runTest(slot, id, model)}
       />
+      <EmptyStateOffer snap={offerSnap} onSaved={() => { void load(); reloadHealth(); offerSnap.reload(); }} />
 
       <p className="mono muted set-sub-head">主端点 · 对话与所有没单独分配的岗位都走它</p>
       <div className="set-route">
@@ -311,6 +315,7 @@ export function EngineSection() {
         </button>
         <span className="muted mono">端点表、主端点、备用、岗位一次提交；任一条不合格就整次拒绝，文件不动。</span>
       </div>
+      <OfferSwitch offer={offerSnap.offer} />
     </Section>
   );
 }

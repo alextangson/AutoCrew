@@ -38,6 +38,9 @@ import { deleteExampleTopic } from "../tools/topic-create.js";
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model?, providers? }
  *   settings:open_config {}                                (打开实际生效的 engine.json)
  *   settings:test_route { provider_id, model }             (拿已保存的配置真发一次调用)
+ *   settings:list_models { api_key, base_url? }           (只认预设地址读 /models；不写盘)
+ *   settings:engine_attach_preset { as, api_key, strong, fast, revision } (服务端追加预设端点)
+ *   settings:offer_set { enabled?, dismiss? }              (本机推荐偏好：总开关 / 某触点不用了)
  *   engine:health      {}                                  (只读；每个端点最近一次探针 + 真实调用结果)
  *   engine:recheck     { force? }                          (复探过时的失败 / 「重新检查」；回最新视图)
  *   hosts:list         {}                                  (只读；命名令牌清单，永不含 token 值)
@@ -140,6 +143,8 @@ import {
   openEngineConfigFile,
 } from "./settings.js";
 import { testEngineRoute } from "./settings-probe.js";
+import { listPresetModels, setOfferPreference } from "./settings-offer.js";
+import { attachPresetEndpoint } from "./settings-attach.js";
 import { getEngineHealth, recheckEngineHealth } from "./engine-health.js";
 import { hostsListHandler, hostsRevokeHandler } from "./host-tokens.js";
 import { WORKBUDDY_HOST } from "./workbuddy-connect.js";
@@ -1312,6 +1317,9 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "settings:open_config": (payload) => openEngineConfigFile(payload),
     // 第二参显式丢掉:handler 的 ctx 与 testEngineRoute 的测试注入口不是一回事
     "settings:test_route": (payload) => testEngineRoute(payload),
+    "settings:list_models": (payload) => listPresetModels(payload),
+    "settings:engine_attach_preset": attachPresetEndpoint,
+    "settings:offer_set": setOfferPreference,
     // 线路健康（P2 spec §4.1）：只读派生视图，不含密钥；更新靠四个时机推，不靠轮询
     "engine:health": getEngineHealth,
     "engine:recheck": recheckEngineHealth,

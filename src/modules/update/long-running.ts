@@ -24,7 +24,7 @@ export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
   "retro:generate", "persona:generate", "style:distill", "style:absorb", "draft:rewrite_selection",
   "draft:adopt_revision", // 采纳改稿顺带蒸馏文风（Codex 审第 8 轮 P2）
   "topic:create", // 超过 30 字的想法会先蒸馏成选题（Codex 审第 8 轮 P2）
-  "article_images:suggest", "onboarding:init", "flywheel:report", "settings:test_route", "engine:recheck",
+  "article_images:suggest", "onboarding:init", "flywheel:report", "settings:test_route", "settings:list_models", "engine:recheck",
   // 外网抓取 / 雷达 / 数据回流
   "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now", "research:import_asset",
   // 长任务编排
@@ -65,6 +65,7 @@ export const SHORT_CHANNELS: ReadonlySet<string> = new Set([
   "chat:abort", "chat:turn_status", "chat:model_options",
   "conversations:rename",
   "settings:get", "settings:set", "settings:open_config", "engine:health",
+  "settings:engine_attach_preset", "settings:offer_set",
   "hosts:list", "hosts:revoke",
   "settings:search_get", "settings:search_set", "settings:publish_get", "settings:publish_set",
   "persona:save", "cover:get", "settings:cover_get", "settings:cover_set",

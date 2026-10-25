@@ -9,6 +9,7 @@
  * 密钥口径：读回只给掩码与「配没配」，原文一个字节都不出后端；
  * 提交空 apiKey = 保留该 id 已存的 key（settings-providers.ts 的既有规则）。
  */
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -30,6 +31,7 @@ import {
 import { inferProtocol, mergeModels, slugFromHost, uniqueProviderId } from "../engine/config-schema.js";
 import { getConfigDir } from "../storage/storage-roots.js";
 import { mergeProviders } from "./settings-providers.js";
+import { readOfferView } from "./settings-offer.js";
 
 export function maskKey(key: string): string {
   return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
@@ -140,6 +142,9 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
         assignments: assignmentsView(cfg?.assignments, byId),
         providers: providerTableView(migrated.draft.providers),
         warnings: [...migrated.warnings, ...outcome.warnings],
+        // 追加写入（settings:engine_attach_preset）带回这个数，写前比对
+        revision: engineRevision(raw),
+        offer: await readOfferView(),
       },
     };
   } catch (err) {
@@ -357,6 +362,54 @@ function changedProviderIds(before: EngineProviderConfig[], after: EngineProvide
     .map((p) => p.id);
 }
 
+/** 引擎配置的修订号：原文件内容的短哈希（没有文件 = 空串）。写前比对它，挡住「读后被别处改过」的丢更新 */
+export function engineRevision(raw: Record<string, unknown>): string {
+  if (!Object.keys(raw).length) return "";
+  return createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 16);
+}
+
+/**
+ * 第 4 步落盘：整图已校验通过的配置 → 备份 v1（一次）→ 原子写 → 通知订阅方。
+ * settings:set 与 settings:engine_attach_preset 共用这一条，落盘形状不分叉。
+ */
+export async function persistEngineConfig(
+  filePath: string,
+  raw: Record<string, unknown>,
+  previous: EngineProviderConfig[],
+  config: NonNullable<ReturnType<typeof validateEngineGraph>["config"]>,
+): Promise<void> {
+  const { main, fallback, assignments, providers } = config;
+  const body = JSON.stringify(
+    {
+      version: 2,
+      providers: providers.map(storedProvider),
+      main,
+      ...(fallback ? { fallback } : {}),
+      ...(assignments && Object.keys(assignments).length ? { assignments } : {}),
+    },
+    null,
+    2,
+  );
+  await backupV1Once(filePath, raw);
+  await atomicWrite(filePath, `${body}\n`);
+  // 保存后探被改动的端点（spec §4.1 的四个更新时机之二）由订阅方去跑：
+  // **不阻塞保存返回**（探针最长 20 秒，保存按钮不该转 20 秒的圈），
+  // 也不让「保存配置」这件事本身依赖网络。旧探针结果会被那一轮覆盖。
+  notifyEngineSettingsChanged({ changedProviderIds: changedProviderIds(previous, providers) });
+}
+
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * engine.json 的**唯一**进程内写锁：settings:set 与 settings:engine_attach_preset 的
+ * 「读 → 校验 → 落盘」整段都在这里排队，谁也插不进别人读后写前那一段（否则后写的静默覆盖先写的）。
+ */
+export function withEngineWriteLock<T>(job: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(job, job);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
 const NOTHING_TO_WRITE =
   "没有可写入的字段（api_key / base_url / strong_model / fast_model / protocol / " +
   "writer_* / reviewer_* / scout_* / analytics_* / providers / main / fallback / assignments）";
@@ -365,6 +418,10 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
+  return withEngineWriteLock(() => applyEngineSettings(payload));
+}
+
+async function applyEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   try {
     const dataDir = (payload._dataDir as string) || undefined;
     const filePath = path.join(getConfigDir(dataDir), "engine.json");
@@ -382,24 +439,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     if (!touched) return { ok: false, error: NOTHING_TO_WRITE };
     const outcome = validateEngineGraph(draft, { strict: true }); // 4. 整图校验
     if (!outcome.config) return { ok: false, error: outcome.errors.join("；") };
-    const { main, fallback, assignments, providers } = outcome.config;
-    const body = JSON.stringify(
-      {
-        version: 2,
-        providers: providers.map(storedProvider),
-        main,
-        ...(fallback ? { fallback } : {}),
-        ...(assignments && Object.keys(assignments).length ? { assignments } : {}),
-      },
-      null,
-      2,
-    );
-    await backupV1Once(filePath, raw);
-    await atomicWrite(filePath, `${body}\n`);
-    // 保存后探被改动的端点（spec §4.1 的四个更新时机之二）由订阅方去跑：
-    // **不阻塞保存返回**（探针最长 20 秒，保存按钮不该转 20 秒的圈），
-    // 也不让「保存配置」这件事本身依赖网络。旧探针结果会被那一轮覆盖。
-    notifyEngineSettingsChanged({ changedProviderIds: changedProviderIds(previous, providers) });
+    await persistEngineConfig(filePath, raw, previous, outcome.config);
     return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

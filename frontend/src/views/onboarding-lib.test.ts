@@ -5,6 +5,15 @@ function form(over: Partial<OnboardingForm> = {}): OnboardingForm {
   return { ...initialForm(), apiKey: "sk-test", ...over };
 }
 
+describe("applyPreset", () => {
+  it("E14：切换端点类型一律清空 Key——DeepSeek 卡上粘的 Key 不会被带去别家", () => {
+    const withKey = form({ apiKey: "sk-deepseek-0001" });
+    for (const kind of ["claude-relay", "openai-compat", "deepseek"] as const) {
+      expect(applyPreset(withKey, kind).apiKey).toBe("");
+    }
+  });
+});
+
 describe("buildEnginePayload", () => {
   it("DeepSeek 默认档：地址与两档模型都预填,只要一把 Key", () => {
     const r = buildEnginePayload(form());
@@ -20,7 +29,7 @@ describe("buildEnginePayload", () => {
     expect(f.strong).toBe("claude-opus-4-8");
     expect(f.fast).toBe("claude-sonnet-5");
     expect(buildEnginePayload(f)).toMatchObject({ ok: false });
-    const ok = buildEnginePayload({ ...f, baseUrl: "https://code.newcli.com/claude/ultra" });
+    const ok = buildEnginePayload({ ...f, apiKey: "sk-test", baseUrl: "https://code.newcli.com/claude/ultra" });
     expect(ok.ok).toBe(true);
     if (ok.ok) expect(ok.payload.main.provider).toBe("relay");
   });
@@ -28,7 +37,7 @@ describe("buildEnginePayload", () => {
   it("其他 OpenAI 兼容：地址与强/快模型都必填", () => {
     const f = applyPreset(form(), "openai-compat");
     expect(buildEnginePayload({ ...f, baseUrl: "https://x.dev" })).toMatchObject({ ok: false });
-    const ok = buildEnginePayload({ ...f, baseUrl: "https://x.dev", strong: "big", fast: "small" });
+    const ok = buildEnginePayload({ ...f, apiKey: "sk-test", baseUrl: "https://x.dev", strong: "big", fast: "small" });
     expect(ok.ok).toBe(true);
     if (ok.ok) expect(ok.payload.providers[0].models).toEqual(["big", "small"]);
   });
@@ -38,7 +47,7 @@ describe("buildEnginePayload", () => {
   });
 
   it("强快同一个模型只落一条清单（models 至少一个,不重复）", () => {
-    const f = { ...applyPreset(form(), "openai-compat"), baseUrl: "https://x.dev", strong: "m", fast: "m" };
+    const f = { ...applyPreset(form(), "openai-compat"), apiKey: "sk-test", baseUrl: "https://x.dev", strong: "m", fast: "m" };
     const r = buildEnginePayload(f);
     expect(r.ok && r.payload.providers[0].models).toEqual(["m"]);
   });
