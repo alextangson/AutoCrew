@@ -7,10 +7,17 @@ import { useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import type { PullLoginTodo } from "./board-columns";
+import { attemptMessage, type PullAttemptView } from "../pull-lib";
 
 export function pullLoginLine(t: PullLoginTodo): string {
   const since = t.lastSuccessAt ? `，上次成功 ${t.lastSuccessAt.slice(0, 10)}` : "";
   return `${t.label}数据回流要重新登录：${t.action}（${t.consoleUrl}）${since}`;
+}
+
+/** 重抓结果照实说（同设置页回流面板的 attemptMessage）：风控 / 浏览器没连 / 超时 / 还没登录各有各的下一步 */
+export function retryMessage(label: string, r: { ok: boolean; error?: string; data?: unknown }): string {
+  if (!r.ok) return r.error ?? `${label}抓取失败`;
+  return attemptMessage(label, r.data as PullAttemptView);
 }
 
 export function PullLoginReminder({ todos, reload }: { todos: PullLoginTodo[] | null | undefined; reload: () => void }) {
@@ -22,9 +29,7 @@ export function PullLoginReminder({ todos, reload }: { todos: PullLoginTodo[] | 
     const r = await invoke("flywheel:pull_now", { platform: t.platform });
     setBusy(null);
     reload();
-    if (!r.ok) return toast(r.error ?? `${t.label}抓取失败`);
-    const status = (r.data as { status?: string } | undefined)?.status;
-    toast(status === "ok" ? `${t.label}数据已抓回来` : `${t.label}还没登录上：先在 ego lite 里登录后台`);
+    toast(retryMessage(t.label, r));
   };
   return <div className="pref-banner" role="status">
     {todos.map((t) => <div key={t.platform} className="pref-banner-row">
