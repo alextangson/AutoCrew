@@ -16,8 +16,10 @@ import type { HostId } from "./onboarding/connect-api";
 import { dropAction, type BoardColumn, type BoardItem } from "./board-columns";
 import { StagePie } from "./pipeline-glyphs";
 import { ThemeCardView, TopicCardView } from "./PipelineCard";
+import { ReviewInbox } from "./review/ReviewInbox";
+import type { InboxItem } from "./review/review-model";
 import {
-  COLUMN_PROGRESS, DEST_LABEL, DROP_TARGET, PIPELINE_COLUMNS, PIPELINE_VISIBLE, collapsedColumns, columnCards, sortPipelineTopics,
+  COLUMN_PROGRESS, DEST_LABEL, DROP_TARGET, PIPELINE_COLUMNS, PIPELINE_VISIBLE, collapsedColumns, columnCards, pendingDerivedDrafts, sortPipelineTopics, withPendingReviews,
   type PipelineColumn, type PipelineData, type ThemeCard, type ThemeColumn, type TopicSupply,
 } from "./pipeline-model";
 import "./pipeline.css";
@@ -72,7 +74,10 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
   const others = (writers?.writers ?? []).filter((h) => h !== writers?.defaultHost);
   useEffect(() => requestDockCollapsed(), []);
 
-  const themes = useMemo(() => (data?.themes ?? []).filter((t) => (!dest || t.destinations.some((d) => d.platform === dest) || t.plan.required.includes(dest)) && (!mine || waitsOnMe(t))), [data, dest, mine]);
+  // 「等你拍板」里的派生稿认稿：卡上对应的去向行直接给「认英文稿 →」，点了打开同一个面板（下面的 ReviewInbox panel）
+  const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const pending = useMemo(() => pendingDerivedDrafts(inbox), [inbox]);
+  const themes = useMemo(() => (data?.themes ?? []).map((t) => withPendingReviews(t, pending)).filter((t) => (!dest || t.destinations.some((d) => d.platform === dest) || t.plan.required.includes(dest)) && (!mine || waitsOnMe(t))), [data, dest, mine, pending]);
   const collapsed = useMemo(() => collapsedColumns(themes), [themes]);
   const topics = useMemo(() => sortPipelineTopics(data?.topics ?? []), [data]);
 
@@ -119,6 +124,7 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
   const count = (data?.themes.length ?? 0);
   const template = PIPELINE_COLUMNS.map((c) => (c !== "选题" && collapsed.has(c) ? "40px" : "minmax(0, 1fr)")).join(" ");
   return <div className="pl">
+    <ReviewInbox variant="panel" onItems={setInbox} />
     <div className="pl-ph"><h1>内容管线</h1><span className="sub">{data ? `${count} 个主题 · 一个主题一张卡，公众号和英文版挂在卡上` : "读取中"}</span></div>
     <div className="pl-tools">
       <label className={"pl-chip" + (dest ? " on" : "")}>去向
