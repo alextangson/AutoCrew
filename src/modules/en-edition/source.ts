@@ -11,6 +11,7 @@ import { ontologyApplies } from "../production/publish-gate.js";
 import { srtFor, validCutApproval } from "../production/derive.js";
 import { factPath } from "../production/chat-approval/files.js";
 import { cleanMasterFor } from "../production/clean-master.js";
+import { cachedSha } from "../production/hash-cache.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import type { LedgerEntry } from "../research/evidence-ledger.js";
@@ -74,7 +75,10 @@ export async function enPicture(item: Pick<Content, "derivedFrom">, dataDir: str
   if (!fact?.path) return ask("源视频审过的这版成片还没有登记无字幕母版");
   if (fact.availability !== "present") return ask(`登记的无字幕母版文件现在${fact.availability === "missing" ? "不见了" : "读不了"}：找回或重新导出后再登记`);
   const abs = factPath(src.id, fact, dataDir);
-  try { await fs.access(abs); } catch { return ask(`登记的无字幕母版文件读不到（${abs}）：找回或重新导出后再登记`); }
+  // 对账之前文件可能已被覆盖：按大小 + 修改时间缓存的现算 sha 核一遍，对不上不放行（付费配音前必核）
+  let now: string;
+  try { now = (await cachedSha(abs)).sha256; } catch { return ask(`登记的无字幕母版文件读不到（${abs}）：找回或重新导出后再登记`); }
+  if (now !== fact.sha256) return ask(`登记的无字幕母版文件在登记之后被改过（${abs}）：从审过的时间线重新导出后重新登记`);
   return { ok: true, picture: { path: abs, sha256: fact.sha256!, duration_s: (fact.duration_ms ?? 0) / 1000, fact_id: fact.id } };
 }
 

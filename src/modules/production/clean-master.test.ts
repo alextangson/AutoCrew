@@ -4,6 +4,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
+import fs from "node:fs/promises";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { setProductionDeps } from "./roots.js";
 import { put, record, type Env } from "./testkit.js";
@@ -93,6 +94,17 @@ describe("英文版的画面来源", () => {
     expect(String(r.next_action)).toContain(`record kind=clean_master content_id=${src} captions_off=true`);
     expect(calls).toEqual([]);
     expect(await executeEnEdition({ _dataDir: env!.dir, content_id: id, op: "status" })).toMatchObject({ picture_source: null, picture_problem: expect.stringContaining("无字幕母版") });
+  });
+
+  it("母版在对账之前被覆盖：dub 拒、不调 ElevenLabs，status 也报出来", async () => {
+    const { id } = await enEdition(true);
+    const calls = fakeElevenLabs([3, 3, 5]);
+    const st = await executeEnEdition({ _dataDir: env!.dir, content_id: id, op: "status" });
+    await fs.writeFile(String(st.picture_source), "overwritten-bytes");
+    const r = await executeEnEdition({ _dataDir: env!.dir, content_id: id, op: "dub" });
+    expect(r).toMatchObject({ ok: false, code: "no_clean_master", error: expect.stringContaining("被改过") });
+    expect(calls).toEqual([]);
+    expect(await executeEnEdition({ _dataDir: env!.dir, content_id: id, op: "status" })).toMatchObject({ picture_source: null });
   });
 
   it("登记了：dub 回执带 picture_source（母版的绝对路径），status 也给出", async () => {
