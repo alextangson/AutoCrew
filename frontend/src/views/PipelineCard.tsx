@@ -8,10 +8,11 @@ import { WRITER_LABEL } from "./hand-off";
 import type { HostId } from "./onboarding/connect-api";
 import type { PublishTarget, TargetAction } from "./publish-targets";
 import { performTarget } from "./StageCard";
+import { openInboxItem } from "./review/review-api";
 import { topicSourceLabel, type BoardItem, type BoardTopic } from "./board-columns";
 import { PGlyph, StateGlyph } from "./pipeline-glyphs";
 import {
-  DEST_LABEL, canReshoot, canSkipRow, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine, topicAgeLine,
+  DEST_LABEL, REVIEW_LABEL, canReshoot, canSkipRow, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine, topicAgeLine,
   type DestRow, type ThemeCard,
 } from "./pipeline-model";
 
@@ -22,7 +23,14 @@ const ROW_ACTION: Record<TargetAction, string> = { prepare_publish: "去发", i_
 /** amber = 待核（过点没核到公开）：提示，不标红 */
 export function exceptionRows(card: ThemeCard): Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> {
   const out: Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> = [];
+  const reviewed = new Set<string>();
   for (const r of card.destinations) {
+    // 派生稿等你认：一条稿一行（YouTube、X 是同一份英文稿），琥珀色
+    if (r.review && r.content_id) {
+      if (!reviewed.has(r.content_id)) out.push({ key: `review-${r.content_id}`, platform: r.platform, text: REVIEW_LABEL[r.review].waiting, hot: false, amber: true });
+      reviewed.add(r.content_id);
+      continue;
+    }
     const name = `${destLabel(r.platform)}${r.tag ? ` ${r.tag}` : ""}`;
     const key = `${r.platform}-${r.content_id ?? "none"}-${r.tag ?? ""}`;
     if (r.paused) out.push({ key, platform: r.platform, text: `${name} 等新成片`, hot: false });
@@ -99,8 +107,8 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
       if (!res.ok) toast(res.error);
     } finally { setBusy(false); await p.reload(); }
   };
-  const hot = r.state === "待你定" || r.state === "没发成";
-  const amber = r.state === "待核";
+  const hot = !r.review && (r.state === "待你定" || r.state === "没发成");
+  const amber = r.state === "待核" || Boolean(r.review);
   const canSkip = canSkipRow(card, r);
   const text = r.skipped && r.state !== "已发" ? "不出" : r.history ? `${r.detail} · 计划外` : r.detail;
   return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : amber ? " amber" : "") + (r.skipped || r.history ? " muted" : "")}>
@@ -110,6 +118,7 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
       {r.at && <span>{r.at}</span>}
       {r.url && isHttpUrl(r.url) && <a className="pl-link" href={r.url} target="_blank" rel="noreferrer">看作品</a>}
       {acts.map((a) => <button key={a} className={"pl-link" + (hot ? " go" : "")} disabled={busy} onClick={() => void run(a)}>{ROW_ACTION[a]}</button>)}
+      {r.review && r.content_id && <button className="pl-link go" onClick={() => openInboxItem(r.content_id!, ["draft"])}>{REVIEW_LABEL[r.review].action}</button>}
       {!acts.length && hot && r.content_id && <button className="pl-link go" onClick={() => p.open(r.content_id!)}>去处理 →</button>}
       {owner && canConfirmPublic(r) && <button className="pl-link go" disabled={busy} onClick={() => void confirmPublic(owner, r.platform, p.reload)}>确认已公开</button>}
       {canSkip && <button className="pl-link" onClick={() => void skipRow(card, r.platform, true, p.reload)}>不出</button>}

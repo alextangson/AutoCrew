@@ -27,7 +27,10 @@ export interface DestRow {
   slot_id?: string;
   fact_id?: string;
   url?: string;
+  /** 这个去向的派生稿（英文版 / 公众号文章）有一件认稿在「等你拍板」里：行上直接给「认英文稿 →」 */
+  review?: DerivedKind;
 }
+export type DerivedKind = "en_edition" | "wechat_article";
 export interface ReshootRecord {
   round_ended: number; round: number; at: string; founder_words: string; via: "board" | "chat"; host?: string;
   published: Array<{ platform: string; content_id: string | null }>;
@@ -180,4 +183,39 @@ export function canSkipRow(card: Pick<ThemeCard, "kind">, r: Pick<DestRow, "requ
 const RESHOOT_COLUMNS: ReadonlySet<string> = new Set(["剪辑", "待发布", "发布中", "全部发完"]);
 export function canReshoot(card: Pick<ThemeCard, "kind" | "column" | "item">): boolean {
   return card.kind === "video" && Boolean(card.item.active) && RESHOOT_COLUMNS.has(card.column);
+}
+
+/** 「等你拍板」里还没认的派生稿：content_id → 哪种（只看认稿那件，detail.derived 由服务端标） */
+export function pendingDerivedDrafts(items: Array<{ type: string; content_id: string | null; detail: Record<string, unknown> }>): Map<string, DerivedKind> {
+  const out = new Map<string, DerivedKind>();
+  for (const i of items) {
+    const k = i.detail.derived;
+    if (i.type === "draft" && i.content_id && (k === "en_edition" || k === "wechat_article")) out.set(i.content_id, k);
+  }
+  return out;
+}
+
+export const REVIEW_LABEL: Record<DerivedKind, { action: string; waiting: string }> = {
+  en_edition: { action: "认英文稿 →", waiting: "英文稿等你认" },
+  wechat_article: { action: "认公众号稿 →", waiting: "公众号稿等你认" },
+};
+
+/**
+ * 卡上的去向行盖上「等你认稿」（2026-10-25：中文版已发、卡在发布中 / 全部发完，英文稿认不了）：
+ * 派生稿有一件待认 → 这一行 = 待你定、写「英文稿等你认」，带上 review 让行上直接给按钮。没有待认的原样返回。
+ */
+export function withPendingReviews(card: ThemeCard, pending: ReadonlyMap<string, DerivedKind>): ThemeCard {
+  if (!pending.size) return card;
+  const kids = new Set(card.children.map((c) => c.id));
+  if (card.kind === "orphan") kids.add(card.item.id);
+  let hit = false;
+  const destinations = card.destinations.map((r) => {
+    const k = r.content_id && kids.has(r.content_id) ? pending.get(r.content_id) : undefined;
+    if (!k || r.paused) return r;
+    hit = true;
+    // 已经投出去的行（不该有，但别把已发说成待你定）：状态照旧，只挂按钮
+    if (r.state === "已发" || r.state === "已定时" || r.state === "待核") return { ...r, review: k };
+    return { ...r, state: "待你定" as const, detail: REVIEW_LABEL[k].waiting, review: k };
+  });
+  return hit ? { ...card, destinations } : card;
 }

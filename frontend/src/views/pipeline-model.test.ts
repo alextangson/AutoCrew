@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canReshoot, canSkipRow, collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, skippedLine, statusLine, stateIcon, type ThemeCard } from "./pipeline-model";
+import { canReshoot, canSkipRow, collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, pendingDerivedDrafts, skippedLine, statusLine, stateIcon, withPendingReviews, type ThemeCard } from "./pipeline-model";
 import { canConfirmPublic, exceptionRows } from "./PipelineCard";
 import type { BoardItem, BoardTopic } from "./board-columns";
 import { sortPipelineTopics, topicAgeLine } from "./pipeline-model";
@@ -101,5 +101,42 @@ describe("选题列：星级排序与老化提示（第 5 期）", () => {
     expect(topicAgeLine({ stars: null, agingDaysLeft: 6 })).toEqual({ kind: "clock", text: "6 天后进回收站" });
     expect(topicAgeLine({ stars: null, agingDaysLeft: 0 })?.text).toBe("今天进回收站");
     expect(topicAgeLine({ stars: 3, agingDaysLeft: null })).toBeNull();
+  });
+});
+
+describe("派生稿等你认（2026-10-25：中文已发，英文稿认不了）", () => {
+  const en = item({ id: "en", platform: "youtube", status: "draft_ready", column: "写稿中" });
+  const art = item({ id: "art", platform: "wechat_mp", status: "draft_ready", column: "写稿中" });
+  const published = () => card({ column: "全部发完", children: [en, art], destinations: [
+    { platform: "douyin", state: "已发", detail: "已发", content_id: "v", required: true },
+    { platform: "wechat_mp", state: "待你定", detail: "等你认稿", content_id: "art", required: true },
+    { platform: "youtube", state: "待你定", detail: "等你认稿", content_id: "en", required: true },
+    { platform: "x", state: "待你定", detail: "等你认稿", content_id: "en", required: true },
+  ] });
+  const inbox = [
+    { type: "draft", content_id: "en", detail: { derived: "en_edition" } },
+    { type: "draft", content_id: "art", detail: { derived: "wechat_article" } },
+    { type: "draft", content_id: "v", detail: {} },
+    { type: "cut_review", content_id: "en", detail: { derived: "en_edition" } },
+  ];
+
+  it("只认派生稿的认稿那件", () => {
+    expect([...pendingDerivedDrafts(inbox)]).toEqual([["en", "en_edition"], ["art", "wechat_article"]]);
+  });
+  it("对应的去向行变成「英文稿等你认」并带按钮；父视频的行不动；收起的卡上一条稿只出一行琥珀色", () => {
+    const c = withPendingReviews(published(), pendingDerivedDrafts(inbox));
+    expect(c.destinations.map((r) => [r.platform, r.state, r.detail, r.review ?? null])).toEqual([
+      ["douyin", "已发", "已发", null],
+      ["wechat_mp", "待你定", "公众号稿等你认", "wechat_article"],
+      ["youtube", "待你定", "英文稿等你认", "en_edition"],
+      ["x", "待你定", "英文稿等你认", "en_edition"],
+    ]);
+    expect(exceptionRows(c).map((x) => [x.text, x.hot, x.amber])).toEqual([["公众号稿等你认", false, true], ["英文稿等你认", false, true]]);
+  });
+  it("没有待认的：卡原样；暂停的（等新成片）不盖", () => {
+    const c = published();
+    expect(withPendingReviews(c, new Map())).toBe(c);
+    const paused = card({ children: [en], destinations: [{ platform: "youtube", state: "在做", detail: "等新成片", content_id: "en", required: true, paused: true }] });
+    expect(withPendingReviews(paused, pendingDerivedDrafts(inbox))).toBe(paused);
   });
 });

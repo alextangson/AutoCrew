@@ -219,4 +219,7 @@ const VERB: Record<InboxType, string> = {
   publish_check: "发前核对", published_ask: "确认发布", publish_claim: "确认发布", ask: "回答", ask_reported: "回答",
   register_blocked: "补登记", writing_rule: "定规则", playbook_change: "定规则", writing_promotion: "定写法", other: "看看",
 };
-export const rowVerb = (r: Pick<Row, "key" | "items">): string => (isLessonRow(r) ? "定规则" : VERB[r.items[0]?.type] ?? "看看");
+/** 由视频派生的英文版 / 公众号文章的认稿：说清认的是哪种稿（2026-10-25：首页写「认稿」看不出是英文稿） */
+export const isDerivedDraft = (i: Pick<InboxItem, "type" | "detail"> | undefined): boolean => i?.type === "draft" && (i.detail.derived === "en_edition" || i.detail.derived === "wechat_article");
+export const derivedVerb = (i: Pick<InboxItem, "detail">): string => (i.detail.derived === "en_edition" ? "认英文稿" : "认公众号稿");
+export const rowVerb = (r: Pick<Row, "key" | "items">): string => (isLessonRow(r) ? "定规则" : isDerivedDraft(r.items[0]) ? derivedVerb(r.items[0]) : VERB[r.items[0]?.type] ?? "看看");
