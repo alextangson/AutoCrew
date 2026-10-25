@@ -15,10 +15,12 @@ import { getDataDir } from "../../storage/local-store.js";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import type { PullStatus } from "../../adapters/browser/pull-types.js";
 import { platformsWhere } from "../publish/platform-caps.js";
+import { loadProfile } from "../profile/creator-profile.js";
+import { normalizePlatform as canonicalPlatform } from "./outcome-schema.js";
 
-/** 自动回流覆盖的三平台（公众号走既有的 flywheel:wechat_pull，不在此列） */
-export type PullPlatform = "douyin" | "wechat_video" | "xiaohongshu";
-/** 能力表 metrics = browser_pull 的平台；类型保持字面量三选一，表里多了就在 platform-caps.test 里报 */
+/** 自动回流覆盖的平台（第 4 期接上 B站、公众号；公众号的 flywheel:wechat_pull 手动按钮仍在，同一个抓取器） */
+export type PullPlatform = "douyin" | "wechat_video" | "xiaohongshu" | "bilibili" | "wechat_mp";
+/** 能力表 metrics = browser_pull 的平台；类型保持字面量，表里多了就在 platform-caps.test 里报 */
 export const PULL_PLATFORMS = platformsWhere((c) => c.metrics === "browser_pull") as readonly PullPlatform[];
 
 export const PULL_STATE_FILE = "metrics-pull.json";
@@ -29,6 +31,8 @@ export const PULL_PLATFORM_LABELS: Record<PullPlatform, string> = {
   douyin: "抖音",
   wechat_video: "视频号",
   xiaohongshu: "小红书",
+  bilibili: "B站",
+  wechat_mp: "公众号",
 };
 
 /** 登录态过期时给人的后台地址（在 ego lite 里打开登录） */
@@ -36,6 +40,8 @@ export const PULL_PLATFORM_CONSOLES: Record<PullPlatform, string> = {
   douyin: "https://creator.douyin.com",
   wechat_video: "https://channels.weixin.qq.com",
   xiaohongshu: "https://creator.xiaohongshu.com",
+  bilibili: "https://member.bilibili.com/platform/home",
+  wechat_mp: "https://mp.weixin.qq.com",
 };
 
 export interface PlatformPullState {
@@ -67,6 +73,15 @@ export interface MetricsPullState {
   platforms: Record<PullPlatform, PlatformPullState>;
 }
 
+/**
+ * 回流范围（管线重规划 §4、§8-10）= 运营平台勾选 ∩ 有抓取器的平台。勾选是外层闸：没勾的平台定时不抓、手动「立即抓取」也不抓；
+ * 每个平台自己的 enabled 开关仍是设置里的「这家先别抓」，只在勾了的平台里起作用（定时看它，手动抓取不看——人点了就是要抓）。
+ */
+export async function pickedPullPlatforms(dataDir?: string): Promise<Set<string>> {
+  const profile = await loadProfile(dataDir);
+  return new Set((profile?.platforms ?? []).map((p) => canonicalPlatform(p)));
+}
+
 export function isPullPlatform(value: unknown): value is PullPlatform {
   return typeof value === "string" && (PULL_PLATFORMS as readonly string[]).includes(value);
 }
@@ -78,7 +93,7 @@ export function localDay(date: Date): string {
 
 export function defaultPlatformState(): PlatformPullState {
   return {
-    enabled: false, // 首次使用三平台全关：Report 页引导人自己开（spec §6）
+    enabled: false, // 首次使用全关：Report 页引导人自己开（spec §6）
     lastSuccessAt: null,
     lastAttemptAt: null,
     nextEligibleAt: null,
@@ -97,6 +112,8 @@ export function defaultPullState(): MetricsPullState {
       douyin: defaultPlatformState(),
       wechat_video: defaultPlatformState(),
       xiaohongshu: defaultPlatformState(),
+      bilibili: defaultPlatformState(),
+      wechat_mp: defaultPlatformState(),
     },
   };
 }

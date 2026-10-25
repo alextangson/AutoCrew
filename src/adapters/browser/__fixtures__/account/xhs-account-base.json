@@ -1,0 +1,161 @@
+{
+ "code": 0,
+ "success": true,
+ "msg": "成功",
+ "data": {
+  "seven": {
+   "begin_time": 1792252800000,
+   "end_time": 1792771200000,
+   "view_list": [
+    {
+     "date": 1792771200000,
+     "count": 149,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792684800000,
+     "count": 136,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792598400000,
+     "count": 176,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792512000000,
+     "count": 262,
+     "count_with_double": 0
+    },
+    {
+     "count_with_double": 0,
+     "date": 1792425600000,
+     "count": 278
+    },
+    {
+     "date": 1792339200000,
+     "count": 99,
+     "count_with_double": 0
+    },
+    {
+     "count_with_double": 0,
+     "date": 1792252800000,
+     "count": 84
+    }
+   ],
+   "rise_fans_list": [
+    {
+     "date": 1792771200000,
+     "count": 0,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792684800000,
+     "count": 2,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792598400000,
+     "count": 6,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792512000000,
+     "count": 4,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792425600000,
+     "count": 2,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792339200000,
+     "count": 1,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792252800000,
+     "count": 0,
+     "count_with_double": 0
+    }
+   ],
+   "net_rise_fans_count_list": [
+    {
+     "date": 1792771200000,
+     "count": -2,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792684800000,
+     "count": 1,
+     "count_with_double": 0
+    },
+    {
+     "count": 4,
+     "count_with_double": 0,
+     "date": 1792598400000
+    },
+    {
+     "count_with_double": 0,
+     "date": 1792512000000,
+     "count": 3
+    },
+    {
+     "count": -3,
+     "count_with_double": 0,
+     "date": 1792425600000
+    },
+    {
+     "date": 1792339200000,
+     "count": 1,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792252800000,
+     "count": -1,
+     "count_with_double": 0
+    }
+   ],
+   "loss_fans_count_list": [
+    {
+     "date": 1792771200000,
+     "count": 2,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792684800000,
+     "count": 1,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792598400000,
+     "count": 2,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792512000000,
+     "count": 1,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792425600000,
+     "count": 5,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792339200000,
+     "count": 0,
+     "count_with_double": 0
+    },
+    {
+     "date": 1792252800000,
+     "count": 1,
+     "count_with_double": 0
+    }
+   ],
+   "view_count": 1184,
+   "rise_fans_count": 15
+  }
+ }
+}

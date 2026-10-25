@@ -37,6 +37,8 @@ beforeEach(async () => {
   vi.stubEnv("AUTOCREW_LOCAL_DIR", machine);
   await fs.mkdir(machine, { recursive: true });
   await fs.mkdir(data, { recursive: true });
+  // 回流只抓勾了的运营平台（管线重规划 §8-10）：测试默认全勾
+  await fs.writeFile(path.join(data, "creator-profile.json"), JSON.stringify({ platforms: ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"] }));
   await fs.writeFile(path.join(machine, "storage.json"), JSON.stringify({ version: 1, id: "lib-deadbeef", root: lib }));
   await fs.writeFile(path.join(lib, "autocrew-library.json"), JSON.stringify({ version: 1, id: "lib-deadbeef" }));
 });

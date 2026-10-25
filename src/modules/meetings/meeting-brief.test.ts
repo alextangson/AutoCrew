@@ -46,7 +46,7 @@ describe("meeting_brief 确定性层（固定数据集）", () => {
     await writePull(f.data, { douyin: { enabled: true, lastSuccessAt: "2026-10-01T20:00:00Z" }, wechat_video: { enabled: true, lastSuccessAt: "2026-09-28T00:00:00Z" } });
     for (const i of [1, 2, 3]) await setWorkTag(entityKey(row({ platformTitle: `回流 ${i}`, publishedAt: `2026-09-1${i - 1}T02:00:00Z` })), { format: "教学" }, f.data);
     const brief = await buildMeetingBrief(f.data, NOW);
-    expect(brief.health.platforms.map((p) => p.status)).toEqual(["正常", "过期", "未开启"]);
+    expect(brief.health.platforms.map((p) => p.status)).toEqual(["正常", "过期", "未开启", "未开启", "未开启"]);
     expect(brief.health.coldStart).toBe(false);
     expect(brief.outliers.map((w) => w.title)).toEqual(["历史抖音 1"]);
     const base = (metric: string, day: number, platform = "douyin") => brief.baselines.find((b) => b.platform === platform && b.metric === metric && b.day === day)!.stat;

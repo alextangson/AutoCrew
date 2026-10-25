@@ -1,12 +1,12 @@
 /**
  * 首页「今天」的纯计算（管线重规划 §1、§5、§8-9，第 3 期）。
- * - 账号格：只写今天真有的东西（回流健康），粉丝 / 播放留给第 4 期的账号快照，不编数字。
- * - 刚发那条：复用数据页的 latestVideo / platformLines / baselines（同一把「平时」尺子）。
+ * - 账号格：回流健康 + 第 4 期账号快照（粉丝、较昨天、昨天播放/阅读、7 天小折线）；没有的数不编。
+ * - 刚发那条：能同龄比（别的作品发出同样时长时的播放）就同龄比；不够样本退回数据页的全量中位数并写明。
  * - 管线一览：/api/pipeline 的列计数 + 一句短提示。
  */
 import { pullHint, type PullPlatformStatus } from "../pull-lib";
 import { baselines, latestVideo, platformLines, daysAfter } from "./data-answers";
-import type { DataPageData } from "./data-lib";
+import { MIN_SAMPLES, median, type DataPageData, type DataRow, type Snapshot, type Work } from "./data-lib";
 import { PIPELINE_COLUMNS, statusLine, type PipelineColumn, type PipelineData } from "./pipeline-model";
 
 /** 账号区的主格（mock 的五格）；YouTube / X 在下面一行小字 */
@@ -49,6 +49,52 @@ export function accountCells(platforms: string[], pull: PullPlatformStatus[] | n
   return platforms.filter((p) => ALL.includes(p)).map((platform) => ({ platform, label: label(platform), state: accountState(platform, pull, pullError) }));
 }
 
+// ── 账号快照的数（后端 flywheel:pull_status 每平台带 account） ────────────────
+
+export interface AccountTileData {
+  health: { lastStatus: string; lastSuccessAt: string | null; lastErrorCode?: string } | null;
+  latest: { metricDate: string; followers: number | null; newFollowers: number | null; views: number | null; viewsKind: "plays" | "reads"; complete: boolean } | null;
+  followersDelta: number | null;
+  compare: "ok" | "no_prev" | "no_data";
+  series: Array<{ date: string; views: number }>;
+}
+
+export type AccountNumbers =
+  | { kind: "none"; text: string }
+  | { kind: "data"; followers: number | null; deltaText: string; deltaTone: "up" | "down" | "flat" | "none"; viewsText: string; staleText: string | null; series: number[] };
+
+const fmtN = (n: number): string => n.toLocaleString("zh-CN");
+/** 北京时间的昨天 YYYY-MM-DD */
+export const beijingYesterday = (now: number): string => new Date(now + 8 * HOUR_MS - 86_400_000).toISOString().slice(0, 10);
+const HOUR_MS = 3_600_000;
+
+/** 一格账号数：没快照就说为什么没有；有就给粉丝、较昨天、那天的播放/阅读；不是昨天的数写明截至哪天 */
+export function accountNumbers(acct: AccountTileData | { error: string } | null | undefined, now: number): AccountNumbers {
+  if (acct === null || acct === undefined) return { kind: "none", text: "还不能抓账号数据" };
+  if ("error" in acct) return { kind: "none", text: acct.error };
+  const h = acct.health;
+  const failed = h && h.lastStatus !== "ok" && h.lastStatus !== "never" ? `账号数据没抓成（${h.lastErrorCode ?? h.lastStatus}）`
+    : h?.lastStatus === "ok" && h.lastErrorCode?.startsWith("partial:") ? `这次只抓到一部分（${h.lastErrorCode.slice(8)}），缺的数先空着` : null;
+  const l = acct.latest;
+  if (!l) return { kind: "none", text: failed ?? "还没有账号数据，下次回流后出现" };
+  const d = acct.followersDelta;
+  const deltaText = acct.compare !== "ok" || d === null ? "明天开始有对比" : d === 0 ? "和昨天持平" : `${d > 0 ? "+" : "−"}${fmtN(Math.abs(d))} 较昨天`;
+  const deltaTone = acct.compare !== "ok" || d === null ? "none" : d > 0 ? "up" : d < 0 ? "down" : "flat";
+  const yest = beijingYesterday(now);
+  const when = l.metricDate === yest ? "昨天" : l.metricDate.slice(5);
+  const unit = l.viewsKind === "reads" ? "阅读" : "播放";
+  const viewsText = l.views === null ? `${when}${unit}没拿到` : `${when}${unit} ${fmtN(l.views)}`;
+  const staleText = l.metricDate < yest ? `数据截至 ${l.metricDate.slice(5)}${failed ? `；${failed}` : ""}` : failed;
+  return { kind: "data", followers: l.followers, deltaText, deltaTone, viewsText, staleText, series: acct.series.length >= 2 ? acct.series.map((x) => x.views) : [] };
+}
+
+/** 小折线的点（viewBox 120×32，上下各留 4） */
+export function sparkPoints(values: number[]): string {
+  if (values.length < 2) return "";
+  const max = Math.max(...values), min = Math.min(...values), span = max - min || 1;
+  return values.map((v, i) => `${((i / (values.length - 1)) * 120).toFixed(1)},${(28 - ((v - min) / span) * 24).toFixed(1)}`).join(" ");
+}
+
 // ── 刚发那条 ───────────────────────────────────────────────────────────────
 
 export interface PerfLine {
@@ -62,6 +108,10 @@ export interface PerfLine {
   barPct?: number;
   basePct?: number | null;
   verdict?: { text: string; tone: "up" | "down" | "flat" | "none" };
+  /** 「平时」怎么算的：same_age = 别的作品发出同样时长时的播放中位数；all = 所有作品最新播放中位数（同龄样本不够） */
+  basis?: "same_age" | "all";
+  /** 这条数据是发出后约几小时抓的 */
+  ageHours?: number;
 }
 export interface Latest { rowId: string; contentId: string | null; title: string; day: string | null; after: number | null; lines: PerfLine[] }
 
@@ -81,13 +131,72 @@ export function barOf(views: number, baseline: number | null): { barPct: number;
   return { barPct: pct(views), basePct: baseline ? pct(baseline) : null };
 }
 
+const HOUR = 3_600_000;
+/**
+ * 快照的真实观察时刻：只有自动回流的行，入账时间就是抓取时间；CSV / 手填的入账时间是导入那一刻、数据日却是历史日期，
+ * 拿它算「发出几小时」会错——这类样本没有观察时刻，不参与同龄比。
+ */
+const snapAt = (s: Snapshot): number | null => {
+  if (s.source !== "auto" || !s.recordedAt) return null;
+  const t = Date.parse(s.recordedAt);
+  return Number.isNaN(t) ? null : t;
+};
+const viewsAt = (s: Snapshot): number | null => (typeof s.metrics.views === "number" ? s.metrics.views : null);
+
+/** 一条作品的最新快照是发出后几小时抓的；没有发布时间就算不出 */
+export function ageHours(w: Work): number | null {
+  const s = w.snapshots[w.snapshots.length - 1];
+  const pub = w.publishedAt ? Date.parse(w.publishedAt) : NaN;
+  const at = s ? snapAt(s) : null;
+  if (at === null || Number.isNaN(pub)) return null;
+  const h = (at - pub) / HOUR;
+  return Number.isFinite(h) && h >= 0 ? h : null;
+}
+
+/**
+ * 同龄「平时」（§8-9）：同平台别的作品里，找发出后同样时长（±max(6 小时, 25%)）抓到的那次快照，取播放中位数。
+ * 够 3 条才算；不够 = null，调用方退回全量中位数并写明。
+ */
+export function sameAgeBaseline(rows: DataRow[], self: DataRow, platform: string, hours: number): number | null {
+  const tol = Math.max(6, hours * 0.25);
+  const vals: number[] = [];
+  for (const r of rows) {
+    if (r.id === self.id) continue;
+    for (const w of r.works.filter((x) => x.platform === platform && x.publishedAt)) {
+      const pub = Date.parse(w.publishedAt!);
+      let best: { d: number; v: number } | null = null;
+      for (const s of w.snapshots) {
+        const v = viewsAt(s), at = snapAt(s);
+        if (at === null) continue;
+        const d = Math.abs((at - pub) / HOUR - hours);
+        if (v !== null && d <= tol && (!best || d < best.d)) best = { d, v };
+      }
+      if (best) vals.push(best.v);
+    }
+  }
+  return vals.length >= MIN_SAMPLES ? median(vals) : null;
+}
+
+function perfLine(platform: string, views: number, baseline: number | null, basis: "same_age" | "all", age: number | null): PerfLine {
+  const ratio = baseline ? views / baseline : null;
+  return { platform, kind: "data", views, baseline, ratio, ...barOf(views, baseline), verdict: verdictOf(ratio), basis, ...(age !== null ? { ageHours: Math.round(age) } : {}) };
+}
+
 export function latestOf(data: DataPageData | null, now: number): Latest | null {
   if (!data) return null;
   const row = latestVideo(data.rows);
   if (!row) return null;
-  const lines = platformLines(row, data.columns, baselines(data.rows), now).map((l): PerfLine => {
+  const all = baselines(data.rows);
+  const lines = platformLines(row, data.columns, all, now).map((l): PerfLine => {
+    const w = row.works.find((x) => x.platform === l.platform);
+    const s = w?.snapshots[w.snapshots.length - 1];
+    const views = s ? viewsAt(s) : null;
+    const age = w ? ageHours(w) : null;
+    const same = views !== null && age !== null ? sameAgeBaseline(data.rows, row, l.platform, age) : null;
+    // 能同龄比就同龄比（不满 24 小时也能比）；否则沿用原来的全量中位数，不满 24 小时的先不比
+    if (views !== null && same !== null) return perfLine(l.platform, views, same, "same_age", age);
     if (l.kind === "pending") return { platform: l.platform, kind: "pending" };
-    return { platform: l.platform, kind: "data", views: l.views, baseline: l.baseline, ratio: l.ratio, ...barOf(l.views, l.baseline), verdict: verdictOf(l.ratio) };
+    return perfLine(l.platform, l.views, l.baseline, "all", age);
   });
   return { rowId: row.id, contentId: row.contentId, title: row.contentTitle ?? row.title, day: row.day, after: daysAfter(row), lines };
 }

@@ -1,0 +1,11 @@
+{
+ "result": 0,
+ "success": true,
+ "code": 0,
+ "data": {
+  "name": "测试账号",
+  "fans_count": 16302,
+  "follow_count": 231,
+  "red_num": "x000000000"
+ }
+}

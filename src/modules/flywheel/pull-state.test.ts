@@ -109,11 +109,13 @@ describe("pull-state — 写队列", () => {
 });
 
 describe("pull-state — 小工具", () => {
-  it("isPullPlatform 只认三家（公众号走既有通道，不在此列）", () => {
+  it("isPullPlatform 认有抓取器的五家（第 4 期接上 B站、公众号），英文平台不认", () => {
     expect(isPullPlatform("douyin")).toBe(true);
     expect(isPullPlatform("wechat_video")).toBe(true);
     expect(isPullPlatform("xiaohongshu")).toBe(true);
-    expect(isPullPlatform("wechat_mp")).toBe(false);
+    expect(isPullPlatform("bilibili")).toBe(true);
+    expect(isPullPlatform("wechat_mp")).toBe(true);
+    expect(isPullPlatform("youtube")).toBe(false);
     expect(isPullPlatform(null)).toBe(false);
   });
 

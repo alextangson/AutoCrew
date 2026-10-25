@@ -1,7 +1,7 @@
 /**
  * 首页「今天」（管线重规划 §1、§5，第 3 期）：账号 → 刚发那条 + 要你做的 → 让 AI 看看 → 管线一览。
  * 视觉照 home-mock-v2/home.html：发丝线分隔不画框，焦点 = 刚发那条，强调色只给「要你做的」。
- * 账号格只写今天真有的（回流健康），粉丝 / 播放等第 4 期账号快照；数字都从现有接口来，不编。
+ * 账号格 = 回流健康 + 账号快照（粉丝、较昨天、昨天播放/阅读、7 天小折线）；数字都从现有接口来，不编。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
@@ -22,8 +22,8 @@ import { COLUMN_PROGRESS, type PipelineData } from "./pipeline-model";
 import type { DataPageData } from "./data-lib";
 import { fmtViews } from "./data-lib";
 import {
-  accountCells, askBlocked, askOutcome, dateEyebrow, enabledPlatforms, glanceOf, latestOf, shortTime,
-  type AccountCell, type AskOutcome, type Latest, type PerfLine,
+  accountCells, accountNumbers, askBlocked, askOutcome, dateEyebrow, enabledPlatforms, glanceOf, latestOf, shortTime, sparkPoints,
+  type AccountCell, type AccountTileData, type AskOutcome, type Latest, type PerfLine,
 } from "./home-model";
 import "./pipeline.css";
 import "./home.css";
@@ -105,7 +105,7 @@ export function Home(props: { inbox?: string; inboxTypes?: string[]; openPipelin
 // ── 账号 ───────────────────────────────────────────────────────────────────
 
 function Accounts(p: { shown: { main: string[]; later: string[] } | null; d: HomeData; reload: () => Promise<void> }) {
-  const head = <div className="sec-h"><h2>账号</h2><span className="sub">今天先看回流通不通；粉丝和每天播放下一期接上</span></div>;
+  const head = <div className="sec-h"><h2>账号</h2><span className="sub">粉丝 · 较昨天 · 昨天的播放 / 阅读</span></div>;
   if (p.d.platforms.error) return <section>{head}<p className="hm-note hot" role="alert">读不出你勾了哪些运营平台：{p.d.platforms.error} · <a href="#/settings?tab=platforms">去设置看</a></p></section>;
   if (!p.shown) return <section>{head}<p className="hm-note">读取中</p></section>;
   if (!p.shown.main.length && !p.shown.later.length) return <section>{head}<p className="hm-note">还没勾运营平台，勾了才有账号格 · <a href="#/settings?tab=platforms">去设置勾平台 →</a></p></section>;
@@ -115,7 +115,7 @@ function Accounts(p: { shown: { main: string[]; later: string[] } | null; d: Hom
   return <section>
     {head}
     {cells.length > 0 && <div className="acct" style={{ gridTemplateColumns: `repeat(${Math.max(cells.length, 3)}, 1fr)` }}>
-      {cells.map((c) => <AccountCellView key={c.platform} c={c} reload={p.reload} />)}
+      {cells.map((c) => <AccountCellView key={c.platform} c={c} account={pull?.find((x) => x.platform === c.platform)?.account} reload={p.reload} />)}
     </div>}
     {later.length > 0 && <div className="later">
       {later.map((c) => <span key={c.platform}><PGlyph id={c.platform} />{c.label}</span>)}
@@ -124,13 +124,22 @@ function Accounts(p: { shown: { main: string[]; later: string[] } | null; d: Hom
   </section>;
 }
 
-const PLACEHOLDER = <>
-  <div className="big ph">—<small>粉丝</small></div>
-  <div className="delta">账号数据下一期接上</div>
-  <svg className="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="24" x2="120" y2="24" stroke="#D3CFC3" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" /></svg>
-</>;
+const FLAT = <svg className="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="24" x2="120" y2="24" stroke="#D3CFC3" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" /></svg>;
 
-function AccountCellView({ c, reload }: { c: AccountCell; reload: () => Promise<void> }) {
+/** 账号快照那几行：没有的数不编，只说为什么没有 */
+function AccountNumbersView({ account }: { account: AccountTileData | { error: string } | null | undefined }) {
+  const a = accountNumbers(account, Date.now());
+  if (a.kind === "none") return <><div className="big ph">—<small>粉丝</small></div><div className="delta">{a.text}</div>{FLAT}</>;
+  const pts = sparkPoints(a.series);
+  return <>
+    <div className={a.followers === null ? "big ph" : "big"}>{a.followers === null ? "—" : a.followers.toLocaleString("zh-CN")}<small>粉丝</small></div>
+    <div className={`delta ${a.deltaTone}`}>{a.deltaText} · {a.viewsText}</div>
+    {pts ? <svg className="spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label={`近 ${a.series.length} 天的每天${a.viewsText.includes("阅读") ? "阅读" : "播放"}`}><polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg> : FLAT}
+    {a.staleText && <div className="y stale">{a.staleText}</div>}
+  </>;
+}
+
+function AccountCellView({ c, account, reload }: { c: AccountCell; account: AccountTileData | { error: string } | null | undefined; reload: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const name = <div className="p-name"><PGlyph id={c.platform} />{c.label}</div>;
   const s = c.state;
@@ -155,7 +164,7 @@ function AccountCellView({ c, reload }: { c: AccountCell; reload: () => Promise<
     running: <>正在抓…</>,
     unsupported: <>还不能自动回流</>,
   };
-  return <div>{name}{PLACEHOLDER}<div className="y">{foot[s.kind]}</div></div>;
+  return <div>{name}<AccountNumbersView account={account} /><div className="y">{foot[s.kind]}</div></div>;
 }
 
 // ── 刚发那条 ───────────────────────────────────────────────────────────────
@@ -175,10 +184,18 @@ function LatestSection(p: { latest: Latest | null; error: string | null; loading
     {l.lines.filter((x) => x.kind === "data").map((x) => <PerfRow key={x.platform} line={x} />)}
     {!l.lines.some((x) => x.kind === "data") && <p className="hm-note">各平台数据还没回来（发出不满 24 小时，或回流还没抓到），先不比。</p>}
     <div className="foot">
-      <span>{pending.length ? `${pending.map((x) => platformLabel(x.platform)).join("、")}的数据还没回来` : "平时 = 这个平台所有作品的播放中位数"}</span>
+      <span>{pending.length ? `${pending.map((x) => platformLabel(x.platform)).join("、")}的数据还没回来` : basisNote(l.lines)}</span>
       <button className="lnk" onClick={p.openData}>全部作品 →</button>
     </div>
   </section>;
+}
+
+/** 「平时」的口径一句话说清：同龄比 / 全量中位数（同龄样本不够） */
+function basisNote(lines: PerfLine[]): string {
+  const data = lines.filter((x) => x.kind === "data");
+  if (data.length && data.every((x) => x.basis === "same_age")) return "平时 = 别的作品发出同样时长时的播放中位数";
+  if (data.some((x) => x.basis === "same_age")) return "能同龄比的按同龄比，其余按全部作品的播放中位数";
+  return "平时 = 这个平台所有作品的播放中位数（同龄数据不够）";
 }
 
 function PerfRow({ line }: { line: PerfLine }) {
@@ -189,7 +206,7 @@ function PerfRow({ line }: { line: PerfLine }) {
       <div className="perf-top"><span className="perf-n">{fmtViews(line.views!)}</span><span className="perf-unit">播放</span>
         <span className={v.tone === "up" ? "ratio up" : v.tone === "down" ? "ratio-low" : "ratio-flat"}>{v.text}</span></div>
       <div className="bar"><i style={{ width: `${line.barPct}%` }} />{line.basePct != null && <b style={{ left: `${line.basePct}%` }}><em>平时</em></b>}</div>
-      <div className="y"><span>{line.baseline ? `平时约 ${fmtViews(line.baseline)}` : "平时样本不够 3 条"}</span></div>
+      <div className="y"><span>{!line.baseline ? "平时样本不够 3 条" : line.basis === "same_age" ? `别的作品发出约 ${line.ageHours} 小时时约 ${fmtViews(line.baseline)}` : `平时约 ${fmtViews(line.baseline)}（同龄样本不够，按全部作品比）`}</span></div>
     </div>
   </div>;
 }
