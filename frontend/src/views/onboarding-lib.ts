@@ -85,10 +85,13 @@ export function initialForm(): OnboardingForm {
   return { kind: "deepseek", baseUrl: p.baseUrl, apiKey: "", strong: p.strong, fast: p.fast, searchProvider: "bocha", searchKey: "" };
 }
 
-/** 换端点类型 = 换一整套预填（用户没改过的字段跟着走，改过的以他填的为准由调用方决定） */
+/**
+ * 换端点类型 = 换一整套预填，**Key 一律清空**：A 家的 Key 不能被带去发给 B 家
+ * （先在 DeepSeek 卡粘了 Key 再切到别的中转，那把 Key 就会被发到别人的地址上）。
+ */
 export function applyPreset(form: OnboardingForm, kind: EndpointKind): OnboardingForm {
   const p = presetOf(kind);
-  return { ...form, kind, baseUrl: p.baseUrl, strong: p.strong, fast: p.fast };
+  return { ...form, kind, baseUrl: p.baseUrl, apiKey: "", strong: p.strong, fast: p.fast };
 }
 
 export interface EnginePayload {

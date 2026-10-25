@@ -20,7 +20,7 @@ import { hostOf, loadEngineConfig, type EngineConfig } from "../engine/config.js
 import { setEngineFallbackSink, setEngineHealthSink, type EngineFallbackRecord, type EngineLiveRecord } from "../engine/health-sink.js";
 import { probeEngineRoute } from "../engine/probe.js";
 import { describeEngineFailure, describeProbeFailure, isEngineFailure, type FailureRole } from "../engine/failure-text.js";
-import { classifyEngineError } from "../engine/error-kind.js";
+import { classifyEngineError, type EngineErrorKind } from "../engine/error-kind.js";
 import { getConfigDir } from "../storage/storage-roots.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { emitEngineEvent } from "./event-hub.js";
@@ -28,14 +28,23 @@ import { onEngineSettingsChanged } from "./settings-engine.js";
 
 const HEALTH_FILE = "engine-health.json";
 
-export interface ProbeHealth {
+/**
+ * 失败的结构化分类（error-kind.ts 的 kind + 上游状态码）。`error` 是给人看的那句话，
+ * 前端判断「换条线能不能救」只读这两个字段，不去解析人话。老记录没有它们 = 认不出。
+ */
+export interface FailureFacts {
+  kind?: EngineErrorKind;
+  status?: number;
+}
+
+export interface ProbeHealth extends FailureFacts {
   at: string;
   ok: boolean;
   ms: number;
   error?: string;
 }
 
-export interface LiveHealth {
+export interface LiveHealth extends FailureFacts {
   at: string;
   ok: boolean;
   role: string;
@@ -128,6 +137,13 @@ async function commit(state: EngineHealthState, dataDir?: string): Promise<void>
   await broadcastHealthChanged(dataDir);
 }
 
+/** 原始错误 → 结构化分类。探针自己的超时那句（中文「超时：」）分类器故意不认，这里单独认回 timeout */
+export function failureFacts(rawError: string): FailureFacts {
+  if (rawError.startsWith("超时：")) return { kind: "timeout" };
+  const c = classifyEngineError(new Error(rawError));
+  return { kind: c.kind, ...(c.status !== undefined ? { status: c.status } : {}) };
+}
+
 export async function recordProbeResult(
   providerId: string,
   result: { ok: boolean; ms: number; error?: string },
@@ -141,6 +157,7 @@ export async function recordProbeResult(
     ok: result.ok,
     ms: result.ms,
     ...(result.error ? { error: describeProbeFailure(cleanErrorMessage(result.error), { id: providerId, host }) } : {}),
+    ...(!result.ok && result.error ? failureFacts(result.error) : {}),
   };
   await commit(state, dataDir);
 }
@@ -168,6 +185,7 @@ export async function recordLiveResult(record: EngineLiveRecord, dataDir?: strin
     role: record.role,
     ...(record.jobId ? { jobId: record.jobId } : {}),
     ...(record.error ? { error: await liveErrorText(record, dataDir) } : {}),
+    ...(!record.ok && record.error ? failureFacts(cleanErrorMessage(record.error)) : {}),
     ...(record.lineFault !== undefined ? { lineFault: record.lineFault } : {}),
   };
   await commit(state, dataDir);

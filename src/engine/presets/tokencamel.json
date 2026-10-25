@@ -1,0 +1,14 @@
+{
+  "id": "tokencamel",
+  "name": "TokenCamel",
+  "baseUrl": "https://api.tokencamel.com/v1",
+  "protocol": "openai",
+  "links": {
+    "keys": "https://tokencamel.com",
+    "pricing": "https://tokencamel.com",
+    "privacy": "https://tokencamel.com"
+  },
+  "suggest": { "strong": [], "fast": [] },
+  "touchpoints": { "onboarding": false, "fallback": false },
+  "_todo": "TODO(D4): links are placeholders until the founder supplies the real key / pricing / privacy pages. TODO(D7): suggest stays empty until resale authorization per model is confirmed. touchpoints stay false until TokenCamel opens self-signup (spec §0)."
+}
