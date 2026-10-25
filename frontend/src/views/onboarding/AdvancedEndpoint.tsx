@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { invoke } from "../../transport";
 import { ENDPOINT_PRESETS, applyPreset, initialForm, presetOf, runOnboardingSave, type EndpointKind, type OnboardingSaveResult } from "../onboarding-lib";
+import { Radio } from "../../components/Switch";
 
 const KINDS = ENDPOINT_PRESETS.filter((p) => p.kind !== "deepseek");
 
@@ -28,7 +29,7 @@ export function AdvancedEndpoint(props: { onSaved: () => void }) {
       <div className="ob-kinds">
         {KINDS.map((p) => (
           <label key={p.kind} className={form.kind === p.kind ? "ob-kind on" : "ob-kind"}>
-            <input type="radio" name="endpoint-kind" checked={form.kind === p.kind} onChange={() => setForm((f) => applyPreset(f, p.kind as EndpointKind))} />
+            <Radio name="endpoint-kind" checked={form.kind === p.kind} onChange={() => setForm((f) => applyPreset(f, p.kind as EndpointKind))} />
             <span>{p.label}</span>
           </label>
         ))}

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { invoke } from "../../transport";
 import { PLATFORM_CAPS } from "../../lib";
 import "./onboarding.css";
+import { Checkbox } from "../../components/Switch";
 
 /** 能力表里的平台（抖音、视频号、小红书、B站、公众号、YouTube、X）；勾了才开对应的生产线 */
 const PLATFORMS: Array<[string, string]> = Object.entries(PLATFORM_CAPS).map(([id, c]) => [id, c.label]);
@@ -39,7 +40,7 @@ export function PersonaStep(props: { onNext: () => void }) {
       <div className="field"><label>你是做什么的<input value={industry} placeholder="比如：教职场人用 AI 的博主" onChange={(e) => setIndustry(e.target.value)} /></label></div>
       <div className="field"><span>发哪些平台</span>
         <div className="ob-kinds">{PLATFORMS.map(([id, label]) => (
-          <label key={id} className="ob-kind"><input type="checkbox" checked={platforms.includes(id)} onChange={() => toggle(id)} />{label}</label>
+          <label key={id} className="ob-kind"><Checkbox checked={platforms.includes(id)} onChange={() => toggle(id)} />{label}</label>
         ))}</div>
       </div>
       <div className="field"><label>给谁看<input value={audience} placeholder="比如：不写代码的上班族" onChange={(e) => setAudience(e.target.value)} /></label></div>

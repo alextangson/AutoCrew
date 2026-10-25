@@ -19,7 +19,7 @@
 .pf-on { background: #F2F6F3; border-color: var(--ok-line); }
 .pf-on:hover { border-color: var(--success); }
 .pf-locked, .pf-locked:hover { cursor: not-allowed; border-color: var(--ok-line); }
-.pf-mark { flex: none; width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; transition: opacity .15s ease; }
+.pf-mark { transition: opacity .15s ease; }
 .pf-tile:not(.pf-on) .pf-mark { opacity: .5; }
 .pf-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
 .pf-name { font-size: var(--fs-md); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -28,14 +28,10 @@
 .pf-state-saved { color: var(--success); }
 .pf-state-error { color: var(--danger); }
 
-/* 开关：原生 checkbox 换皮，键盘/读屏行为不变 */
-.pf-switch { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border-radius: 999px; background: var(--line-2); cursor: inherit; transition: background-color .15s ease; }
-.pf-switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s ease; }
-.pf-switch:checked { background: var(--success); }
-.pf-switch:checked::before { transform: translateX(16px); }
-.pf-switch:disabled { cursor: progress; }
-.pf-switch[aria-disabled="true"] { opacity: .45; }
-.pf-switch:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+/* 开关本体在 components.css（.ui-switch）；这里只管整格可点时的光标与「至少保留一个」的灰态 */
+.pf-tile .pf-switch { cursor: inherit; }
+.pf-tile .pf-switch:disabled { cursor: progress; opacity: 1; }
+.pf-tile .pf-switch[aria-disabled="true"] { opacity: .45; }
 
 .pf-callout { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: 8px; background: #FBF4EC; border-left: 3px solid var(--crew-review); color: var(--ink); font-size: var(--fs-sm); line-height: 1.6; }
 

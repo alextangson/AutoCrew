@@ -12,6 +12,7 @@ import { Field, SaveRow } from "./settings-kit";
 import { integrationStatus, type IntegrationStatus } from "./integrations-lib";
 import { digestHourLabel, digestStateLine, DIGEST_HOURS, type DigestView } from "./digest-lib";
 import { HostsCard } from "./onboarding/HostsCard";
+import { Switch } from "../components/Switch";
 
 interface RadarSource {
   id?: string;
@@ -93,8 +94,7 @@ function DigestBlock(props: { configured: boolean; digest?: DigestView | null; r
   return (
     <>
       <div className="row row-static">
-        <input
-          type="checkbox"
+        <Switch
           disabled={!props.configured}
           checked={props.configured && d?.enabled !== false}
           title="每天到点把雷达当天的新选题发一份到你的 Telegram"
