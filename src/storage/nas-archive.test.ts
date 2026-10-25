@@ -142,6 +142,14 @@ describe("NAS 归档", () => {
     expect(await exists(path.join(root(parent), "02-aroll/raw.mov"))).toBe(true);
   });
 
+  it("after archiving, the board cover still shows from the kept copy", async () => {
+    const old = await published("旧稿", 3);
+    const { coverOf } = await import("../desktop/board-data.js");
+    await archive();
+    expect(await exists(path.join(root(old), "05-cover/封面-3x4.png"))).toBe(false);
+    expect(await coverOf(old.id, data)).toMatchObject({ path: "00-project/kept/05-cover/封面-3x4.png" });
+  });
+
   it("archives nothing when derived progress cannot be read (cannot tell, so does not delete)", async () => {
     const old = await published("旧稿", 3);
     const r = await archive({ unfinishedChildren: async () => { throw new Error("看板读坏了"); } });

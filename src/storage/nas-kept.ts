@@ -35,3 +35,28 @@ export async function locateProjectFile(root: string, file: string): Promise<Loc
   const nas = relocations[`@project/${rel}`];
   return nas ? { where: "nas", path: nas } : null;
 }
+
+/** 归档过、NAS 又没挂上时给人看的那句话 */
+export const ON_NAS_UNMOUNTED = "在 NAS 上，挂上 NAS 再用";
+export type ArchivedLookup = { ok: true; path: string } | { ok: false; error: string };
+
+/** 往上找项目根（有 00-project 的那层） */
+async function projectRootOf(file: string): Promise<string | null> {
+  for (let d = path.dirname(file); d !== path.dirname(d); d = path.dirname(d)) {
+    if (await exists(path.join(d, "00-project"))) return d;
+  }
+  return null;
+}
+
+/**
+ * 读项目里的素材前过一道：本机有就用本机；归档过的按 本机留底副本 → NAS（挂着才给）；
+ * NAS 没挂给明说的错误，不让调用方读到 ENOENT 当「没有」。不是归档造成的缺失照原样交回（调用方原来怎么报还怎么报）。
+ */
+export async function resolveArchivedFile(file: string, root?: string): Promise<ArchivedLookup> {
+  if (await exists(file)) return { ok: true, path: file };
+  const r = root ?? (await projectRootOf(file));
+  const loc = r ? await locateProjectFile(r, file).catch(() => null) : null;
+  if (!loc) return { ok: true, path: file };
+  if (loc.where === "local" || (await exists(loc.path))) return { ok: true, path: loc.path };
+  return { ok: false, error: `「${path.basename(file)}」${ON_NAS_UNMOUNTED}（${loc.path}）` };
+}

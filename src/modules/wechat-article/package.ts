@@ -6,6 +6,7 @@
  * 只管由视频派生的公众号文章（derivedFrom.kind = wechat_article）；普通公众号稿不读这个文件。
  */
 import fs from "node:fs/promises";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
@@ -124,6 +125,8 @@ export const LEGACY_COVER_PAIR = "包里还是 2a 的两张独立封面：公众
 async function coverProblems(pkg: ArticlePackage): Promise<string[]> {
   if (pkg.covers?.length) return [LEGACY_COVER_PAIR];
   if (!pkg.cover) return ["缺封面主图（一张，2.35:1 和 1:1 从它裁）"];
+  const onNas = await resolveArchivedFile(pkg.cover.path);
+  if (!onNas.ok) return [`封面主图${onNas.error}`];
   if ((await fileSha(pkg.cover.path)) !== pkg.cover.sha256) return [`封面主图不见了或在登记后被改过（${pkg.cover.path}）：重新 set_cover`];
   return [];
 }
@@ -143,7 +146,10 @@ async function imageProblems(entries: ArticleImageEntry[]): Promise<string[]> {
 
 async function fileSha(p: string | undefined): Promise<string> {
   if (!p) return "missing";
-  try { return createHash("sha256").update(await fs.readFile(p)).digest("hex"); } catch { return "missing"; }
+  // 归档过的读本机留底副本 / NAS（字节一样，指纹不变）；NAS 没挂 = missing，原因由 coverProblems 明说
+  const found = await resolveArchivedFile(p);
+  if (!found.ok) return "missing";
+  try { return createHash("sha256").update(await fs.readFile(found.path)).digest("hex"); } catch { return "missing"; }
 }
 
 /** 整包指纹：正文、选定标题、每张图（文件字节 + 来源）、封面主图（文件字节）+ 两个裁切、创作来源、排版主题（设置里现在的） */

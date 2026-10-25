@@ -11,6 +11,8 @@ import { ontologyApplies } from "../production/publish-gate.js";
 import { srtFor, validCutApproval } from "../production/derive.js";
 import { factPath } from "../production/chat-approval/files.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
+import { contentRoot } from "../../storage/content-project.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import type { LedgerEntry } from "../research/evidence-ledger.js";
 
@@ -61,8 +63,11 @@ async function registeredSrt(src: Content, dataDir: string): Promise<{ text: str
   if (!cut?.sha256) return { error: "源视频的成片现在没有有效的审片通过" };
   const fact = srtFor(doc, cut.sha256);
   if (!fact?.path) return { error: "审过的这版成片没有登记字幕" };
+  // 源视频归档了：读本机留底的字幕副本，或 NAS 上的（没挂就明说）
+  const file = await resolveArchivedFile(factPath(src.id, fact, dataDir), contentRoot(src.id, dataDir));
+  if (!file.ok) return { error: `登记字幕${file.error}` };
   try {
-    const bytes = await fs.readFile(factPath(src.id, fact, dataDir));
+    const bytes = await fs.readFile(file.path);
     if (createHash("sha256").update(bytes).digest("hex") !== fact.sha256) return { error: "字幕文件在登记之后被改过" };
     return { text: bytes.toString("utf8") };
   } catch (e) {
