@@ -27,10 +27,17 @@ describe("ego:open_console", () => {
     expect(scripts[0]).toContain("task.handOff()");
   });
 
-  it("publish 目标开发布页；公众号没有 ego 发布页就开它的后台", async () => {
+  it("publish 目标开发布页；公众号开图文编辑页（和原来复制文案后打开的一样）", async () => {
     capture(ok);
     expect(await openConsoleHandler({ platform: "douyin", target: "publish" })).toMatchObject({ ok: true, data: { url: "https://creator.douyin.com/creator-micro/content/upload" } });
-    expect(await openConsoleHandler({ platform: "wechat_mp", target: "publish" })).toMatchObject({ ok: true, data: { url: "https://mp.weixin.qq.com" } });
+    expect(await openConsoleHandler({ platform: "wechat_mp", target: "publish" })).toMatchObject({ ok: true, data: { url: expect.stringContaining("https://mp.weixin.qq.com/cgi-bin/appmsg") } });
+  });
+
+  it("图文平台（twitter / reddit / toutiao）也开得了发布页", async () => {
+    capture(ok);
+    for (const [p, url] of [["twitter", "https://x.com/compose/post"], ["reddit", "https://www.reddit.com/submit"], ["toutiao", "https://mp.toutiao.com/profile_v4/graphic/publish"]]) {
+      expect(await openConsoleHandler({ platform: p, target: "publish" })).toMatchObject({ ok: true, data: { url } });
+    }
   });
 
   it("不认识的平台：拒，不起子进程；契约要 platform", async () => {

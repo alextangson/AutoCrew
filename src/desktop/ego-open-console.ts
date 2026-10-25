@@ -10,6 +10,9 @@ import { openForUserScript } from "../adapters/browser/ego-scripts.js";
 import { PULL_PLATFORM_CONSOLES, PULL_PLATFORM_LABELS, isPullPlatform } from "../modules/flywheel/pull-state.js";
 import { PLATFORM_CAPS, type PlatformId } from "../modules/publish/platform-caps.js";
 
+import { PUBLISH_URLS } from "../modules/publish/clipboard-publisher.js";
+import { platformLabel } from "./platform-label.js";
+
 const OPEN_TIMEOUT_MS = 30_000;
 
 let runnerOverride: EgoRunner | null = null;
@@ -23,6 +26,9 @@ function consoleOf(platform: unknown, target: Target): { url: string; label: str
   if (target === "data") return isPullPlatform(platform) ? { url: PULL_PLATFORM_CONSOLES[platform], label: PULL_PLATFORM_LABELS[platform] } : null;
   const caps = (PLATFORM_CAPS as Record<string, (typeof PLATFORM_CAPS)[PlatformId] | undefined>)[platform];
   if (caps?.publishChannel === "ego_lite" && caps.publishUrl) return { url: caps.publishUrl, label: caps.label };
+  // 图文平台（推特 / Reddit / 头条…）：和「复制发布文案」原来打开的是同一张发布页表
+  const clip = (PUBLISH_URLS as Record<string, string | undefined>)[platform];
+  if (clip) return { url: clip, label: platformLabel(platform) };
   // 公众号发布走接口 + ego lite 里的编辑器：没有发布页就开它的后台
   return isPullPlatform(platform) ? { url: PULL_PLATFORM_CONSOLES[platform], label: PULL_PLATFORM_LABELS[platform] } : null;
 }
