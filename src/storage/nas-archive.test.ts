@@ -272,6 +272,17 @@ describe("NAS 归档", () => {
       expect(await exists(path.join(root(old), "99-cache/remotion"))).toBe(false);
     });
 
+    it("never follows a symlinked 99-cache out of the project", async () => {
+      await fiveRecent();
+      const old = await published("旧稿", 8);
+      const outside = path.join(temp, "outside");
+      await fs.mkdir(outside, { recursive: true });
+      await fs.writeFile(path.join(outside, "precious.mov"), "keep me");
+      await fs.symlink(outside, path.join(root(old), "99-cache"));
+      await archive();
+      expect(await fs.readFile(path.join(outside, "precious.mov"), "utf8")).toBe("keep me");
+    });
+
     it("keeps the cache of projects that are not archived (kept 5, too young, busy)", async () => {
       const recent = await fiveRecent();
       const young = await published("三天稿", 3.5);

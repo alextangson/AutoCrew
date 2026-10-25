@@ -168,7 +168,11 @@ async function purgeCacheDir(dir: string): Promise<number> {
 
 /** 归档后清 99-cache：成片和素材已在 NAS 上核对过，这里只剩可重建的中间产物（渲染、抽音频）；口播转写留着给写稿用 */
 async function purgeProjectCache(projectRoot: string): Promise<number> {
-  return purgeCacheDir(path.join(projectRoot, PROJECT_CACHE_DIR));
+  const dir = path.join(projectRoot, PROJECT_CACHE_DIR);
+  const st = await fs.lstat(dir).catch((e) => { if (isMissing(e)) return null; throw e; });
+  // 缓存根是符号链接（指到项目外）就不跟进去删：只清项目自己的目录；子项里的链接只删链接本身
+  if (!st || !st.isDirectory()) return 0;
+  return purgeCacheDir(dir);
 }
 
 async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<ArchivedItem> {
