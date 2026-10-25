@@ -236,7 +236,21 @@ export interface BannerLine {
 /** 与后端 STALE_FAILURE_MS 同值：失败过了这么久没新证据，就该复探一次 */
 export const STALE_FAILURE_MS = 5 * 60_000;
 
-/** 有没有挂着红点、但证据已经过时的线（前端据此请后端复探） */
+/** 挂着红点时多久问一次后端（后端按 5 分钟过时阈值决定真探不探，不过时就是读一下内存） */
+export const RECHECK_TICK_MS = 60_000;
+
+/**
+ * 红点挂着期间的复查节拍：立刻一次，之后每 RECHECK_TICK_MS 一次，**不依赖重渲染**——
+ * 刚失败的线会在过时后被探到；复探失败刷新了时间，节拍也照走，恢复后下一拍就清掉。
+ * 返回停表函数。
+ */
+export function startStaleRecheck(tick: () => void, everyMs = RECHECK_TICK_MS): () => void {
+  tick();
+  const timer = setInterval(tick, everyMs);
+  return () => clearInterval(timer);
+}
+
+/** 有没有挂着红点、但证据已经过时的线 */
 export function hasStaleFailure(lines: BannerLine[], now: number): boolean {
   return lines.some((l) => now - new Date(l.checkedAt).getTime() > STALE_FAILURE_MS);
 }

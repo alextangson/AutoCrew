@@ -56,6 +56,8 @@ function symptom(kind: EngineErrorKind, status?: number): string {
   switch (kind) {
     case "connect":
       return "连不上：网络不通或域名解析失败";
+    case "interrupted":
+      return "回复到一半被断开（网络或上游中断）";
     case "timeout":
       return `响应超时${code}：端点在限时内没有回内容`;
     case "auth":

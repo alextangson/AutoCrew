@@ -12,6 +12,8 @@
 
 export type EngineErrorKind =
   | "connect"
+  /** 连上了、回复流到一半被断开（undici `terminated`）——不是「连不上」 */
+  | "interrupted"
   | "timeout"
   | "auth"
   | "rate_limit"
@@ -32,7 +34,9 @@ export interface ClassifiedEngineError {
 export const PROTOCOL_MISMATCH = "protocol_mismatch";
 
 const CONNECT_RE =
-  /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EPIPE|ENETUNREACH|socket hang up|premature close|connection error|other side closed|UND_ERR|terminated/i;
+  /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EPIPE|ENETUNREACH|socket hang up|connection error|other side closed|UND_ERR/i;
+/** 流到一半被掐：undici 的 `terminated`、流库的 `premature close` */
+const INTERRUPTED_RE = /\bterminated\b|premature close/i;
 /**
  * 只认**上游/传输层**的超时指纹。刻意不认中文「超时」——那是我们自己写的话
  * （整稿墙钟、视角墙钟），把它认成线路超时就会给一个「端点没回内容」的假诊断。
@@ -107,6 +111,7 @@ export function classifyEngineError(err: unknown): ClassifiedEngineError {
   // 3. 连接类**优先于状态码**：`502 {"message":"fetch failed"}` 里的 502 是观察器补的，
   //    不是上游给的（创始人真机上那句 `出错了：502 {…fetch failed}` 正是这么来的）。
   //    真·上游 502 的 body 会说别的话，不会说 fetch failed。
+  if (INTERRUPTED_RE.test(detail)) return { kind: "interrupted", detail };
   if (e.name === "APIConnectionError" || CONNECT_RE.test(detail)) return { kind: "connect", detail };
   // 4. 上游明确给了状态码：它说什么就是什么
   if (status !== undefined) {
@@ -114,6 +119,7 @@ export function classifyEngineError(err: unknown): ClassifiedEngineError {
     if (kind) return { kind, status, detail };
   }
   // 5. 无状态码：连接 > 超时 > 中止，按「用户最需要知道哪件事」排
+  if (INTERRUPTED_RE.test(e.message)) return { kind: "interrupted", detail };
   if (CONNECT_RE.test(e.message)) return { kind: "connect", detail };
   if (TIMEOUT_RE.test(e.message)) return { kind: "timeout", detail };
   if (ABORT_RE.test(e.message)) return { kind: "aborted", detail };

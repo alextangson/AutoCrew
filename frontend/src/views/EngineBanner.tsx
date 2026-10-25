@@ -4,12 +4,12 @@
  * **线路好的时候不轮询**（spec §2「不做」）：只有三个重拉时机——应用加载、SSE `engine` 里
  * `kind === "engine_health"`、SSE `reconnect`。
  *
- * 唯一例外：顶栏挂着红点时，那条失败过了 5 分钟就请后端复探（`engine:recheck`，后端只探过时的
- * 失败、同时只跑一轮）——否则一次早已恢复的网络抖动会一直挂着「连不上」。探完靠 SSE 重拉。
+ * 唯一例外：顶栏挂着红点时每分钟问一次后端（`engine:recheck`，后端只探过时 5 分钟以上的失败、
+ * 同时只跑一轮）——否则一次早已恢复的网络抖动会一直挂着「连不上」。探完靠 SSE 重拉。
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
-import { engineBannerLines, hasStaleFailure, STALE_FAILURE_MS, type EngineHealthView } from "./engine-lib";
+import { engineBannerLines, startStaleRecheck, type EngineHealthView } from "./engine-lib";
 
 export function useEngineHealth(): { health: EngineHealthView | null; reload: () => void } {
   const [health, setHealth] = useState<EngineHealthView | null>(null);
@@ -32,14 +32,11 @@ export function useEngineHealth(): { health: EngineHealthView | null; reload: ()
   return { health, reload };
 }
 
-/** 挂着红点时：过时的失败立刻复探，之后每 5 分钟看一次（后端只探过时的，健康的线一个字节都不发） */
+/** 挂着红点就一直打节拍（见 startStaleRecheck）：探不探由后端的 5 分钟过时阈值定，健康的线一个字节都不发 */
 function useStaleRecheck(active: boolean): void {
   useEffect(() => {
     if (!active) return;
-    const tick = () => void invoke("engine:recheck", {});
-    tick();
-    const timer = setInterval(tick, STALE_FAILURE_MS);
-    return () => clearInterval(timer);
+    return startStaleRecheck(() => void invoke("engine:recheck", {}));
   }, [active]);
 }
 
@@ -50,7 +47,7 @@ export function EngineDot(props: { onSettings: () => void }) {
   const [checkError, setCheckError] = useState<string | null>(null);
   const now = Date.now();
   const lines = engineBannerLines(health, now);
-  useStaleRecheck(lines.length > 0 && hasStaleFailure(lines, now));
+  useStaleRecheck(lines.length > 0);
   if (lines.length === 0) return null;
   const recheck = () => {
     if (checking) return;
