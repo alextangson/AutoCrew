@@ -96,7 +96,8 @@ export function validMarkUrl(raw: unknown): string | null | undefined {
 }
 
 /** 「我发了」：记一条手动发布（同平台覆盖），待发布的稿同步为已发布 */
-export async function markPublished(id: string, platform: string, url: unknown, dataDir: string): Promise<MarkResult> {
+/** round：页面上看到的那一轮（管线「确认已公开」带上）；对话框开着期间重拍 / 重开过 = 拒（staleRound），不落到新一轮 */
+export async function markPublished(id: string, platform: string, url: unknown, dataDir: string, round?: unknown): Promise<MarkResult> {
   if (!isContentId(id) || !/^[a-z_]{2,32}$/.test(platform)) return { ok: false, code: "bad_request", error: "参数不对" };
   const link = validMarkUrl(url);
   if (link === null) return { ok: false, code: "bad_request", error: "链接要是 http(s) 地址" };
@@ -104,7 +105,7 @@ export async function markPublished(id: string, platform: string, url: unknown, 
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
   const history = historyRefusal(content);
   if (history) return { ok: false, code: "wrong_stage", error: history };
-  if (await ontologyVideo(content, dataDir)) return ontologyMark(content, platform, link, dataDir);
+  if (await ontologyVideo(content, dataDir)) return ontologyMark(content, platform, link, dataDir, round);
   // 非视频稿认过（approved）就在「待发布」列，也能记「我发了」；视频稿仍要走完剪辑与封面
   const markable = MARKABLE.has(content.status) || (content.status === "approved" && !isVideoPlatform(content.platform));
   if (!markable) return { ok: false, code: "wrong_stage", error: "这条还没到发布这一步" };
@@ -146,8 +147,9 @@ async function done(r: Record<string, unknown>, id: string, dataDir: string): Pr
   return { ok: true, content: (await getContent(id, dataDir))! };
 }
 
-async function ontologyMark(content: Content, platform: string, link: string | undefined, dataDir: string): Promise<MarkResult> {
-  const r = await founderDecision(content.id, "i_published", { platform, ...(link ? { url: link } : {}) }, dataDir);
+async function ontologyMark(content: Content, platform: string, link: string | undefined, dataDir: string, round?: unknown): Promise<MarkResult> {
+  const hasRound = round !== undefined && round !== null && round !== "";
+  const r = await founderDecision(content.id, "i_published", { platform, ...(link ? { url: link } : {}), ...(hasRound ? { round } : {}) }, dataDir);
   if (r.ok) {
     const mark: ManualPublication = { platform, at: new Date().toISOString(), ...(link ? { url: link } : {}) };
     await updateContent(content.id, { manualPublications: [...(content.manualPublications ?? []).filter((m) => m.platform !== platform), mark] }, dataDir);

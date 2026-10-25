@@ -1,5 +1,5 @@
 /* 内容管线（管线重规划 §2、§8）：照 home-mock-v2/pipeline.html 的视觉语言。只在 .pl 里生效。 */
-.pl { --paper-2: #EFEDE6; --line: #E2DFD5; --line-strong: #D3CFC3; --faint: #B4B0A4; --pl-text-2: #5C584D; --pl-sched: #8B877B; --pl-wip: #D3CFC3;
+.pl { --paper-2: #EFEDE6; --line: #E2DFD5; --line-strong: #D3CFC3; --faint: #B4B0A4; --pl-text-2: #5C584D; --pl-sched: #8B877B; --pl-wip: #D3CFC3; --pl-amber: #B26A00;
   margin: calc(-1 * var(--s4)) calc(-1 * var(--s5)); line-height: 20px; color: var(--ink); }
 .pl .g { width: 12px; height: 12px; display: inline-block; flex: none; color: var(--muted); }
 
@@ -49,11 +49,13 @@
 .pl-meter { display: flex; gap: 2px; }
 .pl-meter i { width: 10px; height: 4px; border-radius: 1px; background: var(--ink); }
 .pl-meter i.sched { background: var(--pl-sched); } .pl-meter i.wip { background: var(--pl-wip); } .pl-meter i.hot { background: var(--hot); }
+.pl-meter i.check { background: var(--pl-amber); }
 .pl-meter i.none { background: none; box-shadow: inset 0 0 0 1px #C9C5B9; }
 .pl-frac { white-space: nowrap; font-size: 12px; color: var(--pl-text-2); font-variant-numeric: tabular-nums; }
 .pl-ex { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 8px; }
 .pl-ex.hot { color: var(--hot); font-weight: 500; }
 .pl-ex.hot .g { color: var(--hot); border-color: var(--hot); }
+.pl-ex.amber, .pl-ex.amber .g { color: var(--pl-amber); }
 .pl-stars { display: flex; gap: 2px; min-width: 1px; }
 .pl .pl-more { font-family: inherit; line-height: 16px; font-size: 12px; color: var(--muted); padding: 4px 0 0 4px; border: 0; background: transparent; }
 .pl .pl-more:hover { color: var(--ink); background: transparent; }
@@ -84,6 +86,7 @@
 .pl-pr .r { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pl-pr.hot .s { color: var(--hot); font-weight: 500; }
 .pl-pr.hot .nm .g { color: var(--hot); border-color: var(--hot); }
+.pl-pr.amber .s { color: var(--pl-amber); }
 .pl-pr.muted .s { color: var(--muted); }
 .pl-pf { column-gap: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; flex-wrap: wrap; }
 .pl-pf svg { width: 12px; height: 12px; }

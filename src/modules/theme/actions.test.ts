@@ -1,7 +1,7 @@
 /**
  * 去向计划落盘 / 改勾选不改老主题 / 标不出 / 重拍（管线重规划 §8-4、§8-6）。全部在临时资料库里跑，不碰真实资料库。
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initProfile, updateProfile } from "../profile/creator-profile.js";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { mutateProduction } from "../production/service.js";
@@ -23,7 +23,10 @@ async function approvedVideo(title: string) {
 }
 const themeOf = async (id: string) => (await pipelineData(env.dir)).themes.find((t) => t.id === id)!;
 
-describe("去向计划", () => {
+describe("去向计划（新主题：修复上线后建的）", () => {
+  // 只假 Date：新主题的建立时间落在 PROFILE_DEFAULT_SINCE 之后
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T00:00:00.000Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
   it("没落盘时按当前勾选给默认、读时不写；改勾选前老主题按改之前的勾选落盘，新主题按新勾选", async () => {
     const old = await approvedVideo("老主题");
     expect(await readPlanFile(old.id, env.dir)).toBeNull();
@@ -49,6 +52,34 @@ describe("去向计划", () => {
     expect((await readPlanFile(c.id, env.dir))!.destinations.bilibili).toMatchObject({ by: "founder", via: "chat", host: "claude" });
     await setDestination(c.id, "bilibili", false, "还是发吧", { via: "board" }, env.dir);
     expect((await themeOf(c.id)).plan.required).toEqual(["douyin", "bilibili", "wechat_mp"]);
+  });
+});
+
+describe("去向计划（老主题：修复上线前建的）", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-10T00:00:00.000Z") }); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("默认只要它实际有的（父视频自己的平台），不按勾选补公众号；改勾选不落盘；v1 冻结写下的勾选默认不认", async () => {
+    const old = await approvedVideo("老主题");
+    expect((await themeOf(old.id)).plan).toMatchObject({ required: ["douyin"], persisted: false });
+    await updateProfile({ platforms: ["douyin", "youtube"] }, env.dir);
+    expect(await readPlanFile(old.id, env.dir)).toBeNull();
+    // 早期冻结钩子按勾选写过的 v1 计划：by=profile 的条目不认，创始人条目照认
+    const { writeJsonAtomic } = await import("../../storage/json-atomic.js");
+    const { contentFile } = await import("../../storage/content-project.js");
+    const fs = await import("node:fs/promises");
+    const file = contentFile(old.id, env.dir, "destination-plan.json");
+    await fs.mkdir((await import("node:path")).dirname(file), { recursive: true });
+    await writeJsonAtomic(file, { version: 1, basis: ["douyin", "wechat_mp", "youtube", "x"], created_at: NOW, reshoots: [], destinations: {
+      douyin: { required: true, by: "profile", at: NOW }, wechat_mp: { required: true, by: "profile", at: NOW }, youtube: { required: true, by: "profile", at: NOW },
+      x: { required: false, by: "founder", via: "board", founder_words: "X 不发", at: NOW } } });
+    const t = await themeOf(old.id);
+    expect(t.plan.required).toEqual(["douyin"]);
+    expect(t.plan.skipped.map((s) => s.platform)).toEqual(["x"]);
+    // 改一条：写回 v2，只带创始人条目
+    await setDestination(old.id, "douyin", true, "这条不发抖音", { via: "board" }, env.dir);
+    const saved = (await readPlanFile(old.id, env.dir))!;
+    expect(saved.version).toBe(2);
+    expect(Object.entries(saved.destinations).map(([p, e]) => [p, e!.by])).toEqual([["x", "founder"], ["douyin", "founder"]]);
   });
 });
 

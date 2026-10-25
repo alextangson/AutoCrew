@@ -273,7 +273,7 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     if (p === "/api/board/mark-published" && req.method === "POST") {
       await post(req, res, (b, dir) => b.undo === true
         ? unmarkPublished(String(b.content_id ?? ""), String(b.platform ?? ""), dir)
-        : markPublished(String(b.content_id ?? ""), String(b.platform ?? ""), b.url, dir));
+        : markPublished(String(b.content_id ?? ""), String(b.platform ?? ""), b.url, dir, b.round));
       return true;
     }
     return false;

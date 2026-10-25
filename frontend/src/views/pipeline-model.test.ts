@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canReshoot, canSkipRow, collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, skippedLine, statusLine, stateIcon, type ThemeCard } from "./pipeline-model";
-import { exceptionRows } from "./PipelineCard";
+import { canConfirmPublic, exceptionRows } from "./PipelineCard";
 import type { BoardItem } from "./board-columns";
 
 const item = (extra: Partial<BoardItem> = {}): BoardItem => ({
@@ -67,3 +67,22 @@ describe("管线页面模型", () => {
   });
 });
 
+
+describe("待核（定时过点、还没核到公开）", () => {
+  it("琥珀色：去向条 check、行图标 check；卡上是提示不是红色例外", () => {
+    expect(meterTone("待核")).toBe("check");
+    expect(stateIcon({ state: "待核", required: true })).toBe("check");
+    const rows = exceptionRows(card({ destinations: [{ platform: "wechat_video", state: "待核", detail: "应已公开，等核对", content_id: "v", required: true }] }));
+    expect(rows).toEqual([{ key: "wechat_video-v-", platform: "wechat_video", text: "视频号 应已公开，等核对", hot: false, amber: true }]);
+  });
+});
+
+describe("确认已公开", () => {
+  it("只给视频平台的待核行；公众号、没稿、别的状态不给", () => {
+    expect(canConfirmPublic({ state: "待核", platform: "wechat_video", content_id: "v" })).toBe(true);
+    expect(canConfirmPublic({ state: "待核", platform: "youtube", content_id: "e" })).toBe(true);
+    expect(canConfirmPublic({ state: "待核", platform: "wechat_mp", content_id: "w" })).toBe(false);
+    expect(canConfirmPublic({ state: "待核", platform: "douyin", content_id: null })).toBe(false);
+    expect(canConfirmPublic({ state: "已定时", platform: "douyin", content_id: "v" })).toBe(false);
+  });
+});

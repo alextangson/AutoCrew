@@ -5,7 +5,9 @@
  * - 公众号：派生文章自己的 article-publish.json（`ArticlePublishState`），从不喂给父视频的 D1。
  * - YouTube / X：英文版自己的发布槽（同样是 `publishTargets`，只是挂在英文版那条稿上）。
  *
- * 状态六种：没开始 / 在做 / 待你定 / 已定时 / 已发 / 没发成（被驳回、结果不明、过点没发）。
+ * 状态七种：没开始 / 在做 / 待你定 / 已定时 / 待核 / 已发 / 没发成。
+ * 待核 = 定时过点了、还没核到公开（旧看板的「应已公开，等核对」）：算投出去了（卡进发布中），但不算确认已发，不标红。
+ * 没发成只给真失败：被驳回、结果不明、推送失败。
  */
 import type { PublishTarget, TargetState } from "../production/targets.js";
 import type { ArticlePublishState } from "../wechat-article/publish-state.js";
@@ -21,7 +23,7 @@ export const DEST_LABEL: Record<Destination, string> = {
   douyin: "抖音", wechat_video: "视频号", xiaohongshu: "小红书", bilibili: "B站", wechat_mp: "公众号", youtube: "YouTube", x: "X",
 };
 
-export type DestState = "没开始" | "在做" | "待你定" | "已定时" | "已发" | "没发成";
+export type DestState = "没开始" | "在做" | "待你定" | "已定时" | "待核" | "已发" | "没发成";
 
 export interface DestRow {
   platform: Destination;
@@ -64,7 +66,7 @@ const TARGET_STATE: Record<Exclude<TargetState, "未发">, { state: DestState; d
   已公开: { state: "已发", detail: () => "已发" },
   已定时: { state: "已定时", detail: () => "已定时" },
   审核中: { state: "已定时", detail: () => "审核中" },
-  应已公开: { state: "没发成", detail: () => "过点了，还没核到公开" },
+  应已公开: { state: "待核", detail: () => "应已公开，等核对" },
   被驳回: { state: "没发成", detail: (t) => `被驳回${t.reason ? `：${t.reason}` : ""}` },
   读不到: { state: "没发成", detail: () => "结果不明，先去后台核对" },
   待核: { state: "待你定", detail: () => "待你核对" },
@@ -88,7 +90,7 @@ export function fromArticle(s: ArticlePublishState, pre: PreReady, contentId: st
   if (s.phase === "published" && r?.published) return { ...base, state: "已发", detail: "已发表", at: mmdd(r.scheduledAt) };
   if (s.phase === "scheduled" && r) {
     return Date.parse(r.scheduledAt) <= now.getTime()
-      ? { ...base, state: "没发成", detail: "定时过了，还没核到已发表", at: mmdd(r.scheduledAt) }
+      ? { ...base, state: "待核", detail: "定时过了，等核对已发表", at: mmdd(r.scheduledAt) }
       : { ...base, state: "已定时", detail: "已定时", at: mmdd(r.scheduledAt) };
   }
   if (s.phase === "scheduled_waiting_scan") return { ...base, state: "待你定", detail: "等你扫码" };
@@ -105,6 +107,7 @@ export function notStarted(platform: Destination): Omit<DestRow, "required"> {
   return { platform, state: "没开始", detail: EN_VIDEO.has(platform) ? "英文版还没做" : platform === "wechat_mp" ? "公众号文章还没做" : "还没发", content_id: null };
 }
 
-export const SENT: ReadonlySet<DestState> = new Set(["已发", "已定时"]);
+/** 投出去了（卡进发布中、派生暂停不盖它）：已发 / 已定时 / 待核 */
+export const SENT: ReadonlySet<DestState> = new Set(["已发", "已定时", "待核"]);
 export const HOT: ReadonlySet<DestState> = new Set(["待你定", "没发成"]);
 export { mmdd };

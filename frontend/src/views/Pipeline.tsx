@@ -120,6 +120,7 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
         <span>去向</span>
         <span><i className="pl-sw" style={{ background: "#16150F" }} />已发</span>
         <span><i className="pl-sw" style={{ background: "#8B877B" }} />已定时</span>
+        <span><i className="pl-sw" style={{ background: "#B26A00" }} />待核</span>
         <span><i className="pl-sw" style={{ background: "#D3CFC3" }} />在做</span>
         <span><i className="pl-sw" style={{ background: "#C63D00" }} />待你定 / 没发成</span>
         <span><i className="pl-sw" style={{ boxShadow: "inset 0 0 0 1px #C9C5B9" }} />没开始</span>

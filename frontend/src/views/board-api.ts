@@ -41,8 +41,9 @@ export const startWriting = (topicId: string, host?: string | null) => post<Star
 export const handOffContent = (contentId: string, mode: "write" | "look", host?: string | null) =>
   post<Delivery & { content_id: string }>("/api/board/hand-off", { content_id: contentId, mode, ...(host ? { host } : {}) });
 
-export const markPublished = (contentId: string, platform: string, url?: string) =>
-  post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}) });
+/** round：带上就由服务端核对是不是这一轮（重开 / 重拍过 = 拒） */
+export const markPublished = (contentId: string, platform: string, url?: string, round?: number) =>
+  post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}), ...(round !== undefined ? { round } : {}) });
 export const unmarkPublished = (contentId: string, platform: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, undo: true });
 

@@ -37,7 +37,7 @@ export async function setDestination(contentId: string, platformRaw: unknown, sk
   const r = await rootOf(contentId, dataDir);
   if ("error" in r) return r.error!;
   const profile = await loadProfile(dataDir);
-  await mutatePlan(contentId, dataDir, profile, (plan) => {
+  await mutatePlan(r.content!, dataDir, profile, (plan) => {
     plan.destinations[platform] = { required: !skip, by: "founder", via: who.via, ...(who.host ? { host: who.host } : {}), founder_words: fw, at: new Date().toISOString() };
   });
   return { ok: true, platform, required: !skip };
@@ -85,7 +85,7 @@ export async function reshoot(contentId: string, founderWords: unknown, expected
   }
   const profile = await loadProfile(dataDir);
   // 重放（同一轮已经重拍过）不再追加；回执照样给当时记下的清单
-  const record = (await mutatePlan(contentId, dataDir, profile, (plan) => {
+  const record = (await mutatePlan(r.content!, dataDir, profile, (plan) => {
     const had = plan.reshoots.find((x) => x.round_ended === round);
     if (had) return had;
     const rec: ReshootRecord = { round_ended: round, round: newRound, at: new Date().toISOString(), founder_words: fw, via: who.via, ...(who.host ? { host: who.host } : {}), published, to_cancel: toCancel };

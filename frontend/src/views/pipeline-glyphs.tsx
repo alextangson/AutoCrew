@@ -30,6 +30,7 @@ export function StateGlyph({ kind }: { kind: StateIcon }) {
   switch (kind) {
     case "done": return box(<><circle cx="6" cy="6" r="5.5" fill="#16150F" /><path d="M3.6 6.1l1.6 1.6 3.1-3.3" fill="none" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></>);
     case "sched": return box(<><circle cx="6" cy="6" r="4.9" fill="none" stroke="#5C584D" strokeWidth="1.2" /><path d="M6 3.4V6l1.8 1.1" fill="none" stroke="#5C584D" strokeWidth="1.2" strokeLinecap="round" /></>);
+    case "check": return box(<><circle cx="6" cy="6" r="4.9" fill="none" stroke="#B26A00" strokeWidth="1.2" /><path d="M6 3.4V6.4" stroke="#B26A00" strokeWidth="1.2" strokeLinecap="round" /><circle cx="6" cy="8.3" r=".75" fill="#B26A00" /></>);
     case "wip": return box(<><circle cx="6" cy="6" r="4.9" fill="none" stroke="#8B877B" strokeWidth="1.2" /><path d="M6 3.2a2.8 2.8 0 0 1 0 5.6Z" fill="#8B877B" /></>);
     case "you": return box(<><circle cx="6" cy="6" r="4.9" fill="none" stroke="#C63D00" strokeWidth="1.2" /><circle cx="6" cy="6" r="2.2" fill="#C63D00" /></>);
     case "fail": return box(<><circle cx="6" cy="6" r="4.9" fill="none" stroke="#C63D00" strokeWidth="1.2" /><path d="M4.3 4.3l3.4 3.4M7.7 4.3L4.3 7.7" stroke="#C63D00" strokeWidth="1.2" strokeLinecap="round" /></>);

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { isHttpUrl } from "../lib";
 import { openDialog, toast } from "../ui";
-import { reshootTheme, setDestination } from "./board-api";
+import { markPublished, reshootTheme, setDestination } from "./board-api";
 import { BackMenu, BoardCodexPublish, PickupNudge } from "./BoardCards";
 import { WRITER_LABEL } from "./hand-off";
 import type { HostId } from "./onboarding/connect-api";
@@ -19,13 +19,15 @@ import {
 const ROW_ACTION: Record<TargetAction, string> = { prepare_publish: "去发", i_published: "标已发", resubmit: "重新提交", confirm_receipt: "确认", correct_publish: "纠正" };
 
 /** 卡上只显示例外：待你定、没发成、等新成片；发布中再加还没发的；重拍留下的「已定时，要你去撤」 */
-export function exceptionRows(card: ThemeCard): Array<{ key: string; platform: string | null; text: string; hot: boolean }> {
-  const out: Array<{ key: string; platform: string | null; text: string; hot: boolean }> = [];
+/** amber = 待核（过点没核到公开）：提示，不标红 */
+export function exceptionRows(card: ThemeCard): Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> {
+  const out: Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> = [];
   for (const r of card.destinations) {
     const name = `${destLabel(r.platform)}${r.tag ? ` ${r.tag}` : ""}`;
     const key = `${r.platform}-${r.content_id ?? "none"}-${r.tag ?? ""}`;
     if (r.paused) out.push({ key, platform: r.platform, text: `${name} 等新成片`, hot: false });
     else if ((r.state === "待你定" || r.state === "没发成") && (r.required || r.content_id)) out.push({ key, platform: r.platform, text: `${name} ${r.detail}`, hot: true });
+    else if (r.state === "待核" && r.required) out.push({ key, platform: r.platform, text: `${name} ${r.detail}`, hot: false, amber: true });
     else if (card.column === "发布中" && r.required && (r.state === "在做" || r.state === "没开始")) out.push({ key, platform: r.platform, text: `${name} ${r.state === "在做" ? (r.platform === "youtube" || r.platform === "x" ? "英文版在做" : "在做") : "没开始"}`, hot: false });
   }
   for (const c of card.reshoot?.to_cancel ?? []) out.push({ key: `cancel-${c.platform}`, platform: c.platform, text: `${destLabel(c.platform)} 已定时，要你去撤`, hot: true });
@@ -66,6 +68,24 @@ function rowTarget(r: DestRow): PublishTarget {
   return { platform: r.platform, state: "未发", actions: r.actions ?? [], ...(r.slot_id ? { slot_id: r.slot_id } : {}), ...(r.fact_id ? { fact_id: r.fact_id } : {}) };
 }
 
+/** 待核 →「确认已公开」：和旧看板「已经发出去了」同一条路（markPublished → 你标的已发布），链接选填 */
+async function confirmPublic(owner: { id: string; round?: number | null }, platform: string, reload: () => Promise<void>) {
+  const name = destLabel(platform);
+  const v = await openDialog({ title: `${name}已经公开了？`, body: "定时过点了还没核到。你在平台上看到它已公开，就记成你确认的已发布。点错了可以在旧看板上撤销。",
+    fields: [{ key: "url", label: "作品链接（选填）", placeholder: "https://…" }], confirmLabel: "确认已公开" });
+  if (!v) return;
+  const url = v.url.trim();
+  if (url && !isHttpUrl(url)) return toast("链接要是 http(s) 开头的地址，没记");
+  try {
+    // 带上看到的那一轮：对话框开着期间重拍 / 重开过，服务端拒（「这条已经重开过…刷新再看」）
+    const r = await markPublished(owner.id, platform, url || undefined, owner.round ?? undefined);
+    toast(r.ok ? `已记下：${name}已公开` : r.error);
+  } finally { await reload(); }
+}
+
+/** 哪些待核行能「确认已公开」：视频平台槽（中文四平台、英文版的 YouTube / X）；公众号走它自己的回执 */
+export const canConfirmPublic = (r: Pick<DestRow, "state" | "platform" | "content_id">) => r.state === "待核" && r.platform !== "wechat_mp" && Boolean(r.content_id);
+
 function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; reload: () => Promise<void> }) {
   const { r, card } = p;
   const [busy, setBusy] = useState(false);
@@ -80,9 +100,10 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
     } finally { setBusy(false); await p.reload(); }
   };
   const hot = r.state === "待你定" || r.state === "没发成";
+  const amber = r.state === "待核";
   const canSkip = canSkipRow(card, r);
   const text = r.skipped && r.state !== "已发" ? "不出" : r.history ? `${r.detail} · 计划外` : r.detail;
-  return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : "") + (r.skipped || r.history ? " muted" : "")}>
+  return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : amber ? " amber" : "") + (r.skipped || r.history ? " muted" : "")}>
     <span className="nm"><PGlyph id={r.platform} />{destLabel(r.platform)}{r.tag && <small>{r.tag}</small>}</span>
     <span className="s"><StateGlyph kind={r.paused ? "wip" : stateIcon(r)} /><span title={text}>{text}</span></span>
     <span className="r">
@@ -90,6 +111,7 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
       {r.url && isHttpUrl(r.url) && <a className="pl-link" href={r.url} target="_blank" rel="noreferrer">看作品</a>}
       {acts.map((a) => <button key={a} className={"pl-link" + (hot ? " go" : "")} disabled={busy} onClick={() => void run(a)}>{ROW_ACTION[a]}</button>)}
       {!acts.length && hot && r.content_id && <button className="pl-link go" onClick={() => p.open(r.content_id!)}>去处理 →</button>}
+      {owner && canConfirmPublic(r) && <button className="pl-link go" disabled={busy} onClick={() => void confirmPublic(owner, r.platform, p.reload)}>确认已公开</button>}
       {canSkip && <button className="pl-link" onClick={() => void skipRow(card, r.platform, true, p.reload)}>不出</button>}
     </span>
   </div>;
@@ -123,7 +145,6 @@ export function ThemeCardView(p: { card: ThemeCard; expanded: boolean; busy: boo
   const { card } = p;
   const st = showMeter(card) ? null : statusLine(card);
   const ex = exceptionRows(card);
-  const sent = new Set(card.destinations.filter((d) => d.state === "已发").map((d) => d.platform));
   return <article className={"pl-card" + (p.expanded ? " sel" : "")} aria-busy={p.busy} aria-expanded={p.expanded} draggable={!p.busy && !p.expanded}
     onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", card.title); p.onDragStart(card.item); }} onDragEnd={p.onDragEnd}
     onClick={() => { if (!p.expanded) p.toggle(); }}>
@@ -133,10 +154,10 @@ export function ThemeCardView(p: { card: ThemeCard; expanded: boolean; busy: boo
       {showMeter(card)
         ? <>{card.required > 0 && <span className="pl-meter" aria-label="去向">{meterRows(card).map((r, i) => <i key={i} className={meterTone(r.state) === "done" ? "" : meterTone(r.state)} />)}</span>}
           <span className="pl-frac">{card.required > 0 ? `${card.sent}/${card.required} 已发` : "没定去向"}</span></>
-        : <span className="pl-plan" aria-label="要发的去向">{card.plan.required.map((pf) => <span key={pf} style={sent.has(pf) ? { color: "var(--ink)" } : undefined} title={sent.has(pf) ? `${destLabel(pf)} 已发` : destLabel(pf)}><PGlyph id={pf} /></span>)}</span>}
+        : null}
       <span className="d">{mmdd(card.date)}</span>
     </div>
-    {!p.expanded && ex.map((x) => <div key={x.key} className={"pl-ex" + (x.hot ? " hot" : "")}>{x.platform ? <PGlyph id={x.platform} /> : <StateGlyph kind="fail" />}{x.text}</div>)}
+    {!p.expanded && ex.map((x) => <div key={x.key} className={"pl-ex" + (x.hot ? " hot" : x.amber ? " amber" : "")}>{x.platform ? <PGlyph id={x.platform} /> : <StateGlyph kind="fail" />}{x.text}</div>)}
     {p.expanded && <Expanded card={card} open={p.open} reload={p.reload} onMenu={p.onMenu} />}
   </article>;
 }

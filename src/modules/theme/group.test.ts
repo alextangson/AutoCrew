@@ -21,11 +21,12 @@ function item(id: string, extra: Partial<BoardItem> = {}): BoardItem {
 const plan = (platforms: string[], extra: Partial<DestinationPlan> = {}): DestinationPlan => ({ ...defaultPlan({ platforms }), ...extra });
 const article = (s: Partial<ArticlePublishState>): ArticlePublishState => ({ superseded: [], attempts: [], ...s });
 
-function run(items: BoardItem[], opts: { derived?: Record<string, { contentId: string; kind: "wechat_article" | "en_edition" }>; plans?: Record<string, DestinationPlan>; articles?: Record<string, ArticlePublishState | Error> } = {}) {
+function run(items: BoardItem[], opts: { derived?: Record<string, { contentId: string; kind: "wechat_article" | "en_edition" }>; plans?: Record<string, DestinationPlan>; legacy?: Record<string, DestinationPlan>; articles?: Record<string, ArticlePublishState | Error> } = {}) {
   const input: ThemeInput = {
     items,
     contents: items.map((i) => ({ id: i.id, platform: i.platform ?? undefined, ...(opts.derived?.[i.id] ? { derivedFrom: { ...opts.derived[i.id], sourceCutHash: "h", at: "" } } : {}) })) as ThemeInput["contents"],
-    plans: new Map(Object.entries(opts.plans ?? {}).map(([k, v]) => [k, { plan: v, persisted: true }])),
+    plans: new Map([...Object.entries(opts.plans ?? {}).map(([k, v]) => [k, { plan: v, persisted: true }] as const),
+      ...Object.entries(opts.legacy ?? {}).map(([k, v]) => [k, { plan: v, persisted: false, legacy: true }] as const)]),
     articles: new Map(Object.entries(opts.articles ?? {})),
     now: new Date("2026-10-25T00:00:00.000Z"),
   };
@@ -106,10 +107,16 @@ describe("列：待发布 / 发布中 / 全部发完", () => {
     expect(c.destinations.find((d) => d.platform === "wechat_mp")).toMatchObject({ state: "已发", at: "10-24" });
     expect(c.destinations.find((d) => d.platform === "douyin")?.state).toBe("没开始");
   });
-  it("公众号定时过点没核到 / 结果不明 = 没发成；读坏了照实标红", () => {
+  it("公众号定时过点没核到 = 待核（不标红）；推送失败 / 结果不明 = 没发成；读坏了照实标红", () => {
     const base = { derived: { w: { contentId: "v", kind: "wechat_article" as const } }, plans: { v: plan(["wechat_mp"]) } };
     const over = run([item("v"), item("w", { platform: "wechat_mp" })], { ...base, articles: { w: article({ phase: "scheduled", receipt: { scheduledAt: "2026-10-20T00:00:00.000Z", founderWords: "", published: false, at: "" } }) } });
-    expect(over[0].destinations[0]).toMatchObject({ state: "没发成" });
+    expect(over[0].destinations[0]).toMatchObject({ state: "待核", detail: "定时过了，等核对已发表" });
+    expect(over[0].exceptions).toEqual([]);
+    expect(over[0].column).toBe("发布中");
+    for (const phase of ["failed", "unknown"] as const) {
+      const r = run([item("v"), item("w", { platform: "wechat_mp" })], { ...base, articles: { w: article({ phase }) } });
+      expect(r[0].destinations[0].state).toBe("没发成");
+    }
     const bad = run([item("v"), item("w", { platform: "wechat_mp" })], { ...base, articles: { w: new Error("公众号发布状态读不出来（坏了）") } });
     expect(bad[0].destinations[0]).toMatchObject({ state: "没发成", detail: "公众号发布状态读不出来（坏了）" });
   });
@@ -148,3 +155,59 @@ describe("暂停与历史", () => {
   });
 });
 
+describe("真实资料库回归（2026-10-25 审计）", () => {
+  const legacyBase = (extra: Partial<DestinationPlan> = {}): DestinationPlan => ({ version: 2, basis: [], created_at: "", destinations: {}, reshoots: [], ...extra });
+  it("中文平台定时过点没核到（应已公开）= 待核：算投出（发布中），不算已发、不标红；确认公开的照样已发", () => {
+    const [c] = run([item("v", { column: "已发布", targets: [tgt("douyin", "应已公开"), tgt("wechat_video", "应已公开"), tgt("xiaohongshu", "已公开"), tgt("bilibili", "应已公开")] })], { legacy: { v: legacyBase() } });
+    expect(c.destinations.map((d) => [d.platform, d.state])).toEqual([["douyin", "待核"], ["wechat_video", "待核"], ["xiaohongshu", "已发"], ["bilibili", "待核"]]);
+    expect(c.destinations[0].detail).toBe("应已公开，等核对");
+    expect(c.column).toBe("发布中");
+    expect([c.sent, c.required]).toEqual([1, 4]);
+    expect(c.exceptions).toEqual([]);
+  });
+  it("真失败才是没发成：被驳回、读不到", () => {
+    const [c] = run([item("v", { column: "已发布", targets: [tgt("douyin", "被驳回", "封面违规"), tgt("bilibili", "读不到"), tgt("xiaohongshu", "已公开")] })], { legacy: { v: legacyBase() } });
+    expect(c.destinations.map((d) => d.state)).toEqual(["没发成", "已发", "没发成"]);
+  });
+  it("老主题默认 = 它实际有的：父视频的中文平台 + 真有的派生（公众号文章、英文版自己的平台）；没有的派生去向不算要发", () => {
+    const [bare] = run([item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) })], { legacy: { v: legacyBase() } });
+    expect(bare.plan.required).toEqual(FOUR);
+    expect(bare.column).toBe("全部发完");
+    expect(bare.destinations.some((d) => ["wechat_mp", "youtube", "x"].includes(d.platform))).toBe(false);
+    const [full] = run([item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) }), item("w", { platform: "wechat_mp", column: "写稿中", status: "drafting" }), item("e", { platform: "youtube", column: "已发布", status: "published", targets: [tgt("youtube", "已公开")] })],
+      { derived: { w: { contentId: "v", kind: "wechat_article" }, e: { contentId: "v", kind: "en_edition" } }, legacy: { v: legacyBase() } });
+    expect(full.plan.required).toEqual([...FOUR, "wechat_mp", "youtube"]);
+    expect(full.column).toBe("发布中");
+  });
+  it("老主题的英文版：按当前勾选补进 targets 的 YouTube / X（未发、不在发布计划里）不算要发；改勾选不挪老主题", () => {
+    const parent = item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) });
+    const opts = { derived: { e: { contentId: "v", kind: "en_edition" as const } }, legacy: { v: legacyBase() } };
+    const published = { kind: "ok" as const, platforms: [{ platform: "youtube", state: "public" as const, submitted: true, raw: "published", review: null, time: null, reason: null, url: null, campaigns: [], manual: null }] };
+    // 勾选只有 YouTube：英文版 targets = [youtube 已公开]
+    const [a] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开")] })], opts);
+    // 又勾上 X：board-data 把 X 作为「未发」补进 targets
+    const [b] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开"), tgt("x", "未发")] })], opts);
+    // 取消勾选 YouTube：targets 里只剩计划 / 回执带出的 youtube
+    const [c] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开")] })], opts);
+    for (const t of [a, b, c]) {
+      expect(t.plan.required).toEqual([...FOUR, "youtube"]);
+      expect(t.column).toBe("全部发完");
+    }
+    // 英文版还没有任何发布计划 / 回执：YouTube / X 都不算要发
+    const [d] = run([parent, item("e", { platform: "youtube", column: "写稿中", status: "drafting", targets: [tgt("youtube", "未发"), tgt("x", "未发")] })], opts);
+    expect(d.plan.required).toEqual(FOUR);
+    expect(d.column).toBe("全部发完");
+  });
+  it("老主题：创始人标的不出 / 恢复要发盖在「实际有的」上", () => {
+    const at = "2026-10-24T00:00:00.000Z";
+    const [c] = run([item("v", { column: "已发布", targets: [tgt("douyin", "已公开"), tgt("bilibili", "未发")] })],
+      { legacy: { v: legacyBase({ destinations: { bilibili: { required: false, by: "founder", via: "board", founder_words: "B站不发", at }, x: { required: true, by: "founder", via: "board", founder_words: "这条发 X", at } } }) } });
+    expect(c.plan.required).toEqual(["douyin", "x"]);
+    expect(c.plan.skipped.map((s) => s.platform)).toEqual(["bilibili"]);
+  });
+  it("纯公众号稿没有 article-publish.json、稿件已在已发布：已发（与旧看板一致）", () => {
+    const [c] = run([item("w", { platform: "wechat_mp", column: "已发布", status: "published", targets: [], publishTime: "2026-10-17T02:00:00.000Z" })]);
+    expect(c.destinations[0]).toMatchObject({ platform: "wechat_mp", state: "已发" });
+    expect(c.column).toBe("全部发完");
+  });
+});

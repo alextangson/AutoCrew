@@ -13,14 +13,14 @@ export interface PipelineData extends BoardData { themes: ThemeCard[]; planError
 export async function themesOf(board: BoardData, contents: Content[], dataDir: string, now = new Date()): Promise<{ themes: ThemeCard[]; planErrors: PipelineData["planErrors"] }> {
   const profile = await loadProfile(dataDir);
   const onBoard = new Set(board.items.map((i) => i.id));
-  const plans = new Map<string, { plan: DestinationPlan; persisted: boolean }>();
+  const plans = new Map<string, { plan: DestinationPlan; persisted: boolean; legacy?: boolean }>();
   const planErrors: PipelineData["planErrors"] = [];
   const articles = new Map<string, ArticlePublishState | Error>();
   for (const c of contents) {
     if (!onBoard.has(c.id)) continue;
     if (isThemeRoot(c)) {
       // 计划读坏了：照实报出来，这张卡按「没定去向」显示，不冒充默认
-      try { plans.set(c.id, await readPlan(c.id, dataDir, profile)); }
+      try { plans.set(c.id, await readPlan(c, dataDir, profile)); }
       catch (e) { planErrors.push({ id: c.id, error: e instanceof Error ? e.message : String(e) }); }
     }
     if (c.platform === "wechat_mp") {
