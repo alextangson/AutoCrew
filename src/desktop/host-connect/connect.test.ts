@@ -158,6 +158,9 @@ describe("接上 Codex", () => {
     const add = sb.argv("codex").find((a) => a[1] === "add")!;
     expect(add.slice(0, 3)).toEqual(["mcp", "add", "autocrew"]);
     expect(add[add.indexOf("--env") + 1]).toBe("AUTOCREW_HOST=codex");
+    expect(r.skills?.linked).toEqual(["personal-ip-video-loop", "publish-content", "cover-generator"]);
+    expect(fs.readlinkSync(path.join(sb.home, ".codex", "skills", "publish-content"))).toBe(path.join(sb.env.skillsRoot, "publish-content"));
+    expect(r.message).toContain("已把 Codex 技能链到本安装");
   });
   it("没登录 → 不写配置，说怎么登录", async () => {
     const env = { ...sb.env, run: sb.env.runWith({ ...sb.env.childEnv, FAKE_CODEX_LOGGED: "0" }) };
@@ -194,7 +197,13 @@ describe("断开（O9）", () => {
   });
   it("Codex 断开走 codex mcp remove", async () => {
     await connectHost("codex", sb.env);
-    expect(await disconnectHost("codex", sb.env)).toMatchObject({ ok: true });
+    const mine = path.join(sb.home, ".codex", "skills", "cover-generator");
+    fs.unlinkSync(mine);
+    fs.mkdirSync(mine); // 用户自己的真目录：断开不能动
+    const r = await disconnectHost("codex", sb.env);
+    expect(r).toMatchObject({ ok: true });
+    expect(r.message).toContain("已删掉 Codex 技能链接：personal-ip-video-loop、publish-content");
+    expect(fs.readdirSync(path.join(sb.home, ".codex", "skills"))).toEqual(["cover-generator"]);
     expect(sb.argv("codex").at(-1)).toEqual(["mcp", "remove", "autocrew"]);
     expect(fs.readFileSync(path.join(sb.home, ".codex", "config.toml"), "utf-8")).not.toContain("autocrew");
   });
