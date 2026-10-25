@@ -17,7 +17,8 @@
  * 用 autocrew_topic radar_pool / radar_score 在自己的额度上打分入库。配了引擎照旧两段打分,
  * 两条路共用 buildRadarPool + applyRadarResults 同一个池口径与入库段。
  */
-import { refreshTopicRadarIfStale } from "../modules/radar/topic-radar.js";
+import { refreshTopicRadar, refreshTopicRadarIfStale } from "../modules/radar/topic-radar.js";
+import { DAILY_TARGET, readSupplyState, refillDue, todayRadarCount, writeSupplyState, type SupplyState } from "../modules/radar/daily-supply.js";
 import { intakeRadarTopics } from "../modules/radar/radar-intake.js";
 import { freezeCurrentRadarPool } from "../modules/radar/radar-host.js";
 import { loadEngineConfigIfConfigured } from "../engine/config.js";
@@ -35,6 +36,12 @@ export interface RadarCycleDeps {
   /** 无引擎时建池冻结,返回 pool_id(无候选为 null) */
   freezePool: () => Promise<string | null>;
   expire: typeof expireStaleTopics;
+  /** 补抓用：不看 6h 缓存直接重抓 */
+  forceRefresh: () => Promise<{ ok: boolean; itemCount: number; failedSources: string[] }>;
+  readSupply: (now: number) => Promise<SupplyState>;
+  writeSupply: (state: SupplyState) => Promise<void>;
+  countToday: (now: number) => Promise<number>;
+  now: () => number;
   emit: typeof emitEngineEvent;
   log: (msg: string) => void;
   warn: (msg: string) => void;
@@ -48,6 +55,8 @@ export interface RadarCycleResult {
   poolId: string | null;
   expiredCount: number;
   failedSources: string[];
+  /** 本轮补抓入库数（没补抓 = 0） */
+  refillCount: number;
 }
 
 /**
@@ -69,14 +78,29 @@ const defaults: RadarCycleDeps = {
   engineReady: engineConfigured,
   freezePool: async () => (await freezeCurrentRadarPool()).pool?.pool_id ?? null,
   expire: expireStaleTopics,
+  forceRefresh: () => refreshTopicRadar(),
+  readSupply: (now) => readSupplyState(undefined, now),
+  writeSupply: (state) => writeSupplyState(state),
+  countToday: (now) => todayRadarCount(undefined, now),
+  now: () => Date.now(),
   emit: emitEngineEvent,
   log: (msg) => console.log(msg),
   warn: (msg) => console.warn(msg),
 };
 
 /** 有引擎:两段打分入库(有产出才发事件);没引擎:只建池冻结,等宿主会话打分。 */
+async function markEngine(d: RadarCycleDeps, unavailable: boolean): Promise<void> {
+  const state = await d.readSupply(d.now());
+  if (state.engineUnavailable !== unavailable) await d.writeSupply({ ...state, engineUnavailable: unavailable });
+}
+
 async function scoreOrPool(d: RadarCycleDeps): Promise<{ intakeCount: number; poolId: string | null }> {
-  if (!(await d.engineReady())) return { intakeCount: 0, poolId: await d.freezePool() };
+  if (!(await d.engineReady())) {
+    // 没配引擎：只建池等宿主打分；记下来，选题列头照实说「今天只找到 N 条」而不是悄悄空着
+    await markEngine(d, true);
+    return { intakeCount: 0, poolId: await d.freezePool() };
+  }
+  await markEngine(d, false);
   const intake = await d.intake();
   if (intake.saved.length > 0) {
     await d.emit({
@@ -89,6 +113,38 @@ async function scoreOrPool(d: RadarCycleDeps): Promise<{ intakeCount: number; po
 }
 
 /**
+ * 每日补抓（daily-supply.ts）：当天雷达选题不够 10 条时，跳过 6h 缓存重抓并按差额入库。
+ * 每天 ≤3 次、间隔 ≥3h；次数先落盘再动手。没配引擎不补（补了也打不了分），交给列头提示。
+ */
+async function topUp(d: RadarCycleDeps, justRefreshed: boolean): Promise<number> {
+  const now = d.now();
+  const [state, today] = await Promise.all([d.readSupply(now), d.countToday(now)]);
+  if (!refillDue(state, today, now) || state.engineUnavailable) return 0;
+  const attempt: SupplyState = { ...state, refills: state.refills + 1, lastRefillAt: new Date(now).toISOString(), lastError: null };
+  await d.writeSupply(attempt);
+  let lastError: string | null = null;
+  let saved = 0;
+  try {
+    // 本轮刚抓过就不重抓：同一份缓存再入一次，拿上一段因名额满没进的过线候选
+    const refreshed = justRefreshed ? { ok: true, itemCount: 0, failedSources: [] } : await d.forceRefresh();
+    if (!refreshed.ok) lastError = refreshed.failedSources.length ? `源抓取失败：${refreshed.failedSources.join("、")}` : "没有可用的雷达源";
+    else {
+      const intake = await d.intake(undefined, { limit: DAILY_TARGET - today });
+      saved = intake.saved.length;
+      if (intake.filter === "keyword") lastError = "打分模型不可用，只按关键词收了中文候选";
+      if (saved > 0) await d.emit({ role: "scout", kind: "work", label: `雷达补抓 ${saved} 条（今天第 ${attempt.refills} 轮补抓）` });
+    }
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+  }
+  if (lastError) {
+    d.warn(`[topic-radar] 补抓第 ${attempt.refills} 轮：${lastError}`);
+    await d.writeSupply({ ...attempt, lastError });
+  }
+  return saved;
+}
+
+/**
  * 造一轮雷达周期函数（闭包持 in-flight 状态）。
  * 返回的函数可被启动路径与 setInterval 共用——同一套行为,不给"启动特例"留后门。
  */
@@ -97,7 +153,7 @@ export function createRadarCycle(overrides?: Partial<RadarCycleDeps>): () => Pro
   let inFlight = false;
 
   return async function runRadarCycle(): Promise<RadarCycleResult> {
-    if (inFlight) return { skipped: "in_flight", intakeCount: 0, poolId: null, expiredCount: 0, failedSources: [] };
+    if (inFlight) return { skipped: "in_flight", intakeCount: 0, poolId: null, expiredCount: 0, failedSources: [], refillCount: 0 };
     inFlight = true;
     try {
       const refreshed = await d.refresh();
@@ -105,17 +161,20 @@ export function createRadarCycle(overrides?: Partial<RadarCycleDeps>): () => Pro
         d.warn(`[topic-radar] 部分源失败: ${refreshed.failedSources.join(", ")}`);
       }
       if (refreshed.skippedFresh) {
-        return { skipped: "fresh", intakeCount: 0, poolId: null, expiredCount: 0, failedSources: refreshed.failedSources };
+        // 缓存新鲜不重评，但当天不够数照样补抓（补抓自己会绕开缓存）
+        const refillCount = await topUp(d, false);
+        return { skipped: "fresh", intakeCount: 0, poolId: null, expiredCount: 0, failedSources: refreshed.failedSources, refillCount };
       }
 
       const scored = await scoreOrPool(d);
+      const refillCount = await topUp(d, true);
 
-      // 入库与清理同节奏:新灵感进来的同一轮把 3 天没选用的送回收站,灵感库才不会越滚越厚
+      // 入库与清理同节奏:新灵感进来的同一轮把 7 天没打星也没选用的送回收站,灵感库才不会越滚越厚
       const swept = await d.expire();
       if (swept.total > 0) {
-        d.log(`  [expiry] ${swept.total} 条超过 3 天未选用的灵感已移入回收站(可恢复)`);
+        d.log(`  [expiry] ${swept.total} 条超过 7 天未选用的灵感已移入回收站(可恢复)`);
       }
-      return { skipped: null, ...scored, expiredCount: swept.total, failedSources: refreshed.failedSources };
+      return { skipped: null, ...scored, expiredCount: swept.total, failedSources: refreshed.failedSources, refillCount };
     } finally {
       inFlight = false;
     }

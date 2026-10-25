@@ -7,11 +7,20 @@ import { listTopics } from "../storage/local-store.js";
 import { saveProfile } from "../modules/profile/creator-profile.js";
 import type { CreatorProfile } from "../modules/profile/creator-profile.js";
 
+import type { SupplyState } from "../modules/radar/daily-supply.js";
+
 type Deps = Parameters<typeof createRadarCycle>[0];
 
 /** 一套默认全绿的注入,单个用例只覆盖它关心的那一项 */
 function deps(over: Partial<NonNullable<Deps>> = {}): NonNullable<Deps> {
+  // 每日供给默认「今天已够 10 条」= 不补抓；供给状态只在内存里，绝不碰真资料库
+  let supply: SupplyState = { date: "2026-10-25", refills: 0, lastRefillAt: null, engineUnavailable: false, lastError: null };
   return {
+    forceRefresh: vi.fn(async () => ({ ok: true, itemCount: 40, failedSources: [] })),
+    readSupply: vi.fn(async () => supply),
+    writeSupply: vi.fn(async (s: SupplyState) => { supply = s; }),
+    countToday: vi.fn(async () => 10),
+    now: () => new Date("2026-10-25T10:00:00").getTime(),
     refresh: vi.fn(async () => ({ ok: true, itemCount: 40, failedSources: [], skippedFresh: false })),
     intake: vi.fn(async () => ({ saved: [], skippedDuplicates: 0, qualified: 0, filter: "llm" as const })),
     engineReady: vi.fn(async () => true),
@@ -114,6 +123,58 @@ describe("createRadarCycle", () => {
   it("周期远密于 6h TTL,又不至于每分钟骚扰一次", () => {
     expect(RADAR_CYCLE_INTERVAL_MS).toBeGreaterThanOrEqual(10 * 60_000);
     expect(RADAR_CYCLE_INTERVAL_MS).toBeLessThan(6 * 3600_000);
+  });
+});
+
+describe("每日补抓（目标 10 条/天）", () => {
+  const saved = (n: number) => ({ saved: Array.from({ length: n }, (_, i) => ({ title: `t${i}` })), skippedDuplicates: 0, qualified: n, filter: "llm" as const });
+
+  it("不够 10 条 → 补一轮，按差额入库；本轮刚抓过就不重抓源", async () => {
+    const d = deps({ countToday: vi.fn(async () => 4), intake: vi.fn(async () => saved(2)) });
+    const result = await createRadarCycle(d)();
+    expect(d.intake).toHaveBeenCalledTimes(2);
+    expect((d.intake as ReturnType<typeof vi.fn>).mock.calls[1][1]).toEqual({ limit: 6 });
+    expect(d.forceRefresh).not.toHaveBeenCalled();
+    expect(result.refillCount).toBe(2);
+    expect((await d.readSupply(0)).refills).toBe(1);
+  });
+
+  it("缓存新鲜也补抓：绕开缓存重抓源", async () => {
+    const d = deps({ refresh: vi.fn(async () => ({ ok: true, itemCount: 40, failedSources: [], skippedFresh: true })), countToday: vi.fn(async () => 0) });
+    await createRadarCycle(d)();
+    expect(d.forceRefresh).toHaveBeenCalledTimes(1);
+    expect(d.intake).toHaveBeenCalledTimes(1);
+  });
+
+  it("每天最多 3 轮、间隔 ≥3 小时", async () => {
+    let now = new Date("2026-10-25T08:00:00").getTime();
+    const d = deps({ countToday: vi.fn(async () => 0), refresh: vi.fn(async () => ({ ok: true, itemCount: 1, failedSources: [], skippedFresh: true })), now: () => now });
+    const cycle = createRadarCycle(d);
+    await cycle();
+    now += 3600_000; await cycle(); // 只隔 1 小时：不补
+    expect(d.forceRefresh).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 4; i++) { now += 3 * 3600_000; await cycle(); }
+    expect(d.forceRefresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("源全挂 → 记下原因（列头能说），不吞", async () => {
+    const d = deps({ refresh: vi.fn(async () => ({ ok: true, itemCount: 1, failedSources: [], skippedFresh: true })), countToday: vi.fn(async () => 0),
+      forceRefresh: vi.fn(async () => ({ ok: false, itemCount: 0, failedSources: ["HN", "36氪"] })) });
+    await createRadarCycle(d)();
+    expect((await d.readSupply(0)).lastError).toContain("HN");
+    expect(d.warn).toHaveBeenCalled();
+  });
+
+  it("没配引擎 → 标记 engineUnavailable，不补抓；配上后清掉", async () => {
+    let ready = false;
+    const d = deps({ engineReady: vi.fn(async () => ready), countToday: vi.fn(async () => 0) });
+    await createRadarCycle(d)();
+    expect((await d.readSupply(0)).engineUnavailable).toBe(true);
+    expect(d.forceRefresh).not.toHaveBeenCalled();
+    expect(d.intake).not.toHaveBeenCalled();
+    ready = true;
+    await createRadarCycle(d)();
+    expect((await d.readSupply(0)).engineUnavailable).toBe(false);
   });
 });
 
