@@ -17,8 +17,8 @@ import { dropAction, type BoardColumn, type BoardItem } from "./board-columns";
 import { StagePie } from "./pipeline-glyphs";
 import { ThemeCardView, TopicCardView } from "./PipelineCard";
 import {
-  COLUMN_PROGRESS, DEST_LABEL, DROP_TARGET, PIPELINE_COLUMNS, PIPELINE_VISIBLE, collapsedColumns, columnCards,
-  type PipelineColumn, type PipelineData, type ThemeCard, type ThemeColumn,
+  COLUMN_PROGRESS, DEST_LABEL, DROP_TARGET, PIPELINE_COLUMNS, PIPELINE_VISIBLE, collapsedColumns, columnCards, sortPipelineTopics,
+  type PipelineColumn, type PipelineData, type ThemeCard, type ThemeColumn, type TopicSupply,
 } from "./pipeline-model";
 import "./pipeline.css";
 
@@ -64,6 +64,7 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
   const [mine, setMine] = useState(false);
   const [more, setMore] = useState<Set<PipelineColumn>>(new Set());
   const [starting, setStarting] = useState<string | null>(null);
+  const [rating, setRating] = useState<string | null>(null);
   const [moving, setMoving] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<PipelineColumn | null>(null);
   const drag = useRef<{ from: BoardColumn; id: string; item: BoardItem | null } | null>(null);
@@ -73,6 +74,7 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
 
   const themes = useMemo(() => (data?.themes ?? []).filter((t) => (!dest || t.destinations.some((d) => d.platform === dest) || t.plan.required.includes(dest)) && (!mine || waitsOnMe(t))), [data, dest, mine]);
   const collapsed = useMemo(() => collapsedColumns(themes), [themes]);
+  const topics = useMemo(() => sortPipelineTopics(data?.topics ?? []), [data]);
 
   const start = async (topicId: string, host?: HostId) => {
     if (starting) return;
@@ -83,6 +85,17 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
     const r = await invoke("topic:delete", { id });
     toast(r.ok ? "已移入回收站（可恢复）" : r.error ?? "删除失败");
     await reload();
+  };
+  // 一次只打一张卡的星（防连点）；1–2 星服务端直接挪进回收站，回收站里能捞回（捞回 = 星级清掉）
+  const rateTopic = async (id: string, stars: number) => {
+    if (rating) return;
+    setRating(id);
+    try {
+      const r = await invoke("topic:rate", { id, stars });
+      const msg = (r as Record<string, unknown>).message;
+      toast(r.ok ? (typeof msg === "string" ? msg : "已记下") : r.error ?? "没记上");
+      await reload();
+    } finally { setRating(null); }
   };
   const verdict = (col: PipelineColumn) => (drag.current ? dropAction(drag.current.from, drag.current.item, DROP_TARGET[col], Boolean(drag.current.item?.active)) : null);
   const beginDrag = (from: BoardColumn, id: string, item: BoardItem | null) => { drag.current = { from, id, item }; pause(true); };
@@ -140,11 +153,11 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
           </section>;
         }
         return <section key={col} aria-label={col} className={"pl-col" + (v && v.kind !== "none" ? (refused ? " drop-no" : " drop-ok") : "")} {...dnd}>
-          <ColumnHead col={col} n={col === "选题" ? data?.topics.length ?? 0 : themes.filter((t) => t.column === col).length} onTrash={() => setTrash(true)} reload={reload} />
+          <ColumnHead col={col} n={col === "选题" ? data?.topics.length ?? 0 : themes.filter((t) => t.column === col).length} supply={data?.topicSupply} onTrash={() => setTrash(true)} reload={reload} />
           {refused && <p className="pl-refuse" role="status">{refused}</p>}
           {!data ? <p className="pl-empty">读取中</p> : col === "选题"
-            ? <Shown items={data.topics} expanded={more.has(col)} onMore={() => setMore((s) => new Set(s).add(col))} render={(t) =>
-              <TopicCardView key={t.id} topic={t} busy={starting === t.id} others={others} onStart={(h) => void start(t.id, h)} onOpen={() => props.openTopic(`t-${t.id}`)}
+            ? <Shown items={topics} expanded={more.has(col)} onMore={() => setMore((s) => new Set(s).add(col))} render={(t) =>
+              <TopicCardView key={t.id} topic={t} busy={starting === t.id} rating={rating !== null} others={others} onStart={(h) => void start(t.id, h)} onRate={(n) => void rateTopic(t.id, n)} onOpen={() => props.openTopic(`t-${t.id}`)}
                 onTrash={() => void trashTopic(t.id)} onDragStart={() => beginDrag("选题", t.id, null)} onDragEnd={endDrag} />} />
             : <Shown items={columnCards(themes, col as ThemeColumn)} expanded={more.has(col)} onMore={() => setMore((s) => new Set(s).add(col))} render={(t) =>
               <ThemeCardView key={t.id} card={t} expanded={open === t.id} busy={moving.has(t.item.id)} toggle={() => setOpen((o) => (o === t.id ? null : t.id))}
@@ -155,7 +168,7 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
   </div>;
 }
 
-function ColumnHead(p: { col: PipelineColumn; n: number; onTrash: () => void; reload: () => Promise<void> }) {
+function ColumnHead(p: { col: PipelineColumn; n: number; supply?: TopicSupply; onTrash: () => void; reload: () => Promise<void> }) {
   const [radar, setRadar] = useState(false);
   // 旧看板「再找 5 条」搬到这里（第 3 期旧看板退役）：找不到 / 失败都照实说
   const collectMore = async () => {
@@ -167,11 +180,20 @@ function ColumnHead(p: { col: PipelineColumn; n: number; onTrash: () => void; re
       await p.reload();
     } finally { setRadar(false); }
   };
-  return <div className="pl-col-h"><StagePie f={COLUMN_PROGRESS[p.col]} />{p.col} <span className="n">{p.n}</span>
-    {p.col === "选题" && <><button className="tool" style={{ marginLeft: "auto" }} disabled={radar} onClick={() => void collectMore()}>{radar ? "找选题中…" : "再找 5 条"}</button>
-      <button className="tool" style={{ marginLeft: 8 }} onClick={p.onTrash}>回收站</button>
+  // 列头一行放不下第四样东西：供给不足单独一行，紧贴列头（mock 的「今天 6/10」，文案按 spec「今天只找到 N 条」）
+  return <><div className="pl-col-h"><StagePie f={COLUMN_PROGRESS[p.col]} />{p.col} <span className="n">{p.n}</span>
+    {p.col === "选题" && <>{radar && <span className="tool" style={{ marginLeft: "auto" }} role="status">找选题中…</span>}
+      {/* 1440 宽下列头放不下三个文字按钮：「再找 5 条 / 回收站」收进 ⋯ 菜单，＋ 留在外面 */}
+      <details className="bcard-menu pl-head-menu" style={{ marginLeft: radar ? 8 : "auto" }}>
+        <summary aria-label="选题列更多操作" title="再找 5 条 / 回收站">⋯</summary>
+        <div className="bcard-menu-list">
+          <button disabled={radar} onClick={(e) => { e.currentTarget.closest("details")?.removeAttribute("open"); void collectMore(); }}>再找 5 条</button>
+          <button onClick={(e) => { e.currentTarget.closest("details")?.removeAttribute("open"); p.onTrash(); }}>回收站</button>
+        </div>
+      </details>
       <button className="plus" style={{ marginLeft: 8 }} title="新想法" onClick={() => void newIdea().then(p.reload)}>＋</button></>}
-  </div>;
+  </div>
+    {p.col === "选题" && p.supply?.short && <div className="pl-short" role="status" title={p.supply.reason ?? undefined}><i />今天只找到 {p.supply.today} 条{p.supply.reason ? ` · ${p.supply.reason}` : ""}</div>}</>;
 }
 
 function Shown<T>(p: { items: T[]; expanded: boolean; onMore: () => void; render: (t: T) => React.ReactNode }) {

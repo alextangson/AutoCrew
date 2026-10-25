@@ -2,7 +2,7 @@
  * 内容管线页面模型（管线重规划 §2、§8，纯函数）：一个主题一张卡。服务端 /api/pipeline 已把分组、列、去向状态算好，
  * 这里只管：列的进度图、去向条每一格的颜色、卡上只显示例外、空列收成竖条、拖动落到旧看板的哪一列。
  */
-import type { BoardColumn, BoardData, BoardItem } from "./board-columns";
+import type { BoardColumn, BoardData, BoardItem, BoardTopic } from "./board-columns";
 import type { TargetAction } from "./publish-targets";
 import { handoffLine } from "./handoff-line";
 
@@ -48,7 +48,26 @@ export interface ThemeCard {
   reshoot: ReshootRecord | null;
   date: string | null;
 }
-export interface PipelineData extends BoardData { themes: ThemeCard[]; planErrors: Array<{ id: string; error: string }> }
+export interface TopicSupply { today: number; target: number; refills: number; short: boolean; reason: string | null }
+export interface PipelineData extends BoardData { themes: ThemeCard[]; planErrors: Array<{ id: string; error: string }>; topicSupply?: TopicSupply }
+
+/** 4–5 星 = 钉住 */
+export const isPinned = (t: Pick<BoardTopic, "stars">) => typeof t.stars === "number" && t.stars >= 4;
+
+/** 选题列排序：钉住的（星多的在前）→ 本周片单 → 雷达分 → 最近动过的 */
+export function sortPipelineTopics(topics: BoardTopic[]): BoardTopic[] {
+  const time = (s: string | null | undefined) => (s ? new Date(s).getTime() || 0 : 0);
+  return [...topics].sort((a, b) =>
+    Number(isPinned(b)) - Number(isPinned(a)) || (isPinned(a) && isPinned(b) ? (b.stars ?? 0) - (a.stars ?? 0) : 0)
+    || Number(!!b.inSlate) - Number(!!a.inSlate) || (b.score ?? -1) - (a.score ?? -1) || time(b.renewedAt ?? b.createdAt) - time(a.renewedAt ?? a.createdAt));
+}
+
+/** 卡右下角：钉住 / N 天后进回收站 / 不老化（3 星、捞回过）；本周片单不写 */
+export function topicAgeLine(t: Pick<BoardTopic, "stars" | "agingDaysLeft" | "inSlate">): { kind: "pin" | "clock"; text: string } | null {
+  if (isPinned(t)) return { kind: "pin", text: "已钉住" };
+  if (typeof t.agingDaysLeft === "number") return { kind: "clock", text: t.agingDaysLeft <= 0 ? "今天进回收站" : `${t.agingDaysLeft} 天后进回收站` };
+  return null;
+}
 
 /** 列头的进度图：0 = 虚线圈，1 = 实心勾（mock 的 ST0–ST6） */
 export const COLUMN_PROGRESS: Record<PipelineColumn, number> = { 选题: 0, 写稿: 0.2, 录制: 0.4, 剪辑: 0.6, 待发布: 0.75, 发布中: 0.9, 全部发完: 1 };

@@ -1,3 +1,4 @@
+import { rateTopic } from "../modules/radar/topic-stars.js";
 import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelStorageSettings } from "./settings-storage.js";
 import { deleteExampleTopic } from "../tools/topic-create.js";
 /**
@@ -1390,6 +1391,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "topic:delete": topicDeleteHandler,
     "topic:delete_example": (p) => deleteExampleTopic(String(p.id ?? ""), (p._dataDir as string) || undefined),
     "topic:restore": topicRestoreHandler,
+    // 卡上点星 = 创始人本人的动作（via board）；对话里转述走 MCP autocrew_topic rate（必带原话）
+    "topic:rate": (p) => rateTopic(String(p.id ?? ""), p.stars, { via: "board" }, (p._dataDir as string) || undefined),
     "topic:select_angle": topicSelectAngleHandler,
     ...DRAFT_IPC_HANDLERS,
     "topic:clear_angle": topicClearAngleHandler,

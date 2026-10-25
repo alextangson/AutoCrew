@@ -7,8 +7,9 @@ import { loadProfile } from "../profile/creator-profile.js";
 import { readPublishState, type ArticlePublishState } from "../wechat-article/publish-state.js";
 import { groupThemes, type ThemeCard } from "./group.js";
 import { isThemeRoot, readPlan, type DestinationPlan } from "./plan.js";
+import { loadSupplyView, type SupplyView } from "../radar/daily-supply.js";
 
-export interface PipelineData extends BoardData { themes: ThemeCard[]; planErrors: Array<{ id: string; error: string }> }
+export interface PipelineData extends BoardData { themes: ThemeCard[]; planErrors: Array<{ id: string; error: string }>; topicSupply: SupplyView }
 
 export async function themesOf(board: BoardData, contents: Content[], dataDir: string, now = new Date()): Promise<{ themes: ThemeCard[]; planErrors: PipelineData["planErrors"] }> {
   const profile = await loadProfile(dataDir);
@@ -36,8 +37,8 @@ export async function themesOf(board: BoardData, contents: Content[], dataDir: s
 }
 
 export async function pipelineData(dataDir: string): Promise<PipelineData> {
-  const [board, contents] = await Promise.all([boardData(dataDir), listContents(dataDir)]);
-  return { ...board, ...(await themesOf(board, contents, dataDir)) };
+  const [board, contents, topicSupply] = await Promise.all([boardData(dataDir), listContents(dataDir), loadSupplyView(dataDir)]);
+  return { ...board, ...(await themesOf(board, contents, dataDir)), topicSupply };
 }
 
 /** 一条稿属于哪个主题（「要你做的」按主题分组显示用）：父 = derivedFrom 指向的稿（父不在或本身是派生 = 自己） */

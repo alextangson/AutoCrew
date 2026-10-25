@@ -123,6 +123,10 @@ export interface BoardTopic {
   renewedAt: string | null;
   /** 本周片单（选题会选中）：置顶 + 标签；选中≠开工 */
   inSlate?: boolean;
+  /** 创始人打的星（1–5）；没打 = null */
+  stars?: number | null;
+  /** 还剩几天进回收站；不老化 = null */
+  agingDaysLeft?: number | null;
 }
 
 

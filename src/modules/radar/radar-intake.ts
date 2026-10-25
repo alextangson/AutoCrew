@@ -22,6 +22,7 @@ import { saveTopic, listTopics, updateTopic } from "../../storage/local-store.js
 import type { Topic } from "../../storage/local-store.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
+import { loadStarAdjustments } from "./topic-stars.js";
 
 export const INTAKE_LIMIT = 3;
 const CANDIDATE_POOL = 20;
@@ -263,13 +264,16 @@ export async function applyRadarResults(
 ): Promise<RadarApplyOutcome> {
   const byId = new Map(candidates.map((c) => [c.candidate_id, c]));
   const scored = results.filter((r) => byId.has(r.candidate_id));
-  const qualified = scored
-    .filter((r) => r.score >= RADAR_PASS_SCORE)
-    .sort((a, b) => b.score - a.score)
+  // 创始人星级当独立信号（topic-stars.ts）：按来源加减分，只影响过线与排序，落库的仍是机器分
+  const adjust = await loadStarAdjustments(dataDir);
+  const effective = (r: RadarScoredResult) => r.score + (adjust.get(`radar:${byId.get(r.candidate_id)!.item.source}`) ?? 0);
+  const passing = scored.filter((r) => effective(r) >= RADAR_PASS_SCORE);
+  const qualified = passing
+    .sort((a, b) => effective(b) - effective(a))
     .map((r) => toQualified(byId.get(r.candidate_id)!, r));
   const limit = Math.max(1, Math.min(options?.limit ?? INTAKE_LIMIT, 10));
   const saved = await saveQualified(qualified, dataDir, limit);
-  const rejected = scored.filter((r) => r.score < RADAR_PASS_SCORE).map((r) => r.candidate_id);
+  const rejected = scored.filter((r) => effective(r) < RADAR_PASS_SCORE).map((r) => r.candidate_id);
   await rememberRejects(rejected.map((id) => byId.get(id)!), dataDir);
   return { ...saved, rejected, qualified: qualified.length };
 }
@@ -330,10 +334,12 @@ export async function intakeRadarTopics(
 
   const limit = Math.max(1, Math.min(options?.limit ?? INTAKE_LIMIT, 10));
   const judge = options?.judge ?? judgeRelevance;
+  // 星级反馈也要进引擎的精修门槛：否则 judge 先按机器分砍掉 <70，被偏爱来源的 66 根本到不了入库段
+  const adjust = await loadStarAdjustments(dataDir);
   const verdicts = await judge(
     pool.industry,
     pool.audience,
-    pool.candidates.map((c) => ({ title: c.item.title, source: c.item.source, description: c.item.description })),
+    pool.candidates.map((c) => ({ title: c.item.title, source: c.item.source, description: c.item.description, adjust: adjust.get(`radar:${c.item.source}`) ?? 0 })),
     dataDir,
   );
   if (!verdicts) return keywordIntake(pool, dataDir, limit);

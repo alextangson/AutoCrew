@@ -226,3 +226,14 @@ describe("autocrew_topic radar_score", () => {
     expect((await radarPool()).pool_id).not.toBe(poolId);
   });
 });
+
+describe("autocrew_topic rate", () => {
+  it("必带原话；带了就记 via=mcp；字符串星级照收", async () => {
+    const created = await executeTopicCreate({ action: "create", title: "选题", description: "d", tags: [], _dataDir: dir });
+    const id = (created as { topic: { id: string } }).topic.id;
+    expect(await executeTopicCreate({ action: "rate", id, stars: 5, _dataDir: dir })).toMatchObject({ ok: false, code: "founder_words_required" });
+    const r = await executeTopicCreate({ action: "rate", id, stars: "4", founder_words: "这个钉住", _dataDir: dir });
+    expect(r).toMatchObject({ ok: true, trashed: false });
+    expect((await listTopics(dir))[0]).toMatchObject({ stars: 4, starredVia: "mcp", starWords: "这个钉住" });
+  });
+});
