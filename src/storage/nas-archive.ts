@@ -199,31 +199,66 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
   return { title: c.title, target, freedBytes };
 }
 
-async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
-  const out: Content[] = [];
-  // 本体稿按本轮发布时间判到点、定 NAS 月份；保留名单与视图同一份；逐条读失败只跳过那一条
-  const set = await publishedSet(await listContents(ctx.data), ctx.data);
-  for (const { content, error } of set.errors) report.errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
-  const { due, unknown } = archiveCandidates(set, ctx.now);
-  for (const c of unknown) report.errors.push(`${c.title}（${c.id}）：待确认发布时间（本轮没有可信的公开 / 定时时间），这次不归档`);
-  if (!due.length) return out;
+export interface ArchiveDecision {
+  content: Content;
+  /** archive = 这轮搬去 NAS；purge_cache = 早先已归档、只补清缓存；stay = 留在本机（why 说为什么） */
+  action: "archive" | "purge_cache" | "stay";
+  why?: string;
+  projectRoot?: string;
+}
+
+/**
+ * 归档判断（只读，不碰 NAS、不写资料库）：哪些搬、哪些留、为什么。归档本身和真数据演练共用这一份。
+ * 返回 null = 整轮判断不了（读不出派生稿进度），一条都不归档。
+ */
+export async function planArchive(data: string, now: Date, children: Ctx["children"] = loadUnfinishedChildren): Promise<{ decisions: ArchiveDecision[]; errors: string[] }> {
+  const decisions: ArchiveDecision[] = [], errors: string[] = [];
+  // 本体稿按本轮发布时间判到点、定 NAS 月份；逐条读失败只跳过那一条
+  const set = await publishedSet(await listContents(data), data);
+  for (const { content, error } of set.errors) errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
+  const { due, unknown } = archiveCandidates(set, now);
+  for (const c of unknown) {
+    errors.push(`${c.title}（${c.id}）：待确认发布时间（本轮没有可信的公开 / 定时时间），这次不归档`);
+    decisions.push({ content: c, action: "stay", why: "待确认发布时间" });
+  }
+  const dueIds = new Set(due.map((c) => c.id));
+  for (const c of set.published) if (c.publishedAt && !dueIds.has(c.id)) decisions.push({ content: c, action: "stay", why: "发布不满 24 小时" });
+  if (!due.length) return { decisions, errors };
   // 主题分组读不出来就整轮不归档（判断不了派生稿做没做完，宁可不删）
   let open: Map<string, string[]>;
-  try { open = await ctx.children(ctx.data, ctx.now); }
-  catch (e) { report.errors.push(`读不出派生稿进度，这次不归档：${errMsg(e)}`); return out; }
+  try { open = await children(data, now); }
+  catch (e) {
+    errors.push(`读不出派生稿进度，这次不归档：${errMsg(e)}`);
+    for (const c of due) decisions.push({ content: c, action: "stay", why: "读不出派生稿进度" });
+    return { decisions, errors };
+  }
   for (const c of due) {
     try {
       const kids = open.get(c.id);
-      if (kids) { report.errors.push(`${c.title}（${c.id}）：这次不归档，派生稿还没发完：${kids.join("、")}`); continue; }
-      const binding = resolveContentProject(c.id, ctx.data);
-      const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;
-      if (busy) { report.errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); continue; }
-      if (!binding) continue;
-      if (!(await isArchived(binding.project_root))) { out.push(c); continue; }
-      // 早先归档时还没清缓存的：这里补清，NAS 不在也能做（不碰 NAS）
-      const freedBytes = await purgeProjectCache(binding.project_root);
-      if (freedBytes > 0) (report.cacheFreed ??= []).push({ title: c.title, target: binding.project_root, freedBytes });
-    } catch (e) { report.errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); }
+      if (kids) { errors.push(`${c.title}（${c.id}）：这次不归档，派生稿还没发完：${kids.join("、")}`); decisions.push({ content: c, action: "stay", why: `派生稿还没发完：${kids.join("、")}` }); continue; }
+      const binding = resolveContentProject(c.id, data);
+      const busy = binding ? await busyInProduction(c.id, data, now) : null;
+      if (busy) { errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); decisions.push({ content: c, action: "stay", why: busy }); continue; }
+      if (!binding) { decisions.push({ content: c, action: "stay", why: "没有项目目录" }); continue; }
+      const archived = await isArchived(binding.project_root);
+      decisions.push({ content: c, action: archived ? "purge_cache" : "archive", projectRoot: binding.project_root, ...(archived ? { why: "早先已归档" } : {}) });
+    } catch (e) { errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); decisions.push({ content: c, action: "stay", why: errMsg(e) }); }
+  }
+  return { decisions, errors };
+}
+
+async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
+  const { decisions, errors } = await planArchive(ctx.data, ctx.now, ctx.children);
+  report.errors.push(...errors);
+  const out: Content[] = [];
+  for (const d of decisions) {
+    if (d.action === "archive") { out.push(d.content); continue; }
+    if (d.action !== "purge_cache") continue;
+    // 早先归档时还没清缓存的：这里补清，NAS 不在也能做（不碰 NAS）
+    try {
+      const freedBytes = await purgeProjectCache(d.projectRoot!);
+      if (freedBytes > 0) (report.cacheFreed ??= []).push({ title: d.content.title, target: d.projectRoot!, freedBytes });
+    } catch (e) { report.errors.push(`${d.content.title}（${d.content.id}）：${errMsg(e)}`); }
   }
   return out;
 }
