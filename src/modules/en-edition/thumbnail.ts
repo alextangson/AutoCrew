@@ -4,6 +4,7 @@
  * 落在英文版项目里的 `en-thumbnail.json`。
  */
 import fs from "node:fs/promises";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { contentRoot, projectFile } from "../../storage/content-project.js";
@@ -44,7 +45,9 @@ export async function setEnThumbnail(contentId: string, source: string, dataDir:
 /** 缩略图还是登记时那张：读不到或字节变了交原因 */
 export async function thumbnailProblem(t: EnThumbnail | null): Promise<string | null> {
   if (!t) return "还没有 16:9 缩略图：派 Codex 按 cover-generator 的英文版段出图，再 op:\"set_thumbnail\" 登记";
-  const bytes = await fs.readFile(t.path).catch(() => null);
+  const found = await resolveArchivedFile(t.path);
+  if (!found.ok) return `登记的缩略图${found.error}`;
+  const bytes = await fs.readFile(found.path).catch(() => null);
   if (!bytes) return `登记的缩略图不见了：${t.path}`;
   return createHash("sha256").update(bytes).digest("hex") === t.sha256 ? null : `缩略图在登记之后被改过：${t.path}，重新登记`;
 }

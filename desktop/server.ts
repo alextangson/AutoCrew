@@ -735,7 +735,7 @@ server.listen(PORT, HOST, () => {
   myContentTimer = startSweepLoop();
 
   // NAS 备份 + 归档(storage-layout.md「NAS 归档」;docs/specs/2026-09-29-nas-backup-on-publish.md):
-  // 启动 2 分钟后一轮,之后每 24 小时一轮。每轮先把到点的已发布稿增量备份到 NAS,再做 7 天腾空间。
+  // 启动 2 分钟后一轮,之后每 24 小时一轮。每轮先把到点的已发布稿增量备份到 NAS,再把发布满 24 小时、不在做了的搬去 NAS 腾空间。
   // 单飞;和「我的内容」对账共用进程内互斥,不同时碰同一个项目;出错只记日志,不让守护进程退出。
   let archiveRunning = false;
   const tickArchive = () => {

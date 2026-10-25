@@ -1,6 +1,6 @@
 /**
- * NAS 归档（storage-layout.md「NAS 归档（2026-09-27）」）：发布满 7 天、不在「已发布」最近 5 条里的稿件，
- * 整个项目复制到 NAS 并逐文件核对后，才删本机的素材目录。先写归档记录和路径重定位，再删；中途失败下次续跑。
+ * NAS 归档（storage-layout.md「NAS 归档（2026-09-27）」；创始人 10-25「本机只留正在做的」）：发布满 24 小时、
+ * 不在做了的稿件（派生的公众号长文 / 英文版都发完或标了不出），整个项目复制到 NAS 并逐文件核对后，才删本机的素材目录。先写归档记录和路径重定位，再删；中途失败下次续跑。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -18,9 +18,11 @@ import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 import { assertTargetOutsideSource } from "./nas-safe-path.js";
 import { KEPT_DIR } from "./nas-kept.js";
 import { publishedSet, type PublishedSet } from "./round-publish-time.js";
+import { loadUnfinishedChildren } from "./archive-in-progress.js";
 
 export const MEDIA_DIRS = ["02-aroll", "03-broll", "04-edit", "05-audio", "05-cover", "07-delivery"] as const;
-export const ARCHIVE_MIN_AGE_MS = 7 * 24 * 60 * 60_000;
+/** 发布后留 24 小时给发布后核对 / 纠正；之后不在做了就搬走（不再保留最近 5 条，那是「我的内容」视图的规则） */
+export const ARCHIVE_MIN_AGE_MS = 24 * 60 * 60_000;
 export const ARCHIVE_MARGIN_BYTES = 1024 ** 3;
 const RELOCATIONS = "00-project/autocrew/relocations.json";
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -32,10 +34,12 @@ export interface ArchiveOptions {
   /** 目标卷剩余字节；测试注入 */
   freeSpace?: (dir: string) => Promise<number>;
   marginBytes?: number;
+  /** 父稿 id → 还没做完的派生稿标题；测试注入，默认按主题分组现算 */
+  unfinishedChildren?: (data: string, now: Date) => Promise<Map<string, string[]>>;
 }
 export interface ArchivedItem { title: string; target: string; freedBytes: number }
 export interface ArchiveReport { skipped?: string; archived: ArchivedItem[]; pending: number; errors: string[]; cacheFreed?: ArchivedItem[] }
-interface Ctx { data: string; lib: string; root: string; now: Date; copy: CopyImpl; free: (dir: string) => Promise<number>; margin: number }
+interface Ctx { data: string; lib: string; root: string; now: Date; copy: CopyImpl; free: (dir: string) => Promise<number>; margin: number; children: (data: string, now: Date) => Promise<Map<string, string[]>> }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -45,14 +49,12 @@ async function volumeFree(dir: string): Promise<number> {
 }
 
 /**
- * 发布满 7 天、不在保留名单（最近 KEEP_PUBLISHED 条，与「5 已发布」视图同一份）里的稿件（「已归档」「还在动」另行判断）。
+ * 发布满 24 小时的稿件（「已归档」「还在动」「派生稿没做完」另行判断）。不看保留名单：本机只留正在做的。
  * 本体 §7：排除条件从「活认领」改成「本条有未完成的文件归属事务，或 30 分钟内有 record」（见 busyInProduction）。
  * 定不出本轮发布时间的不归档（归档会删本机文件，宁可不删），报告里列「待确认发布时间」。
  */
 export function archiveCandidates(set: PublishedSet, now: Date): { due: Content[]; unknown: Content[] } {
-  const rest = set.published.filter((c) => !set.keep.has(c.id));
-  const due = rest.filter((c) => c.publishedAt && now.getTime() - Date.parse(c.publishedAt) >= ARCHIVE_MIN_AGE_MS);
-  // 待确认要报全：保留名单里的也列（它们这次不归档，但定不出发布时间同样要让创始人看见）
+  const due = set.published.filter((c) => c.publishedAt && now.getTime() - Date.parse(c.publishedAt) >= ARCHIVE_MIN_AGE_MS);
   return { due, unknown: set.published.filter((c) => !c.publishedAt) };
 }
 
@@ -197,24 +199,66 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
   return { title: c.title, target, freedBytes };
 }
 
-async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
-  const out: Content[] = [];
-  // 本体稿按本轮发布时间判到点、定 NAS 月份；保留名单与视图同一份；逐条读失败只跳过那一条
-  const set = await publishedSet(await listContents(ctx.data), ctx.data);
-  for (const { content, error } of set.errors) report.errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
-  const { due, unknown } = archiveCandidates(set, ctx.now);
-  for (const c of unknown) report.errors.push(`${c.title}（${c.id}）：待确认发布时间（本轮没有可信的公开 / 定时时间），这次不归档`);
+export interface ArchiveDecision {
+  content: Content;
+  /** archive = 这轮搬去 NAS；purge_cache = 早先已归档、只补清缓存；stay = 留在本机（why 说为什么） */
+  action: "archive" | "purge_cache" | "stay";
+  why?: string;
+  projectRoot?: string;
+}
+
+/**
+ * 归档判断（只读，不碰 NAS、不写资料库）：哪些搬、哪些留、为什么。归档本身和真数据演练共用这一份。
+ * 返回 null = 整轮判断不了（读不出派生稿进度），一条都不归档。
+ */
+export async function planArchive(data: string, now: Date, children: Ctx["children"] = loadUnfinishedChildren): Promise<{ decisions: ArchiveDecision[]; errors: string[] }> {
+  const decisions: ArchiveDecision[] = [], errors: string[] = [];
+  // 本体稿按本轮发布时间判到点、定 NAS 月份；逐条读失败只跳过那一条
+  const set = await publishedSet(await listContents(data), data);
+  for (const { content, error } of set.errors) errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
+  const { due, unknown } = archiveCandidates(set, now);
+  for (const c of unknown) {
+    errors.push(`${c.title}（${c.id}）：待确认发布时间（本轮没有可信的公开 / 定时时间），这次不归档`);
+    decisions.push({ content: c, action: "stay", why: "待确认发布时间" });
+  }
+  const dueIds = new Set(due.map((c) => c.id));
+  for (const c of set.published) if (c.publishedAt && !dueIds.has(c.id)) decisions.push({ content: c, action: "stay", why: "发布不满 24 小时" });
+  if (!due.length) return { decisions, errors };
+  // 主题分组读不出来就整轮不归档（判断不了派生稿做没做完，宁可不删）
+  let open: Map<string, string[]>;
+  try { open = await children(data, now); }
+  catch (e) {
+    errors.push(`读不出派生稿进度，这次不归档：${errMsg(e)}`);
+    for (const c of due) decisions.push({ content: c, action: "stay", why: "读不出派生稿进度" });
+    return { decisions, errors };
+  }
   for (const c of due) {
     try {
-      const binding = resolveContentProject(c.id, ctx.data);
-      const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;
-      if (busy) { report.errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); continue; }
-      if (!binding) continue;
-      if (!(await isArchived(binding.project_root))) { out.push(c); continue; }
-      // 早先归档时还没清缓存的：这里补清，NAS 不在也能做（不碰 NAS）
-      const freedBytes = await purgeProjectCache(binding.project_root);
-      if (freedBytes > 0) (report.cacheFreed ??= []).push({ title: c.title, target: binding.project_root, freedBytes });
-    } catch (e) { report.errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); }
+      const kids = open.get(c.id);
+      if (kids) { errors.push(`${c.title}（${c.id}）：这次不归档，派生稿还没发完：${kids.join("、")}`); decisions.push({ content: c, action: "stay", why: `派生稿还没发完：${kids.join("、")}` }); continue; }
+      const binding = resolveContentProject(c.id, data);
+      const busy = binding ? await busyInProduction(c.id, data, now) : null;
+      if (busy) { errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); decisions.push({ content: c, action: "stay", why: busy }); continue; }
+      if (!binding) { decisions.push({ content: c, action: "stay", why: "没有项目目录" }); continue; }
+      const archived = await isArchived(binding.project_root);
+      decisions.push({ content: c, action: archived ? "purge_cache" : "archive", projectRoot: binding.project_root, ...(archived ? { why: "早先已归档" } : {}) });
+    } catch (e) { errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); decisions.push({ content: c, action: "stay", why: errMsg(e) }); }
+  }
+  return { decisions, errors };
+}
+
+async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
+  const { decisions, errors } = await planArchive(ctx.data, ctx.now, ctx.children);
+  report.errors.push(...errors);
+  const out: Content[] = [];
+  for (const d of decisions) {
+    if (d.action === "archive") { out.push(d.content); continue; }
+    if (d.action !== "purge_cache") continue;
+    // 早先归档时还没清缓存的：这里补清，NAS 不在也能做（不碰 NAS）
+    try {
+      const freedBytes = await purgeProjectCache(d.projectRoot!);
+      if (freedBytes > 0) (report.cacheFreed ??= []).push({ title: d.content.title, target: d.projectRoot!, freedBytes });
+    } catch (e) { report.errors.push(`${d.content.title}（${d.content.id}）：${errMsg(e)}`); }
   }
   return out;
 }
@@ -242,6 +286,7 @@ export async function archivePublished(dataDir?: string, opts: ArchiveOptions = 
   const ctx: Ctx = {
     data, lib: libRoot, root: path.join(libRoot, VIEW_DIR), now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)),
     free: opts.freeSpace ?? volumeFree, margin: opts.marginBytes ?? ARCHIVE_MARGIN_BYTES,
+    children: opts.unfinishedChildren ?? loadUnfinishedChildren,
   };
   // 与 record 落位、重开文稿同排文件归属事务（本体 §7）：归档核验到删除之间不许有新文件搬进来
   try {
