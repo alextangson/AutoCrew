@@ -165,6 +165,24 @@ describe("每日补抓（目标 10 条/天）", () => {
     expect(d.warn).toHaveBeenCalled();
   });
 
+  it("缓存新鲜时补抓前也现查引擎：盘上标记被零点重置也不会走关键词入库", async () => {
+    const d = deps({ engineReady: vi.fn(async () => false), countToday: vi.fn(async () => 0),
+      refresh: vi.fn(async () => ({ ok: true, itemCount: 1, failedSources: [], skippedFresh: true })) });
+    await createRadarCycle(d)();
+    expect(d.forceRefresh).not.toHaveBeenCalled();
+    expect(d.intake).not.toHaveBeenCalled();
+    expect((await d.readSupply(0)).engineUnavailable).toBe(true);
+  });
+
+  it("盘上残留 engineUnavailable=true 但引擎已配好 → 照常补抓并清掉标记", async () => {
+    const d = deps({ countToday: vi.fn(async () => 0),
+      refresh: vi.fn(async () => ({ ok: true, itemCount: 1, failedSources: [], skippedFresh: true })) });
+    await d.writeSupply({ ...(await d.readSupply(0)), engineUnavailable: true });
+    await createRadarCycle(d)();
+    expect(d.forceRefresh).toHaveBeenCalledTimes(1);
+    expect((await d.readSupply(0)).engineUnavailable).toBe(false);
+  });
+
   it("没配引擎 → 标记 engineUnavailable，不补抓；配上后清掉", async () => {
     let ready = false;
     const d = deps({ engineReady: vi.fn(async () => ready), countToday: vi.fn(async () => 0) });

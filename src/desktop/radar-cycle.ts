@@ -119,8 +119,13 @@ async function scoreOrPool(d: RadarCycleDeps): Promise<{ intakeCount: number; po
 async function topUp(d: RadarCycleDeps, justRefreshed: boolean): Promise<number> {
   const now = d.now();
   const [state, today] = await Promise.all([d.readSupply(now), d.countToday(now)]);
-  if (!refillDue(state, today, now) || state.engineUnavailable) return 0;
-  const attempt: SupplyState = { ...state, refills: state.refills + 1, lastRefillAt: new Date(now).toISOString(), lastError: null };
+  if (!refillDue(state, today, now)) return 0;
+  // 每次补抓前现查引擎：盘上的 engineUnavailable 只是给列头看的，跨零点会重置、配上引擎后也可能还是旧值
+  if (!(await d.engineReady())) {
+    await markEngine(d, true);
+    return 0;
+  }
+  const attempt: SupplyState = { ...state, engineUnavailable: false, refills: state.refills + 1, lastRefillAt: new Date(now).toISOString(), lastError: null };
   await d.writeSupply(attempt);
   let lastError: string | null = null;
   let saved = 0;
