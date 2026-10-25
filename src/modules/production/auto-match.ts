@@ -94,13 +94,14 @@ export async function planAutoMatches(content: Content, doc: ProductionDoc, data
 export function applyAutoMatches(doc: ProductionDoc, plans: AutoMatchPlan[]): Array<{ type: string; detail: Record<string, unknown> }> {
   const events: Array<{ type: string; detail: Record<string, unknown> }> = [];
   for (const p of plans) {
-    if (!p.verdict.ok) continue;
-    const slot = receiptsOfRound(doc).pending.find((s) => s.source === "metrics_title" && s.platform === p.platform && s.item_id === p.verdict.evidence.item_id && s.fact_id);
+    const v = p.verdict;
+    if (!v.ok) continue;
+    const slot = receiptsOfRound(doc).pending.find((s) => s.source === "metrics_title" && s.platform === p.platform && s.item_id === v.evidence.item_id && s.fact_id);
     if (!slot) continue;
     const id = newId("dec");
     doc.decisions.push({ id, type: "publish_confirm", round: doc.round, at: new Date().toISOString(), source: "auto", fact_id: slot.fact_id!, platform: slot.platform,
-      auto_match: p.verdict.evidence, ...(p.gate ? { gate: p.gate } : {}) });
-    events.push({ type: "receipt_auto_confirmed", detail: { decision_id: id, fact_id: slot.fact_id, ...p.verdict.evidence } });
+      auto_match: v.evidence, ...(p.gate ? { gate: p.gate } : {}) });
+    events.push({ type: "receipt_auto_confirmed", detail: { decision_id: id, fact_id: slot.fact_id, ...v.evidence } });
   }
   return events;
 }
