@@ -3,7 +3,7 @@
  * 视觉照 home-mock-v2/home.html：发丝线分隔不画框，焦点 = 刚发那条，强调色只给「要你做的」。
  * 账号格只写今天真有的（回流健康），粉丝 / 播放等第 4 期账号快照；数字都从现有接口来，不编。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { platformLabel } from "../lib";
@@ -43,8 +43,12 @@ const fromInvoke = <T,>(r: { ok: boolean; error?: string } & Record<string, unkn
 /** 四路并行读；任何一路失败只影响它自己那一段，并且照实写出来 */
 function useHome() {
   const [d, setD] = useState<HomeData>(EMPTY);
+  // 事件 / 聚焦 / 轮询会叠着刷新：只认最后发出的那一次，慢回来的旧结果丢掉，不覆盖新状态
+  const seq = useRef(0);
   const reload = useCallback(async () => {
+    const mine = ++seq.current;
     const [prof, pull, report, pipeline] = await Promise.all([invoke("onboarding:status"), invoke("flywheel:pull_status"), loadDataPage(), loadPipeline()]);
+    if (mine !== seq.current) return;
     setD({
       platforms: fromInvoke(prof as never, (r) => ((r.platforms ?? (r.data as { platforms?: string[] } | undefined)?.platforms) as string[] | undefined) ?? []),
       pull: fromInvoke(pull as never, (r) => r.data as { dailyPullHour?: number; platforms: PullPlatformStatus[] }),
@@ -72,14 +76,18 @@ export function Home(props: { inbox?: string; inboxTypes?: string[]; openPipelin
   const shown = d.platforms.data ? enabledPlatforms(d.platforms.data) : null;
   const shownSet = new Set([...(shown?.main ?? []), ...(shown?.later ?? [])]);
   // 第 1 期的登录提醒：在账号格里就地说；没进账号格的平台（没勾运营但开着回流）仍用原来的提醒条
-  const strayLogin = d.pipeline.data?.pullLogin?.filter((t) => !shownSet.has(t.platform));
+  // pullLogin 为 null = 回流状态读不了：原样交给提醒条，让它照实说，不当成没事
+  const rawLogin = d.pipeline.data?.pullLogin;
+  const strayLogin = rawLogin === null ? null : rawLogin?.filter((t) => !shownSet.has(t.platform));
+  const noCells = Boolean(shown && !shown.main.length && !shown.later.length);
   const hour = d.pull.data?.dailyPullHour;
   return <div className="hm">
     <UpdateBanner />
     <PersonaReminder />
     <LegacyTwitterReminder />
     {d.pipeline.data && <OntologyBanner ontology={d.pipeline.data.ontology} reload={reload} />}
-    {strayLogin && strayLogin.length > 0 && <PullLoginReminder todos={strayLogin} reload={() => void reload()} />}
+    {(strayLogin === null || (strayLogin && strayLogin.length > 0)) && <PullLoginReminder todos={strayLogin} reload={() => void reload()} />}
+    {d.pull.error && noCells && <p className="hm-note hot" role="alert">数据回流状态读不出来：{d.pull.error} · <a href="#/settings?tab=data">去设置看回流</a></p>}
     <div className="hm-head">
       <div><div className="eyebrow">{dateEyebrow(new Date(now))}</div><h1>今天</h1></div>
       <div className="head-r">{hour !== undefined ? `数据回流每天 ${String(hour).padStart(2, "0")}:00 抓取` : ""}</div>
