@@ -1,0 +1,201 @@
+{
+ "data": {
+  "fans": {
+   "current_count": "11629",
+   "extra": {
+    "now": 1792917270000
+   },
+   "last_period_incr": "727",
+   "option_list": [
+    {
+     "count": "1600",
+     "date": "2026-10-18",
+     "last_day_incr_rate": "+0.50%"
+    },
+    {
+     "count": "1604",
+     "date": "2026-10-19",
+     "last_day_incr_rate": "+0.25%"
+    },
+    {
+     "count": "1650",
+     "date": "2026-10-20",
+     "last_day_incr_rate": "+2.87%"
+    },
+    {
+     "count": "1664",
+     "date": "2026-10-21",
+     "last_day_incr_rate": "+0.85%"
+    },
+    {
+     "count": "1688",
+     "date": "2026-10-22",
+     "last_day_incr_rate": "+1.44%"
+    },
+    {
+     "count": "1702",
+     "date": "2026-10-23",
+     "last_day_incr_rate": "+0.83%"
+    },
+    {
+     "count": "1721",
+     "date": "2026-10-24",
+     "last_day_incr_rate": "+1.12%"
+    }
+   ],
+   "option_type": 6,
+   "permission_key": "",
+   "status_code": 0,
+   "status_msg": ""
+  },
+  "new_fans": {
+   "current_count": "129",
+   "extra": {
+    "now": 1792917270000
+   },
+   "last_period_incr": "46",
+   "option_list": [
+    {
+     "count": "8",
+     "date": "2026-10-18",
+     "last_day_incr_rate": "-61.90%"
+    },
+    {
+     "count": "4",
+     "date": "2026-10-19",
+     "last_day_incr_rate": "-50.00%"
+    },
+    {
+     "count": "46",
+     "date": "2026-10-20",
+     "last_day_incr_rate": "+1050.00%"
+    },
+    {
+     "count": "14",
+     "date": "2026-10-21",
+     "last_day_incr_rate": "-69.57%"
+    },
+    {
+     "count": "24",
+     "date": "2026-10-22",
+     "last_day_incr_rate": "+71.43%"
+    },
+    {
+     "count": "14",
+     "date": "2026-10-23",
+     "last_day_incr_rate": "-41.67%"
+    },
+    {
+     "count": "19",
+     "date": "2026-10-24",
+     "last_day_incr_rate": "+35.71%"
+    }
+   ],
+   "option_type": 9,
+   "permission_key": "",
+   "status_code": 0,
+   "status_msg": ""
+  },
+  "play": {
+   "current_count": "39821",
+   "extra": {
+    "now": 1792917270000
+   },
+   "last_period_incr": "-21242",
+   "option_list": [
+    {
+     "count": "2619",
+     "date": "2026-10-18",
+     "last_day_incr_rate": "-75.64%"
+    },
+    {
+     "count": "2116",
+     "date": "2026-10-19",
+     "last_day_incr_rate": "-19.21%"
+    },
+    {
+     "count": "8253",
+     "date": "2026-10-20",
+     "last_day_incr_rate": "+290.03%"
+    },
+    {
+     "count": "5283",
+     "date": "2026-10-21",
+     "last_day_incr_rate": "-35.99%"
+    },
+    {
+     "count": "5973",
+     "date": "2026-10-22",
+     "last_day_incr_rate": "+13.06%"
+    },
+    {
+     "count": "2832",
+     "date": "2026-10-23",
+     "last_day_incr_rate": "-52.59%"
+    },
+    {
+     "count": "12745",
+     "date": "2026-10-24",
+     "last_day_incr_rate": "+350.04%"
+    }
+   ],
+   "option_type": 1,
+   "permission_key": "",
+   "status_code": 0,
+   "status_msg": ""
+  },
+  "cancel_fans": {
+   "current_count": "12",
+   "extra": {
+    "now": 1792917270000
+   },
+   "last_period_incr": "1",
+   "option_list": [
+    {
+     "count": "1",
+     "date": "2026-10-18",
+     "last_day_incr_rate": "-66.67%"
+    },
+    {
+     "count": "2",
+     "date": "2026-10-19",
+     "last_day_incr_rate": "+100.00%"
+    },
+    {
+     "count": "1",
+     "date": "2026-10-20",
+     "last_day_incr_rate": "-50.00%"
+    },
+    {
+     "count": "2",
+     "date": "2026-10-21",
+     "last_day_incr_rate": "+100.00%"
+    },
+    {
+     "count": "0",
+     "date": "2026-10-22",
+     "last_day_incr_rate": "-100.00%"
+    },
+    {
+     "count": "2",
+     "date": "2026-10-23",
+     "last_day_incr_rate": "-"
+    },
+    {
+     "count": "4",
+     "date": "2026-10-24",
+     "last_day_incr_rate": "+100.00%"
+    }
+   ],
+   "option_type": 24,
+   "permission_key": "",
+   "status_code": 0,
+   "status_msg": ""
+  }
+ },
+ "extra": {
+  "now": 1792917270000
+ },
+ "status_code": 0,
+ "status_message": ""
+}
