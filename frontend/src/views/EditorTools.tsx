@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
+import { openInEgo } from "../ego-open";
 import { toast, confirmDialog } from "../ui";
 import { VIDEO_PLATFORMS, isHttpUrl, needsPublishUrlBackfill, publishUrlPlatformWarning, type Content } from "../lib";
 import type { VersionLike } from "../version-diff";
@@ -228,7 +229,8 @@ export function EditorTools(props: EditorToolsProps) {
                 }
               }}
             >复制发布文案</button>
-            <a href={clip.publishUrl} target="_blank" rel="noreferrer"><button>打开平台后台 ↗</button></a>
+            {/* 发布走 ego lite（登录态在那里）：在 ego lite 里开发布页，不开默认浏览器 */}
+            <button onClick={() => void openInEgo(c.platform, "publish")}>在 ego lite 打开平台后台</button>
           </div>
         </div>
       )}

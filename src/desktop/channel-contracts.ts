@@ -105,6 +105,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:pull_status": [],
   "flywheel:pull_now": ["platform"],
   "flywheel:pull_toggle": ["platform", "enabled"],
+  // 可选 target：data（数据后台，默认）/ publish（发布页）；地址由服务端按平台查
+  "ego:open_console": ["platform"],
   "flywheel:hypotheses_list": [],
   "calibration:ledger": [],
   "dialog:pick_file": [],

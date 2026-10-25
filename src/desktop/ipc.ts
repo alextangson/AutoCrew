@@ -156,6 +156,7 @@ import {
   pullToggleHandler,
 } from "./metrics-pull-handlers.js";
 import { ledgerHandler } from "./ledger-handler.js";
+import { openConsoleHandler } from "./ego-open-console.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { makeEnsureBrief } from "./write-research-gate.js";
 import { claimJob, releaseJob, holdJobUntilSettled, GENERATE_JOB_KEY } from "./job-claims.js";
@@ -1362,6 +1363,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "flywheel:pull_status": pullStatusHandler,
     "flywheel:pull_now": pullNowHandler,
     "flywheel:pull_toggle": pullToggleHandler,
+    "ego:open_console": openConsoleHandler,
     "flywheel:hypotheses_list": hypothesesListHandler,
     "calibration:ledger": ledgerHandler,
     "dialog:pick_file": dialogUnavailableHandler,

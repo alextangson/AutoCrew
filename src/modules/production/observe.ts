@@ -231,6 +231,8 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
   const formal: Array<{ fact: Fact; path: string; first?: boolean }> = [];
   for (const s of obs.seen) {
     // 任何一轮记过都算：重开文稿后旧轮的成片 / 封面还在盘上，它们属于历史，不再导进新一轮
+    // 无字幕母版的字节被扫成「成片」（放进 07-delivery 之类）：它已经记成母版了，不另算一版成片
+    if (s.kind === "cut" && doc.facts.some((f) => f.kind === "clean_master" && f.sha256 === s.sha256)) continue;
     const dup = doc.facts.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
     // 去重时不丢新信息（Codex 审 P2）：本轮已有字幕没绑成片，这次算出了绑定就补上
     if (dup && dup.kind === "srt" && dup.round === doc.round && !dup.for_cut && s.for_cut) { dup.for_cut = s.for_cut; changed++; }

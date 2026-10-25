@@ -41,6 +41,7 @@
 .hm .alert-cell p { font-size: 13px; color: var(--hm-text-2); margin-top: 8px; overflow-wrap: anywhere; }
 .hm .alert-cell .go { display: inline-flex; margin-top: 16px; font-size: 13px; font-weight: 600; color: var(--hot); gap: 4px; }
 .hm .alert-cell .go-2 { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); text-decoration: none; }
+.hm .alert-cell button.go-2 { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font: inherit; font-size: 12px; }
 .hm .later { display: flex; gap: 24px; align-items: center; padding-top: 12px; font-size: 12px; color: var(--muted); }
 .hm .later span { display: inline-flex; gap: 6px; align-items: center; }
 .hm .later .g { color: var(--faint); width: 12px; height: 12px; }

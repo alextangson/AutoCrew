@@ -35,6 +35,8 @@ async function recut(srcId: string, srt = SRT_V2) {
   const sha = (await readProductionDoc(srcId, env.dir))!.facts.find((f) => f.id === cut.fact_id)!.sha256!;
   await waiveSliverCheck(env, srcId, sha);
   expect(await founderDecision(srcId, "approve_cut", { fact_id: cut.fact_id, sha256: sha }, env.dir)).toMatchObject({ ok: true });
+  // 成片换版后无字幕母版也要从新时间线重新导出、重新登记（英文版画面来源，2026-10-25）
+  expect(await record(env, { content_id: srcId, kind: "clean_master", path: await put(path.join(env.chatcut, "深度思考-v2-无字幕.mp4"), "master-v2"), request_id: "m2", captions_off: true })).toMatchObject({ ok: true });
 }
 
 describe("diffCues", () => {

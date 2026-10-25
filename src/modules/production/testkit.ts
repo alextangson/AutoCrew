@@ -31,8 +31,8 @@ export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
   setChatcutDeps({ projectsRoot: () => path.join(temp, "chatcut-projects") });
   setProductionDeps({
     roots: async () => ({ inbox, chatcut, jianying }),
-    // 假探针：文件名带 broken 的读不出时长，其余 12 秒
-    probe: async (file) => (path.basename(file).includes("broken") ? { error: "moov atom not found" } : { durationMs: 12_000 }),
+    // 假探针：文件名带 broken 的读不出时长，其余 12 秒、1920×1080、有音轨（无字幕母版的核验要尺寸和音轨）
+    probe: async (file) => (path.basename(file).includes("broken") ? { error: "moov atom not found" } : { durationMs: 12_000, width: 1920, height: 1080, audio: true }),
     now: () => Date.now(),
   });
   if (opts.enabled) await writeEnabledVersion(dir);

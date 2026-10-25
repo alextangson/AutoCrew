@@ -295,7 +295,7 @@ export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEv
     // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
     // 其他平台已投出时，被驳回平台的原因照样上卡（E35）
     const alerts = [...(inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH]), ...receiptNotes(receipts).alerts, ...gateAlerts(receipts.live)];
-    badges.push(...overrideBadges(receipts.live), ...chat);
+    badges.push(...overrideBadges(receipts.live), ...receipts.live.flatMap((s) => (s.auto_note ? [s.auto_note] : [])), ...chat);
     return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);
