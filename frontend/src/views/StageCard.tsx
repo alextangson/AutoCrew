@@ -166,7 +166,7 @@ async function perform(run: Run, p: StageCardProps, d: CardPanelData | null): Pr
   return performTarget(run.target, run.action, c, d?.round ?? 1);
 }
 
-async function performTarget(t: PublishTarget, a: TargetAction, c: StageCardProps["content"], round: number): Promise<ActionResult> {
+export async function performTarget(t: PublishTarget, a: TargetAction, c: StageCardProps["content"], round: number): Promise<ActionResult> {
   if (a === "prepare_publish" || a === "resubmit") {
     try { await navigator.clipboard.writeText(publishAsk(c.id, c.title, t, a)); } catch { return { ok: false, error: "复制没成功：浏览器不让写剪贴板" }; }
     toast("已复制，贴给发布对话（Codex / Claude）");

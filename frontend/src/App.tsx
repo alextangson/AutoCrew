@@ -5,6 +5,7 @@
 import { CHIEF_PREFILL_EVENT } from "./views/hand-off";
 import { useEffect, useRef, useState } from "react";
 import { Board } from "./views/Board";
+import { Pipeline } from "./views/Pipeline";
 import { TopicPage } from "./views/TopicMatrix";
 import { Editor } from "./views/Editor";
 import { TopicNavigator } from "./views/TopicNavigator";
@@ -34,11 +35,15 @@ import type { Route } from "./routes";
 
 export type { Route, EditorPanel } from "./routes";
 
-/** 主导航只留三个（看板规格 §27）；灵感收件箱、品牌校准、任务日志、素材库收进设置页，增长不露出但路由保留 */
+/**
+ * 主导航（管线重规划第 2 期）：首页 / 内容管线 / 设置；「数据」先放在设置后面，第 6 期首页接住它的动作后再去掉。
+ * 灵感收件箱、品牌校准、任务日志、素材库收进设置页，增长不露出但路由保留。
+ */
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
-  { view: "board", label: "看板" },
-  { view: "report", label: "数据" },
+  { view: "board", label: "首页" },
+  { view: "pipeline", label: "内容管线" },
   { view: "settings", label: "设置" },
+  { view: "report", label: "数据" },
 ];
 
 export function App() {
@@ -54,7 +59,7 @@ export function App() {
   const focus = useRevisionFocus();
   const IN_SETTINGS = new Set(["inbox", "calibration", "playbooks", "logs", "library", "campaigns"]);
   const active = route.view === "editor" || route.view === "topic" ? "board" : IN_SETTINGS.has(route.view) ? "settings" : route.view;
-  const boardRoute = route.view === "board" || route.view === "topic";
+  const boardRoute = route.view === "board" || route.view === "topic" || route.view === "pipeline";
 
   useEffect(() => {
     if (focus) setDockOpen(true);
@@ -148,6 +153,9 @@ export function App() {
               openEditor={(id) => setRoute({ view: "editor", id })}
               openData={() => setRoute({ view: "report" })}
             />
+          )}
+          {route.view === "pipeline" && (
+            <Pipeline openEditor={(id) => setRoute({ view: "editor", id })} openTopic={(key) => setRoute({ view: "topic", key })} />
           )}
           {route.view === "topic" && (
             <TopicPage atomKey={route.key} back={() => setRoute({ view: "board" })} openEditor={(id) => setRoute({ view: "editor", id })} />

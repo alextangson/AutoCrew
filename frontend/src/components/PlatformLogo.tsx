@@ -18,6 +18,9 @@ const GLYPHS: Record<string, Glyph> = {
 
 const FALLBACK: Record<string, [string, string]> = { wechat_video: ["视", "#F59B23"], toutiao: ["头", "#E8403F"] };
 
+/** 单色小标用的字形路径（24×24）；没有真 logo 的平台 = null，调用方用单字框兜底 */
+export const platformGlyphPath = (id: string): string | null => GLYPHS[id]?.path ?? null;
+
 /** 有真 logo 的平台 id（测试与调用方用来区分兜底） */
 export const hasPlatformLogo = (id: string) => id in GLYPHS;
 

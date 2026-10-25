@@ -9,6 +9,8 @@
 .ri-head .ri-toggle { margin-left: auto; }
 .ri-empty { color: var(--ri-gray); }
 .ri-list { list-style: none; border-top: 1px solid var(--ri-line); }
+/* 按主题分组的组头（管线重规划 §8-5）：只是标签，不是一行事 */
+.ri-theme { padding: 10px 14px 2px; font-size: var(--fs-xs); line-height: 16px; color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ri-row { display: grid; grid-template-columns: 10px 40px 1fr auto; align-items: center; gap: 12px; padding: 10px 14px; min-height: 60px;
   border-bottom: 1px solid var(--ri-line); cursor: pointer; outline: none; }
 .ri-row:last-child { border-bottom: none; }

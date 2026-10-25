@@ -30,6 +30,9 @@ export interface InboxItem {
   actions: InboxAction[];
   blocked_reason?: string;
   detail: Record<string, unknown>;
+  /** 属于哪个主题（服务端按 derivedFrom 反查源视频）：只用来分组显示，每件照旧按自己的身份关 */
+  theme_id?: string;
+  theme_title?: string;
 }
 
 export interface InboxView { items: InboxItem[]; count: number; agent_waiting: number; generated_at: string }

@@ -191,7 +191,7 @@ function ColumnBody(p: {
 }
 
 /** 拖放落地：认稿 / 标已发布走状态流转（force 只越状态图形状、越不过阶段门）；交剪辑、成片只打开工作台 */
-async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: string) => void, reload: () => Promise<void>): Promise<void> {
+export async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: string) => void, reload: () => Promise<void>): Promise<void> {
   switch (act.kind) {
     case "open": return openEditor(item.id);
     case "undo": return runUndo(act.undo, item, reload);
@@ -237,7 +237,7 @@ async function runUndo(undo: UndoMove, item: BoardItem, reload: () => Promise<vo
  * 「开始写」的收尾（spec 2026-10-15 §B2）：已开写就打开那篇；交给默认写稿 AI（或这一次换的那个），
  * 按 AI 说清下一步（Claude 按发送 / Codex 粘贴 / WorkBuddy 粘过去）；没接 AI、默认的断了都明说，不假装开工。
  */
-async function runStart(topicId: string, openEditor: (id: string) => void, host?: HostId): Promise<void> {
+export async function runStart(topicId: string, openEditor: (id: string) => void, host?: HostId): Promise<void> {
   const r = await startWriting(topicId, host);
   if (!r.ok) return explainFailure(r, (alt) => runStart(topicId, openEditor, alt));
   if (!r.data.created) {

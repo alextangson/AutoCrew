@@ -13,11 +13,13 @@
 
 .topnav { margin-left: var(--s5); flex: 1; display: flex; gap: var(--s2); align-items: center; }
 .topnav-spacer { flex: 1; }
-.topnav button { border-color: transparent; background: transparent; color: var(--muted); padding: var(--s1) var(--s3); border-radius: 0; border-width: 0 0 2px; }
-.topnav button:hover { color: var(--ink); }
-.topnav .nav-on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 700; }
-.topnav .nav-cta { border: 1px solid var(--border); border-radius: var(--radius); color: var(--ink); background: var(--card); margin-left: var(--s2); }
-.topnav .nav-cta:hover { border-color: var(--ink); }
+/* 管线重规划第 2 期：顶栏照 home-mock-v2 —— 选中的一项是浅底圆角块，不再是下划线 */
+.topnav button { border: 0; background: transparent; color: var(--text-2); height: 32px; padding: 0 var(--s3); border-radius: 6px; line-height: 32px; }
+.topnav button:hover { color: var(--ink); background: transparent; }
+.topnav .nav-on { color: var(--ink); background: #EFEDE6; font-weight: 600; }
+.topnav .nav-on:hover { background: #EFEDE6; }
+.topnav .nav-cta { border: 1px solid var(--ink); border-radius: 8px; color: #F8F7F2; background: var(--ink); margin-left: var(--s2); font-size: 13px; font-weight: 500; }
+.topnav .nav-cta:hover { border-color: var(--ink); background: var(--ink); color: #F8F7F2; }
 
 .body { display: flex; flex: 1; min-height: 0; }
 /* min-width:0——对话栏拖宽时主区让位收缩，而不是把整个壳撑出横向滚动条 */

@@ -1388,7 +1388,10 @@
        "revoke",
        "inbox_list",
        "inbox_attach",
-       "sync"
+       "sync",
+       "theme_skip",
+       "theme_restore",
+       "theme_reshoot"
       ],
       "type": "string"
      },
@@ -1471,6 +1474,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "round": {
+      "type": "number"
      },
      "sha256": {
       "type": "string"
@@ -4411,7 +4417,10 @@
        "revoke",
        "inbox_list",
        "inbox_attach",
-       "sync"
+       "sync",
+       "theme_skip",
+       "theme_restore",
+       "theme_reshoot"
       ],
       "type": "string"
      },
@@ -4494,6 +4503,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "round": {
+      "type": "number"
      },
      "sha256": {
       "type": "string"
