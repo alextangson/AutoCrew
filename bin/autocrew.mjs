@@ -704,6 +704,12 @@ switch (command) {
     try { hosts = JSON.parse(hostsResult.stdout || "[]"); } catch { hostsError = "宿主检测脚本没跑成"; }
     const hostConnected = (h) => hosts.find((x) => x.host === h)?.connected === true;
 
+    // Codex 用的 AutoCrew 技能是否链到本安装（随 AutoCrew 更新）。可选项，不影响退出码
+    let codexSkills = [];
+    const csResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "codex-skills-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { codexSkills = JSON.parse((csResult.stdout || "").trim().split("\n").pop() || "[]"); } catch { codexSkills = [{ name: "全部", ok: false, detail: "检查脚本没跑成" }]; }
+    const codexSkillsOk = codexSkills.length > 0 && codexSkills.every((s) => s.ok);
+
     // 薄路径的 Codex 审稿（2026-10-04）：codex 命令在不在、登没登录。可选项，不影响退出码（审稿只是提示，不拦定稿）
     const codexLogin = spawnSync("codex", ["login", "status"], { encoding: "utf8", timeout: 15_000 });
     const codexReview = { installed: !codexLogin.error, loggedIn: !codexLogin.error && codexLogin.status === 0 };
@@ -723,6 +729,7 @@ switch (command) {
       hostClaude: hostConnected("claude"),
       hostCodex: hostConnected("codex"),
       hostWorkbuddy: hostConnected("workbuddy"),
+      codexSkills: codexSkillsOk,
       uv: uvOk,
       wechatPublishScript: fs.existsSync(wechatScript),
       wechatConfig: fs.existsSync(wechatConfig),
@@ -757,6 +764,7 @@ switch (command) {
       + (checks.engineConfigured ? "" : "\n  没配钥匙：深调研、选题雷达、复盘、人设、每日摘要暂时不可用；在接上的 Claude Code / Codex / WorkBuddy 里写稿不受影响（设置→模型 里随时补）")
       + (hostsError ? `\n  → ${hostsError}，宿主接没接未知（autocrew connect --list 重查）` : "")
       + hosts.filter((h) => h.unverified).map((h) => `\n  → ${h.label} 写进去了但没连上：${h.unverified}（再试一次：autocrew connect ${h.host}）`).join("")
+      + (codexSkillsOk ? "" : `\n  → Codex 技能没链到本安装（${codexSkills.filter((s) => !s.ok).map((s) => `${s.name}：${s.detail}`).join("；")}）：autocrew connect codex`)
       + (checks.hostClaude || checks.hostCodex || checks.hostWorkbuddy ? "" : "\n  → 还没接任何宿主：autocrew connect claude（或 codex / workbuddy），也可以在 设置→接入更多→宿主 里点「接上」")
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")

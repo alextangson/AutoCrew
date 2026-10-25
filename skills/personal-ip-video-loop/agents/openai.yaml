@@ -1,0 +1,6 @@
+interface:
+  display_name: "个人 IP 视频闭环"
+  short_description: "四次审核完成粗剪、B-roll、成片与双尺寸封面"
+  default_prompt: "Use $personal-ip-video-loop to turn my original talking-head footage into an editable final video and paired covers with only four review gates."
+policy:
+  allow_implicit_invocation: true

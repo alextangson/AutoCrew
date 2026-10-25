@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "workflow": "personal-ip-video-loop",
+  "human_gates": [
+    "rough_cut",
+    "storyboard_and_generation",
+    "final_cut",
+    "paired_covers"
+  ],
+  "video": {
+    "provider": "fal.ai",
+    "model_family": "minimax/h3",
+    "resolution": "768P",
+    "effective_coverage_target": [
+      0.45,
+      0.55
+    ]
+  },
+  "typography": {
+    "preferred_family": "新青年体",
+    "resolved_font_id": null,
+    "caption_editor": "jianying",
+    "caption_fill": "#FFFFFF",
+    "stroke_enabled": false,
+    "stroke_width": 0,
+    "shadow": "soft",
+    "shadow_enabled": true,
+    "shadow_parameters": null,
+    "verify_inherited_styles": true,
+    "captions_editable": true,
+    "manual_word_breaks": false
+  },
+  "aroll": {
+    "grade": "source_dependent",
+    "protect_skin": true,
+    "no_detail_recovery_claim": true
+  },
+  "audio": {
+    "instrumental": true,
+    "vocals": false,
+    "speech_priority": true,
+    "mix_verified": false
+  },
+  "covers": {
+    "mode": "paired_draft",
+    "ratios": [
+      "3:4",
+      "4:3"
+    ],
+    "runtime": "codex_builtin_image_gen",
+    "billing_mode": "codex_subscription",
+    "model_requested": "Image 2.5",
+    "model_reported": null,
+    "cash_cap_required": false
+  },
+  "budget": {
+    "currency": "USD",
+    "cap": null,
+    "authorization_id": null,
+    "user_message": null
+  },
+  "note": "Defaults are preferences, not spending/upload authorization. Resolve font, runtime and current provider schema before use.",
+  "explainer": {
+    "style_id": "chatterfly-blueprint-paper-v001",
+    "scope": "personal_ip_presentation_and_concept_diagrams",
+    "reference": "references/explainer-packaging.md",
+    "reference_image": "assets/chatterfly-explainer-reference.png",
+    "background": "blue_grid",
+    "cards": "cream_paper_with_restrained_orange_accents",
+    "layout": "script_specific_relationships",
+    "rendering": "deterministic_editable",
+    "preserve_authentic_product_ui": true,
+    "preserve_approved_3d_style": true,
+    "design_implementation_owner": "claude",
+    "model_required": "claude-opus-5-5",
+    "delegation_reference": "references/opus-motion-delegation.md",
+    "creative_direction": "technology_product_advertising_with_clear_causal_explanation",
+    "reference_is_layout_template": false,
+    "silent_model_fallback": false
+  }
+}
