@@ -27,6 +27,10 @@ describe("账号格的数（第 4 期账号快照）", () => {
     expect(accountNumbers({ error: "账号数据读不出：EACCES" }, NOW)).toEqual({ kind: "none", text: "账号数据读不出：EACCES" });
     expect(accountNumbers(tile({ latest: null, compare: "no_data", health: null }), NOW)).toEqual({ kind: "none", text: "还没有账号数据，下次回流后出现" });
   });
+  it("只抓到一部分：数照给，说明缺口", () => {
+    const a = accountNumbers(tile({ health: { lastStatus: "ok", lastSuccessAt: "x", lastErrorCode: "partial:http_500" }, latest: { metricDate: "2026-10-24", followers: 16302, newFollowers: null, views: null, viewsKind: "plays", complete: false } }), NOW);
+    expect(a).toMatchObject({ followers: 16302, viewsText: "昨天播放没拿到", staleText: "这次只抓到一部分（http_500），缺的数先空着" });
+  });
   it("掉粉写负号", () => {
     expect(accountNumbers(tile({ followersDelta: -3 }), NOW)).toMatchObject({ deltaText: "−3 较昨天", deltaTone: "down" });
   });
@@ -46,6 +50,12 @@ describe("刚发那条：同龄比", () => {
     const l = latestOf(data([...peers, fresh]), Date.parse("2026-10-25T02:00:00.000Z"))!;
     expect(l.lines[0]).toMatchObject({ platform: "douyin", kind: "data", views: 13543, baseline: 3002, basis: "same_age", ageHours: 15 });
     expect(sameAgeBaseline([...peers, fresh], fresh, "douyin", 15)).toBe(3002);
+  });
+  it("CSV 导入的快照没有真实观察时刻：不当同龄样本（入账时间是导入那一刻）", () => {
+    const csvPeers = peers.map((r) => ({ ...r, works: r.works.map((w) => ({ ...w, snapshots: w.snapshots.map((x) => ({ ...x, source: "csv" })) })) }));
+    expect(sameAgeBaseline([...csvPeers, fresh], fresh, "douyin", 15)).toBeNull();
+    const csvFresh = { ...fresh, works: fresh.works.map((w) => ({ ...w, snapshots: w.snapshots.map((x) => ({ ...x, source: "csv" })) })) };
+    expect(latestOf(data([...peers, csvFresh]), Date.parse("2026-10-25T02:00:00.000Z"))!.lines[0]).toEqual({ platform: "douyin", kind: "pending" });
   });
   it("同龄样本不够 3 条：不满 24 小时的先不比；满了退回全量中位数并标 all", () => {
     expect(latestOf(data([peers[0], fresh]), Date.parse("2026-10-25T02:00:00.000Z"))!.lines[0]).toEqual({ platform: "douyin", kind: "pending" });

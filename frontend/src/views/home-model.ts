@@ -73,7 +73,8 @@ export function accountNumbers(acct: AccountTileData | { error: string } | null 
   if (acct === null || acct === undefined) return { kind: "none", text: "还不能抓账号数据" };
   if ("error" in acct) return { kind: "none", text: acct.error };
   const h = acct.health;
-  const failed = h && h.lastStatus !== "ok" && h.lastStatus !== "never" ? `账号数据没抓成（${h.lastErrorCode ?? h.lastStatus}）` : null;
+  const failed = h && h.lastStatus !== "ok" && h.lastStatus !== "never" ? `账号数据没抓成（${h.lastErrorCode ?? h.lastStatus}）`
+    : h?.lastStatus === "ok" && h.lastErrorCode?.startsWith("partial:") ? `这次只抓到一部分（${h.lastErrorCode.slice(8)}），缺的数先空着` : null;
   const l = acct.latest;
   if (!l) return { kind: "none", text: failed ?? "还没有账号数据，下次回流后出现" };
   const d = acct.followersDelta;
@@ -131,16 +132,24 @@ export function barOf(views: number, baseline: number | null): { barPct: number;
 }
 
 const HOUR = 3_600_000;
-/** 快照的抓取时刻：有入账时间用它，旧行只有数据日就按那天 09:00（北京）算 */
-const snapAt = (s: Snapshot): number => Date.parse(s.recordedAt ?? `${s.metricDate}T01:00:00.000Z`);
+/**
+ * 快照的真实观察时刻：只有自动回流的行，入账时间就是抓取时间；CSV / 手填的入账时间是导入那一刻、数据日却是历史日期，
+ * 拿它算「发出几小时」会错——这类样本没有观察时刻，不参与同龄比。
+ */
+const snapAt = (s: Snapshot): number | null => {
+  if (s.source !== "auto" || !s.recordedAt) return null;
+  const t = Date.parse(s.recordedAt);
+  return Number.isNaN(t) ? null : t;
+};
 const viewsAt = (s: Snapshot): number | null => (typeof s.metrics.views === "number" ? s.metrics.views : null);
 
 /** 一条作品的最新快照是发出后几小时抓的；没有发布时间就算不出 */
 export function ageHours(w: Work): number | null {
   const s = w.snapshots[w.snapshots.length - 1];
   const pub = w.publishedAt ? Date.parse(w.publishedAt) : NaN;
-  if (!s || Number.isNaN(pub)) return null;
-  const h = (snapAt(s) - pub) / HOUR;
+  const at = s ? snapAt(s) : null;
+  if (at === null || Number.isNaN(pub)) return null;
+  const h = (at - pub) / HOUR;
   return Number.isFinite(h) && h >= 0 ? h : null;
 }
 
@@ -157,7 +166,9 @@ export function sameAgeBaseline(rows: DataRow[], self: DataRow, platform: string
       const pub = Date.parse(w.publishedAt!);
       let best: { d: number; v: number } | null = null;
       for (const s of w.snapshots) {
-        const v = viewsAt(s), d = Math.abs((snapAt(s) - pub) / HOUR - hours);
+        const v = viewsAt(s), at = snapAt(s);
+        if (at === null) continue;
+        const d = Math.abs((at - pub) / HOUR - hours);
         if (v !== null && d <= tol && (!best || d < best.d)) best = { d, v };
       }
       if (best) vals.push(best.v);
