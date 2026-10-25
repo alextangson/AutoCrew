@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { canReshoot, canSkipRow, collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, skippedLine, statusLine, stateIcon, type ThemeCard } from "./pipeline-model";
 import { canConfirmPublic, exceptionRows } from "./PipelineCard";
-import type { BoardItem } from "./board-columns";
+import type { BoardItem, BoardTopic } from "./board-columns";
+import { sortPipelineTopics, topicAgeLine } from "./pipeline-model";
 
 const item = (extra: Partial<BoardItem> = {}): BoardItem => ({
   id: "v", title: "稿", platform: "douyin", status: "publish_ready", topicId: null, column: "待发布", createdAt: "", updatedAt: "2026-10-24T00:00:00.000Z",
@@ -84,5 +85,21 @@ describe("确认已公开", () => {
     expect(canConfirmPublic({ state: "待核", platform: "wechat_mp", content_id: "w" })).toBe(false);
     expect(canConfirmPublic({ state: "待核", platform: "douyin", content_id: null })).toBe(false);
     expect(canConfirmPublic({ state: "已定时", platform: "douyin", content_id: "v" })).toBe(false);
+  });
+});
+
+describe("选题列：星级排序与老化提示（第 5 期）", () => {
+  const topic = (id: string, extra: Partial<BoardTopic> = {}): BoardTopic => ({
+    id, title: id, source: null, score: null, createdAt: "2026-10-20T00:00:00.000Z", renewedAt: null, ...extra,
+  });
+  it("4–5 星钉在最上（5 星在 4 星前），其后片单、雷达分", () => {
+    const out = sortPipelineTopics([topic("plain", { score: 90 }), topic("four", { stars: 4 }), topic("slate", { inSlate: true }), topic("five", { stars: 5, score: 10 }), topic("three", { stars: 3, score: 95 })]);
+    expect(out.map((t) => t.id)).toEqual(["five", "four", "slate", "three", "plain"]);
+  });
+  it("钉住 / N 天后进回收站 / 不老化不写", () => {
+    expect(topicAgeLine({ stars: 4, agingDaysLeft: null })).toEqual({ kind: "pin", text: "已钉住" });
+    expect(topicAgeLine({ stars: null, agingDaysLeft: 6 })).toEqual({ kind: "clock", text: "6 天后进回收站" });
+    expect(topicAgeLine({ stars: null, agingDaysLeft: 0 })?.text).toBe("今天进回收站");
+    expect(topicAgeLine({ stars: 3, agingDaysLeft: null })).toBeNull();
   });
 });

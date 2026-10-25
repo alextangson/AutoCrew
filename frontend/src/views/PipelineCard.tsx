@@ -11,7 +11,7 @@ import { performTarget } from "./StageCard";
 import { topicSourceLabel, type BoardItem, type BoardTopic } from "./board-columns";
 import { PGlyph, StateGlyph } from "./pipeline-glyphs";
 import {
-  DEST_LABEL, canReshoot, canSkipRow, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine,
+  DEST_LABEL, canReshoot, canSkipRow, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine, topicAgeLine,
   type DestRow, type ThemeCard,
 } from "./pipeline-model";
 
@@ -162,16 +162,41 @@ export function ThemeCardView(p: { card: ThemeCard; expanded: boolean; busy: boo
   </article>;
 }
 
-/** 选题卡：现有内容不变（开始写 / 换一个 AI 写 / 看来源 / 移入回收站）；星级第 5 期上，这里只留位置 */
-export function TopicCardView(p: { topic: BoardTopic; busy: boolean; others: HostId[]; onStart: (host?: HostId) => void; onOpen: () => void; onTrash: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+const STAR_PATH = "M6 1l1.5 3.1 3.4.5-2.5 2.4.6 3.4L6 8.8 3 10.4l.6-3.4L1.1 4.6l3.4-.5z";
+
+/** 单色五星（mock pipeline.html）：点第 N 颗 = N 星；点当前那颗 = 清掉；悬停预览 */
+export function TopicStars(p: { stars: number | null; busy: boolean; onRate: (stars: number) => void }) {
+  const [hover, setHover] = useState(0);
+  const shown = hover || p.stars || 0;
+  return <span className="pl-stars" role="group" aria-label={p.stars ? `${p.stars} 星` : "没打星"} onMouseLeave={() => setHover(0)}>
+    {[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" className="pl-star" disabled={p.busy} aria-pressed={p.stars === n}
+      title={p.stars === n ? "再点一次清掉星级" : n <= 2 ? `${n} 星：移入回收站，同来源少推` : n >= 4 ? `${n} 星：钉住` : "3 星：不自动进回收站"}
+      onMouseEnter={() => setHover(n)} onClick={() => p.onRate(p.stars === n ? 0 : n)}>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d={STAR_PATH} className={n <= shown ? "on" : ""} /></svg>
+    </button>)}
+  </span>;
+}
+
+function AgeGlyph(p: { kind: "pin" | "clock" }) {
+  return <svg viewBox="0 0 12 12" aria-hidden="true">{p.kind === "pin"
+    ? <path d="M4.5 1.5h3M5 1.5v3L3 7h6L7 4.5v-3M6 7v3.5" fill="none" stroke="#5C584D" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+    : <><circle cx="6" cy="6" r="4.6" fill="none" stroke="#8B877B" strokeWidth="1.1" /><path d="M6 3.6V6h2" fill="none" stroke="#8B877B" strokeWidth="1.1" strokeLinecap="round" /></>}</svg>;
+}
+
+/** 选题卡：星级 + 老化（第 5 期）一行，动作（开始写 / 换一个 AI 写 / 看来源 / 移入回收站）一行 */
+export function TopicCardView(p: { topic: BoardTopic; busy: boolean; rating: boolean; others: HostId[]; onStart: (host?: HostId) => void; onRate: (stars: number) => void; onOpen: () => void; onTrash: () => void; onDragStart: () => void; onDragEnd: () => void }) {
   const t = p.topic;
+  const age = topicAgeLine(t);
   return <article className="pl-card" draggable={!p.busy} aria-busy={p.busy}
     onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.title); p.onDragStart(); }} onDragEnd={p.onDragEnd}
     onClick={p.onOpen}>
     <div className="t" title={t.title}>{t.title}</div>
     <div className="pl-st">{[t.inSlate ? "本周片单" : null, t.score !== null ? `雷达 ${t.score}` : topicSourceLabel(t.source), mmdd(t.renewedAt ?? t.createdAt)].filter(Boolean).join(" · ")}</div>
     <div className="pl-ft" onClick={(e) => e.stopPropagation()}>
-      <span className="pl-stars" data-slot="stars" />
+      <TopicStars stars={t.stars ?? null} busy={p.rating || p.busy} onRate={p.onRate} />
+      {age && <span className="pl-age"><AgeGlyph kind={age.kind} />{age.text}</span>}
+    </div>
+    <div className="pl-ft pl-ft-acts" onClick={(e) => e.stopPropagation()}>
       <span className="pl-acts">
         {p.others.length > 0 && <select className="pl-sel" aria-label="换一个 AI 写" value="" disabled={p.busy} onChange={(e) => { const h = e.target.value as HostId; if (h) p.onStart(h); }}>
           <option value="">换一个 AI 写</option>
