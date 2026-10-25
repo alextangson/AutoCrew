@@ -4,11 +4,11 @@
   "baseUrl": "https://api.tokencamel.com/v1",
   "protocol": "openai",
   "links": {
-    "keys": "https://tokencamel.com",
-    "pricing": "https://tokencamel.com",
-    "privacy": "https://tokencamel.com"
+    "keys": "https://tokencamel.com/sign-up",
+    "pricing": "https://tokencamel.com/pricing",
+    "privacy": "https://tokencamel.com/privacy-policy"
   },
   "suggest": { "strong": [], "fast": [] },
-  "touchpoints": { "onboarding": false, "fallback": false },
-  "_todo": "TODO(D4): links are placeholders until the founder supplies the real key / pricing / privacy pages. TODO(D7): suggest stays empty until resale authorization per model is confirmed. touchpoints stay false until TokenCamel opens self-signup (spec §0)."
+  "touchpoints": { "onboarding": true, "fallback": true },
+  "_todo": "TODO(D7): suggest stays empty until resale authorization per model is confirmed. No top-up link: TokenCamel has no online top-up yet (purchase is by email, see the site's quickstart)."
 }
