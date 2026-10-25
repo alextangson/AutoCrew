@@ -108,7 +108,8 @@ async function forward(
     armIdle(); // 响应头到达算活动
     const outHeaders: Record<string, string> = {};
     upstream.headers?.forEach?.((v, k) => {
-      if (!HOP_BY_HOP.has(k.toLowerCase())) outHeaders[k] = v;
+      // fetch 已把 gzip/br 解开，body 是明文：留着 content-encoding 会让 SDK 再解一次，报 Z_DATA_ERROR → terminated
+      if (!HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== "content-encoding") outHeaders[k] = v;
     });
     // 中转抽风归一化:流式请求收到非 SSE 的 200(HTML/error-shaped JSON)= 垃圾响应。
     // 旧引擎在解析层报 malformed 并 fail-fast;SDK 会吞掉 body 里的 provider 信息 ——
