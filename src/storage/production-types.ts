@@ -141,13 +141,25 @@ export type DecisionType =
   | "script_revise" // 「稿子还要改…」：一句话给 agent
   | "inbox_ack"; // 只确认、不改事实的条目（「对，就是它」自动挂上的原片、「让 agent 补」）
 
+/** 自动对上的证据：平台、作品发布时间、期望时间（发布计划定时 / 稿件记录的发布）、标题分 */
+export interface AutoMatchEvidence {
+  platform: string;
+  item_id: string;
+  work_published_at: string;
+  expected_at: string;
+  expected_kind: "plan_slot" | "content_published";
+  title_score: number;
+}
+
 export interface Decision {
   id: string;
   type: DecisionType;
   round: number;
   at: string;
   /** legacy = 启用本体时由旧状态迁移出来的等价决定（§4.1）；chat = 对话里按创始人原话定的（chat-dialog / chat-reported 是修订前的旧值，照旧可读） */
-  source: "founder" | "legacy" | "chat" | "chat-dialog" | "chat-reported";
+  source: "founder" | "legacy" | "chat" | "chat-dialog" | "chat-reported" | "auto";
+  /** auto：数据回流按标题猜的回执，平台 + 时间窗 + 唯一候选都对上时自动确认（创始人 2026-10-25）的证据 */
+  auto_match?: AutoMatchEvidence;
   /** chat*：创始人在对话里的原话（agent 照抄转述，未经核验） */
   founder_words?: string;
   /** chat*：发起的宿主 / 会话 */

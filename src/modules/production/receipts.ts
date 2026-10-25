@@ -25,6 +25,7 @@ import { readPublishRecord, type PlatformPublication } from "../../storage/publi
 import { bindingsForContent } from "../flywheel/platform-items.js";
 import { normalizePlatform } from "../publish/review-gate/platforms.js";
 import { isWorkUrl } from "./chat-approval/post-publish-view.js";
+import { autoMatchNote } from "./auto-match-note.js";
 
 /** 平台名按发布闸门同一张别名表归一（「视频号」= wechat_video）：认不出的原样 */
 export const canonPlatform = (p: string): string => normalizePlatform(p) ?? p;
@@ -255,6 +256,8 @@ export interface Slot {
   seen_at?: string;
   /** 被顶掉的早先观察（删了重发、AI 说法被可信观察顶掉…） */
   history: string[];
+  /** 系统按平台 + 时间窗 + 唯一候选自动确认的（2026-10-25）：卡上那句「自动对上：…，不对就纠正」 */
+  auto_note?: string;
 }
 
 export const slotId = (round: number, platform: string) => `slot:${round}:${canonPlatform(platform)}`;
@@ -285,7 +288,7 @@ function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[]
       .map((d): Entry => ({ cls: "founder", at: Date.parse(d.at), pub_state: "public", fact_id: null, source: "founder", evidence: "你标了已发布", d })),
     // 创始人确认 AI 的说法：保留那条说法里的提交状态（确认真实性 ≠ 确认已公开）
     ...decisions.filter((d) => d.type === "publish_confirm" && byId.has(d.fact_id ?? ""))
-      .map((d): Entry => { const o = byId.get(d.fact_id!)!; return { cls: "founder", at: Date.parse(d.at), pub_state: o.pub_state, fact_id: o.id, source: "founder", evidence: "你确认过 AI 说的发布", o, d }; }),
+      .map((d): Entry => { const o = byId.get(d.fact_id!)!; return { cls: "founder", at: Date.parse(d.at), pub_state: o.pub_state, fact_id: o.id, source: "founder", evidence: d.auto_match ? autoMatchNote(d.auto_match) : "你确认过 AI 说的发布", o, d }; }),
   ].filter((e) => !killed.has(e.fact_id ?? "") && !killed.has(e.d?.id ?? ""));
 }
 
@@ -320,6 +323,7 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
     ...(o?.published_at ? { published_at: o.published_at } : {}), seen_at: pick.d?.at ?? o?.seen_at ?? new Date(pick.at).toISOString(),
     history: entries.filter((e) => e !== pick && e.fact_id).map((e) => e.fact_id!),
     ...foundLink(doc, round, platform, cut),
+    ...(pick.d?.auto_match ? { auto_note: autoMatchNote(pick.d.auto_match) } : {}),
   };
 }
 
