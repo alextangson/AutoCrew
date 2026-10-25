@@ -22,6 +22,7 @@ import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, type AttachmentOpen 
 import { createReadStream } from "node:fs";
 import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
+import { derivedReview } from "../modules/production/derived-review-view.js";
 import { publishDesk } from "../modules/production/publish-desk.js";
 import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
@@ -152,6 +153,15 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         if (params.content_id !== undefined && !isContentId(String(params.content_id))) return { ok: false, code: "bad_request", error: "content_id 不对" };
         return decideItem(params, dir, deps.inbox);
       });
+      return true;
+    }
+    // 派生稿（英文版 / 公众号文章）认稿那件：面板里直接显示中英对照 / 正文，不用另开审阅页；只读
+    if (p === "/api/inbox/derived" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const id = url.searchParams.get("content_id") ?? "";
+      if (!isContentId(id)) { send(res, 400, { ok: false, code: "bad_request", error: "content_id 不对" }); return true; }
+      try { send(res, 200, await derivedReview(id, await deps.resolveDataDir())); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }
     // 请示附件（§5.4）：只读、sandbox + nosniff、只认绑定时的 sha；HTML 不从这里给
