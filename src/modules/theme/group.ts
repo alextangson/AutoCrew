@@ -46,7 +46,8 @@ export interface ThemeCard {
 export interface ThemeInput {
   items: BoardItem[];
   contents: Array<Pick<Content, "id" | "derivedFrom" | "platform">>;
-  plans: Map<string, { plan: DestinationPlan; persisted: boolean }>;
+  /** legacy = 老主题：默认由 legacyPlan 按「实际有的」现算，plan 里只放创始人条目 */
+  plans: Map<string, { plan: DestinationPlan; persisted: boolean; legacy?: boolean }>;
   /** 公众号文章的发布状态；读坏了给 Error（照实标红，不当成没发） */
   articles: Map<string, ArticlePublishState | Error>;
   now?: Date;
@@ -66,6 +67,8 @@ function rowsOf(item: BoardItem, kind: "parent" | "en" | "article" | "text", inp
   if (kind === "article" || (kind === "text" && item.platform === "wechat_mp")) {
     const st = input.articles.get(item.id);
     if (st instanceof Error) return [{ platform: "wechat_mp", state: "没发成", detail: st.message, content_id: item.id }];
+    // 没有 article-publish.json、但稿件状态已经是已发布（旧流程 / 手动标发）：跟旧看板一样算已发
+    if (!st?.phase && item.column === "已发布") return [{ platform: "wechat_mp", state: "已发", detail: "已发", content_id: item.id, ...(item.publishTime ? { at: mmdd(item.publishTime) } : {}) }];
     const base = st ?? { superseded: [], attempts: [] };
     return [{ platform: "wechat_mp", ...fromArticle(base, pre, item.id, input.now) }];
   }
@@ -150,7 +153,7 @@ function columnOf(item: BoardItem, rows: DestRow[], planned: number): ThemeColum
   const anySent = rows.some((r) => SENT.has(r.state));
   // 没定去向：不能说「全部发完」
   if (planned === 0) return anySent ? "发布中" : "待发布";
-  // 要发的都确认已发（或全部被标了不出）
+  // 要发的都确认已发（或全部被标了不出）；待核（过点没核到）不算，卡留在发布中
   if (required.every((r) => r.state === "已发")) return "全部发完";
   return anySent ? "发布中" : "待发布";
 }
@@ -165,8 +168,29 @@ function exceptionsOf(rows: DestRow[], planned: number, skippedAll: boolean): st
   return out;
 }
 
+/**
+ * 老主题的默认去向 =「它实际有的」：父视频自己的中文平台（发布计划 / 回执槽，即 targets）+ 真有派生稿的去向
+ * （有公众号文章 → 公众号；英文版自己的平台槽 → YouTube / X）。创始人定过的条目盖在上面。
+ */
+export function legacyPlan(plan: DestinationPlan, parent: BoardItem, children: Array<{ item: BoardItem; kind: "en" | "article" }>): DestinationPlan {
+  const had = new Set<Destination>();
+  for (const t of parent.targets ?? []) if (ZH_VIDEO.has(t.platform) && isDestination(t.platform)) had.add(t.platform);
+  for (const c of children) {
+    if (c.kind === "article") had.add("wechat_mp");
+    else for (const t of c.item.targets ?? []) if (EN_VIDEO.has(t.platform) && isDestination(t.platform)) had.add(t.platform);
+  }
+  const destinations: DestinationPlan["destinations"] = {};
+  for (const p of DESTINATIONS) {
+    const founder = plan.destinations[p];
+    if (founder?.by === "founder") destinations[p] = founder;
+    else if (had.has(p)) destinations[p] = { required: true, by: "profile", at: plan.created_at };
+  }
+  return { ...plan, destinations };
+}
+
 function card(id: string, kind: ThemeCard["kind"], item: BoardItem, children: Array<{ item: BoardItem; kind: "en" | "article" }>, input: ThemeInput): ThemeCard {
-  const view = kind === "video" ? input.plans.get(id) : undefined;
+  const raw = kind === "video" ? input.plans.get(id) : undefined;
+  const view = raw?.legacy ? { ...raw, plan: legacyPlan(raw.plan, item, children) } : raw;
   const reshoot = activeReshoot(view?.plan, item);
   const rows = kind === "video" ? destinationsFor(item, children, view, input, reshoot)
     : rowsOf(item, kind === "orphan" ? (item.platform === "wechat_mp" ? "article" : "en") : "text", input).map((r) => ({ ...r, required: true }));
