@@ -8,7 +8,8 @@ import { relativeLabel } from "../../time-format";
 import { openStoryboard } from "../board-api";
 import { attachmentUrl, mediaUrl } from "./review-api";
 import { platformName } from "../board-columns";
-import { plainWords, type InboxAction, type InboxItem } from "./review-model";
+import { isDerivedDraft, plainWords, type InboxAction, type InboxItem } from "./review-model";
+import { DerivedDraftBody } from "./DerivedDraft";
 
 export type Act = (a: InboxAction, extra?: Record<string, unknown>) => Promise<void>;
 
@@ -228,9 +229,10 @@ function Generic(p: { item: InboxItem; act: Act }) {
 
 export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClose: () => void }) {
   const it = p.item;
-  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody
+  const derived = isDerivedDraft(it);
+  const Body = derived ? DerivedDraftBody : it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody
     : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : it.type === "publish_claim" ? ClaimBody : Generic;
-  return <aside className="ri-peek" role="dialog" aria-label={it.summary}>
+  return <aside className={"ri-peek" + (derived ? " ri-peek-wide" : "")} role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>
     <h2>{plainWords(it.summary)}</h2>
     {p.gone ? <p className="ri-note" role="status">已在别处处理</p> : <Body key={`${it.item_id}:${it.gen}`} item={it} act={p.act} />}

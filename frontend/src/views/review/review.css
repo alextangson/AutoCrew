@@ -95,3 +95,17 @@
 .ri-home-row .m { display: block; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ri-home-row .arr { color: #B4B0A4; line-height: 22px; }
 .ri-home-foot { font-size: 12px; color: var(--muted); margin-top: 12px; }
+
+/* 派生稿认稿（英文版中英对照 / 公众号文章）：面板加宽，表就地看 */
+.ri-peek { --ri-line: var(--line-soft); --ri-gray: var(--text-2); }
+.ri-peek.ri-peek-wide { width: min(880px, 100vw); }
+.ri-bi { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); line-height: 1.6; margin: 0 0 16px; }
+.ri-bi th, .ri-bi td { border: 1px solid var(--ri-line); padding: 6px 8px; vertical-align: top; text-align: left; }
+.ri-bi th { background: var(--surface); font-weight: 500; }
+.ri-bi td.n { width: 64px; color: var(--ri-gray); }
+.ri-bi mark { background: #FFE58A; }
+.ri-bi ul { margin: 4px 0; padding-left: 1.2em; font-size: var(--fs-xs); }
+.ri-budget { font-size: var(--fs-xs); color: var(--ri-gray); margin: 4px 0 0; }
+.ri-ok { color: #1E8449; }
+.ri-problems { font-size: var(--fs-sm); color: var(--hot); margin: 0 0 14px; }
+.ri-problems ol { margin: 4px 0 0; padding-left: 1.4em; }

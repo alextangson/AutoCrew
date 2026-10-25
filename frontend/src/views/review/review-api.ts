@@ -48,6 +48,17 @@ export function openInboxItem(contentId: string, types?: string[]): void {
   window.dispatchEvent(new CustomEvent<InboxOpenDetail>(INBOX_OPEN_EVENT, { detail: { content_id: contentId, ...(types ? { types } : {}) } }));
 }
 
+/** 派生稿（英文版 / 公众号文章）认稿那件的正文：中英对照 / 标题 + 正文 + 还差什么；读不出来回原因 */
+export interface EnSegmentView {
+  index: number; startMs: number; endMs: number; zh: string; en: string; keyword: string | null; changed: string | null;
+  slotS: number; estimatedS: number; words: number; over: boolean;
+  swaps: Array<{ from: string; to: string; reason: string; factual: boolean; verified: boolean; evidenceId: string | null }>;
+}
+export type DerivedReview =
+  | { ok: true; kind: "en_edition"; title: string; segments: EnSegmentView[]; problems: string[]; approval: string; hash: string }
+  | { ok: true; kind: "wechat_article"; title: string; chosenTitle: string | null; titleOptions: string[]; body: string; chars: number; images: number; problems: string[]; approval: string; sourceNote: string | null; hash: string };
+export const loadDerived = (contentId: string) => call<DerivedReview>(`/api/inbox/derived?content_id=${encodeURIComponent(contentId)}`);
+
 /** 改稿经验组（spec 2026-10-15 §A）：规则走工作台规则路由，手册走手册路由；eventId 由面板按条固定，双击 / 重试不重复记 */
 export const decideRule = (body: { ruleId: string; revision: number; decision: "active" | "rejected"; eventId: string; replaces?: string }) =>
   call<Json>("/api/rules/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

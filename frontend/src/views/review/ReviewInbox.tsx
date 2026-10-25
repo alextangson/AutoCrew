@@ -62,7 +62,8 @@ function QuickButton(p: { row: Row; a: InboxAction; run: (item: InboxItem, a: In
 export const HIDDEN_POLL_MS = 30_000;
 
 /** variant="home"：首页「要你做的」的紧凑列表（动词 · 标题 · 一行说明 · →），点开仍是同一个面板、同一套动作 */
-export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[]; hiddenPollMs?: number; variant?: "home" }) {
+/** variant="panel"：不画列表，只给面板和提示（内容管线页用：卡上的「认英文稿 →」用 openInboxItem 打开同一个面板）；onItems 把读到的列表交出去 */
+export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[]; hiddenPollMs?: number; variant?: "home" | "panel"; onItems?: (items: InboxItem[]) => void }) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 上一次读成功的时间：读失败时列表停在那一刻，列表头写明（整分支审 3 P2） */
@@ -75,12 +76,15 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   const primaryRef = useRef<(() => void) | null>(null);
   const setPrimary = useCallback((fn: (() => void) | null) => { primaryRef.current = fn; }, []);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onItems = useRef(props.onItems);
+  onItems.current = props.onItems;
 
   const reload = useCallback(async (): Promise<InboxItem[] | null> => {
     const r = await loadInbox();
     if (!r.ok) { setError(r.error); return null; }
     const sorted = sortItems(r.data.items);
     setItems(sorted); setError(null); setLastOkAt(Date.now());
+    onItems.current?.(sorted);
     return sorted;
   }, []);
   useEffect(() => {
@@ -227,6 +231,7 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
       {toast.undo && <button onClick={() => void toast.undo!()}>撤回</button>}
       <span className="ri-left">{toast.left > 0 ? `还有 ${toast.left} 件` : "都处理完了"}</span></div>}
   </>;
+  if (props.variant === "panel") return <div className="ri-panel-only">{panels}</div>;
   if (props.variant === "home") return <section className="ri-home" aria-label="要你做的">
     <div className="ri-home-h"><h2>要你做的</h2>
       {rows.length > 0 && <span className="ri-home-count">{rows.length} 件</span>}
