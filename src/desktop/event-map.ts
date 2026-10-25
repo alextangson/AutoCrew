@@ -114,6 +114,12 @@ export const CHANNEL_EVENT_MAP: Partial<Record<IpcChannel, Mapper>> = {
     return { role: "system", kind: "trash", label: `你从回收站恢复了选题「${t?.title ?? ""}」` };
   },
 
+  "topic:rate": ({ result }) => {
+    if (result.ok !== true || result.trashed !== true) return null;
+    const t = result.topic as { title?: string; stars?: number } | undefined;
+    return { role: "system", kind: "trash", label: `你给选题「${t?.title ?? ""}」打了 ${t?.stars ?? ""} 星，已移入回收站（可恢复）` };
+  },
+
   "radar:refresh": ({ result }) => {
     if (result.ok !== true) return null;
     const d = result.data as { topics?: unknown[] } | undefined;

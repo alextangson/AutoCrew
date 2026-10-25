@@ -156,6 +156,8 @@ export const IPC_CHANNELS = [
   // 一键删示例（onboarding-connect O20）：示例选题连同其下的稿一起进回收站
   "topic:delete_example",
   "topic:restore",
+  // 选题星级（管线重规划 §3）：1–5 星，0 = 清掉；1–2 星进回收站
+  "topic:rate",
   // 角度点选（角度卡 spec §1.4）：点选 = 只带 angle_id；改写 = 额外带改写后的 card
   "topic:select_angle",
   "topic:clear_angle",
