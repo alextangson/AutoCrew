@@ -212,3 +212,11 @@ export function quickAction(row: Pick<Row, "items">): InboxAction | null {
   const want = i.type === "cover_pick" ? "pick_cover" : i.type === "candidate" ? "confirm_candidate" : null;
   return i.actions.find((a) => a.action === want && a.role === "primary" && !a.note) ?? null;
 }
+
+/** 首页「要你做的」行首的动词（管线重规划 §1 第 3 期）：一眼看出要你做哪种事 */
+const VERB: Record<InboxType, string> = {
+  draft: "认稿", cut_review: "看成片", cover_pick: "挑封面", candidate: "认素材", sliver: "看闪帧",
+  publish_check: "发前核对", published_ask: "确认发布", publish_claim: "确认发布", ask: "回答", ask_reported: "回答",
+  register_blocked: "补登记", writing_rule: "定规则", playbook_change: "定规则", writing_promotion: "定写法", other: "看看",
+};
+export const rowVerb = (r: Pick<Row, "key" | "items">): string => (isLessonRow(r) ? "定规则" : VERB[r.items[0]?.type] ?? "看看");
