@@ -22,6 +22,8 @@ export interface PullPlatformStatus {
   lastCoverError?: string;
   /** 本进程没有资料库写入权、回流被拒（只在服务内存里，资料库里的 lastStatus 还是旧的） */
   writeRefusal?: { code: string; at: string };
+  /** 账号级快照（第 4 期）：null = 这个平台还不能抓账号数据；{error} = 读不出 */
+  account?: import("./views/home-model").AccountTileData | { error: string } | null;
 }
 
 export type PullTone = "ok" | "warn" | "bad" | "idle";
@@ -103,6 +105,8 @@ export function attemptMessage(label: string, attempt: PullAttemptView): string 
   switch (attempt.status) {
     case "in_flight":
       return `${label}正在抓——这一轮跑完会自己刷新`;
+    case "not_picked":
+      return `${label}没勾在运营平台里，不抓——要抓先去设置勾上${label}`;
     case "ok":
       return `${label}：抓回 ${attempt.rowCount} 条，入账 ${attempt.imported ?? 0} 条${
         attempt.hasMore ? "（作品数到上限，还有更多没抓完）" : ""

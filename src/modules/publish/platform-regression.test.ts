@@ -77,7 +77,7 @@ describe("中文平台现行口径（回归钉）", () => {
   });
   it("数据回流平台", () => {
     expect([...BINDABLE_PLATFORMS]).toEqual(["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"]);
-    expect([...PULL_PLATFORMS]).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
+    expect([...PULL_PLATFORMS]).toEqual(["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"]);
     expect(DEFAULT_COLUMNS).toEqual(ZH_VIDEO);
   });
 });

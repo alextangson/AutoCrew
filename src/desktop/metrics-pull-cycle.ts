@@ -18,6 +18,7 @@ import {
   PULL_PLATFORMS,
   PULL_PLATFORM_LABELS,
   localDay,
+  pickedPullPlatforms,
   readPullState,
   updatePlatformPullState,
   type PlatformPullState,
@@ -29,6 +30,7 @@ import { getDataDir } from "../storage/local-store.js";
 import { assertDataDirWritable } from "../storage/storage-roots.js";
 import type { PullResult, PullStatus, TypedRow } from "../adapters/browser/pull-types.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { runAccountPull, type AccountAttempt, type AccountFn } from "./account-pull.js";
 
 /** 30 分钟一次检查：09:00 那一抓最多迟到半小时；错过（睡眠/没开服务）就在醒来后的这一检查补上 */
 export const METRICS_PULL_TICK_MS = 30 * 60_000;
@@ -43,10 +45,11 @@ const RETRY_BACKOFF_MS = 3_600_000;
 
 export type PullTrigger = "auto" | "manual";
 
+
 /** 一次抓取的结果快照（IPC 直接回给前端；status=in_flight 表示被单飞拦下，没真抓） */
 export interface PullAttempt {
   platform: PullPlatform;
-  status: PullStatus | "in_flight";
+  status: PullStatus | "in_flight" | "not_picked";
   rowCount: number;
   /** 真正入账的行数（rowCount 是抓回来的行数，两者可能因行级 rejected 不等） */
   imported?: number;
@@ -57,13 +60,19 @@ export interface PullAttempt {
   importError?: string;
   /** 入库成功但状态没写住：下轮会重抓，重复导入无害——如实报出来，不静默 */
   persistError?: string;
+  /** 同一轮顺带抓的账号级数据（只有接了账号抓取的平台有） */
+  account?: AccountAttempt;
 }
 
 export type PullFn = () => Promise<PullResult>;
 
 export interface MetricsPullDeps {
-  /** 抓取器注入点：默认动态 import 三个真实抓取器（测试塞假的，不连浏览器） */
+  /** 抓取器注入点：默认动态 import 真实抓取器（测试塞假的，不连浏览器） */
   registry?: Partial<Record<PullPlatform, PullFn>>;
+  /** 账号级抓取器注入点（测试不连浏览器） */
+  accountRegistry?: Partial<Record<string, AccountFn>>;
+  /** 运营平台勾选的注入点；默认读档案 profile.platforms */
+  picked?: (dataDir?: string) => Promise<Set<string>>;
   importRows?: typeof importPerformanceRows;
   emit?: typeof emitEngineEvent;
   now?: () => Date;
@@ -84,6 +93,9 @@ const DEFAULT_REGISTRY: Record<PullPlatform, PullFn> = {
   douyin: async () => (await import("../adapters/browser/douyin-stats.js")).pullDouyinStats(),
   wechat_video: async () => (await import("../adapters/browser/wechat-video-stats.js")).pullWechatVideoStats(),
   xiaohongshu: async () => (await import("../adapters/browser/xhs-stats.js")).pullXhsStats(),
+  bilibili: async () => (await import("../adapters/browser/bilibili-stats.js")).pullBilibiliStats(),
+  // 与 flywheel:wechat_pull 手动按钮同一个抓取器（同标题去重也在里面）
+  wechat_mp: async () => (await import("../adapters/browser/wechat-mp-stats.js")).pullWechatMpStats(),
 };
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -374,6 +386,7 @@ async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<Pu
   } catch (err) {
     persistError = err instanceof Error ? err.message : String(err);
   }
+  const account = await runAccountPull(platform, landing.status, now, opts);
 
   const attempt: PullAttempt = {
     platform,
@@ -384,6 +397,7 @@ async function runPull(platform: PullPlatform, opts: PullNowOptions): Promise<Pu
     ...(landing.hasMore ? { hasMore: true } : {}),
     ...(landing.importError ? { importError: landing.importError } : {}),
     ...(persistError ? { persistError } : {}),
+    ...(account ? { account } : {}),
   };
   const label = persistError ? `${eventLabel(attempt)}（状态未写住，下轮会重抓）` : eventLabel(attempt);
   notifyPull(attempt, label, opts, !refusals.has(key));
@@ -404,6 +418,8 @@ export function inFlightPlatforms(dataDir?: string): PullPlatform[] {
 
 /** 手动 IPC 与定时 tick 的唯一入口：同平台并发直接返回 in_flight，不排队也不重复抓 */
 export async function pullPlatformNow(platform: PullPlatform, opts: PullNowOptions = {}): Promise<PullAttempt> {
+  // 勾选是共用执行入口上的闸：定时与手动都过这里，没勾的平台一次都不打开后台
+  if (!(await (opts.picked ?? pickedPullPlatforms)(opts.dataDir)).has(platform)) return { platform, status: "not_picked", rowCount: 0 };
   const key = flightKey(opts.dataDir, platform);
   if (inFlight.has(key)) return { platform, status: "in_flight", rowCount: 0 };
   inFlight.add(key);
@@ -419,7 +435,8 @@ export async function pullPlatformNow(platform: PullPlatform, opts: PullNowOptio
 export async function runMetricsPullTick(dataDir?: string, deps: MetricsPullDeps = {}): Promise<PullAttempt[]> {
   const now = deps.now?.() ?? new Date();
   const state = await readPullState(dataDir, deps.warn);
-  const due = PULL_PLATFORMS.filter((p) => isPullDue(state.platforms[p], now));
+  const picked = await (deps.picked ?? pickedPullPlatforms)(dataDir);
+  const due = PULL_PLATFORMS.filter((p) => picked.has(p) && isPullDue(state.platforms[p], now));
   const attempts: PullAttempt[] = [];
   for (const platform of due) {
     // 串行 + 间隔：不并发打三家后台（风控面最小）

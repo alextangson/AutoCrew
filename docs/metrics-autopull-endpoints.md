@@ -88,3 +88,23 @@
 5. 抖音新旧两路（`item/list` vs `work_list`）哪条实际存活；`metrics_trend` 响应结构。
 6. 视频号 `finderUsername` 的真实路径（当前认 4 条常见路径）。
 7. x-s-common 是否必需（当前未拼，等 x-s/x-t 确认不够用再补）。
+
+## 账号级每日快照 + B站 / 公众号（第 4 期，2026-10-25 只读探查）
+
+探查方式：ego lite 新开 TaskSpace，只打开后台首页 / 列表页，旁听页面自己收到的响应，不点任何按钮、不提交任何东西。脱敏样本存在 `src/adapters/browser/__fixtures__/account/`、`__fixtures__/bilibili/`。
+
+| 平台 | 打开的页 | 旁听的响应 | 粉丝 | 当日新增粉丝 | 当日播放/阅读 | 备注 |
+|---|---|---|---|---|---|---|
+| 抖音 | `creator.douyin.com/creator-micro/home` | `/aweme/janus/creator/data/overview/all/` | `data.fans.option_list[].count`（每日累计） | `data.new_fans.option_list` | `data.play.option_list` | 近 7 天每天一个数，字符串；一抓就有 7 天，「较昨天」当天可用。昵称取 `/web/api/media/user/info/` |
+| 小红书 | `creator.xiaohongshu.com/new/home` | `datacenter/account/base` + `creator/home/personal_info` | `personal_info.fans_count`（抓取此刻，记在前一个数据日上） | `seven.rise_fans_list` | `seven.view_list` | 日期是北京零点毫秒 |
+| B站 | `member.bilibili.com/platform/home` | `/x/web/data/index/stat` | `total_fans` | `incr_fans` | `incr_click` | 只有 `log_date` 那一天；`code -101` 未登录 |
+| 公众号 | `mp.weixin.qq.com/` 首页 | 首页 HTML 文档本身（`/cgi-bin/home`） | `total_friend_cnt` | `yesterdaySummary.subscribe` | `yesterdaySummary.pv`（昨日阅读**人数**） | 「数据统计时间」= 昨天；`useranalysis` 也有逐日累计关注，没接（首页一屏够了） |
+| 视频号 | — | — | — | — | — | 探查时 ego lite 里视频号已掉登录，看不到首页结构，**没接**（不编字段） |
+
+B站作品级：`member.bilibili.com/platform/upload-manager/article` → `/x/web/archives`，`data.arc_audits[].Archive.{bvid,title,ptime}` + `.stat.{view,like,reply,share,favorite}`，分页 `data.page.{pn,ps,count}`。「下一页」控件文字未经真机翻页验证。
+
+公众号作品级：沿用既有 `wechat-mp-stats`（发表记录页），定时回流和设置页的手动「拉公众号数据」按钮是同一个抓取器。
+
+存储：`<dataDir>/account-snapshots.jsonl`（只追加，每行 = 平台 + 账号 + 数据日 + 抓取时间 + 粉丝 / 新增 / 播放或阅读 + 是否完整；读时同一天逐字段取最新非空值）；账号抓取健康单独在 `<dataDir>/account-pull.json`，和作品抓取的 `metrics-pull.json` 分开。
+
+回流范围：运营平台勾选（`creator-profile.json` 的 `platforms`）∩ 有抓取器的平台，在 `pullPlatformNow`（定时和手动共用的入口）拦。设置里每个平台的开关仍是「这家先别自动抓」：定时只抓「勾了且开着」的；手动「立即抓取」只看勾没勾。

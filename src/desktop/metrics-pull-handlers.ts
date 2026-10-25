@@ -22,6 +22,9 @@ import {
   pullPlatformNow,
   writeRefusalFor,
 } from "./metrics-pull-cycle.js";
+import { isAccountPlatform } from "../adapters/browser/account-stats.js";
+import { readAccountDays, readAccountPullState, type AccountPullState, type AccountSnapshot } from "../modules/flywheel/account-snapshots.js";
+import { accountTile } from "../modules/flywheel/account-view.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
@@ -35,10 +38,21 @@ function badPlatform(value: unknown): HandlerResult | null {
   return { ok: false, error: `platform 必须是 ${PULL_PLATFORMS.join(" / ")} 之一` };
 }
 
+/** 账号格的数：读不出来就整段报 accountError（不当成「还没数据」） */
+async function accountData(dataDir?: string): Promise<{ days: AccountSnapshot[]; health: AccountPullState } | { error: string }> {
+  try {
+    const [days, health] = await Promise.all([readAccountDays(dataDir), readAccountPullState(dataDir)]);
+    return { days, health };
+  } catch (err) {
+    return { error: `账号数据读不出：${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function pullStatusHandler(payload: Payload): Promise<HandlerResult> {
   const dataDir = dataDirOf(payload);
   try {
     const state = await readPullState(dataDir);
+    const acct = await accountData(dataDir);
     const running = new Set(inFlightPlatforms(dataDir));
     return {
       ok: true,
@@ -54,6 +68,8 @@ export async function pullStatusHandler(payload: Payload): Promise<HandlerResult
           inFlight: running.has(platform),
           ...(state.platforms[platform] ?? defaultPlatformState()),
           ...(writeRefusal ? { writeRefusal } : {}),
+          // 账号级快照：没接账号抓取的平台（视频号）给 null，首页写「还不能抓账号数据」
+          account: !isAccountPlatform(platform) ? null : "error" in acct ? { error: acct.error } : accountTile(platform, acct.days, acct.health[platform] ?? null),
           };
         }),
       },
