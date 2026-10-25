@@ -9,6 +9,19 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { PublishEvidence } from "./derive.js";
 import { explain, type Explanation } from "./explain.js";
 import { withEnNeeds } from "../en-edition/en-explain.js";
+import { readPublishState } from "../wechat-article/publish-state.js";
+import { articleBoardStage } from "../wechat-article/board-stage.js";
+
+/** 公众号文章：发布记在它自己的 article-publish.json，待发布的卡按它改列和原因；读坏了标红，不当成没发 */
+async function withArticlePublish(content: Content, exp: Explanation, dataDir: string, now?: Date): Promise<Explanation> {
+  if (content.platform !== "wechat_mp" || exp.column !== "待发布") return exp;
+  try {
+    const st = articleBoardStage(await readPublishState(content.id, dataDir), now);
+    return st ? { ...exp, column: st.column, reason: st.reason, badges: [...exp.badges, st.badge] } : exp;
+  } catch (e) {
+    return { ...exp, alerts: [...exp.alerts, e instanceof Error ? e.message : String(e)] };
+  }
+}
 
 const STATE_BADGE: Record<string, string> = {
   scheduled: "已定时", overdue: "应已公开", public: "已公开", reviewing: "审核中", manual: "你标了已发布", unknown: "已投出",
@@ -57,7 +70,7 @@ export async function explainContent(content: Content, dataDir: string, ctx?: Ex
   const publish = active && isVideoPlatform(content.platform) ? { verified: false } : await publishEvidenceOf(content, dataDir, record, doc?.round_started_at);
   const raw = explain({ content, doc, enabled: active, publish });
   // 英文版按自己的需要（缩略图 + 英文发布包）说还差什么，不按中文封面对
-  const exp = active ? await withEnNeeds(content, raw, dataDir) : raw;
+  const exp = await withArticlePublish(content, active ? await withEnNeeds(content, raw, dataDir) : raw, dataDir);
   // 启用时被排除的稿：照旧行为，卡片上标出来（从不静默跳过）
   const alerts = [...exp.alerts, ...(excluded ? ["未纳入本体（启用时对账失败，已排除）"] : []), ...(error ? [`制作记录读不了：${error}`] : [])];
   return { ...exp, alerts, ...(error ? { error } : {}) };
