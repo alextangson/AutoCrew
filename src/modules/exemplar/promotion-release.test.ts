@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +45,8 @@ describe("写法补丁合进技能后自动生效", () => {
     expect(releaseEvidence((await readPromotions(dir))[0], "<!-- promotion-folded: wp-other -->")).toBeNull();
     const skill = await skillWith("改写过的写法", `<!-- promotion-folded: wp-other ${id} -->\n`);
     expect(await releaseFoldedPromotions(dir, skill)).toHaveLength(1);
-    expect((await readPromotions(dir))[0]).toMatchObject({ status: "released", released_evidence: "marker" });
+    const sha = createHash("sha256").update(await fs.readFile(skill)).digest("hex");
+    expect((await readPromotions(dir))[0]).toMatchObject({ status: "released", released_evidence: "marker", released_skill_file: skill, released_skill_sha256: sha });
   });
 
   it("只出现在「写法」一节外面的全文不算证据", async () => {

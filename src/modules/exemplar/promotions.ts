@@ -7,7 +7,7 @@
  * 手册骨架的升级不走这里，走手册提案。
  * 文件读坏了 = 可见错误，不当成没有提案、不覆盖。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
@@ -43,6 +43,9 @@ export interface Promotion {
   /** released：在技能文件里找到合入证据的时间和依据 */
   released_at?: string;
   released_evidence?: "marker" | "text";
+  /** released：写稿实际加载的那份技能文件（路径 + 判定时的 sha256），可事后核对 */
+  released_skill_file?: string;
+  released_skill_sha256?: string;
 }
 interface PromotionFile { schema: 1; items: Promotion[] }
 
@@ -144,7 +147,8 @@ export function releaseEvidence(p: Promotion, skill: string): "marker" | "text" 
   return t.length > 0 && norm(section).includes(t) ? "text" : null;
 }
 
-/** 已批等发布的写法：技能文件里找到合入证据的转 released。技能文件读不了 = 抛错，不当成没合 */
+/** 已批等发布的写法：写稿实际加载的技能文件（默认 SKILL_FILE，立意锁写法读的同一份）里找到合入证据的转 released，
+ *  记下文件路径和 sha256 作证据。技能文件读不了 = 抛错，不当成没合 */
 export function releaseFoldedPromotions(dataDir?: string, skillFile = SKILL_FILE): Promise<Promotion[]> {
   return serializeExemplars(dataDir, async () => {
     const items = await readPromotions(dataDir);
@@ -153,11 +157,12 @@ export function releaseFoldedPromotions(dataDir?: string, skillFile = SKILL_FILE
     let skill: string;
     try { skill = await fs.readFile(skillFile, "utf8"); } catch (e) { throw new ExemplarError("method_unreadable", `write-script 技能读不了，判断不了写法补丁有没有生效：${(e as Error).message}`); }
     const at = new Date().toISOString();
+    const sha = createHash("sha256").update(skill).digest("hex");
     const released: Promotion[] = [];
     for (const p of waiting) {
       const ev = releaseEvidence(p, skill);
       if (!ev) continue;
-      Object.assign(p, { status: "released", released_at: at, released_evidence: ev });
+      Object.assign(p, { status: "released", released_at: at, released_evidence: ev, released_skill_file: skillFile, released_skill_sha256: sha });
       released.push(p);
     }
     if (released.length > 0) await write(items, dataDir);
