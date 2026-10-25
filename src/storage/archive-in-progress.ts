@@ -13,12 +13,14 @@ export function childDone(card: ThemeCard, child: BoardItem): boolean {
 }
 
 /** 父稿 id → 还没做完的派生稿标题 */
-export function unfinishedChildren(themes: ThemeCard[]): Map<string, string[]> {
+export function unfinishedChildren(themes: ThemeCard[], planErrors: Array<{ id: string; error: string }> = []): Map<string, string[]> {
   const out = new Map<string, string[]>();
+  // 去向计划读坏了：要发哪些判断不了（行会变成不要求），当没做完，源视频留本机
+  for (const e of planErrors) out.set(e.id, [`去向计划读不出来（${e.error}）`]);
   for (const card of themes) {
     if (card.kind !== "video") continue;
     const open = card.children.filter((ch) => !childDone(card, ch)).map((ch) => ch.title);
-    if (open.length) out.set(card.id, open);
+    if (open.length && !out.has(card.id)) out.set(card.id, open);
   }
   return out;
 }
@@ -29,5 +31,6 @@ export async function loadUnfinishedChildren(data: string, now: Date): Promise<M
     import("../desktop/board-data.js"), import("./local-store.js"), import("../modules/theme/pipeline-data.js"),
   ]);
   const [board, contents] = await Promise.all([boardData(data), listContents(data)]);
-  return unfinishedChildren((await themesOf(board, contents, data, now)).themes);
+  const { themes, planErrors } = await themesOf(board, contents, data, now);
+  return unfinishedChildren(themes, planErrors);
 }

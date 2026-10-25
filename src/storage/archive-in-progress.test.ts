@@ -39,4 +39,10 @@ describe("派生稿做没做完（归档用）", () => {
     const themes = [card([done, open], [row("a", "已发"), { ...row("b", "在做"), platform: "wechat_mp" }]), { ...card([open], []), id: "q", kind: "text" as const }];
     expect([...unfinishedChildren(themes)]).toEqual([["p", ["t-b"]]]);
   });
+  it("a theme whose destination plan cannot be read is treated as unfinished, even if rows look done", () => {
+    const en = item("en", "已发布");
+    const themes = [card([en], [row("en", "已发", { required: false })])];
+    expect(unfinishedChildren(themes).size).toBe(0);
+    expect(unfinishedChildren(themes, [{ id: "p", error: "JSON 坏了" }]).get("p")).toEqual(["去向计划读不出来（JSON 坏了）"]);
+  });
 });
