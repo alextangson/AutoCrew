@@ -91,6 +91,17 @@ export interface Topic {
   meetingSlot?: { meetingDate: string; slotId: string };
   /** 装好后试跑建的示例选题（onboarding-connect O20）：其下稿件继承，不进数据回流和写作学习，可一键删 */
   example?: boolean;
+  /**
+   * 创始人打的星（1–5，选题星级 spec §3）：和雷达的机器分 `score` 分开存。
+   * 1–2 星 = 进回收站 + 同来源少推；≥3 星不老化；4–5 星钉在选题列最上面。缺省 = 没打。
+   */
+  stars?: number;
+  /** 打星的时间与途径（board = 管线卡上点的；mcp = 对话里转述，带 starWords 原话） */
+  starredAt?: string;
+  starredVia?: "board" | "mcp";
+  starWords?: string;
+  /** 从回收站捞回来的时间：捞回 = 显式想要，不再自动老化 */
+  restoredAt?: string;
 }
 
 /**
@@ -758,10 +769,21 @@ export async function softDeleteTopic(id: string, dataDir?: string): Promise<Top
   return topic;
 }
 
+/**
+ * 从回收站捞回：清 deletedAt、记 restoredAt（此后不自动老化）。
+ * 因 1–2 星进回收站的，一并清掉星级——误点一颗星，捞回来就是没打过，同来源的负反馈随之撤销。
+ */
 export async function restoreTopic(id: string, dataDir?: string): Promise<Topic | null> {
   const topic = await getTopic(id, dataDir);
   if (!topic) return null;
+  if (topic.deletedAt) topic.restoredAt = new Date().toISOString();
   topic.deletedAt = null;
+  if (typeof topic.stars === "number" && topic.stars <= 2) {
+    delete topic.stars;
+    delete topic.starredAt;
+    delete topic.starredVia;
+    delete topic.starWords;
+  }
   await writeTopic(topic, dataDir);
   return topic;
 }

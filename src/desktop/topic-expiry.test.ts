@@ -1,5 +1,5 @@
 /**
- * topic-expiry.test.ts — 灵感库 3 天过期清理（创始人 2026-07-08 裁决）
+ * topic-expiry.test.ts — 灵感库过期清理（创始人 2026-07-08 裁决；2026-10-25 改 7 天 + 星级 / 捞回豁免 + 上线日起算）
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
@@ -33,18 +33,24 @@ afterEach(async () => {
 /** 直接改 topic 文件的 createdAt(saveTopic 总是写 now,测试需要旧时间戳) */
 async function ageTopic(id: string, daysAgo: number, dataDir?: string): Promise<void> {
   const dir = dataDir ?? tmpHome;
+  await seedAgingStart(dir, 365); // 上线日标记早于一切：这些用例只测老化本身
   const p = path.join(dir, "topics", `${id}.json`);
   const t = JSON.parse(await fs.readFile(p, "utf-8"));
   t.createdAt = new Date(Date.now() - daysAgo * 24 * 3600_000).toISOString();
   await fs.writeFile(p, JSON.stringify(t, null, 2), "utf-8");
 }
 
+async function seedAgingStart(dir: string, daysAgo: number): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "topic-aging-v7.json"), JSON.stringify({ startedAt: new Date(Date.now() - daysAgo * 24 * 3600_000).toISOString() }));
+}
+
 describe("expireStaleTopics", () => {
   it("回归：会议记录读不出时不清带会议位的选题，并留下可见记录", async () => {
     const slotted = await saveTopic({ title: "片单", description: "d", tags: [] });
     const plain = await saveTopic({ title: "普通", description: "d", tags: [] });
-    await ageTopic(slotted.id, 5);
-    await ageTopic(plain.id, 5);
+    await ageTopic(slotted.id, 8);
+    await ageTopic(plain.id, 8);
     await updateTopic(slotted.id, { meetingSlot: { meetingDate: "2026-09-25", slotId: "s1" } });
     await fs.writeFile(path.join(tmpHome, "meetings"), "不是目录");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -57,7 +63,7 @@ describe("expireStaleTopics", () => {
   it("会议位选题豁免到下次开会为止；下次没再选中就恢复正常过期（选题会边界 8）", async () => {
     const { saveMeetingCas } = await import("../modules/meetings/meeting-store.js");
     const slotted = await saveTopic({ title: "本周片单", description: "d", tags: [] });
-    await ageTopic(slotted.id, 5);
+    await ageTopic(slotted.id, 8);
     await updateTopic(slotted.id, { meetingSlot: { meetingDate: "2026-09-25", slotId: "s1" } });
     await saveMeetingCas({ date: "2026-09-25", slots: [], rejected: [], reviews: [] }, 0, tmpHome);
     expect((await expireStaleTopics()).total).toBe(0);
@@ -66,10 +72,11 @@ describe("expireStaleTopics", () => {
     expect((await listTopics()).map((t) => t.id)).not.toContain(slotted.id);
   });
 
-  it("超过 3 天未选用 → 移入回收站(软删可恢复);3 天内的不动", async () => {
+  it("超过 7 天未选用 → 移入回收站(软删可恢复);7 天内的不动", async () => {
     const stale = await saveTopic({ title: "过期灵感", description: "d", tags: [] });
     const fresh = await saveTopic({ title: "新鲜灵感", description: "d", tags: [] });
-    await ageTopic(stale.id, 4);
+    await ageTopic(stale.id, 8);
+    await ageTopic(fresh.id, 6);
 
     const r = await expireStaleTopics();
 
@@ -118,7 +125,40 @@ describe("expireStaleTopics", () => {
     expect(r.expiredByWorkspace[ws.id]).toBe(1);
     const events = await fs.readFile(path.join(ws.dataDir, "events.jsonl"), "utf-8");
     expect(events).toMatch(/灵感库清理/);
-    expect(TOPIC_TTL_MS).toBe(3 * 24 * 3600_000); // 默认 3 天(创始人裁决)钉死
+    expect(TOPIC_TTL_MS).toBe(7 * 24 * 3600_000); // 默认 7 天(spec §6 Q5)钉死
+  });
+
+  it("≥3 星不老化；1–2 星不会出现在活跃列表；捞回过的不老化", async () => {
+    const three = await saveTopic({ title: "三星", description: "d", tags: [] });
+    const restored = await saveTopic({ title: "捞回的", description: "d", tags: [] });
+    const plain = await saveTopic({ title: "没打星", description: "d", tags: [] });
+    for (const t of [three, restored, plain]) await ageTopic(t.id, 30);
+    await updateTopic(three.id, { stars: 3 });
+    await updateTopic(restored.id, { restoredAt: new Date().toISOString() });
+    const r = await expireStaleTopics();
+    expect(r.total).toBe(1);
+    expect((await listTopics()).map((t) => t.id).sort()).toEqual([three.id, restored.id].sort());
+  });
+
+  it("上线前的旧选题从上线日起算 7 天：第一次清理写标记，不一上线就清；7 天后照清", async () => {
+    const old = await saveTopic({ title: "上线前的旧选题", description: "d", tags: [] });
+    const p = path.join(tmpHome, "topics", `${old.id}.json`);
+    const t = JSON.parse(await fs.readFile(p, "utf-8"));
+    t.createdAt = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+    await fs.writeFile(p, JSON.stringify(t));
+    expect((await expireStaleTopics()).total).toBe(0);
+    const marker = JSON.parse(await fs.readFile(path.join(tmpHome, "topic-aging-v7.json"), "utf-8"));
+    expect(Number.isFinite(new Date(marker.startedAt).getTime())).toBe(true);
+    expect((await expireStaleTopics({ now: Date.now() + 6 * 24 * 3600_000 })).total).toBe(0);
+    expect((await expireStaleTopics({ now: Date.now() + 8 * 24 * 3600_000 })).total).toBe(1);
+  });
+
+  it("过期 ≠ 不喜欢：过期进回收站的不带星，不产生负反馈", async () => {
+    const { loadStarAdjustments } = await import("../modules/radar/topic-stars.js");
+    const t = await saveTopic({ title: "过期", description: "d", tags: [], source: "radar:HN" });
+    await ageTopic(t.id, 8);
+    expect((await expireStaleTopics()).total).toBe(1);
+    expect((await loadStarAdjustments()).size).toBe(0);
   });
 });
 

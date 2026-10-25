@@ -439,4 +439,33 @@ describe("applyRadarResults(引擎与宿主共用的入库段)", () => {
     expect(result.saved.map((t) => t.title)).toEqual(["AI 七分"]);
     expect(result.saved[0].score).toBe(70);
   });
+
+  it("星级当独立信号：按来源加减分，只影响过线与排序，落库仍是机器分", async () => {
+    const pool = await poolOf(2); // [0] = 36氪，[1] = 爱范儿
+    const disliked = await saveTopic({ title: "不喜欢的", description: "d", tags: [], source: "radar:36氪" }, testDir);
+    const liked = await saveTopic({ title: "喜欢的", description: "d", tags: [], source: "radar:爱范儿" }, testDir);
+    const { rateTopic } = await import("./topic-stars.js");
+    await rateTopic(disliked.id, 1, { via: "board" }, testDir); // -2 × 3 = -6，且进回收站
+    await rateTopic(liked.id, 5, { via: "board" }, testDir); // +6
+    const out = await applyRadarResults(pool, [
+      { candidate_id: pool[0].candidate_id, score: 72, title: "36氪的", summary: "s", angles: ["a"] },
+      { candidate_id: pool[1].candidate_id, score: 66, title: "爱范儿的", summary: "s", angles: ["a"] },
+    ], testDir);
+    expect(out.saved.map((x) => x.topic.title)).toEqual(["爱范儿的"]);
+    expect(out.saved[0].topic.score).toBe(66);
+    expect(out.rejected).toEqual([pool[0].candidate_id]);
+  });
+
+  it("撤销：捞回 1 星的选题后，同来源不再被压分", async () => {
+    const pool = await poolOf(1);
+    const t = await saveTopic({ title: "误点", description: "d", tags: [], source: "radar:36氪" }, testDir);
+    const { rateTopic, loadStarAdjustments } = await import("./topic-stars.js");
+    await rateTopic(t.id, 1, { via: "board" }, testDir);
+    expect((await loadStarAdjustments(testDir)).get("radar:36氪")).toBe(-6);
+    const { restoreTopic } = await import("../../storage/local-store.js");
+    await restoreTopic(t.id, testDir);
+    expect((await loadStarAdjustments(testDir)).size).toBe(0);
+    const out = await applyRadarResults(pool, [{ candidate_id: pool[0].candidate_id, score: 72, title: "回来了", summary: "s", angles: ["a"] }], testDir);
+    expect(out.saved).toHaveLength(1);
+  });
 });
