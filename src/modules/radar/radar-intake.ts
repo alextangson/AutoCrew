@@ -334,10 +334,12 @@ export async function intakeRadarTopics(
 
   const limit = Math.max(1, Math.min(options?.limit ?? INTAKE_LIMIT, 10));
   const judge = options?.judge ?? judgeRelevance;
+  // 星级反馈也要进引擎的精修门槛：否则 judge 先按机器分砍掉 <70，被偏爱来源的 66 根本到不了入库段
+  const adjust = await loadStarAdjustments(dataDir);
   const verdicts = await judge(
     pool.industry,
     pool.audience,
-    pool.candidates.map((c) => ({ title: c.item.title, source: c.item.source, description: c.item.description })),
+    pool.candidates.map((c) => ({ title: c.item.title, source: c.item.source, description: c.item.description, adjust: adjust.get(`radar:${c.item.source}`) ?? 0 })),
     dataDir,
   );
   if (!verdicts) return keywordIntake(pool, dataDir, limit);

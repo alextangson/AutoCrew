@@ -468,4 +468,16 @@ describe("applyRadarResults(引擎与宿主共用的入库段)", () => {
     const out = await applyRadarResults(pool, [{ candidate_id: pool[0].candidate_id, score: 72, title: "回来了", summary: "s", angles: ["a"] }], testDir);
     expect(out.saved).toHaveLength(1);
   });
+
+  it("引擎路径把来源星级调整交给 judge（精修门槛也吃反馈）", async () => {
+    await poolOf(2);
+    const t = await saveTopic({ title: "喜欢", description: "d", tags: [], source: "radar:爱范儿" }, testDir);
+    const { rateTopic } = await import("./topic-stars.js");
+    await rateTopic(t.id, 5, { via: "board" }, testDir);
+    let seen: Array<{ source: string; adjust?: number }> = [];
+    const judge = (async (_i: string, _a: string, cands: Array<{ source: string; adjust?: number }>) => { seen = cands; return []; }) as unknown as typeof import("./relevance.js").judgeRelevance;
+    await intakeRadarTopics(testDir, { judge });
+    expect(seen.find((c) => c.source === "爱范儿")?.adjust).toBe(6);
+    expect(seen.find((c) => c.source === "36氪")?.adjust).toBe(0);
+  });
 });
