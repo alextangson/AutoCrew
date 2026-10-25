@@ -103,3 +103,7 @@
   .hm .stages { grid-template-columns: repeat(4, 1fr); }
   .hm .stages > button:nth-child(5) { border-left: 0; padding-left: 0; }
 }
+.hm .delta.up { color: var(--ink); }
+.hm .delta.down { color: var(--hot); }
+.hm .acct .spark { color: var(--ink); }
+.hm .y.stale { margin-bottom: 4px; }
