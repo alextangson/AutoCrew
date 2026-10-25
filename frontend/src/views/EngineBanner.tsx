@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { engineBannerLines, startStaleRecheck, type EngineHealthView } from "./engine-lib";
 import { TokenCamelOffer, useOfferState } from "./TokenCamelConnect";
-import { shouldOffer } from "./tokencamel-offer";
+import { offerGateOpen, shouldOffer } from "./tokencamel-offer";
 
 export function useEngineHealth(): { health: EngineHealthView | null; reload: () => void } {
   const [health, setHealth] = useState<EngineHealthView | null>(null);
@@ -52,7 +52,7 @@ export function EngineDot(props: { onSettings: () => void }) {
   const now = Date.now();
   const lines = engineBannerLines(health, now);
   // 触点 B（spec 2026-10-25 §2.2）：只在展开的面板里、「去设置」下面；条件全在 shouldOffer 里算
-  const showOffer = Boolean(offer.offer?.preset) && (pinned || shouldOffer("fallback", { offer: offer.offer, health }, now));
+  const showOffer = offerGateOpen("fallback", offer.offer) && (pinned || shouldOffer("fallback", { offer: offer.offer, health }, now));
   useStaleRecheck(lines.length > 0);
   if (lines.length === 0) return null;
   const recheck = () => {

@@ -398,6 +398,18 @@ export async function persistEngineConfig(
   notifyEngineSettingsChanged({ changedProviderIds: changedProviderIds(previous, providers) });
 }
 
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * engine.json 的**唯一**进程内写锁：settings:set 与 settings:engine_attach_preset 的
+ * 「读 → 校验 → 落盘」整段都在这里排队，谁也插不进别人读后写前那一段（否则后写的静默覆盖先写的）。
+ */
+export function withEngineWriteLock<T>(job: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(job, job);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
 const NOTHING_TO_WRITE =
   "没有可写入的字段（api_key / base_url / strong_model / fast_model / protocol / " +
   "writer_* / reviewer_* / scout_* / analytics_* / providers / main / fallback / assignments）";
@@ -406,6 +418,10 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
+  return withEngineWriteLock(() => applyEngineSettings(payload));
+}
+
+async function applyEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   try {
     const dataDir = (payload._dataDir as string) || undefined;
     const filePath = path.join(getConfigDir(dataDir), "engine.json");

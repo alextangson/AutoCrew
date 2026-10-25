@@ -93,13 +93,21 @@ export interface OfferInput {
   health?: EngineHealthView | null;
 }
 
-export function shouldOffer(touchpoint: OfferTouchpoint, state: OfferInput, now: number): boolean {
-  const offer = state.offer;
+/**
+ * 与当下处境无关的那几道闸（E1–E4）：上线闸、总开关、「不用了」。
+ * 已经点开（钉住）的卡也要过这几道——用户刚在设置里关掉推荐，钉住的卡同样得收起。
+ */
+export function offerGateOpen(touchpoint: OfferTouchpoint, offer: OfferState | null | undefined): boolean {
   if (!offer?.preset || !offer.ready?.[touchpoint]) return false; // E1 / E4
   if (!offer.enabled) return false; // E2
-  if (offer.dismissed?.[touchpoint]) return false; // E3
+  return !offer.dismissed?.[touchpoint]; // E3
+}
+
+export function shouldOffer(touchpoint: OfferTouchpoint, state: OfferInput, now: number): boolean {
+  const offer = state.offer;
+  if (!offerGateOpen(touchpoint, offer)) return false;
   if (touchpoint === "onboarding") return state.configured === false;
-  return Boolean(state.health) && fallbackEligible(state.health!, offer.preset, now);
+  return Boolean(state.health) && fallbackEligible(state.health!, offer!.preset!, now);
 }
 
 /** 预选：suggest 里第一个出现在实时列表里的；都不在就不预选（E12） */

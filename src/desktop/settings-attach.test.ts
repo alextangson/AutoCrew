@@ -105,3 +105,31 @@ describe("settings:engine_attach_preset", () => {
     await expect(fs.access(enginePath())).rejects.toThrow();
   });
 });
+
+describe("与 settings:set 共用一把写锁（Codex P2）", () => {
+  it("并发 attach + settings:set：两边的改动都在，或后到的 attach 被判过期——绝不静默丢一边", async () => {
+    await fs.writeFile(enginePath(), JSON.stringify(BASE));
+    const rev = await revision();
+    const { setEngineSettings } = await import("./settings-engine.js");
+    const [set, att] = await Promise.all([
+      setEngineSettings({ _dataDir: dir, main: { provider: "deepseek", strong: "deepseek-v4-pro", fast: "deepseek-v4-pro" } }),
+      attach({ revision: rev }),
+    ]);
+    expect(set.ok).toBe(true);
+    const after = await readEngine();
+    expect((after.main as { fast: string }).fast).toBe("deepseek-v4-pro");
+    if (att.ok) expect(after.fallback).toMatchObject({ provider: "tokencamel" });
+    else expect(att).toMatchObject({ code: "stale" });
+    // 反过来排：attach 先进锁时 set 也不会把它覆盖掉
+    await fs.writeFile(enginePath(), JSON.stringify(BASE));
+    const rev2 = await revision();
+    const [att2] = await Promise.all([
+      attach({ revision: rev2 }),
+      setEngineSettings({ _dataDir: dir, main: { provider: "deepseek", strong: "deepseek-v4-pro", fast: "deepseek-v4-pro" } }),
+    ]);
+    expect(att2.ok).toBe(true);
+    const after2 = await readEngine();
+    expect(after2.fallback).toMatchObject({ provider: "tokencamel" });
+    expect((after2.main as { fast: string }).fast).toBe("deepseek-v4-pro");
+  });
+});

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { invoke } from "../../transport";
 import { ENDPOINT_PRESETS, applyPreset, initialForm, presetOf, runOnboardingSave, type EndpointKind, type OnboardingSaveResult } from "../onboarding-lib";
 import { TokenCamelOffer, useOfferState } from "../TokenCamelConnect";
-import { shouldOffer } from "../tokencamel-offer";
+import { offerGateOpen, shouldOffer } from "../tokencamel-offer";
 
 const KINDS = ENDPOINT_PRESETS.filter((p) => p.kind !== "deepseek");
 
@@ -19,7 +19,7 @@ export function AdvancedEndpoint(props: { onSaved: () => void }) {
   const offer = useOfferState();
   const [camel, setCamel] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const showCamel = pinned || shouldOffer("onboarding", offer, Date.now());
+  const showCamel = offerGateOpen("onboarding", offer.offer) && (pinned || shouldOffer("onboarding", offer, Date.now()));
   const pickKind = (kind: EndpointKind) => { setCamel(false); setForm((f) => applyPreset(f, kind)); };
   const pickCamel = () => { setCamel(true); setForm((f) => ({ ...f, apiKey: "" })); };
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));

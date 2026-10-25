@@ -8,7 +8,7 @@
  *   - `as: "fallback"`：追加一条并让备用指针指向它；主指针与岗位不动。
  *
  * 防重复（spec E13）：写前比对前端读到的 `revision`，不一致就拒绝；同一预设地址已在表里就不新建；
- * 同一进程内的两次提交排队执行，后到的那次一定看见先到的那条。
+ * 与 settings:set 共用 settings-engine.ts 的同一把进程内写锁，后到的那次一定看见先到的那条。
  */
 import path from "node:path";
 import {
@@ -23,16 +23,7 @@ import {
 import { uniqueProviderId } from "../engine/config-schema.js";
 import { getConfigDir } from "../storage/storage-roots.js";
 import { loadOfferPreset, type OfferPreset } from "./settings-offer.js";
-import { engineRevision, getEngineSettings, persistEngineConfig } from "./settings-engine.js";
-
-let queue: Promise<unknown> = Promise.resolve();
-
-/** 同一进程内串行：await 之间别的请求插不进来「读后写前」那一段 */
-function serialized<T>(job: () => Promise<T>): Promise<T> {
-  const run = queue.then(job, job);
-  queue = run.catch(() => {});
-  return run;
-}
+import { engineRevision, getEngineSettings, persistEngineConfig, withEngineWriteLock } from "./settings-engine.js";
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -106,7 +97,7 @@ export async function attachPresetEndpoint(payload: Record<string, unknown>): Pr
   const input = readInput(payload);
   if ("error" in input) return { ok: false, error: input.error };
   const dataDir = (payload._dataDir as string) || undefined;
-  return serialized(() => attach(input, preset, dataDir)).catch((err: unknown) => ({
+  return withEngineWriteLock(() => attach(input, preset, dataDir)).catch((err: unknown) => ({
     ok: false,
     error: err instanceof Error ? err.message : String(err),
   }));

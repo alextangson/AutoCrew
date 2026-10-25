@@ -7,12 +7,21 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { OFFER_COPY, preselect, shouldOffer, type OfferPresetView, type OfferState, type OfferTouchpoint } from "./tokencamel-offer";
+import { OFFER_COPY, offerGateOpen, preselect, shouldOffer, type OfferPresetView, type OfferState, type OfferTouchpoint } from "./tokencamel-offer";
 
 export interface OfferSnapshot {
   offer: OfferState | null;
   configured: boolean | undefined;
   revision: string;
+}
+
+/** 推荐偏好变了（总开关 / 不用了）：通知所有已挂载的 useOfferState 重读——顶栏红点和设置页是两棵树 */
+const offerListeners = new Set<() => void>();
+
+/** 写偏好的唯一入口：成功后广播给每个订阅者 */
+export async function setOfferPref(payload: { enabled?: boolean; dismiss?: OfferTouchpoint }): Promise<void> {
+  const r = await invoke("settings:offer_set", payload);
+  if (r.ok) for (const cb of [...offerListeners]) cb();
 }
 
 /** 读 settings:get 里的 offer 块 + configured + revision；读不出来就当没有推荐（观测层不报错） */
@@ -25,10 +34,12 @@ export function useOfferState(): OfferSnapshot & { reload: () => void; dismiss: 
       setSnap({ offer: d?.offer ?? null, configured: d?.configured, revision: d?.revision ?? "" });
     });
   }, []);
-  useEffect(() => reload(), [reload]);
-  const dismiss = useCallback((t: OfferTouchpoint) => {
-    void invoke("settings:offer_set", { dismiss: t }).then(() => reload());
+  useEffect(() => {
+    reload();
+    offerListeners.add(reload);
+    return () => { offerListeners.delete(reload); };
   }, [reload]);
+  const dismiss = useCallback((t: OfferTouchpoint) => void setOfferPref({ dismiss: t }), []);
   return { ...snap, reload, dismiss };
 }
 
@@ -150,14 +161,14 @@ export function TokenCamelOffer(props: {
 }
 
 /** 设置 · 模型的未配置空态：「添加端点」旁一行小字链接，点开才是推荐卡（已配置就不出） */
-export function EmptyStateOffer(props: { snap: OfferSnapshot; onSaved: () => void; onChanged: () => void }) {
+export function EmptyStateOffer(props: { snap: OfferSnapshot; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const preset = props.snap.offer?.preset;
-  if (!preset || !(pinned || shouldOffer("onboarding", props.snap, Date.now()))) return null;
+  if (!preset || !offerGateOpen("onboarding", props.snap.offer) || !(pinned || shouldOffer("onboarding", props.snap, Date.now()))) return null;
   const dismiss = () => {
     setOpen(false); setPinned(false);
-    void invoke("settings:offer_set", { dismiss: "onboarding" }).then(() => props.onChanged());
+    void setOfferPref({ dismiss: "onboarding" });
   };
   return (
     <div className="tc-empty">
@@ -168,10 +179,10 @@ export function EmptyStateOffer(props: { snap: OfferSnapshot; onSaved: () => voi
 }
 
 /** 设置 · 模型底部的总开关：关 = 两个触点都不出；从关拨回开 = 清空「不用了」。预设没有任何触点上线时不出 */
-export function OfferSwitch(props: { offer: OfferState | null; onChanged: () => void }) {
+export function OfferSwitch(props: { offer: OfferState | null }) {
   const o = props.offer;
   if (!o?.preset || !(o.ready.onboarding || o.ready.fallback)) return null;
-  const toggle = () => void invoke("settings:offer_set", { enabled: !o.enabled }).then(() => props.onChanged());
+  const toggle = () => void setOfferPref({ enabled: !o.enabled });
   return (
     <p className="muted mono tc-switch">
       {OFFER_COPY.switchLabel}：{o.enabled ? "开" : "关"}{" "}
