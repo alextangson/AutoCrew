@@ -58,6 +58,12 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 测的是**端点**不是岗位（P2 spec §4.1）：provider_id 指端点表里的一条，model 指要试的模型名。
   // **永不接受裸 baseUrl/apiKey**，见 settings-probe.ts
   "settings:test_route": ["provider_id", "model"],
+  // 只认预设 baseUrl，不写盘；base_url 可选（传了别的地址直接拒）
+  "settings:list_models": ["api_key"],
+  // 服务端「读 → 追加 → 校验 → 原子写」；revision 是 settings:get 回的修订号（写前比对）
+  "settings:engine_attach_preset": ["as", "api_key", "strong", "fast"],
+  // enabled? / dismiss? 至少一个，由 handler 判
+  "settings:offer_set": [],
   // 只读，无参：视图由服务端从配置 + 健康态派生（不含任何密钥）
   "engine:health": [],
   // force 可选：true = 现在就探（用户点「重新检查」），缺省只探过时的失败
@@ -125,6 +131,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "topic:delete": ["id"],
   "topic:delete_example": ["id"],
   "topic:restore": ["id"],
+  "topic:rate": ["id"],
   // 角度点选：brief_revision 是乐观锁（必须是该选题最新版，否则用户看的是过期候选）；
   // 可选键 card = 改写后的整张卡（§1.4 改写动作），缺省则落原卡快照
   "topic:select_angle": ["topic_id", "brief_revision", "angle_id"],

@@ -25,6 +25,15 @@ async function call<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
 const post = <T>(url: string, payload: Json) => call<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 
 export const loadBoard = () => call<BoardData>("/api/board");
+/** 内容管线（一个主题一张卡）；标不出 / 恢复要发、重拍都要原话 */
+export const loadPipeline = () => call<import("./pipeline-model").PipelineData>("/api/pipeline");
+/** 首页「让 AI 看看」：服务端拼分析指令，走写稿交接同一个 deliver() */
+export type AskKind = "insights" | "meeting" | "retro";
+export const askAI = (kind: AskKind, contentId?: string | null) => post<Delivery & { kind: AskKind }>("/api/home/ask-ai", { kind, ...(contentId ? { content_id: contentId } : {}) });
+export const setDestination =(contentId: string, platform: string, skip: boolean, founderWords: string) =>
+  post<{ platform: string; required: boolean }>("/api/pipeline/destination", { content_id: contentId, platform, skip, founder_words: founderWords });
+export const reshootTheme = (contentId: string, round: number, founderWords: string) =>
+  post<{ round: number; published: Array<{ platform: string }>; to_cancel: Array<{ platform: string; at?: string }>; warning?: string }>("/api/pipeline/reshoot", { content_id: contentId, round, founder_words: founderWords, confirm: true });
 
 /** 交给某个 AI 的结果（spec 2026-10-15 §B2）：paste = 指令要放进剪贴板让人粘贴（Codex / WorkBuddy / 没打开） */
 export interface Delivery { host: string; label: string; prompt: string; opened: boolean; paste: boolean; open_error?: string }
@@ -35,8 +44,9 @@ export const startWriting = (topicId: string, host?: string | null) => post<Star
 export const handOffContent = (contentId: string, mode: "write" | "look", host?: string | null) =>
   post<Delivery & { content_id: string }>("/api/board/hand-off", { content_id: contentId, mode, ...(host ? { host } : {}) });
 
-export const markPublished = (contentId: string, platform: string, url?: string) =>
-  post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}) });
+/** round：带上就由服务端核对是不是这一轮（重开 / 重拍过 = 拒） */
+export const markPublished = (contentId: string, platform: string, url?: string, round?: number) =>
+  post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}), ...(round !== undefined ? { round } : {}) });
 export const unmarkPublished = (contentId: string, platform: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, undo: true });
 

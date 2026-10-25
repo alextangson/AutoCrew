@@ -8,7 +8,9 @@ import type { PullResult } from "../adapters/browser/pull-types.js";
 import { rowsToCsvText } from "../modules/flywheel/csv-text.js";
 import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
 import { localDateStamp } from "../modules/analytics/quality-baseline.js";
-import { emitEngineEvent } from "./event-hub.js";
+import { pullPlatformNow } from "./metrics-pull-cycle.js";
+import { pullAccountStats } from "../adapters/browser/account-stats.js";
+import type { ImportReport } from "../modules/flywheel/row-import.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
@@ -48,42 +50,40 @@ function partialText(r: PullResult): string {
   return `(中途出错:${r.errorCode},已拿到的页照常入账)`;
 }
 
+/**
+ * 手动按钮走和定时回流同一个入口（pullPlatformNow）：吃同一把单飞锁、同一道勾选闸；
+ * 入库仍走 CSV 导入管线（与旧按钮口径一致），报告形状不变。
+ */
 export async function wechatPullHandler(
   payload: Payload,
   _ctx?: unknown,
   deps?: { pull?: () => Promise<PullResult> },
 ): Promise<HandlerResult> {
   const dataDir = (payload._dataDir as string) || undefined;
-  const pull = deps?.pull ?? (() => pullWechatMpStats());
-  const emit = (kind: "work" | "run_done" | "run_failed", label: string) =>
-    void emitEngineEvent({ role: "analyst", kind, label }, dataDir).catch(() => {});
-
-  emit("work", "分析师去公众号后台看近 30 天的文章数据…");
-  const res = await pull();
-  // 中途碰到登录/风控：已拿到的行照常入账，但结论仍是失败提示（要人去登录 / 今天别再碰）
-  if ((res.status === "needs_login" || res.status === "risk_control") && res.rows.length > 0) {
-    const kept = await importRows(res.rows, dataDir).catch(() => null);
-    const text = `${wechatFailureText(res)}(此前已拿到的 ${res.rows.length} 条${kept ? `入账 ${kept.imported} 条` : "入账失败"})`;
-    emit("run_failed", text.slice(0, 80));
-    return { ok: false, error: text, status: res.status, ...(res.status === "needs_login" ? { needLogin: true } : {}) };
+  let report: ImportReport | null = null;
+  let raw: PullResult | null = null;
+  const fetcher = deps?.pull ?? (() => pullWechatMpStats());
+  const attempt = await pullPlatformNow("wechat_mp", {
+    dataDir,
+    trigger: "manual",
+    registry: { wechat_mp: async () => (raw = await fetcher()) },
+    importRows: async (_p, rows) => (report = await importRows(rows, dataDir)),
+    // 注入了 registry 时共用入口不会自己去开账号首页：生产路径显式给真账号抓取器，测试给空的
+    accountRegistry: deps?.pull ? {} : { wechat_mp: () => pullAccountStats("wechat_mp") },
+  });
+  if (attempt.status === "in_flight") return { ok: false, error: "公众号正在抓（定时回流或上一次点击），这一轮跑完会自己刷新" };
+  if (attempt.status === "not_picked") return { ok: false, error: "公众号没勾在运营平台里，不抓——要抓先去设置勾上公众号" };
+  const res: PullResult = raw ?? { status: attempt.status, rows: [], ...(attempt.errorCode ? { errorCode: attempt.errorCode } : {}) };
+  const needLogin = attempt.status === "needs_login" ? { needLogin: true } : {};
+  if (attempt.status === "needs_login" || attempt.status === "risk_control") {
+    const kept = res.rows.length > 0 ? `(此前已拿到的 ${res.rows.length} 条${attempt.importError ? "入账失败" : `入账 ${attempt.imported ?? 0} 条`})` : "";
+    return { ok: false, error: `${wechatFailureText(res)}${kept}`, status: attempt.status, ...needLogin };
   }
-  if (res.status !== "ok") {
-    const text = wechatFailureText(res);
-    emit("run_failed", text.slice(0, 80));
-    return { ok: false, error: text, status: res.status, ...(res.status === "needs_login" ? { needLogin: true } : {}) };
+  if (attempt.status !== "ok") {
+    const text = attempt.errorCode === "import_failed" || attempt.errorCode?.startsWith("library_") ? `公众号回填导入失败:${attempt.errorCode}` : wechatFailureText(res);
+    return { ok: false, error: text, status: attempt.status };
   }
   const note = partialText(res);
-  if (res.rows.length === 0) {
-    emit("run_done", `公众号近 30 天没有已发表文章数据${note}`);
-    return { ok: true, note, data: { total: 0, imported: 0, replaced: 0, matched: 0, historical: 0, needsReview: [], rejected: [] } };
-  }
-  try {
-    const report = await importRows(res.rows, dataDir);
-    emit("run_done", `公众号回填入账 ${report.imported} 条(匹配稿件 ${report.matched} · 历史 ${report.historical})${note}`);
-    return { ok: true, note, data: report };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    emit("run_failed", `公众号回填导入失败:${msg.slice(0, 80)}`);
-    return { ok: false, error: msg };
-  }
+  const empty: ImportReport = { total: 0, imported: 0, replaced: 0, matched: 0, historical: 0, needsReview: [], rejected: [] };
+  return { ok: true, note, data: report ?? empty };
 }

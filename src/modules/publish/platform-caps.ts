@@ -13,7 +13,7 @@ export type PlatformKind = "video" | "article";
 export type PlatformLanguage = "zh" | "en";
 /** cjk_weighted = 中文 1 字、英文数字半字、空格不计（中文平台后台口径）；plain = 字符数（英文平台） */
 export type TitleCounter = "cjk_weighted" | "plain";
-/** browser_pull = 自动回流（浏览器拉数）；bind_only = 只能手动绑作品 / 认领（公众号另有 wechat_pull）；unsupported = 不回流 */
+/** browser_pull = 自动回流（浏览器拉数）；bind_only = 只能手动绑作品 / 认领；unsupported = 不回流 */
 export type MetricsSupport = "browser_pull" | "bind_only" | "unsupported";
 export type PublishChannel = "ego_lite" | "wechat_api";
 
@@ -84,7 +84,7 @@ const TABLE = {
     label: "B站", kind: "video", language: "zh", coverRatios: ["4:3"], coverSlots: ["4:3", "16:9"], coverRequired: true,
     titleCounter: "cjk_weighted", titleMax: 40, bodyMin: 200, bodyMax: 2000,
     captionRule: "发布文案(简介)200-500 字:讲清这期讲什么+能带走什么,3-6 个标签",
-    kitFields: ZH_KIT, metrics: "bind_only", publishChannel: "ego_lite",
+    kitFields: ZH_KIT, metrics: "browser_pull", publishChannel: "ego_lite",
     publishUrl: "https://member.bilibili.com/platform/upload/video/frame",
     aliases: ["bilibili", "哔哩哔哩", "b站", "b 站"], textAliases: ["bilibili", "哔哩哔哩", "b站", "b 站"],
   },
@@ -92,7 +92,7 @@ const TABLE = {
     label: "公众号", kind: "article", language: "zh", coverRatios: ["2.35:1"], coverSlots: ["2.35:1"], coverRequired: false,
     // 正文上限 4000（spec §7 #8：长文 2500–4000 字）；标题上限沿用回退 30
     titleCounter: "cjk_weighted", bodyMin: 800, bodyMax: 4000,
-    kitFields: [], metrics: "bind_only", publishChannel: "wechat_api",
+    kitFields: [], metrics: "browser_pull", publishChannel: "wechat_api",
     aliases: ["wechat_mp", "公众号"], textAliases: [],
   },
   youtube: {

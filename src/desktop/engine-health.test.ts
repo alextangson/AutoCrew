@@ -113,6 +113,18 @@ describe("落盘与更新", () => {
     expect(state.providers.newcli?.live?.error).not.toContain("fetch failed");
   });
 
+  it("失败记录带结构化 kind/status（第三方推荐的触点 B 只读它，不解析人话）；成功记录不带", async () => {
+    await recordLiveResult({ providerId: "newcli", ok: false, role: "writer", error: "fetch failed" }, dir);
+    await recordProbeResult("deepseek", { ok: false, ms: 20000, error: "超时：20 秒内端点没有回任何内容" }, dir);
+    await recordLiveResult({ providerId: "auth", ok: false, role: "main", error: '401 {"error":{"message":"bad key"}}' }, dir);
+    await recordProbeResult("ok", { ok: true, ms: 10 }, dir);
+    const state = await loadHealthState(dir);
+    expect(state.providers.newcli?.live).toMatchObject({ kind: "connect" });
+    expect(state.providers.deepseek?.probe).toMatchObject({ kind: "timeout" });
+    expect(state.providers.auth?.live).toMatchObject({ kind: "auth", status: 401 });
+    expect(state.providers.ok?.probe?.kind).toBeUndefined();
+  });
+
   it("健康文件缺失/损坏 = 当作没探过，不报错", async () => {
     expect(await loadHealthState(dir)).toEqual({ providers: {} });
     await fs.writeFile(path.join(dir, "engine-health.json"), "{ 这不是 JSON", "utf-8");

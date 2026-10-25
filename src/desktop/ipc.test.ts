@@ -137,6 +137,7 @@ describe("IPC_CHANNELS", () => {
     "topic:delete",
     "topic:delete_example",
     "topic:restore",
+    "topic:rate",
     "topic:select_angle",
     "topic:clear_angle",
     "content:delete",
@@ -157,8 +158,8 @@ describe("IPC_CHANNELS", () => {
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
   // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
-  it("has exactly 174 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(174);
+  it("has exactly 178 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(178);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -282,6 +283,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "settings:open_config" &&
           // 配置面反馈闭环:settings-probe.ts 的 testEngineRoute
           ch !== "settings:test_route" &&
+          // 第三方中转推荐（spec 2026-10-25）:settings-offer.ts / settings-attach.ts
+          ch !== "settings:list_models" &&
+          ch !== "settings:engine_attach_preset" &&
+          ch !== "settings:offer_set" &&
           // 线路健康（P2 spec §4.1）:engine-health.ts 的 getEngineHealth,只读派生视图
           ch !== "engine:health" &&
           ch !== "engine:recheck" &&
@@ -366,6 +371,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "topic:delete" &&
           ch !== "topic:delete_example" &&
           ch !== "topic:restore" &&
+          // 选题星级：modules/radar/topic-stars.ts 的 rateTopic（卡上点星，via board）
+          ch !== "topic:rate" &&
           // 角度点选：ipc.ts 的 topicSelectAngleHandler / topicClearAngleHandler
           ch !== "topic:select_angle" &&
           ch !== "topic:clear_angle" &&

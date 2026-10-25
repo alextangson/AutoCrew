@@ -11,7 +11,8 @@
        "radar_pool",
        "radar_score",
        "delete",
-       "delete_example"
+       "delete_example",
+       "rate"
       ],
       "type": "string"
      },
@@ -20,6 +21,9 @@
      },
      "example": {
       "type": "boolean"
+     },
+     "founder_words": {
+      "type": "string"
      },
      "id": {
       "type": "string"
@@ -56,6 +60,9 @@
      },
      "source": {
       "type": "string"
+     },
+     "stars": {
+      "type": "number"
      },
      "tags": {
       "items": {
@@ -1388,7 +1395,10 @@
        "revoke",
        "inbox_list",
        "inbox_attach",
-       "sync"
+       "sync",
+       "theme_skip",
+       "theme_restore",
+       "theme_reshoot"
       ],
       "type": "string"
      },
@@ -1471,6 +1481,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "round": {
+      "type": "number"
      },
      "sha256": {
       "type": "string"
@@ -3034,7 +3047,8 @@
        "radar_pool",
        "radar_score",
        "delete",
-       "delete_example"
+       "delete_example",
+       "rate"
       ],
       "type": "string"
      },
@@ -3043,6 +3057,9 @@
      },
      "example": {
       "type": "boolean"
+     },
+     "founder_words": {
+      "type": "string"
      },
      "id": {
       "type": "string"
@@ -3079,6 +3096,9 @@
      },
      "source": {
       "type": "string"
+     },
+     "stars": {
+      "type": "number"
      },
      "tags": {
       "items": {
@@ -4411,7 +4431,10 @@
        "revoke",
        "inbox_list",
        "inbox_attach",
-       "sync"
+       "sync",
+       "theme_skip",
+       "theme_restore",
+       "theme_reshoot"
       ],
       "type": "string"
      },
@@ -4494,6 +4517,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "round": {
+      "type": "number"
      },
      "sha256": {
       "type": "string"

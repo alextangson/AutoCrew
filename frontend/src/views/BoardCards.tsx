@@ -116,7 +116,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
 }
 
 /** 交出去 30 分钟还没人接手：「重新交给」同一个，或换一个（认领中 / 已接手不出） */
-function PickupNudge({ item, reload }: { item: BoardItem; reload: () => Promise<void> }) {
+export function PickupNudge({ item, reload }: { item: BoardItem; reload: () => Promise<void> }) {
   const line = item.column === "写稿中" && item.status === "drafting" ? handoffLine(item.handoff) : null;
   if (!line?.stale || !item.handoff) return null;
   const host = item.handoff.host as HostId;
@@ -125,7 +125,7 @@ function PickupNudge({ item, reload }: { item: BoardItem; reload: () => Promise<
   </div>;
 }
 
-function BoardCodexPublish({ item }: { item: BoardItem }) {
+export function BoardCodexPublish({ item }: { item: BoardItem }) {
   const { review } = useProjectReview(item.id, false);
   const place = item.status === "editing" ? "board" : "publish_page";
   if (!review || !showCodexPublish(place, item.status, review)) return null;
@@ -160,7 +160,7 @@ async function trashable(item: BoardItem, reload: () => Promise<void>): Promise<
   return now;
 }
 
-function BackMenu(props: { item: BoardItem; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
+export function BackMenu(props: { item: BoardItem; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
   const moves = backMoves(props.item);
   const trash = canTrash(props.item);
   const [busy, setBusy] = useState(false);

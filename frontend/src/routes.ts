@@ -3,6 +3,7 @@ export type EditorPanel = "cover" | "images" | "video";
 
 export type Route =
   | { view: "board"; inbox?: string; inboxTypes?: string[] }
+  | { view: "pipeline" }
   | { view: "topic"; key: string }
   | { view: "editor"; id: string; panel?: EditorPanel }
   | { view: "calibration" }
@@ -14,7 +15,7 @@ export type Route =
   | { view: "inbox" }
   | { view: "settings"; tab?: "platforms" | "models" | "integrations" | "data" };
 
-const PAGES = new Set(["board", "calibration", "report", "library", "logs", "playbooks", "campaigns", "inbox"]);
+const PAGES = new Set(["board", "pipeline", "calibration", "report", "library", "logs", "playbooks", "campaigns", "inbox"]);
 const PANELS = new Set(["cover", "images", "video"]);
 
 export function parseRouteHash(hash: string): Route {

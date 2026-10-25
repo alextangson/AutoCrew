@@ -4,7 +4,8 @@
  */
 import { CHIEF_PREFILL_EVENT } from "./views/hand-off";
 import { useEffect, useRef, useState } from "react";
-import { Board } from "./views/Board";
+import { Home } from "./views/Home";
+import { Pipeline } from "./views/Pipeline";
 import { TopicPage } from "./views/TopicMatrix";
 import { Editor } from "./views/Editor";
 import { TopicNavigator } from "./views/TopicNavigator";
@@ -34,11 +35,16 @@ import type { Route } from "./routes";
 
 export type { Route, EditorPanel } from "./routes";
 
-/** 主导航只留三个（看板规格 §27）；灵感收件箱、品牌校准、任务日志、素材库收进设置页，增长不露出但路由保留 */
+/**
+ * 主导航（管线重规划第 3 期）：首页「今天」/ 内容管线 / 设置；「数据」先放在设置后面，第 6 期首页接住它的动作后再去掉。
+ * 旧看板已由内容管线取代（拖动、回收站、新想法、再找选题都在那边）；首页仍沿用 board 这个路由名，旧书签照常进首页。
+ * 灵感收件箱、品牌校准、任务日志、素材库收进设置页，增长不露出但路由保留。
+ */
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
-  { view: "board", label: "看板" },
-  { view: "report", label: "数据" },
+  { view: "board", label: "首页" },
+  { view: "pipeline", label: "内容管线" },
   { view: "settings", label: "设置" },
+  { view: "report", label: "数据" },
 ];
 
 export function App() {
@@ -54,7 +60,7 @@ export function App() {
   const focus = useRevisionFocus();
   const IN_SETTINGS = new Set(["inbox", "calibration", "playbooks", "logs", "library", "campaigns"]);
   const active = route.view === "editor" || route.view === "topic" ? "board" : IN_SETTINGS.has(route.view) ? "settings" : route.view;
-  const boardRoute = route.view === "board" || route.view === "topic";
+  const boardRoute = route.view === "topic" || route.view === "pipeline";
 
   useEffect(() => {
     if (focus) setDockOpen(true);
@@ -118,7 +124,7 @@ export function App() {
           className="brand serif"
           role="button"
           tabIndex={0}
-          title="回到看板"
+          title="回到首页"
           onClick={() => setRoute({ view: "board" })}
           onKeyDown={(e) => {
             if ((e.key === "Enter" || e.key === " ") && !e.nativeEvent.isComposing) setRoute({ view: "board" });
@@ -141,13 +147,16 @@ export function App() {
       <div className="body">
         <main className={boardRoute ? "main main-board" : "main"}>
           {route.view === "board" && (
-            <Board
+            <Home
               {...(route.inbox ? { inbox: route.inbox } : {})}
               {...(route.inboxTypes ? { inboxTypes: route.inboxTypes } : {})}
-              openTopic={(key) => setRoute({ view: "topic", key })}
+              openPipeline={() => setRoute({ view: "pipeline" })}
               openEditor={(id) => setRoute({ view: "editor", id })}
               openData={() => setRoute({ view: "report" })}
             />
+          )}
+          {route.view === "pipeline" && (
+            <Pipeline openEditor={(id) => setRoute({ view: "editor", id })} openTopic={(key) => setRoute({ view: "topic", key })} />
           )}
           {route.view === "topic" && (
             <TopicPage atomKey={route.key} back={() => setRoute({ view: "board" })} openEditor={(id) => setRoute({ view: "editor", id })} />

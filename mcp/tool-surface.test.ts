@@ -82,7 +82,15 @@ async function toolsFor(host: string) {
  * 2026-10-23 全媒体 Phase 2a：autocrew_content 加 wechat_article 动作与一个 article 参数（子参数收在对象里，说明在宿主侧压到零）。
  * 实测 33,628，上限从 33,600 提到 33,700。
  */
-export const BUDGET = { total: 33_700, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-25 内容管线主题卡：autocrew_review_inbox 加 theme_skip / theme_restore / theme_reshoot 三个动作与 round 参数
+ * （对话里标「这条不出 XX」、重拍）；实测 33,771，上限从 33,700 提到 33,800。
+ */
+/*
+ * 2026-10-25 选题星级：autocrew_topic 加 rate 动作与 stars / founder_words 两个参数（对话里转述创始人打星，原话必带）；
+ * 实测 33,871，上限从 33,800 提到 33,900。
+ */
+export const BUDGET = { total: 33_900, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

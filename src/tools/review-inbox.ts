@@ -11,12 +11,14 @@ import { chatDecide, chatRevoke, type ChatDecideInput } from "../modules/product
 import { listForChat, sweepDecided } from "../modules/production/chat-approval/present.js";
 import { attachInbox, listInbox } from "../modules/production/intake.js";
 import { runSweep, sweepHealth } from "../modules/production/sweep.js";
+import { reshoot, setDestination } from "../modules/theme/actions.js";
+import { isContentId } from "../storage/entity-id.js";
 
-const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync"] as const;
+const ACTIONS = ["list", "decide", "revoke", "inbox_list", "inbox_attach", "sync", "theme_skip", "theme_restore", "theme_reshoot"] as const;
 const DECISIONS = ["confirm_receipt", "correct_publish", "i_published", "answer_ask", "ask_resend", "publish_check_confirm", "publish_check_revise", "publish_check_override", "pick_cover", "retire_cover_group", "reject_cover", "approve_cut", "reject_cut", "confirm_candidate", "reject_candidate", "approve_rule", "reject_rule", "replace_rule", "approve_playbook", "reject_playbook", "playbook_batch", "approve_promotion", "reject_promotion", "waive_sliver_check", "waive_sliver", "approve_script", "revise_script", "approve_en_package", "revise_en_package"] as const;
 
 export const reviewInboxSchema = Type.Object({
-  action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke | inbox_list | inbox_attach | sync" }),
+  action: Type.Unsafe<(typeof ACTIONS)[number]>({ type: "string", enum: [...ACTIONS], description: "list | decide | revoke | inbox_list | inbox_attach | sync | theme_skip | theme_restore | theme_reshoot" }),
   item_id: Type.Optional(Type.String({ description: "decide：list 给的 item_id；list 带上就只看这一件" })),
   preview_dir: Type.Optional(Type.String({ description: "你这个会话的工作目录（绝对路径）：要看的文件放进它下面的 review-preview/" })),
   gen: Type.Optional(Type.String({ description: "decide：list 给的 gen（你给创始人看的那一版）" })),
@@ -31,7 +33,8 @@ export const reviewInboxSchema = Type.Object({
   request_id: Type.Optional(Type.String({ description: "请求号，重试用同一个" })),
   content_id: Type.Optional(Type.String({ description: "revoke：稿件 id；list 带上就只列这条稿的事" })),
   decision_id: Type.Optional(Type.String({ description: "revoke：decide 回执里的决定 id" })),
-  platform: Type.Optional(Type.String({ description: "revoke：他说没发的平台" })),
+  platform: Type.Optional(Type.String({ description: "revoke：他说没发的平台；theme_skip/restore：去向平台 id" })),
+  round: Type.Optional(Type.Number({ description: "theme_reshoot：卡上的轮次" })),
   target_rule_id: Type.Optional(Type.String({ description: "replace_rule：要换掉的那条生效规则 id" })),
   sliver_key: Type.Optional(Type.String({ description: "waive_sliver：哪一处（facts.points 里的 sliver_key）" })),
   items: Type.Optional(Type.Unknown({ description: "playbook_batch 的各条" })),
@@ -57,6 +60,7 @@ export const REVIEW_INBOX_DESCRIPTION = [
   "4) revoke{content_id, decision_id, founder_words, request_id}：他说「撤回刚才那个」时用，decision_id 取 decide 回执；只能撤成片 / 封面的批准。他说某个平台其实没发：revoke{content_id, platform, founder_words, request_id}，纠正这个平台本轮的发布记录。",
   "5) 收原片：创始人说「原片放进去了，是《XX》那条」→ inbox_list 列收件箱里的视频（name、sha256、used_by 已挂在哪条、still_copying 还在拷）和能挂的稿 contents；他点名哪个文件是哪条，inbox_attach{file:文件名, sha256:列表里的, content_id:稿件 id, founder_words, request_id}。文件或稿对不上唯一一个就问他，别猜（回 ambiguous_file / ambiguous_content 带 candidates）；file_changed = 列出之后文件换过，重新 list；looks_like_other = 文件名更像别条，问他，确认后换新 request_id 带 confirm_other:true。他自己导出的成片也让他说是哪条，照 record 记。",
   "6) sync：创始人说「同步一下」时立即跑一轮安全巡检（项目文件夹对账 + 我的内容同步，平时 30 分钟一轮）；正在跑就等这一轮，joined:true。errors / warnings 照说给他。",
+  "7) 主题去向与重拍（只对中文视频源稿，content_id 用源视频的 id，不用公众号 / 英文版的）：他说「这条不出 YouTube」= theme_skip{content_id, platform, founder_words}；又要发了 = theme_restore{同上}。他说这条要重拍 = theme_reshoot{content_id, round, founder_words}：本轮原片 / 成片 / 批准转入历史，沿用原稿回「录制」；回执里 to_cancel 是已定时还没公开的平台，照说给他、请他自己去后台撤（不会自动撤），published 是已发保留的。founder_words 一字不改照抄，没有原话不要调。",
   "返回 stale：这件事变了，把返回的新 item 重新给他看；already_handled：已经在别处定了；selector_required：问他是哪一组 / 哪一版；file_changed：文件变过、什么都没记，把返回的新 item 重新给他看；stale_selector：你点名的那一组 / 一版已经不在了，把返回的 item 重新给他看；warnings：预览清理没成，照说（决定不受影响）。",
 ].join("\n");
 
@@ -98,5 +102,12 @@ export async function executeReviewInbox(params: Record<string, unknown>): Promi
   if (action === "inbox_attach") return attachInbox({ file: str(params.file) ?? "", sha256: str(params.sha256) ?? "", content_id: str(params.content_id) ?? "", founder_words: str(params.founder_words) ?? "",
     request_id: str(params.request_id) ?? "", confirm_other: params.confirm_other === true || params.confirm_other === "true", host: params._host, session: params._session }, dataDir);
   if (action === "sync") return syncNow(dataDir);
-  return { ok: false, code: "invalid_params", error: `不认识的 action：${action}（list | decide | revoke | inbox_list | inbox_attach | sync）` };
+  if (action === "theme_skip" || action === "theme_restore" || action === "theme_reshoot") {
+    const id = str(params.content_id)?.trim() ?? "";
+    if (!isContentId(id)) return { ok: false, code: "invalid_params", error: "content_id 不对" };
+    const who = { via: "chat" as const, ...(typeof params._host === "string" ? { host: params._host } : {}) };
+    if (action === "theme_reshoot") return { ...(await reshoot(id, params.founder_words, params.round, who, dataDir)) };
+    return { ...(await setDestination(id, params.platform, action === "theme_skip", params.founder_words, who, dataDir)) };
+  }
+  return { ok: false, code: "invalid_params", error: `不认识的 action：${action}（list | decide | revoke | inbox_list | inbox_attach | sync | theme_skip | theme_restore | theme_reshoot）` };
 }

@@ -103,4 +103,28 @@ describe("judgeRelevance (两阶段)", () => {
     const result = await judgeRelevance("AI 工具", "", [{ title: "X", source: "HN" }], dir, { runLoopImpl });
     expect(result).toBeNull();
   });
+
+  it("星级调整进精修门槛与排序：偏爱来源的 66 能进精修，返回的仍是机器分", async () => {
+    const runLoopImpl = async (_c: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      const scoreTool = options.tools?.find((t) => t.name === "submit_scores");
+      const contentTool = options.tools?.find((t) => t.name === "submit_content");
+      if (scoreTool) {
+        await scoreTool.execute({ scores: [
+          { index: 0, audience_fit: 20, material_richness: 16, novelty: 18, timeliness: 12 }, // 66 + 6 = 72
+          { index: 1, audience_fit: 20, material_richness: 18, novelty: 18, timeliness: 16 }, // 72 - 6 = 66
+        ] });
+      } else if (contentTool) {
+        expect(options.userMessage).toContain("偏爱来源");
+        expect(options.userMessage).not.toContain("被压来源");
+        await contentTool.execute({ items: [{ index: 0, title_zh: "偏爱来源的选题", reason: "r" }] });
+      }
+      return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    const result = await judgeRelevance("AI 工具", "", [
+      { title: "偏爱来源", source: "PH", adjust: 6 },
+      { title: "被压来源", source: "HN", adjust: -6 },
+    ], dir, { runLoopImpl });
+    expect(result?.map((v) => v.index)).toEqual([0]);
+    expect(result?.[0].totalScore).toBe(66);
+  });
 });

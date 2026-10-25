@@ -5,6 +5,7 @@ import { codexTargetLine, publishMessage, publishPlatforms } from "./codex-publi
 import { profilePlatformsOf } from "./platform-preview";
 import { saveInstruction, skipResave } from "./publish-prefs-api";
 import type { ProjectReview } from "./project-board";
+import { Checkbox } from "../components/Switch";
 
 type Props = { contentId: string; title: string; status: string; review: ProjectReview; primary?: boolean };
 
@@ -95,7 +96,7 @@ function CodexPublishDialog(props: Props & { text: string; setText: (t: string) 
       {props.choice && props.choice.defaults.length + props.choice.optional.length > 0 && <fieldset className="cx-platforms">
         <legend>发到哪些平台（默认只勾这条稿自己的平台；改勾选会重写下面的指令）</legend>
         {[...props.choice.defaults, ...props.choice.optional].map((p) => <label key={p}>
-          <input type="checkbox" checked={props.choice!.picked.includes(p)} onChange={() => props.toggle(p)} /> {p}{props.choice!.optional.includes(p) ? "（可选）" : ""}
+          <Checkbox checked={props.choice!.picked.includes(p)} onChange={() => props.toggle(p)} /> {p}{props.choice!.optional.includes(p) ? "（可选）" : ""}
         </label>)}
       </fieldset>}
       <textarea ref={area} className="cx-text" rows={12} value={props.text} onChange={(e) => props.setText(e.target.value)} />

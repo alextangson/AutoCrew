@@ -180,7 +180,8 @@ function candidateList(items: Array<{ idx: number; title: string; source: string
 export async function judgeRelevance(
   positioning: string,
   audience: string,
-  candidates: Array<{ title: string; source: string; description?: string }>,
+  // adjust = 创始人星级给这条来源的加减分（topic-stars.ts）：只参与精修门槛与排序，返回的分仍是机器分
+  candidates: Array<{ title: string; source: string; description?: string; adjust?: number }>,
   dataDir?: string,
   deps?: { runLoopImpl?: typeof runLoop },
 ): Promise<RelevanceVerdict[] | null> {
@@ -233,16 +234,17 @@ export async function judgeRelevance(
     return null;
   }
   if (!cap1.scores) return null; // 粗筛没提交 → 回退
+  const effective = (s: Stage1Score) => s.totalScore + (pool[s.index]?.adjust ?? 0);
   const selected = cap1.scores
-    .filter((s) => s.totalScore >= STAGE2_MIN_SCORE)
-    .sort((a, b) => b.totalScore - a.totalScore)
+    .filter((s) => effective(s) >= STAGE2_MIN_SCORE)
+    .sort((a, b) => effective(b) - effective(a))
     .slice(0, STAGE2_MAX);
   if (selected.length === 0) return []; // 没有够格的 → 正常空结果,不是失败
 
   // ── Stage 2:高分候选精修中文文案 ────────────────────────────────────────
   const cap2: { content: Stage2Content[] | null } = { content: null };
   const contentTool = buildContentTool(cap2, pool.length);
-  const stage2List = candidateList(selected.map((s) => ({ idx: s.index, ...pool[s.index] })));
+  const stage2List = candidateList(selected.map((s) => ({ idx: s.index, title: pool[s.index].title, source: pool[s.index].source, description: pool[s.index].description })));
   try {
     await loopFn(scout.config, {
       model: scout.model,

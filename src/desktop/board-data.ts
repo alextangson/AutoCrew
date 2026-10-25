@@ -3,6 +3,7 @@
  * 列归属一律用 explain()（与我的内容、晨报、desk 同一个），不另立口径；本体未启用时 explain 按旧状态给列（影子模式）。
  * 发布记录已投出的待发布稿由 explain 直接归到已发布——从前在这里读时改状态（syncPublished），现已删除。
  */
+import { agingDaysLeft, readAgingStart } from "../modules/radar/topic-aging.js";
 import { cachedSha } from "../modules/production/hash-cache.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -29,6 +30,7 @@ import { staleReason } from "../modules/lineage/lineage.js";
 import { loadProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
 import { allowedKitPlatforms, enKitPlatforms, lineStoppedReason } from "../modules/profile/platform-lines.js";
 import { videoKitsOf } from "../storage/video-kits.js";
+import { loadPullLoginTodos, type DashboardSummary } from "./dashboard-summary.js";
 
 export { isBeingWritten };
 
@@ -104,6 +106,10 @@ export interface BoardTopic {
   inSlate: boolean;
   /** 试跑示例（O20）：卡上标「示例」并给一键删 */
   example?: boolean;
+  /** 创始人打的星（1–5）；没打 = null */
+  stars: number | null;
+  /** 还剩几天进回收站；不老化（≥3 星 / 捞回过 / 本周片单）= null */
+  agingDaysLeft: number | null;
 }
 
 export interface BoardData {
@@ -113,6 +119,8 @@ export interface BoardData {
   wordsPerMinute: number | null;
   /** 本体状态（§4.1）：是否已启用；未启用时给最近一次对账算出的「要挪 N 张卡」清单；对账失败逐条列出 */
   ontology: { enabled: boolean; report: ReconcileReport | null };
+  /** 开着自动回流、上次判定要重新登录的平台（看板顶部提醒）；null = 回流状态读不了（照实说，不当成都好着） */
+  pullLogin: DashboardSummary["pullLoginTodos"] | null;
 }
 
 /** 数字数：去掉空白与 markdown 标题记号，中文按字、英文按字母 */
@@ -173,7 +181,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext, profile:
     finalDurationMs: current.video?.final?.duration_ms ?? null,
     handoffHash: current.video?.handoff?.hash ?? null,
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
-    publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
+    publish, publishTime: exp.published_at ?? (publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt),
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
     active, writing: isBeingWritten(current), derivedStale: await boardStale(current, dataDir), kitPlatforms: allowedKitPlatforms(current.platform, profile), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
     missing: exp.missing, badges: exp.badges, alerts: [...exp.alerts, ...stoppedAlerts(current, profile)], reason: exp.reason, candidates: exp.candidates,
@@ -199,9 +207,11 @@ async function boardStale(c: Content, dataDir: string): Promise<string | null> {
   catch (e) { return `来源状态读不出来：${e instanceof Error ? e.message : String(e)}`; }
 }
 
-function topicOf(t: Topic, latestMeeting: string | null): BoardTopic {
+function topicOf(t: Topic, latestMeeting: string | null, agingStart: number, now: number): BoardTopic {
+  const inSlate = inCurrentSlate(t, latestMeeting);
   return { id: t.id, title: t.title, source: t.source ?? null, link: t.link ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null,
-    inSlate: inCurrentSlate(t, latestMeeting), ...(t.example ? { example: true } : {}) };
+    inSlate, ...(t.example ? { example: true } : {}),
+    stars: typeof t.stars === "number" ? t.stars : null, agingDaysLeft: inSlate ? null : agingDaysLeft(t, agingStart, now) };
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {
@@ -216,10 +226,14 @@ export async function boardData(dataDir: string): Promise<BoardData> {
   }
   const started = new Set(contents.filter((c) => c.topicId).map((c) => c.topicId!));
   const latestMeeting = await latestMeetingDate(dataDir);
+  // 只读：还没写上线日标记（清理还没跑过）就按「今天上线」算
+  const now = Date.now();
+  const agingStart = (await readAgingStart(dataDir)) ?? now;
   return {
     items,
-    topics: topics.filter((t) => !started.has(t.id)).map((t) => topicOf(t, latestMeeting)),
+    topics: topics.filter((t) => !started.has(t.id)).map((t) => topicOf(t, latestMeeting, agingStart, now)),
     wordsPerMinute: await wordsPerMinute(contents, dataDir),
     ontology: { enabled: ctx.enabled, report: await readReconcileReport(dataDir) },
+    pullLogin: await loadPullLoginTodos(dataDir),
   };
 }

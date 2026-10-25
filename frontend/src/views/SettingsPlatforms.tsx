@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { PLATFORM_CAPS, SEAT_CHOICES } from "../lib";
+import { PlatformLogo } from "../components/PlatformLogo";
+import { Switch } from "../components/Switch";
 import "./settings-platforms.css";
 
 type Choice = { id: string; label: string };
@@ -30,13 +32,6 @@ export const PLATFORM_GROUPS: Array<{ title: string; note: string; items: Choice
   },
 ];
 
-/** 平台标记：本地单字/字母圆标，颜色取各平台主色，不拉远程 logo */
-const MARKS: Record<string, [string, string]> = {
-  douyin: ["抖", "#161823"], wechat_video: ["视", "#F59B23"], xiaohongshu: ["红", "#FF2442"], bilibili: ["B", "#00A1D6"],
-  wechat_mp: ["公", "#07C160"], toutiao: ["头", "#E8403F"], reddit: ["R", "#FF4500"], instagram: ["IG", "#C13584"],
-  youtube: ["YT", "#E62117"], x: ["X", "#16150F"],
-};
-
 async function readPlatforms(): Promise<string[] | null> {
   const r = await invoke("onboarding:status");
   if (!r.ok) return null;
@@ -49,17 +44,16 @@ type TileState = { id: string; kind: "saving" | "saved" | "error"; msg: string }
 
 function Tile(props: { c: Choice; on: boolean; last: boolean; busy: boolean; state?: TileState; onToggle: () => void }) {
   const { c, on, last, state } = props;
-  const [mark, color] = MARKS[c.id] ?? [c.label.slice(0, 1), "#6E6A5E"];
   return (
     <label className={"pf-tile" + (on ? " pf-on" : "") + (last ? " pf-locked" : "")} title={last ? "至少保留一个平台：先打开别的，再关这个" : undefined}>
-      <span className="pf-mark" style={{ background: color }} aria-hidden="true">{mark}</span>
+      <PlatformLogo id={c.id} label={c.label} className="pf-mark" />
       <span className="pf-text">
         <span className="pf-name">{c.label}</span>
         {state && <span className={"pf-state pf-state-" + state.kind} role={state.kind === "error" ? "alert" : "status"}>{state.msg}</span>}
         {!state && last && <span className="pf-state">至少保留一个</span>}
       </span>
-      <input
-        type="checkbox" role="switch" className="pf-switch" aria-label={c.label} aria-checked={on}
+      <Switch
+        className="pf-switch" aria-label={c.label}
         aria-disabled={last || undefined} checked={on} disabled={props.busy} onChange={props.onToggle}
       />
     </label>

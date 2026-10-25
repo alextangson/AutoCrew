@@ -12,14 +12,20 @@
  *    前端只负责摆位置，不再改写一个字。
  */
 
-export interface ProbeHealth {
+/** 失败的结构化分类（后端 error-kind 的 kind + 上游状态码）；老记录没有 = 认不出 */
+export interface FailureFacts {
+  kind?: string;
+  status?: number;
+}
+
+export interface ProbeHealth extends FailureFacts {
   at: string;
   ok: boolean;
   ms: number;
   error?: string;
 }
 
-export interface LiveHealth {
+export interface LiveHealth extends FailureFacts {
   at: string;
   ok: boolean;
   role: string;

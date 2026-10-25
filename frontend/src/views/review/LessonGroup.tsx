@@ -8,6 +8,7 @@ import { useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { decidePlaybook, decideRule, type Reply } from "./review-api";
 import type { InboxItem, Row } from "./review-model";
+import { Checkbox } from "../../components/Switch";
 
 type Json = Record<string, unknown>;
 type Run = (key: string, fn: (eventId: string) => Promise<Reply<Json>>) => Promise<void>;
@@ -78,7 +79,7 @@ function MergedPlaybook(p: { items: InboxItem[]; run: Run }) {
     <div className="ri-lesson-text">《{String(d.playbook_name)}》手册：这 {p.items.length} 条一起改成一个新版本</div>
     <p className="ri-question">{String(d.question ?? "")}</p>
     <ul className="ri-check">{p.items.map((i) => <li key={i.item_id}>
-      <label><input type="checkbox" checked={checked(i)} onChange={(e) => setOn({ ...on, [i.item_id]: e.target.checked })} /> {String(i.detail.lesson ?? i.summary)}</label>
+      <label><Checkbox checked={checked(i)} onChange={(e) => setOn({ ...on, [i.item_id]: e.target.checked })} /> {String(i.detail.lesson ?? i.summary)}</label>
       {i.detail.words_text ? <div className="ri-note">你当时说：{String(i.detail.words_text)}</div> : null}
     </li>)}</ul>
     <div className="ri-actions">

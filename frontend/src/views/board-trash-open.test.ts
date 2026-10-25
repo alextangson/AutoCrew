@@ -105,26 +105,6 @@ describe("回收站里的稿件能恢复", () => {
   });
 });
 
-describe("点卡直接进稿件页", () => {
-  it("本体启用的视频卡点标题也直接 openEditor，不弹卡片面板", async () => {
-    boardItems = [item("待录制", { active: true })];
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    const { Board } = await import("./Board");
-    const openEditor = vi.fn();
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const root = createRoot(el);
-    await act(async () => {
-      root.render(createElement(Board, { openTopic: () => {}, openEditor, openData: () => {} }));
-    });
-    const title = [...el.querySelectorAll<HTMLButtonElement>("button.bcard-title")].find((b) => b.textContent?.includes("某稿"))!;
-    await act(async () => { title.click(); });
-    expect(openEditor).toHaveBeenCalledWith("content-1-a");
-    expect(el.querySelector("[aria-label='卡片详情']")).toBeNull();
-    root.unmount();
-  });
-});
-
 describe("确认框开着期间状态变了", () => {
   it("确认后再重读一次：这时已经开始写了 → 拒绝，不删", async () => {
     const { trashItem } = await import("./BoardCards");

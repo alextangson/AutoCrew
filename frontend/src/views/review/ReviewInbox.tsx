@@ -5,14 +5,15 @@
  * 做完：底部深色小提示「结果 · 撤回 · 还有 N 件」（10 秒），自动打开下一件；↓ / ↑ 切换，回车 = 主按钮。
  * 列表 5 秒轮询；面板开着的那件在别处处理掉了就提示「已在别处处理」。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { groupByTheme } from "../pipeline-model";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { focusPick } from "./inbox-focus";
 import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
 import { invoke, SESSION_EXPIRED } from "../../transport";
 import { LessonPanel } from "./LessonGroup";
-import { DONE_TEXT, isLessonRow, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
+import { DONE_TEXT, isLessonRow, rowVerb, quickAction, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
 import { GroupPanel } from "./ReviewGroup";
 import { useInboxNotify } from "./review-notify";
@@ -60,7 +61,8 @@ function QuickButton(p: { row: Row; a: InboxAction; run: (item: InboxItem, a: In
 /** 标签页在后台时轮询放慢到 30 秒（不停）：后台标签页也要能弹提醒、更新标题件数（整分支审 5 P2） */
 export const HIDDEN_POLL_MS = 30_000;
 
-export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[]; hiddenPollMs?: number }) {
+/** variant="home"：首页「要你做的」的紧凑列表（动词 · 标题 · 一行说明 · →），点开仍是同一个面板、同一套动作 */
+export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[]; hiddenPollMs?: number; variant?: "home" }) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 上一次读成功的时间：读失败时列表停在那一刻，列表头写明（整分支审 3 P2） */
@@ -94,7 +96,10 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   }, [reload, props.hiddenPollMs]);
 
   const list = items ?? [];
-  const rows = groupRows(list);
+  // 「要你做的」按主题分组显示（管线重规划 §8-5）：同一主题的行挨在一起，键盘上下切也按这个顺序
+  const themed = groupByTheme(groupRows(list));
+  const rows = themed.flatMap((g) => g.rows);
+  const themeHead = new Map(themed.filter((g) => g.theme && themed.length > 1).map((g) => [g.rows[0].key, g.theme!.title]));
   const rowOfItem = (id: string) => rows.find((r) => r.items.some((i) => i.item_id === id)) ?? null;
   const open = useCallback((row: Row | null) => { setOpenKey(row?.key ?? null); setHeld(row); }, []);
   // 件数 = 创始人看到的行数（合成的行算一件），列表头和标签页标题用同一个数
@@ -211,6 +216,38 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   });
 
   const expanded = collapsed === null ? list.length > 0 : !collapsed;
+  const panels = <>
+    <PrimaryContext.Provider value={setPrimary}>
+    {shown && isLessonRow(shown) ? <LessonPanel key={shown.key} row={current ?? shown} gone={!current} onClose={() => open(null)} reload={reload} />
+      : shown && (shown.items.length === 1
+      ? <ReviewPanel item={shown.items[0]} gone={!current} onClose={() => open(null)} act={async (a, extra) => { await act(shown.items[0], a, extra); }} />
+      : <GroupPanel row={current ?? shown} gone={!current} onClose={() => open(null)} act={async (i, a, extra) => { await act(i, a, extra); }} rejectAll={rejectAll} />)}
+    </PrimaryContext.Provider>
+    {toast && <div className="ri-toast" role="status"><span>{toast.text}</span>
+      {toast.undo && <button onClick={() => void toast.undo!()}>撤回</button>}
+      <span className="ri-left">{toast.left > 0 ? `还有 ${toast.left} 件` : "都处理完了"}</span></div>}
+  </>;
+  if (props.variant === "home") return <section className="ri-home" aria-label="要你做的">
+    <div className="ri-home-h"><h2>要你做的</h2>
+      {rows.length > 0 && <span className="ri-home-count">{rows.length} 件</span>}
+      {notify.canAsk && rows.length > 0 && <button className="ri-home-link" onClick={notify.ask}>打开提醒</button>}</div>
+    {staleText && <p className="ri-home-warn" role="alert">{staleText}</p>}
+    <div className="ri-home-list">
+      {rows.length === 0 && <p className="ri-home-empty">{error && !items ? `「要你做的」读不出来：${error}` : items === null ? "读取中" : "没有要你定的"}</p>}
+      {rows.map((r) => {
+        // 首页按稿名排（mock）：主行 = 稿名，说明行 = 这件事；组头只在一个主题下有两件以上时出，免得和稿名重复
+        const head = themed.find((g) => g.rows[0].key === r.key && g.rows.length > 1)?.theme?.title;
+        const name = r.items[0]?.title || r.title;
+        return <Fragment key={r.key}>{head !== undefined && <div className="ri-home-theme" aria-hidden="true">{head || "（无标题）"}</div>}
+          <button className={"ri-home-row" + (r.key === openKey ? " on" : "")} aria-label={r.title} onClick={() => open(r)}>
+            <span className="verb">{rowVerb(r)}</span>
+            <span className="tx"><span className="t">{name}</span><span className="m">{name === r.title ? "" : `${r.title} · `}{relativeLabel(r.since)}</span></span>
+            <span className="arr">→</span>
+          </button></Fragment>; })}
+    </div>
+    {rows.length > 0 && <p className="ri-home-foot">按主题分组；每件仍按原稿关闭。</p>}
+    {panels}
+  </section>;
   return <section className="ri" aria-label="等你拍板">
     <div className="ri-head">
       {list.length === 0 ? <span className="ri-empty">{error ? `「等你拍板」读不出来：${error}` : items === null ? "等你拍板 · 读取中" : "没有等你拍板的事"}</span>
@@ -221,23 +258,16 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
     </div>
     {expanded && rows.length > 0 && <ul className="ri-list">{rows.map((r) => {
       const qa = quickAction(r);
-      return <li key={r.key} tabIndex={0} className={"ri-row" + (qa ? " ri-row-quick" : "") + (r.key === openKey ? " ri-on" : "")}
+      const head = themeHead.get(r.key);
+      return <Fragment key={r.key}>{head !== undefined && <li className="ri-theme" aria-hidden="true">{head || "（无标题）"}</li>}<li tabIndex={0} className={"ri-row" + (qa ? " ri-row-quick" : "") + (r.key === openKey ? " ri-on" : "")}
         aria-label={r.title} onClick={() => open(r)}>
         {r.agent_waiting ? <span className="ri-dot" aria-label="有 agent 在等" /> : <span />}
         {r.items[0].type === "cover_pick" ? <CoverPair item={r.items[0]} /> : <Thumb item={r.items[0]} />}
         <span className="ri-text"><div className="ri-title">{r.title}</div><div className="ri-sub">{r.sub}</div></span>
         {qa && <QuickButton row={r} a={qa} run={quick} />}
         <span className="ri-time">{relativeLabel(r.since)}</span>
-      </li>;
+      </li></Fragment>;
     })}</ul>}
-    <PrimaryContext.Provider value={setPrimary}>
-    {shown && isLessonRow(shown) ? <LessonPanel key={shown.key} row={current ?? shown} gone={!current} onClose={() => open(null)} reload={reload} />
-      : shown && (shown.items.length === 1
-      ? <ReviewPanel item={shown.items[0]} gone={!current} onClose={() => open(null)} act={async (a, extra) => { await act(shown.items[0], a, extra); }} />
-      : <GroupPanel row={current ?? shown} gone={!current} onClose={() => open(null)} act={async (i, a, extra) => { await act(i, a, extra); }} rejectAll={rejectAll} />)}
-    </PrimaryContext.Provider>
-    {toast && <div className="ri-toast" role="status"><span>{toast.text}</span>
-      {toast.undo && <button onClick={() => void toast.undo!()}>撤回</button>}
-      <span className="ri-left">{toast.left > 0 ? `还有 ${toast.left} 件` : "都处理完了"}</span></div>}
+    {panels}
   </section>;
 }

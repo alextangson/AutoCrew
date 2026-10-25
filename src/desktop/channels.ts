@@ -50,6 +50,10 @@ export const IPC_CHANNELS = [
   "settings:open_config",
   // 配置面的反馈闭环：拿**已保存的**配置真发一次极小调用，回耗时与上游实际回的模型名
   "settings:test_route",
+  // 缺线路时的第三方中转推荐（spec 2026-10-25 §4）：只认预设地址读模型列表 / 服务端追加端点 / 本机推荐偏好
+  "settings:list_models",
+  "settings:engine_attach_preset",
+  "settings:offer_set",
   // 线路健康只读通道（P2 spec §4.1）：每个端点最近一次探针 + 最近一次真实调用的结果。
   // 不轮询——变更时服务端发既有 `engine` SSE 事件（kind:"engine_health"），前端据此重拉
   "engine:health",
@@ -152,6 +156,8 @@ export const IPC_CHANNELS = [
   // 一键删示例（onboarding-connect O20）：示例选题连同其下的稿一起进回收站
   "topic:delete_example",
   "topic:restore",
+  // 选题星级（管线重规划 §3）：1–5 星，0 = 清掉；1–2 星进回收站
+  "topic:rate",
   // 角度点选（角度卡 spec §1.4）：点选 = 只带 angle_id；改写 = 额外带改写后的 card
   "topic:select_angle",
   "topic:clear_angle",

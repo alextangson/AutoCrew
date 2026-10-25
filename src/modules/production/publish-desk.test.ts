@@ -50,9 +50,10 @@ describe("比平时 = 数据页口径（吸收 1 / 边界 7）", () => {
 });
 
 describe("回流原因分类（吸收 10 / 边界 5）", () => {
-  it("B站不支持、未开启、登录过期、抓取失败、正常", () => {
+  it("YouTube 不支持、未开启、登录过期、抓取失败、正常（B站第 4 期起自动回流）", () => {
     const s = defaultPullState();
-    expect(backflowOf("bilibili", s).kind).toBe("unsupported");
+    expect(backflowOf("youtube", s).kind).toBe("unsupported");
+    expect(backflowOf("bilibili", s)).toMatchObject({ kind: "off", auto: false });
     expect(backflowOf("douyin", s)).toMatchObject({ kind: "off", auto: false });
     s.platforms.wechat_video = { ...s.platforms.wechat_video, enabled: true, lastStatus: "needs_login" };
     expect(backflowOf("wechat_video", s).text).toBe("视频号登录过期，去 ego lite 登录后自动接上");
@@ -116,13 +117,13 @@ describe("各平台一行（deskRow）", () => {
     const r = deskRow(input({ target: target("douyin", "已公开", { url: "https://www.douyin.com/video/111" }), slot: slot("douyin", { url: "https://www.douyin.com/video/111" }), works: [work("douyin", "111", 50)], backflow: backflowOf("douyin", pull) }));
     expect(r.data).toMatchObject({ kind: "metrics", views: 50, metric_date: "2026-10-11", warning: "抖音登录过期，去 ego lite 登录后自动接上" });
   });
-  it("边界 5：回流断了写原因，不写 0；B站不回流时更多里能手填", () => {
+  it("边界 5：回流断了写原因，不写 0；B站回流没开时更多里能手填", () => {
     const pull = defaultPullState();
     pull.platforms.wechat_video = { ...pull.platforms.wechat_video, enabled: true, lastStatus: "needs_login" };
     const wv = deskRow(input({ target: target("wechat_video", "已公开", { url: "https://channels.weixin.qq.com/x?objectId=9" }), slot: slot("wechat_video", { item_id: "9" }), backflow: backflowOf("wechat_video", pull) }));
     expect(wv.data).toMatchObject({ why: "login", text: "视频号登录过期，去 ego lite 登录后自动接上" });
     const bili = deskRow(input({ target: target("bilibili", "已公开", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }), slot: slot("bilibili", { url: "https://www.bilibili.com/video/BV1xx411c7mD" }), backflow: backflowOf("bilibili", pull) }));
-    expect(bili.data).toMatchObject({ why: "unsupported" });
+    expect(bili.data).toMatchObject({ why: "off" });
     expect(bili.more).toContain("record_metrics");
     expect(wv.more).not.toContain("record_metrics");
   });
