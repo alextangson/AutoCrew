@@ -39,6 +39,14 @@ describe("小红书：近 7 天观看 / 新增粉丝 + 抓取时的粉丝总数"
     expect(last).toEqual({ metricDate: "2026-10-24", followers: 16302, newFollowers: 0, views: 149 });
     expect(r.rows[0].followers).toBeNull();
   });
+  it("account/base 坏了、personal_info 好的：粉丝照收，但缺口记成 partial，不报成完整成功", () => {
+    const r = judgeAccountPage("xiaohongshu", page(res(base.url, "oops", 500), info), CAPTURED);
+    expect(r).toMatchObject({ status: "ok", rows: [{ metricDate: "2026-10-24", followers: 16302, views: null }] });
+    expect(r.errorCode).toMatch(/^partial:/);
+    const missing = judgeAccountPage("xiaohongshu", page(info), CAPTURED);
+    expect(missing.errorCode).toBe("partial:missing_response:/datacenter/account/base");
+    expect(judgeAccountPage("xiaohongshu", page(base, info), CAPTURED).errorCode).toBeUndefined();
+  });
   it("缺 view_list = 结构变了；success:false = 出错", () => {
     expect(parseXhsAccount(res(base.url, JSON.stringify({ success: true, data: { seven: {} } })), CAPTURED)).toMatchObject({ stop: "schema_changed" });
     expect(parseXhsAccount(res(base.url, JSON.stringify({ success: false, code: -1 })), CAPTURED)).toMatchObject({ stop: "error" });

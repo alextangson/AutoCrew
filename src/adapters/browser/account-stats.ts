@@ -154,6 +154,8 @@ export function parseWechatMpAccount(res: CapturedResponse, capturedAt: string):
 interface AccountSource {
   url: string;
   patterns: string[];
+  /** 少了哪条就算「只抓到一部分」（抖音的昵称接口可有可无） */
+  required: string[];
   gates: BrowseParams["gates"];
   parse(res: CapturedResponse, capturedAt: string): Parsed;
 }
@@ -161,20 +163,21 @@ interface AccountSource {
 const GATES = { riskUrl: RISK_URL_COMMON, loginText: LOGIN_TEXT_COMMON, riskText: RISK_TEXT_COMMON };
 
 export const ACCOUNT_SOURCES: Record<AccountPlatform, AccountSource> = {
-  douyin: { url: "https://creator.douyin.com/creator-micro/home", patterns: ["/aweme/janus/creator/data/overview/all", "/web/api/media/user/info"], gates: GATES, parse: (r) => parseDouyinAccount(r) },
+  douyin: { url: "https://creator.douyin.com/creator-micro/home", patterns: ["/aweme/janus/creator/data/overview/all", "/web/api/media/user/info"], required: ["/aweme/janus/creator/data/overview/all"], gates: GATES, parse: (r) => parseDouyinAccount(r) },
   xiaohongshu: {
-    url: "https://creator.xiaohongshu.com/new/home", patterns: ["/datacenter/account/base", "/creator/home/personal_info"],
+    url: "https://creator.xiaohongshu.com/new/home", patterns: ["/datacenter/account/base", "/creator/home/personal_info"], required: ["/datacenter/account/base", "/creator/home/personal_info"],
     gates: { ...GATES, loginUrl: "creator\\.xiaohongshu\\.com/login" }, parse: parseXhsAccount,
   },
-  bilibili: { url: "https://member.bilibili.com/platform/home", patterns: ["/x/web/data/index/stat"], gates: { ...GATES, loginUrl: "passport\\.bilibili\\.com/login" }, parse: (r) => parseBilibiliAccount(r) },
-  wechat_mp: { url: "https://mp.weixin.qq.com/", patterns: ["/cgi-bin/home"], gates: GATES, parse: parseWechatMpAccount },
+  bilibili: { url: "https://member.bilibili.com/platform/home", patterns: ["/x/web/data/index/stat"], required: ["/x/web/data/index/stat"], gates: { ...GATES, loginUrl: "passport\\.bilibili\\.com/login" }, parse: (r) => parseBilibiliAccount(r) },
+  wechat_mp: { url: "https://mp.weixin.qq.com/", patterns: ["/cgi-bin/home"], required: ["/cgi-bin/home"], gates: GATES, parse: parseWechatMpAccount },
 };
 
 /** 一页里所有响应 → 结果（纯函数）：任一条能用就算拿到；全都停 → 风控 > 登录 > 其他 */
 export function judgeAccountPage(platform: AccountPlatform, o: BrowseOutcome, capturedAt: string): AccountPullResult {
   if (o.end === "error") { const t = classifyThrown(o.error); return { status: t.status, rows: [], account: null, errorCode: t.errorCode }; }
   if (o.gate) return { status: o.gate === "risk" ? "risk_control" : "needs_login", rows: [], account: null, errorCode: `${o.gate}_page` };
-  const parsed = (o.pages[0]?.responses ?? []).map((r) => ACCOUNT_SOURCES[platform].parse(r, capturedAt));
+  const responses = o.pages[0]?.responses ?? [];
+  const parsed = responses.map((r) => ACCOUNT_SOURCES[platform].parse(r, capturedAt));
   const stops = parsed.filter((p): p is Extract<Parsed, { stop: PullStatus }> => "stop" in p);
   const oks = parsed.filter((p): p is Extract<Parsed, { rows: AccountDayRow[] }> => "rows" in p);
   const rows = mergeDayRows(oks.flatMap((p) => p.rows));
@@ -185,7 +188,10 @@ export function judgeAccountPage(platform: AccountPlatform, o: BrowseOutcome, ca
     const first = stops[0];
     return first ? { status: first.stop, rows: [], account: null, errorCode: first.errorCode } : { status: "error", rows: [], account: null, errorCode: "no_data_response" };
   }
-  return { status: "ok", rows, account };
+  // 有能用的行，但某条来源坏了或没等到：行照收，缺口记进 errorCode（健康里看得见，首页能说明为什么缺某个数）
+  const missing = ACCOUNT_SOURCES[platform].required.filter((pat) => !responses.some((r) => r.url.includes(pat)));
+  const gap = stops[0]?.errorCode ?? (missing.length ? `missing_response:${missing[0]}` : null);
+  return { status: "ok", rows, account, ...(gap ? { errorCode: `partial:${gap}` } : {}) };
 }
 
 export interface AccountPullOptions {
