@@ -3,11 +3,11 @@
  * 存 <dataDir>/exemplars/promotions.json，进「等你拍板」。批准后（§15.8）：
  * - 范文批注：同一个队列里给那篇范文生成新版本（批注追加在末尾），再记提案状态 applied；
  * - 写法：写法在仓库技能文件里，不自动改；在资料库生成一份可审阅的补丁，状态 approved_pending_release，
- *   在「等你拍板」里一直显示「已批，等发布」，直到代码发布后有人标成已发布。
+ *   在「等你拍板」里显示「已批，等发布」；技能文件里有证据说明它已合进去（折入标记或改动全文）后，自动转 released 并消失。
  * 手册骨架的升级不走这里，走手册提案。
  * 文件读坏了 = 可见错误，不当成没有提案、不覆盖。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
@@ -15,10 +15,11 @@ import { assertDataDirWritable } from "../../storage/storage-roots.js";
 import { contentHash, exemplarsDir, putInQueue, readExemplarManifest, readExemplarText, serializeExemplars } from "./store.js";
 import { writeTextAtomicMkdir } from "../../storage/json-atomic.js";
 import { getDataDir } from "../../storage/local-store.js";
+import { SKILL_FILE, methodSection } from "./method.js";
 import { ExemplarError } from "./types.js";
 
 export type PromotionTarget = "exemplar" | "method";
-export type PromotionStatus = "pending" | "applied" | "approved_pending_release" | "rejected";
+export type PromotionStatus = "pending" | "applied" | "approved_pending_release" | "released" | "rejected";
 
 export interface PromotionCite { content_id: string; index: number; founder_words: string }
 export interface Promotion {
@@ -39,6 +40,12 @@ export interface Promotion {
   exemplar_version?: number;
   /** approved_pending_release：补丁文件（相对数据目录） */
   patch_file?: string;
+  /** released：在技能文件里找到合入证据的时间和依据 */
+  released_at?: string;
+  released_evidence?: "marker" | "text";
+  /** released：写稿实际加载的那份技能文件（路径 + 判定时的 sha256），可事后核对 */
+  released_skill_file?: string;
+  released_skill_sha256?: string;
 }
 interface PromotionFile { schema: 1; items: Promotion[] }
 
@@ -124,5 +131,41 @@ export function decidePromotion(id: string, gen: string, decision: "approve" | "
     Object.assign(p, landed, { decided_at: at, founder_words: founderWords });
     await write(items, dataDir);
     return p;
+  });
+}
+
+/** 技能文件里的折入标记：<!-- promotion-folded: wp-a wp-b -->，人工合补丁时写上（措辞改过也能认） */
+const FOLDED_RE = /<!--\s*promotion-folded:([^>]*)-->/g;
+const norm = (t: string) => t.replace(/[\s\p{P}\p{S}]/gu, "");
+
+/** 这份已批写法有没有合进技能的证据：标记里有它的 id，或改动全文（去掉空白和标点）原样在「写法」一节里。没有证据 = null */
+export function releaseEvidence(p: Promotion, skill: string): "marker" | "text" | null {
+  for (const m of skill.matchAll(FOLDED_RE)) if (m[1].split(/[\s,，]+/).includes(p.id)) return "marker";
+  let section: string;
+  try { section = methodSection(skill); } catch { return null; }
+  const t = norm(p.text);
+  return t.length > 0 && norm(section).includes(t) ? "text" : null;
+}
+
+/** 已批等发布的写法：写稿实际加载的技能文件（默认 SKILL_FILE，立意锁写法读的同一份）里找到合入证据的转 released，
+ *  记下文件路径和 sha256 作证据。技能文件读不了 = 抛错，不当成没合 */
+export function releaseFoldedPromotions(dataDir?: string, skillFile = SKILL_FILE): Promise<Promotion[]> {
+  return serializeExemplars(dataDir, async () => {
+    const items = await readPromotions(dataDir);
+    const waiting = items.filter((p) => p.status === "approved_pending_release");
+    if (waiting.length === 0) return [];
+    let skill: string;
+    try { skill = await fs.readFile(skillFile, "utf8"); } catch (e) { throw new ExemplarError("method_unreadable", `write-script 技能读不了，判断不了写法补丁有没有生效：${(e as Error).message}`); }
+    const at = new Date().toISOString();
+    const sha = createHash("sha256").update(skill).digest("hex");
+    const released: Promotion[] = [];
+    for (const p of waiting) {
+      const ev = releaseEvidence(p, skill);
+      if (!ev) continue;
+      Object.assign(p, { status: "released", released_at: at, released_evidence: ev, released_skill_file: skillFile, released_skill_sha256: sha });
+      released.push(p);
+    }
+    if (released.length > 0) await write(items, dataDir);
+    return released;
   });
 }

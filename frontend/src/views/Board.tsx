@@ -20,6 +20,7 @@ import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
 import { PersonaReminder } from "./PersonaReminder";
 import { LegacyTwitterReminder } from "./LegacyTwitterReminder";
+import { PullLoginReminder } from "./PullLoginReminder";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
 import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
@@ -128,6 +129,7 @@ export function Board(props: Nav) {
     <UpdateBanner />
     <PersonaReminder />
     <LegacyTwitterReminder />
+    {data && <PullLoginReminder todos={data.pullLogin} reload={() => void reload()} />}
     <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} {...(props.inboxTypes ? { focusTypes: props.inboxTypes } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}

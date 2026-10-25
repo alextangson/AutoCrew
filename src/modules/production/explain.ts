@@ -32,6 +32,8 @@ export interface Explanation {
   candidates: CandidateView[];
   publishable: boolean;
   evidence: string[];
+  /** 已发布的时间来自内容自己的回执（公众号文章 article-publish.json），看板按它排「已发布」 */
+  published_at?: string;
   /** 只有发布回执、本轮没有对当前正文的认稿（导入的、先剪后认的）：照样已发布，只提醒不挡（吸收 5） */
   no_script_approval?: boolean;
   /** 未启用时：推导出来会是什么（启用前的差异清单读它） */

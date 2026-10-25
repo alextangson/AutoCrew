@@ -1,9 +1,10 @@
 /**
  * 改稿意见升级成范文批注 / 写法（spec 2026-10-15 §6、§15.8）在「等你拍板」里：批 / 不要。
- * 批范文批注 = 生成范文新版本；批写法 = 资料库里出一份补丁，条目留在列表里显示「已批，等发布」（只能看，不在对话里定）。
+ * 批范文批注 = 生成范文新版本；批写法 = 资料库里出一份补丁，条目留在列表里显示「已批，等发布」（只能看，不在对话里定），
+ * 技能文件里有合入证据后自动转 released、从列表消失。
  */
 import { genOf } from "../inbox.js";
-import { decidePromotion, readPromotions, type Promotion } from "../../exemplar/promotions.js";
+import { decidePromotion, readPromotions, releaseFoldedPromotions, type Promotion } from "../../exemplar/promotions.js";
 import { ExemplarError } from "../../exemplar/types.js";
 import type { InboxItem } from "../inbox.js";
 
@@ -28,8 +29,9 @@ function releaseItem(p: Promotion): InboxItem {
 }
 
 /** 待批的升级提案；文件读坏了列一件看得见的「其他」，不当成没有 */
-export async function promotionItems(dataDir: string): Promise<InboxItem[]> {
+export async function promotionItems(dataDir: string, skillFile?: string): Promise<InboxItem[]> {
   try {
+    await releaseFoldedPromotions(dataDir, skillFile);
     const all = await readPromotions(dataDir);
     return [...all.filter((p) => p.status === "pending").map(promotionItem), ...all.filter((p) => p.status === "approved_pending_release").map(releaseItem)];
   } catch (err) {

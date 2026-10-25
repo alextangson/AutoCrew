@@ -117,3 +117,24 @@ it("稿件移入回收站后离开看板、进回收站，恢复后回到原列"
   await restoreContent(c.id, dir);
   expect((await boardData(dir)).items.find((i) => i.id === c.id)?.column).toBe("写稿中");
 });
+
+it("看板带回流登录提醒：只列开着回流、判定要重新登录的平台", async () => {
+  const { defaultPullState, writePullState } = await import("../modules/flywheel/pull-state.js");
+  expect((await boardData(dir)).pullLogin).toEqual([]);
+  const s = defaultPullState();
+  s.platforms.wechat_video = { ...s.platforms.wechat_video, enabled: true, lastStatus: "needs_login", lastSuccessAt: "2026-10-15T01:00:00.000Z" };
+  s.platforms.douyin = { ...s.platforms.douyin, enabled: false, lastStatus: "needs_login" };
+  await writePullState(s, dir);
+  const todos = (await boardData(dir)).pullLogin;
+  expect(todos?.map((t) => t.platform)).toEqual(["wechat_video"]);
+  expect(todos?.[0]).toMatchObject({ label: "视频号", lastSuccessAt: "2026-10-15T01:00:00.000Z" });
+});
+
+it("公众号文章按 article-publish.json 发表后，看板的发布时间用回执时间（排进「已发布」最近 5 条）", async () => {
+  const { writePublishState } = await import("../modules/wechat-article/publish-state.js");
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
+  await writePublishState(c.id, { phase: "published", receipt: { scheduledAt: "2026-10-24T21:00:00+08:00", founderWords: "扫了", published: true, at: "2026-10-25T03:57:32.531Z" }, superseded: [], attempts: [] }, dir);
+  const item = (await boardData(dir)).items.find((i) => i.id === c.id);
+  expect(item?.column).toBe("已发布");
+  expect(item?.publishTime).toBe("2026-10-24T21:00:00+08:00");
+});

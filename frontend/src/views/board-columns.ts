@@ -149,7 +149,9 @@ export interface OntologyState {
   report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[] } | null;
 }
 
-export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }
+/** 开着自动回流、上次判定要重新登录的平台（服务端 /api/board 的 pullLogin） */
+export interface PullLoginTodo { platform: string; label: string; consoleUrl: string; action: string; lastSuccessAt: string | null }
+export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState; pullLogin?: PullLoginTodo[] | null }
 
 /** 看板顶部的本体提示：未启用且有要挪的卡 → 「要挪 N 张卡」；对账失败逐条可见；什么都没有 → null */
 export function ontologyNotice(o: OntologyState | undefined): { moves: OntologyMove[]; errors: number; warnings: string[]; text: string } | null {
