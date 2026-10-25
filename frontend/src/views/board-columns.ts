@@ -83,6 +83,8 @@ export interface BoardItem {
   /** 这张卡能列的发布平台（服务端按语言与勾选算好）；旧服务端没给 = 按语言回退 */
   kitPlatforms?: string[];
   badges?: string[];
+  /** explain 给的「还差什么」（剪辑中等你审 / 你说还要改…） */
+  missing?: string[];
   /** 本轮候选 / 核对中的事实（本体 explain 给的；写稿段也带） */
   candidates?: Array<{ kind: string; state?: string }>;
   reason?: string;

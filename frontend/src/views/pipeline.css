@@ -1,0 +1,92 @@
+/* 内容管线（管线重规划 §2、§8）：照 home-mock-v2/pipeline.html 的视觉语言。只在 .pl 里生效。 */
+.pl { --paper-2: #EFEDE6; --line: #E2DFD5; --line-strong: #D3CFC3; --faint: #B4B0A4; --pl-text-2: #5C584D; --pl-sched: #8B877B; --pl-wip: #D3CFC3;
+  margin: calc(-1 * var(--s4)) calc(-1 * var(--s5)); line-height: 20px; color: var(--ink); }
+.pl .g { width: 12px; height: 12px; display: inline-block; flex: none; color: var(--muted); }
+
+.pl-ph { display: flex; align-items: flex-end; padding: 32px 24px 0; }
+.pl-ph h1 { font-family: var(--font-display); font-size: var(--fs-2xl); line-height: 36px; font-weight: 700; letter-spacing: -0.02em; }
+.pl-ph .sub { font-size: 13px; color: var(--muted); margin-left: 16px; padding-bottom: 6px; }
+.pl-tools { display: flex; align-items: center; gap: 8px; padding: 20px 24px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.pl .pl-chip { font-family: inherit; line-height: 20px; height: 32px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--pl-text-2); border-radius: 8px;
+  border: 0; background: transparent; }
+.pl .pl-chip:hover { background: var(--paper-2); border: 0; }
+.pl-chip b { color: var(--ink); font-weight: 500; }
+.pl .pl-chip.on { background: var(--paper-2); }
+.pl-chip select { font: inherit; font-size: 13px; font-weight: 500; color: var(--ink); border: 0; background: transparent; padding: 0; cursor: pointer; }
+.pl-legend { margin-left: auto; display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--muted); }
+.pl-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pl-sw { width: 10px; height: 4px; border-radius: 1px; display: inline-block; }
+.pl-stale { font-size: 12px; color: var(--hot); }
+
+.pl-board { display: grid; gap: 16px; padding: 20px 24px 64px; align-items: start; }
+.pl-col { min-width: 0; min-height: 480px; border-radius: 8px; }
+.pl-col.drop-ok { background: rgba(22, 21, 15, .03); }
+.pl-col.drop-no { background: rgba(198, 61, 0, .05); }
+.pl-col-h { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.pl-col-h .n { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl .pl-col-h .plus { margin-left: auto; color: var(--faint); font-weight: 400; font-size: 16px; border: 0; background: transparent; padding: 0 2px; line-height: 20px; }
+.pl-col-h .plus:hover { color: var(--ink); background: transparent; }
+.pl .pl-col-h .tool { color: var(--muted); font-weight: 400; font-size: 12px; border: 0; background: transparent; padding: 0; }
+.pl-col-h .tool:hover { color: var(--ink); background: transparent; }
+.pl-refuse { font-size: 12px; color: var(--hot); margin: -4px 0 8px; }
+.pl-collapsed { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 6px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); min-height: 480px; }
+.pl-collapsed .v { white-space: nowrap; writing-mode: vertical-rl; font-size: 13px; font-weight: 600; letter-spacing: .1em; }
+.pl-collapsed .n { font-size: 12px; color: var(--muted); }
+
+.pl-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 12px 10px; margin-bottom: 8px; position: relative; cursor: pointer; }
+.pl-card:hover { border-color: var(--line-strong); }
+.pl-card.sel { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); cursor: default; }
+.pl-card[aria-busy="true"] { opacity: .6; }
+.pl-card .t { font-size: 14px; line-height: 20px; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pl-st { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--pl-text-2); margin-top: 8px; }
+.pl-st.hot { color: var(--hot); font-weight: 500; }
+.pl-st svg { width: 12px; height: 12px; flex: none; }
+.pl-ft { display: flex; align-items: center; gap: 8px; margin-top: 12px; min-height: 16px; }
+.pl-ft .d { white-space: nowrap; margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-plan { display: flex; gap: 6px; color: var(--faint); }
+.pl-plan .g { color: var(--faint); }
+
+.pl-meter { display: flex; gap: 2px; }
+.pl-meter i { width: 10px; height: 4px; border-radius: 1px; background: var(--ink); }
+.pl-meter i.sched { background: var(--pl-sched); } .pl-meter i.wip { background: var(--pl-wip); } .pl-meter i.hot { background: var(--hot); }
+.pl-meter i.none { background: none; box-shadow: inset 0 0 0 1px #C9C5B9; }
+.pl-frac { white-space: nowrap; font-size: 12px; color: var(--pl-text-2); font-variant-numeric: tabular-nums; }
+.pl-ex { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 8px; }
+.pl-ex.hot { color: var(--hot); font-weight: 500; }
+.pl-ex.hot .g { color: var(--hot); border-color: var(--hot); }
+.pl-stars { display: flex; gap: 2px; min-width: 1px; }
+.pl .pl-more { font-family: inherit; line-height: 16px; font-size: 12px; color: var(--muted); padding: 4px 0 0 4px; border: 0; background: transparent; }
+.pl .pl-more:hover { color: var(--ink); background: transparent; }
+.pl-empty { font-size: 12px; color: var(--muted); padding: 4px; }
+
+/* 选题卡的动作：开始写 / 换一个 AI 写 / ⋯ */
+.pl-acts { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.pl .pl-btn { font-family: inherit; height: 24px; padding: 0 8px; font-size: 12px; line-height: 22px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); white-space: nowrap; }
+.pl .pl-btn:hover { border-color: var(--ink); }
+.pl .pl-btn.primary { background: var(--ink); color: #F8F7F2; border-color: var(--ink); }
+.pl .pl-btn:disabled { opacity: .5; cursor: default; }
+.pl .pl-link { font-family: inherit; line-height: 16px; font-size: 12px; color: var(--pl-text-2); border: 0; background: transparent; padding: 0; white-space: nowrap; }
+.pl .pl-link:hover { color: var(--ink); background: transparent; }
+.pl .pl-link.go { color: var(--hot); font-weight: 600; }
+.pl-sel { font-size: 12px; height: 24px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--pl-text-2); padding: 0 4px; max-width: 110px; }
+.pl-card .bcard-menu { position: relative; }
+
+/* 展开：每个去向一行 */
+.pl-xp { margin: 12px -12px -10px; padding: 4px 12px 8px; border-top: 1px solid var(--line); background: #FBFAF7; border-radius: 0 0 8px 8px; cursor: default; }
+.pl-pr { display: grid; grid-template-columns: 64px minmax(56px, 1fr) auto; gap: 4px; align-items: center; min-height: 28px; font-size: 12px; }
+.pl-pr .nm { display: flex; align-items: center; gap: 6px; color: var(--pl-text-2); white-space: nowrap; }
+.pl-pr .nm .g { color: var(--pl-text-2); }
+
+.pl-pr .nm small { font-size: 12px; color: var(--muted); }
+.pl-pr .s { display: flex; align-items: center; gap: 4px; color: var(--ink); min-width: 0; }
+.pl-pr .s span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-pr .s svg { width: 12px; height: 12px; flex: none; }
+.pl-pr .r { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-pr.hot .s { color: var(--hot); font-weight: 500; }
+.pl-pr.hot .nm .g { color: var(--hot); border-color: var(--hot); }
+.pl-pr.muted .s { color: var(--muted); }
+.pl-pf { column-gap: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; flex-wrap: wrap; }
+.pl-pf svg { width: 12px; height: 12px; }
+.pl-warn { font-size: 12px; line-height: 16px; color: var(--hot); padding: 6px 0 2px; }
+.pl-ops { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
+.pl-ops .bcard-actions { margin: 0; }

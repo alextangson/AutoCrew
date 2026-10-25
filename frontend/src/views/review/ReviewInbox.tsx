@@ -5,7 +5,8 @@
  * 做完：底部深色小提示「结果 · 撤回 · 还有 N 件」（10 秒），自动打开下一件；↓ / ↑ 切换，回车 = 主按钮。
  * 列表 5 秒轮询；面板开着的那件在别处处理掉了就提示「已在别处处理」。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { groupByTheme } from "../pipeline-model";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { focusPick } from "./inbox-focus";
@@ -94,7 +95,10 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   }, [reload, props.hiddenPollMs]);
 
   const list = items ?? [];
-  const rows = groupRows(list);
+  // 「要你做的」按主题分组显示（管线重规划 §8-5）：同一主题的行挨在一起，键盘上下切也按这个顺序
+  const themed = groupByTheme(groupRows(list));
+  const rows = themed.flatMap((g) => g.rows);
+  const themeHead = new Map(themed.filter((g) => g.theme && themed.length > 1).map((g) => [g.rows[0].key, g.theme!.title]));
   const rowOfItem = (id: string) => rows.find((r) => r.items.some((i) => i.item_id === id)) ?? null;
   const open = useCallback((row: Row | null) => { setOpenKey(row?.key ?? null); setHeld(row); }, []);
   // 件数 = 创始人看到的行数（合成的行算一件），列表头和标签页标题用同一个数
@@ -221,14 +225,15 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
     </div>
     {expanded && rows.length > 0 && <ul className="ri-list">{rows.map((r) => {
       const qa = quickAction(r);
-      return <li key={r.key} tabIndex={0} className={"ri-row" + (qa ? " ri-row-quick" : "") + (r.key === openKey ? " ri-on" : "")}
+      const head = themeHead.get(r.key);
+      return <Fragment key={r.key}>{head !== undefined && <li className="ri-theme" aria-hidden="true">{head || "（无标题）"}</li>}<li tabIndex={0} className={"ri-row" + (qa ? " ri-row-quick" : "") + (r.key === openKey ? " ri-on" : "")}
         aria-label={r.title} onClick={() => open(r)}>
         {r.agent_waiting ? <span className="ri-dot" aria-label="有 agent 在等" /> : <span />}
         {r.items[0].type === "cover_pick" ? <CoverPair item={r.items[0]} /> : <Thumb item={r.items[0]} />}
         <span className="ri-text"><div className="ri-title">{r.title}</div><div className="ri-sub">{r.sub}</div></span>
         {qa && <QuickButton row={r} a={qa} run={quick} />}
         <span className="ri-time">{relativeLabel(r.since)}</span>
-      </li>;
+      </li></Fragment>;
     })}</ul>}
     <PrimaryContext.Provider value={setPrimary}>
     {shown && isLessonRow(shown) ? <LessonPanel key={shown.key} row={current ?? shown} gone={!current} onClose={() => open(null)} reload={reload} />
