@@ -1,8 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  RECHECK_TICK_MS,
+  STALE_FAILURE_MS,
+  startStaleRecheck,
   assignmentSummary,
   engineBannerLines,
   fallbackTitle,
+  hasStaleFailure,
   latestRecord,
   providerDot,
   providerPayload,
@@ -213,5 +217,65 @@ describe("stripRoleAndOutcome", () => {
     expect(stripRoleAndOutcome("主端点 dead（x.invalid）连不上：网络不通或域名解析失败。本次调用已中断。")).toBe("dead（x.invalid）连不上：网络不通或域名解析失败。");
     expect(stripRoleAndOutcome("端点 a（h）拒绝了 Key（401）：Key 错误或已过期，换端点没用。")).toBe("a（h）拒绝了 Key（401）：Key 错误或已过期，换端点没用。");
     expect(stripRoleAndOutcome("写稿专线 r（h）限流（429）：请求太密或额度用尽。这次没有备用端点，写稿已中断。")).toBe("r（h）限流（429）：请求太密或额度用尽。");
+  });
+});
+
+describe("startStaleRecheck：红点挂着就一直打节拍，不靠重渲染", () => {
+  // 模拟后端 recheckProviders：只探过时 5 分钟以上的失败；探失败刷新失败时间，探通则清掉
+  function fakeBackend(probeOk: () => boolean) {
+    let failedAt: number | null = Date.now();
+    let probes = 0;
+    const tick = () => {
+      if (failedAt === null || Date.now() - failedAt <= STALE_FAILURE_MS) return;
+      probes++;
+      failedAt = probeOk() ? null : Date.now();
+    };
+    return { tick, probes: () => probes, cleared: () => failedAt === null };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("刚失败：没有任何别的渲染，过时后照样被探到并清掉", () => {
+    vi.useFakeTimers();
+    const b = fakeBackend(() => true);
+    const stop = startStaleRecheck(b.tick);
+    expect(b.probes()).toBe(0); // 刚失败不探
+    vi.advanceTimersByTime(STALE_FAILURE_MS + RECHECK_TICK_MS);
+    expect(b.probes()).toBe(1);
+    expect(b.cleared()).toBe(true);
+    stop();
+  });
+
+  it("复探失败刷新了时间：节拍不停，之后还会继续探", () => {
+    vi.useFakeTimers();
+    const b = fakeBackend(() => false);
+    const stop = startStaleRecheck(b.tick);
+    vi.advanceTimersByTime(30 * 60_000);
+    expect(b.probes()).toBeGreaterThanOrEqual(4);
+    stop();
+    const before = b.probes();
+    vi.advanceTimersByTime(30 * 60_000);
+    expect(b.probes()).toBe(before); // 停表后不再打
+  });
+});
+
+describe("上次检查与过时判定（顶栏红点只反映现在）", () => {
+  const failed = (at: string) => view({ providers: [provider({ live: { at, ok: false, role: "scout", error: "调研专线 deepseek（api.deepseek.com）连不上：网络不通或域名解析失败。调研已中断。" } })] });
+
+  it("文案带「上次检查：X 前」，且保留「没有备用端点」的提醒", () => {
+    const [line] = engineBannerLines(failed("2026-09-05T08:00:00.000Z"), T0);
+    expect(line.text).toContain("上次检查：2 小时前。");
+    expect(line.text).toContain("没有备用端点");
+    expect(line.checkedAt).toBe("2026-09-05T08:00:00.000Z");
+  });
+
+  it("失败过了 5 分钟算过时（该复探），刚失败的不算", () => {
+    expect(hasStaleFailure(engineBannerLines(failed("2026-09-05T08:00:00.000Z"), T0), T0)).toBe(true);
+    expect(hasStaleFailure(engineBannerLines(failed("2026-09-05T09:58:00.000Z"), T0), T0)).toBe(false);
+  });
+
+  it("复探通了（更新的成功 probe）→ 红点消失", () => {
+    const v = view({ providers: [provider({ live: { at: "2026-09-05T08:00:00.000Z", ok: false, role: "scout", error: "连不上" }, probe: { at: "2026-09-05T09:59:00.000Z", ok: true, ms: 200 } })] });
+    expect(engineBannerLines(v, T0)).toEqual([]);
   });
 });

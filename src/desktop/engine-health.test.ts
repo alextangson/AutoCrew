@@ -15,6 +15,9 @@ import {
   initEngineHealth,
   recordFallbackCount,
   probeAllProviders,
+  recheckEngineHealth,
+  recheckProviders,
+  STALE_FAILURE_MS,
   recordLiveResult,
   recordProbeResult,
   resetEngineHealth,
@@ -265,5 +268,70 @@ describe("真实调用的失败也翻译", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("复查过时的失败（顶栏红点不该挂着早已恢复的抖动）", () => {
+  const later = () => Date.now() + STALE_FAILURE_MS + 60_000;
+  const failLive = () => recordLiveResult({ providerId: "deepseek", ok: false, role: "scout", error: "terminated", lineFault: true }, dir);
+
+  it("过时的失败复探一次，探通了就清掉：最近一条是成功，熔断/横幅都跟着合上", async () => {
+    await writeEngineJson();
+    await failLive();
+    const seen: string[] = [];
+    const checked = await recheckProviders(dir, { now: later(), probe: async (c) => { seen.push(c.baseUrl); return { ok: true, ms: 9 }; } });
+    expect(checked).toEqual(["deepseek"]);
+    expect(seen).toEqual(["https://api.deepseek.com"]); // 健康的 newcli 一个字节都没发
+    const state = await loadHealthState(dir);
+    expect(state.providers.deepseek.probe?.ok).toBe(true);
+    expect(Date.parse(state.providers.deepseek.probe!.at)).toBeGreaterThan(Date.parse(state.providers.deepseek.live!.at) - 1);
+  });
+
+  it("还没过时的失败不复探（刚失败就再打一次没有意义）", async () => {
+    await writeEngineJson();
+    await failLive();
+    let calls = 0;
+    const checked = await recheckProviders(dir, { probe: async () => { calls++; return { ok: true, ms: 1 }; } });
+    expect(checked).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  it("真的还坏着：复探失败照样记坏、时间刷新——现在的故障仍然大声显示", async () => {
+    await writeEngineJson();
+    await failLive();
+    const before = (await loadHealthState(dir)).providers.deepseek.live!.at;
+    await recheckProviders(dir, { now: later(), probe: async () => ({ ok: false, ms: 5, error: "getaddrinfo ENOTFOUND api.deepseek.com" }) });
+    const probe = (await loadHealthState(dir)).providers.deepseek.probe!;
+    expect(probe.ok).toBe(false);
+    expect(probe.error).toMatch(/连不上/);
+    expect(Date.parse(probe.at)).toBeGreaterThanOrEqual(Date.parse(before));
+  });
+
+  it("重复触发共用同一轮，不叠探针", async () => {
+    await writeEngineJson();
+    await failLive();
+    let calls = 0;
+    const probe = async () => { calls++; await new Promise((r) => setTimeout(r, 20)); return { ok: true, ms: 1 }; };
+    await Promise.all([recheckProviders(dir, { now: later(), probe }), recheckProviders(dir, { now: later(), probe })]);
+    expect(calls).toBe(1);
+  });
+
+  it("「重新检查」（force）：不管过没过时，失败的那条现在就探；没有失败时探全表", async () => {
+    await writeEngineJson();
+    await failLive();
+    const seen: string[] = [];
+    const probe = async (c: EngineConfig) => { seen.push(c.activeProvider!.id); return { ok: true, ms: 1 }; };
+    expect(await recheckProviders(dir, { force: true, probe })).toEqual(["deepseek"]);
+    expect(await recheckProviders(dir, { force: true, probe })).toEqual(["deepseek", "newcli"]);
+    expect(seen).toEqual(["deepseek", "deepseek", "newcli"]);
+  });
+
+  it("IPC engine:recheck 回探过的端点 + 最新视图；坏 payload 照实拒", async () => {
+    await writeEngineJson();
+    const res = (await recheckEngineHealth({ _dataDir: dir })) as { ok: boolean; data: { checked: string[]; health: { configured: boolean } } };
+    expect(res.ok).toBe(true);
+    expect(res.data.checked).toEqual([]);
+    expect(res.data.health.configured).toBe(true);
+    expect((await recheckEngineHealth([] as unknown as Record<string, unknown>)).ok).toBe(false);
   });
 });

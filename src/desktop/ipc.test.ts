@@ -157,8 +157,8 @@ describe("IPC_CHANNELS", () => {
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
   // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
-  it("has exactly 173 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(173);
+  it("has exactly 174 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(174);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -284,6 +284,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "settings:test_route" &&
           // 线路健康（P2 spec §4.1）:engine-health.ts 的 getEngineHealth,只读派生视图
           ch !== "engine:health" &&
+          ch !== "engine:recheck" &&
           // 宿主令牌（P3 spec §4.1）:host-tokens.ts 的 hostsList/hostsRevoke,直接读写 tokens/
           ch !== "hosts:list" &&
           ch !== "hosts:revoke" &&
