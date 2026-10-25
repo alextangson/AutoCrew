@@ -41,6 +41,7 @@ describe("explainContent 读公众号发布状态", () => {
     const e = await explainContent(art, env.dir);
     expect(e.column).toBe("已发布");
     expect(e.badges).toContain("公众号 已发表");
+    expect(e.published_at).toBe("2026-10-24T21:00:00+08:00");
   });
 
   it("视频稿不读公众号状态", async () => {

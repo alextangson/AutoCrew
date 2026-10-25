@@ -7,7 +7,7 @@
 import type { ArticlePublishState } from "./publish-state.js";
 import type { Column } from "../production/explain.js";
 
-export interface ArticleBoardStage { column: Column; reason: string; badge: string }
+export interface ArticleBoardStage { column: Column; reason: string; badge: string; publishedAt?: string }
 
 const shanghai = (iso: string) => {
   const t = Date.parse(iso);
@@ -19,7 +19,7 @@ const shanghai = (iso: string) => {
 
 export function articleBoardStage(s: ArticlePublishState, now = new Date()): ArticleBoardStage | null {
   const r = s.receipt;
-  if (s.phase === "published" && r?.published) return { column: "已发布", badge: "公众号 已发表", reason: `公众号已发表（${shanghai(r.scheduledAt)}，创始人说「${r.founderWords}」）` };
+  if (s.phase === "published" && r?.published) return { column: "已发布", publishedAt: r.scheduledAt, badge: "公众号 已发表", reason: `公众号已发表（${shanghai(r.scheduledAt)}，创始人说「${r.founderWords}」）` };
   if (s.phase === "scheduled" && r) {
     const past = Date.parse(r.scheduledAt) <= now.getTime();
     return past

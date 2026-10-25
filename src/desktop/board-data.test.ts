@@ -129,3 +129,12 @@ it("看板带回流登录提醒：只列开着回流、判定要重新登录的�
   expect(todos?.map((t) => t.platform)).toEqual(["wechat_video"]);
   expect(todos?.[0]).toMatchObject({ label: "视频号", lastSuccessAt: "2026-10-15T01:00:00.000Z" });
 });
+
+it("公众号文章按 article-publish.json 发表后，看板的发布时间用回执时间（排进「已发布」最近 5 条）", async () => {
+  const { writePublishState } = await import("../modules/wechat-article/publish-state.js");
+  const c = await saveContent({ _provenance: HUMAN_WRITE, title: "公众号", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
+  await writePublishState(c.id, { phase: "published", receipt: { scheduledAt: "2026-10-24T21:00:00+08:00", founderWords: "扫了", published: true, at: "2026-10-25T03:57:32.531Z" }, superseded: [], attempts: [] }, dir);
+  const item = (await boardData(dir)).items.find((i) => i.id === c.id);
+  expect(item?.column).toBe("已发布");
+  expect(item?.publishTime).toBe("2026-10-24T21:00:00+08:00");
+});

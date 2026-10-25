@@ -17,7 +17,7 @@ async function withArticlePublish(content: Content, exp: Explanation, dataDir: s
   if (content.platform !== "wechat_mp" || exp.column !== "待发布") return exp;
   try {
     const st = articleBoardStage(await readPublishState(content.id, dataDir), now);
-    return st ? { ...exp, column: st.column, reason: st.reason, badges: [...exp.badges, st.badge] } : exp;
+    return st ? { ...exp, column: st.column, reason: st.reason, badges: [...exp.badges, st.badge], ...(st.publishedAt ? { published_at: st.publishedAt } : {}) } : exp;
   } catch (e) {
     return { ...exp, alerts: [...exp.alerts, e instanceof Error ? e.message : String(e)] };
   }

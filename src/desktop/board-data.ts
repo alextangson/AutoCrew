@@ -176,7 +176,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext, profile:
     finalDurationMs: current.video?.final?.duration_ms ?? null,
     handoffHash: current.video?.handoff?.hash ?? null,
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
-    publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
+    publish, publishTime: exp.published_at ?? (publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt),
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
     active, writing: isBeingWritten(current), derivedStale: await boardStale(current, dataDir), kitPlatforms: allowedKitPlatforms(current.platform, profile), ...(handoffView(current) ? { handoff: handoffView(current)! } : {}),
     missing: exp.missing, badges: exp.badges, alerts: [...exp.alerts, ...stoppedAlerts(current, profile)], reason: exp.reason, candidates: exp.candidates,
