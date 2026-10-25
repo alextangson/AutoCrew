@@ -19,6 +19,7 @@ import {
   type PullPlatformStatus,
 } from "../pull-lib";
 import { Switch } from "../components/Switch";
+import { openInEgo } from "../ego-open";
 
 const TONE_CLASS: Record<string, string> = { ok: "", warn: "pull-warn", bad: "pull-bad", idle: "muted" };
 
@@ -51,8 +52,8 @@ function PullRow(props: {
         <p className="muted pull-note">
           {hint}{" "}
           {row.lastStatus === "needs_login" && (
-            // 回流用的是 ego lite 里的登录态：在别的浏览器里登录没用，所以只给地址，不给外链
-            <span className="mono">{row.consoleUrl}</span>
+            // 回流用的是 ego lite 里的登录态：在别的浏览器里登录没用，所以按钮只在 ego lite 里开
+            <><span className="mono">{row.consoleUrl}</span>{" "}<button className="btn-sm" onClick={() => void openInEgo(row.platform)}>在 ego lite 打开后台</button></>
           )}
         </p>
       )}
