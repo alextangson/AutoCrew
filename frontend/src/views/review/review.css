@@ -78,7 +78,7 @@
 
 /* 首页「要你做的」（home-mock-v2/home.html 的 .todo）：发丝线分行，不画框；强调色只给动词和件数 */
 .ri-home-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
-.ri-home-h h2 { font-size: 15px; font-weight: 600; line-height: 24px; }
+.ri-home-h h2 { font-size: var(--fs-lg); font-weight: 600; line-height: 24px; }
 .ri-home-count { font-size: 13px; font-weight: 600; color: var(--hot); font-variant-numeric: tabular-nums; }
 .ri-home .ri-home-link { margin-left: auto; font-size: 12px; color: var(--muted); border: 0; background: transparent; padding: 0; }
 .ri-home-warn { font-size: 12px; color: var(--hot); margin-bottom: 8px; }

@@ -1,4 +1,4 @@
-/* 首页「今天」（管线重规划第 3 期）：照 home-mock-v2/home.html。发丝线分隔、不画框；强调色只给「要你做的」。只在 .hm 里生效。 */
+/* 首页「今天」（管线重规划第 3 期）：照 home-mock-v2/home.html 的版式；字号收进全站 7 档尺子（type-scale.test），mock 的 40/44/32/24/15/11 落到最近一档。发丝线分隔、不画框；强调色只给「要你做的」。只在 .hm 里生效。 */
 .hm { --paper-2: #EFEDE6; --line: #E2DFD5; --line-strong: #D3CFC3; --faint: #B4B0A4; --hm-text-2: #5C584D; --up: #14523F; --down: #9A3A26;
   max-width: 1120px; margin: 0 auto; padding: 32px 0 96px; line-height: 20px; color: var(--ink); }
 .hm .g { width: 14px; height: 14px; display: inline-block; flex: none; color: var(--hm-text-2); }
@@ -10,11 +10,11 @@
 
 .hm-head { display: flex; align-items: flex-end; justify-content: space-between; margin: 16px 0 40px; }
 .hm .eyebrow { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-.hm h1 { font-family: var(--font-display); font-size: 40px; line-height: 48px; font-weight: 700; letter-spacing: -0.02em; }
+.hm h1 { font-family: var(--font-display); font-size: var(--fs-2xl); line-height: 36px; font-weight: 700; letter-spacing: -0.02em; }
 .hm .head-r { font-size: 13px; color: var(--muted); }
 
 .hm .sec-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
-.hm .sec-h h2 { font-size: 15px; font-weight: 600; line-height: 24px; font-family: inherit; }
+.hm .sec-h h2 { font-size: var(--fs-lg); font-weight: 600; line-height: 24px; font-family: inherit; }
 .hm .sec-h .sub { font-size: 13px; color: var(--muted); }
 .hm .sec-h .r { margin-left: auto; }
 .hm-note { font-size: 13px; color: var(--muted); padding: 16px 0; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line); }
@@ -27,7 +27,7 @@
 .hm .acct > div { padding: 20px 24px 24px; border-left: 1px solid var(--line); min-width: 0; }
 .hm .acct > div:first-child { border-left: 0; padding-left: 0; }
 .hm .p-name { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--hm-text-2); height: 20px; }
-.hm .big { font-size: 32px; line-height: 40px; font-weight: 500; letter-spacing: -0.025em; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.hm .big { font-size: var(--fs-2xl); line-height: 36px; font-weight: 500; letter-spacing: -0.025em; margin-top: 12px; font-variant-numeric: tabular-nums; }
 .hm .big.ph { color: var(--faint); }
 .hm .big small { font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-left: 4px; }
 .hm .delta { font-size: 13px; line-height: 20px; color: var(--hm-text-2); }
@@ -35,7 +35,7 @@
 .hm .y { font-size: 12px; line-height: 16px; color: var(--muted); }
 .hm .y b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; font-size: 13px; }
 .hm .y a { text-decoration: underline; text-underline-offset: 3px; }
-.hm .alert-cell .big-msg { font-size: 15px; line-height: 24px; font-weight: 600; margin-top: 20px; display: flex; align-items: center; gap: 8px; }
+.hm .alert-cell .big-msg { font-size: var(--fs-lg); line-height: 24px; font-weight: 600; margin-top: 20px; display: flex; align-items: center; gap: 8px; }
 .hm .alert-cell .big-msg i { width: 6px; height: 6px; border-radius: 50%; background: var(--hot); }
 .hm .alert-cell .big-msg.muted { color: var(--hm-text-2); }
 .hm .alert-cell p { font-size: 13px; color: var(--hm-text-2); margin-top: 8px; overflow-wrap: anywhere; }
@@ -48,23 +48,23 @@
 /* 刚发那条 + 要你做的 */
 .hm-row2 { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 64px; margin-top: 56px; align-items: start; }
 .hm .lede-meta { font-size: 13px; color: var(--muted); }
-.hm .lede-title { font-family: var(--font-display); font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; margin: 8px 0 24px; }
+.hm .lede-title { font-family: var(--font-display); font-size: var(--fs-xl); line-height: 30px; font-weight: 700; letter-spacing: -0.01em; margin: 8px 0 24px; }
 .hm .lede-empty { border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line); padding: 20px 0; font-size: 14px; }
 .hm .lede-empty .muted { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .hm .perf { display: grid; grid-template-columns: 96px 1fr; column-gap: 24px; padding: 20px 0; border-top: 1px solid var(--line); }
 .hm .perf:last-of-type { border-bottom: 1px solid var(--line); }
 .hm .perf .p-name { height: auto; align-self: start; padding-top: 16px; }
 .hm .perf-top { display: flex; align-items: baseline; gap: 16px; }
-.hm .perf-n { font-size: 44px; line-height: 52px; font-weight: 500; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
+.hm .perf-n { font-size: var(--fs-2xl); line-height: 36px; font-weight: 600; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; }
 .hm .perf-unit { font-size: 13px; color: var(--muted); margin-left: -10px; }
-.hm .ratio { margin-left: auto; font-size: 32px; line-height: 40px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.hm .ratio { margin-left: auto; font-size: var(--fs-xl); line-height: 30px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .hm .ratio.up { color: var(--up); }
 .hm .ratio-low { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--down); }
 .hm .ratio-flat { margin-left: auto; font-size: 13px; font-weight: 500; color: var(--hm-text-2); }
 .hm .bar { position: relative; height: 6px; background: var(--paper-2); border-radius: 3px; margin: 24px 0 8px; }
 .hm .bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--ink); }
 .hm .bar > b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--hm-text-2); border-radius: 1px; }
-.hm .bar > b em { position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%); font-style: normal; font-size: 11px; line-height: 12px; color: var(--muted); white-space: nowrap; }
+.hm .bar > b em { position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%); font-style: normal; font-size: var(--fs-xs); line-height: 12px; color: var(--muted); white-space: nowrap; }
 .hm .perf .y { display: flex; justify-content: space-between; }
 .hm .foot { font-size: 12px; color: var(--muted); margin-top: 16px; display: flex; justify-content: space-between; gap: 16px; }
 .hm .foot .lnk { color: var(--ink); font-weight: 500; white-space: nowrap; }
@@ -77,7 +77,7 @@
 .hm .ai-card:disabled .t { color: var(--hm-text-2); }
 .hm .ai-card .ic { width: 32px; height: 32px; border-radius: 8px; background: var(--paper-2); display: flex; align-items: center; justify-content: center; grid-row: span 2; }
 .hm .ai-card .ic svg { width: 16px; height: 16px; stroke: var(--ink); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.hm .ai-card .t { font-size: 15px; font-weight: 600; line-height: 24px; display: flex; justify-content: space-between; }
+.hm .ai-card .t { font-size: var(--fs-lg); font-weight: 600; line-height: 24px; display: flex; justify-content: space-between; }
 .hm .ai-card .t span { font-weight: 400; color: var(--faint); }
 .hm .ai-card .d { font-size: 13px; color: var(--hm-text-2); margin-top: 4px; }
 .hm .ai-card .d.out-ok { color: var(--up); }
@@ -92,7 +92,7 @@
 .hm .stages > button { padding: 16px 16px 20px; border-left: 1px solid var(--line); display: block; min-width: 0; }
 .hm .stages > button:first-child { border-left: 0; padding-left: 0; }
 .hm .st-l { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--hm-text-2); }
-.hm .st-n { display: block; font-size: 24px; line-height: 32px; font-weight: 500; letter-spacing: -0.02em; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.hm .st-n { display: block; font-size: var(--fs-xl); line-height: 30px; font-weight: 500; letter-spacing: -0.02em; margin-top: 8px; font-variant-numeric: tabular-nums; }
 .hm .st-n.zero { color: var(--faint); }
 .hm .st-w { display: block; font-size: 12px; line-height: 16px; color: var(--hot); font-weight: 500; margin-top: 4px; min-height: 16px; }
 .hm .st-w.q { color: var(--muted); font-weight: 400; }
