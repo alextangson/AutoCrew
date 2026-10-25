@@ -231,7 +231,10 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
       {toast.undo && <button onClick={() => void toast.undo!()}>撤回</button>}
       <span className="ri-left">{toast.left > 0 ? `还有 ${toast.left} 件` : "都处理完了"}</span></div>}
   </>;
-  if (props.variant === "panel") return <div className="ri-panel-only">{panels}</div>;
+  // 管线页：列表读不出来 / 停住时照实说一行，否则卡上的「认英文稿 →」会悄悄消失或过期
+  if (props.variant === "panel") return <div className="ri-panel-only">
+    {(staleText || (error && !items)) && <p className="ri-home-warn" role="alert">{staleText ?? `「等你拍板」读不出来：${error}`}，卡上的认稿按钮可能不全</p>}
+    {panels}</div>;
   if (props.variant === "home") return <section className="ri-home" aria-label="要你做的">
     <div className="ri-home-h"><h2>要你做的</h2>
       {rows.length > 0 && <span className="ri-home-count">{rows.length} 件</span>}

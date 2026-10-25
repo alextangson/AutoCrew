@@ -234,7 +234,7 @@ export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClo
     : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : it.type === "publish_claim" ? ClaimBody : Generic;
   return <aside className={"ri-peek" + (derived ? " ri-peek-wide" : "")} role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>
-    <h2>{plainWords(it.summary)}</h2>
+    <h2>{derived ? `${it.detail.derived === "en_edition" ? "英文稿" : "公众号稿"}写好了，过一眼` : plainWords(it.summary)}</h2>
     {p.gone ? <p className="ri-note" role="status">已在别处处理</p> : <Body key={`${it.item_id}:${it.gen}`} item={it} act={p.act} />}
   </aside>;
 }

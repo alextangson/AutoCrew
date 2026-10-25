@@ -11,8 +11,9 @@ import type { InboxItem } from "./review-model";
 const decided: Array<Record<string, unknown>> = [];
 let inbox: InboxItem[] = [];
 let derived: Record<string, unknown> = {};
+let inboxFail: string | null = null;
 vi.mock("./review-api", () => ({
-  loadInbox: async () => ({ ok: true, data: { items: inbox, count: inbox.length, agent_waiting: 0, generated_at: "" } }),
+  loadInbox: async () => (inboxFail ? { ok: false, error: inboxFail } : { ok: true, data: { items: inbox, count: inbox.length, agent_waiting: 0, generated_at: "" } }),
   decideItem: async (p: Record<string, unknown>) => { decided.push(p); return { ok: true, data: { ok: true } }; },
   undoDecision: async () => ({ ok: true, data: {} }),
   loadDerived: async () => (derived.ok === false ? { ok: false, error: String(derived.error) } : { ok: true, data: derived }),
@@ -40,7 +41,7 @@ let el: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  decided.length = 0; inbox = [item()]; derived = EN;
+  decided.length = 0; inbox = [item()]; derived = EN; inboxFail = null;
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
 });
 afterEach(async () => { await act(async () => { root.unmount(); }); el.remove(); });
@@ -61,6 +62,7 @@ async function mountPanelOnly() {
 describe("英文稿认稿面板", () => {
   it("卡片打开的是这一件：中英对照就地显示，不用另开页面；「稿子没问题」带 item_id + gen", async () => {
     await mountPanelOnly();
+    expect(el.querySelector("h2")?.textContent).toBe("英文稿写好了，过一眼");
     const table = el.querySelector(".ri-bi");
     expect(table?.textContent).toContain("腾讯的同事刚发了一个测试");
     expect(table?.textContent).toContain("Tariq just published");
@@ -114,5 +116,11 @@ describe("英文稿认稿面板", () => {
     expect(el.textContent).toContain("充电宝的秘密");
     expect(el.querySelector(".ri-body")?.textContent).toBe("正文第一段。");
     expect(el.textContent).toContain("还没选创作来源");
+  });
+
+  it("管线页上列表读不出来：照实说一行，不悄悄藏掉", async () => {
+    inboxFail = "连不上";
+    await mountPanelOnly();
+    expect(el.querySelector("[role=alert]")?.textContent).toContain("「等你拍板」读不出来：连不上");
   });
 });
