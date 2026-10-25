@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../components/Button";
 import { Section } from "./settings-kit";
 import { checkNow, loadUpdate, saveUpdateSettings, type UpdateView } from "./update/update-api";
+import { Switch } from "../components/Switch";
 
 export function statusLine(v: UpdateView): string {
   const s = v.status;
@@ -34,7 +35,7 @@ export function SettingsUpdate(props: { initial?: UpdateView }) {
     {error && <p role="alert">{error}</p>}
     <div className="upd-row">
       <Button variant="secondary" size="sm" disabled={busy} onClick={() => void apply(checkNow())}>{busy ? "检查中…" : "检查更新"}</Button>
-      {view && <label><input type="checkbox" checked={view.settings.autoCheck} disabled={busy}
+      {view && <label><Switch checked={view.settings.autoCheck} disabled={busy}
         onChange={(e) => void apply(saveUpdateSettings({ auto_check: e.target.checked }))} />自动检查更新（每天一次）</label>}
     </div>
   </Section>;

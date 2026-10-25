@@ -18,6 +18,7 @@ import {
   type PullAttemptView,
   type PullPlatformStatus,
 } from "../pull-lib";
+import { Switch } from "../components/Switch";
 
 const TONE_CLASS: Record<string, string> = { ok: "", warn: "pull-warn", bad: "pull-bad", idle: "muted" };
 
@@ -33,8 +34,7 @@ function PullRow(props: {
   return (
     <div>
       <div className="row row-static">
-        <input
-          type="checkbox"
+        <Switch
           checked={row.enabled}
           title="开启后每 12 小时自动抓一次"
           onChange={(e) => props.onToggle(e.target.checked)}

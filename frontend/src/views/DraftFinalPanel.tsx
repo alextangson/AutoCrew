@@ -7,6 +7,7 @@ import { invoke } from "../transport";
 import { toast } from "../ui";
 import { Button } from "../components/Button";
 import { finalizeBlock, reviewVersionLabel, splitChecklist, structuredReview, testReadCounts, testReadLabel, VERDICT_LABEL, type DraftItem, type DraftPanelData, type DraftReviewNote, type DraftTestRead } from "./draft-final-lib";
+import { Checkbox } from "../components/Switch";
 
 /** 观众试读：小林只拿正文读一遍，标出会划走 / 没听懂 / 会转发的地方；默认收成一行摘要，点开原文照摆 */
 export function TestRead(p: { reads: DraftTestRead[] }) {
@@ -43,7 +44,7 @@ export function ChecklistRow(p: { item: DraftItem; kept: boolean; toggle: () => 
     {i.status === "sourced" ? "有出处" : "没出处"} · {i.text}
     {i.status === "sourced" ? <span className="muted"> （{i.evidence_ids.join("、")}）</span> : <>
       <span className="muted"> {i.reason}</span>{" "}
-      <label><input type="checkbox" checked={p.kept} onChange={p.toggle} /> 保留（记为未核验）</label>
+      <label><Checkbox checked={p.kept} onChange={p.toggle} /> 保留（记为未核验）</label>
     </>}
     {i.needs_human?.length ? <span className="muted"> · 要你看一眼的数字：{i.needs_human.join("、")}</span> : null}
   </li>;

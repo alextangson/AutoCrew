@@ -53,3 +53,23 @@
 .md-preview-inline { min-height: auto; margin: var(--s2) 0; }
 .report .board-bar { align-items: center; }
 .report .board-bar .row-actions { align-items: center; }
+
+/* 开关 / 勾选框 / 单选（Switch.tsx）：原生控件换皮，同一套色值与焦点环。开关=设置开关，勾选框=多选清单项 */
+.ui-switch, .ui-check, .ui-radio { appearance: none; -webkit-appearance: none; flex: none; position: relative; margin: 0; vertical-align: -0.2em; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+input.ui-switch { width: 36px; height: 20px; border-radius: 999px; background: var(--line-2); }
+.ui-switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s ease; }
+.ui-switch:checked { background: var(--success); }
+.ui-switch:checked::before { transform: translateX(16px); }
+input.ui-check, input.ui-radio { width: 16px; height: 16px; border: 1.5px solid var(--line-2); background: var(--card); }
+.ui-check { border-radius: 4px; }
+.ui-radio { border-radius: 50%; }
+.ui-check:checked, .ui-radio:checked { background: var(--success); border-color: var(--success); }
+.ui-check:checked::before { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.ui-radio:checked::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #fff; }
+:is(.ui-check, .ui-radio):hover:not(:disabled):not(:checked) { border-color: var(--ink); }
+:is(.ui-switch, .ui-check, .ui-radio):disabled { cursor: not-allowed; opacity: .45; }
+:is(.ui-switch, .ui-check, .ui-radio):focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+label:has(> :is(.ui-switch, .ui-check, .ui-radio)) { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; }
+
+/* 平台 logo（PlatformLogo.tsx）：主色圆底 + 白色字形；没有可靠来源的平台用单字兜底 */
+.platform-logo { flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-size: 12px; font-weight: 700; line-height: 1; }
