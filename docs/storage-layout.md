@@ -145,7 +145,7 @@ AI 的项目目录（`workspaces/default/projects/…`）原地不动，发布�
 
 发布过的视频素材占本机空间，但口播稿、发布记录还要留着给复盘和写手学。所以每天把老稿件整个项目复制到 NAS，核对无误后只删本机的素材目录。实现：`src/storage/nas-archive.ts`（编排）、`nas-archive-copy.ts`（复制与校验）、`nas-archive-log.ts`（台账和归档记录.md）。
 
-**哪些稿件归档**（全部满足）：`status = published`；有 `publishedAt` 且已满 7 天；不在按 `publishedAt` 排的最近 5 条已发布里（与「5 已发布」栏共用 `KEEP_PUBLISHED`）；没有活认领（`activeClaim`）；还没归档过（有 `00-project/notes/archive-*.json` 且素材目录都空）。
+**哪些稿件归档**（全部满足；2026-10-25 创始人「本机只留正在做的」）：在「已发布」栏；本轮有可信发布时间（定不出的不归档，错误区列「待确认发布时间」）且已满 24 小时（留给发布后核对 / 纠正）；派生的公众号长文 / 英文版（按 `derivedFrom` 主题分组）都已发或标了不出——英文版要用源成片和无字幕母版；没有未完成的文件归属事务、30 分钟内没有新 record；还没归档过（有 `00-project/notes/archive-*.json` 且素材目录都空）。不再保留最近 5 条（`KEEP_PUBLISHED` 只管「5 已发布」视图）。
 
 **每条怎么做**
 1. 目标：`<归档根>/<年>/<英文月份>/<项目文件夹名>`，年月取 `publishedAt`（本机时区），如 `…/2026/September/20260901 标题--content-…`。归档根默认 `/Volumes/<NAS 卷>/<账号>/Account`，目前没有现成配置项，只能由调用方 `archiveRoot` 选项改（测试用）。

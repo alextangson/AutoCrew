@@ -9,6 +9,7 @@ import { acquireLibraryLock } from "./library-lock.js";
 import { portableProjectRecord } from "./project-record.js";
 import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { archivePublished, type ArchiveOptions } from "./nas-archive.js";
+import { loadUnfinishedChildren } from "./archive-in-progress.js";
 import { ARCHIVE_ROOT_UNSET } from "./storage-roots.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { writeProductionDoc } from "./production-store.js";
@@ -44,7 +45,7 @@ const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86400_000).toISOStri
 const exists = (p: string) => fs.lstat(p).then(() => true, () => false);
 const root = (c: Content) => resolveContentProject(c.id, data)!.project_root;
 const archive = (opts: ArchiveOptions = {}) =>
-  archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0, ...opts });
+  archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0, unfinishedChildren: async () => new Map(), ...opts });
 
 async function make(title: string, patch: Partial<Content>): Promise<Content> {
   const c = await saveContent({ _provenance: HUMAN_WRITE, title, body: `${title} 正文`, platform: "douyin", status: "drafting", tags: [] }, data);
@@ -58,8 +59,8 @@ async function make(title: string, patch: Partial<Content>): Promise<Content> {
 }
 const published = (title: string, days: number, extra: Partial<Content> = {}) =>
   make(title, { status: "published", publishedAt: daysAgo(days), ...extra });
-/** 最近 5 条已发布（1–5 天前），占满保留名额 */
-async function fiveRecent(): Promise<Content[]> { const out: Content[] = []; for (let i = 1; i <= 5; i++) out.push(await published(`新${i}`, i)); return out; }
+/** 5 条刚发布（不到 24 小时）的稿：还在发布后核对期，不归档 */
+async function fiveRecent(): Promise<Content[]> { const out: Content[] = []; for (let i = 1; i <= 5; i++) out.push(await published(`新${i}`, i * 0.15)); return out; }
 const nasDir = (c: Content) => path.join(nas, "2026", "September", path.basename(root(c)));
 
 describe("NAS 归档", () => {
@@ -90,7 +91,7 @@ describe("NAS 归档", () => {
   it("archives only the 6th-newest+ published ≥7 days, not busy in production（本体 §7：排除改成未完成事务 / 30 分钟内 record）", async () => {
     await fiveRecent();
     const old = await published("旧稿", 8);
-    const young = await published("三天稿", 3.5);
+    const young = await published("半天稿", 0.5);
     const draft = await make("未发布", { status: "publish_ready" });
     // 活认领不再挡归档；30 分钟内有 record 的才挡
     const claim = { token: "clm-x", host: "codex", leaseUntil: new Date(NOW.getTime() + 3600_000).toISOString() } as unknown as Content["claim"];
@@ -109,19 +110,53 @@ describe("NAS 归档", () => {
     for (const c of [young, draft, claimed]) expect(await exists(path.join(root(c), "02-aroll/raw.mov"))).toBe(true);
   });
 
-  it("keeps the newest 5 published even when they are old", async () => {
+  it("本机只留正在做的：不再保留最近 5 条，发布满 24 小时就归档", async () => {
     for (let i = 0; i < 5; i++) await published(`老${i}`, 20 + i);
+    await published("刚满一天", 1.01);
+    await published("差一点满一天", 0.99);
+    const r = await archive();
+    expect(r.archived.map((a) => a.title).sort()).toEqual(["老0", "老1", "老2", "老3", "老4", "刚满一天"].sort());
+  });
+
+  it("imported history records are never archived", async () => {
+    await published("历史作品", 30, { source: "imported_history" });
     const r = await archive();
     expect(r.archived).toEqual([]);
     expect(r.pending).toBe(0);
   });
 
-  it("a newer imported history record does not take one of the 5 kept slots", async () => {
-    for (let i = 0; i < 5; i++) await published(`老${i}`, 20 + i);
-    await published("历史作品", 1, { source: "imported_history" });
+  it("keeps a parent local while a derived 公众号长文 / 英文版 is unfinished, and says why", async () => {
+    const parent = await published("源视频", 3);
+    const r = await archive({ unfinishedChildren: async () => new Map([[parent.id, ["源视频（英文版）"]]]) });
+    expect(r.archived).toEqual([]);
+    expect(r.errors).toEqual([expect.stringContaining("派生稿还没发完：源视频（英文版）")]);
+    expect(await exists(path.join(root(parent), "02-aroll/raw.mov"))).toBe(true);
+  });
+
+  it("real theme grouping: an English edition still being written keeps its source video local", async () => {
+    const parent = await published("源视频", 3);
+    await make("源视频 EN", { status: "drafting", platform: "youtube", derivedFrom: { contentId: parent.id, kind: "en_edition", sourceCutHash: "h", at: daysAgo(1) } });
+    expect((await loadUnfinishedChildren(data, NOW)).get(parent.id)).toEqual(["源视频 EN"]);
+    const r = await archive({ unfinishedChildren: loadUnfinishedChildren });
+    expect(r.archived.map((a) => a.title)).not.toContain("源视频");
+    expect(await exists(path.join(root(parent), "02-aroll/raw.mov"))).toBe(true);
+  });
+
+  it("archives nothing when derived progress cannot be read (cannot tell, so does not delete)", async () => {
+    const old = await published("旧稿", 3);
+    const r = await archive({ unfinishedChildren: async () => { throw new Error("看板读坏了"); } });
+    expect(r.archived).toEqual([]);
+    expect(r.errors).toEqual([expect.stringContaining("读不出派生稿进度，这次不归档：看板读坏了")]);
+    expect(await exists(path.join(root(old), "02-aroll/raw.mov"))).toBe(true);
+  });
+
+  it("reports content without a trustworthy publish time and leaves it local", async () => {
+    const c = await make("没时间", { status: "published" });
     const r = await archive();
     expect(r.archived).toEqual([]);
-    expect(r.pending).toBe(0);
+    expect(r.errors.join()).toContain("没时间");
+    expect(r.errors.join()).toContain("待确认发布时间");
+    expect(await exists(path.join(root(c), "02-aroll/raw.mov"))).toBe(true);
   });
 
   it("does nothing when the NAS is not mounted and reports pending", async () => {
@@ -285,7 +320,7 @@ describe("NAS 归档", () => {
 
     it("keeps the cache of projects that are not archived (kept 5, too young, busy)", async () => {
       const recent = await fiveRecent();
-      const young = await published("三天稿", 3.5);
+      const young = await published("半天稿", 0.5);
       for (const c of [...recent, young]) await putCache(c, "keep");
       const r = await archive();
       expect(r.cacheFreed).toBeUndefined();
