@@ -304,6 +304,9 @@ function serializeProfile<T>(dataDir: string | undefined, fn: () => Promise<T>):
 }
 
 async function writeProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
+  // 勾选一变，先把还没落盘的主题去向计划按改之前的勾选落盘：之后改勾选不回头改老主题（管线重规划 §8-4）
+  const { freezeIfPlatformsChange } = await import("../theme/freeze.js");
+  await freezeIfPlatformsChange(getDataDir(dataDir), await loadProfile(dataDir), profile);
   profile.revision = (profile.revision ?? 0) + 1;
   profile.updatedAt = new Date().toISOString();
   await writeJsonAtomicMkdir(path.join(getDataDir(dataDir), PROFILE_FILE), profile);
