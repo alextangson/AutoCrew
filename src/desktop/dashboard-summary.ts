@@ -160,7 +160,7 @@ function buildVideoReadyTodos(contents: Content[], now: number): DashboardSummar
  * 登录态过期待办。null = 状态文件读失败（不是「没有待办」）——
  * 文件损坏走 readPullState 的重建默认（三平台全关 → 无待办），只有真 IO 故障才到这。
  */
-async function loadPullLoginTodos(dataDir?: string): Promise<DashboardSummary["pullLoginTodos"] | null> {
+export async function loadPullLoginTodos(dataDir?: string): Promise<DashboardSummary["pullLoginTodos"] | null> {
   try {
     const state = await readPullState(dataDir);
     return PULL_PLATFORMS.filter(

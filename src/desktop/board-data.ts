@@ -29,6 +29,7 @@ import { staleReason } from "../modules/lineage/lineage.js";
 import { loadProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
 import { allowedKitPlatforms, enKitPlatforms, lineStoppedReason } from "../modules/profile/platform-lines.js";
 import { videoKitsOf } from "../storage/video-kits.js";
+import { loadPullLoginTodos, type DashboardSummary } from "./dashboard-summary.js";
 
 export { isBeingWritten };
 
@@ -113,6 +114,8 @@ export interface BoardData {
   wordsPerMinute: number | null;
   /** 本体状态（§4.1）：是否已启用；未启用时给最近一次对账算出的「要挪 N 张卡」清单；对账失败逐条列出 */
   ontology: { enabled: boolean; report: ReconcileReport | null };
+  /** 开着自动回流、上次判定要重新登录的平台（看板顶部提醒）；null = 回流状态读不了（照实说，不当成都好着） */
+  pullLogin: DashboardSummary["pullLoginTodos"] | null;
 }
 
 /** 数字数：去掉空白与 markdown 标题记号，中文按字、英文按字母 */
@@ -221,5 +224,6 @@ export async function boardData(dataDir: string): Promise<BoardData> {
     topics: topics.filter((t) => !started.has(t.id)).map((t) => topicOf(t, latestMeeting)),
     wordsPerMinute: await wordsPerMinute(contents, dataDir),
     ontology: { enabled: ctx.enabled, report: await readReconcileReport(dataDir) },
+    pullLogin: await loadPullLoginTodos(dataDir),
   };
 }
