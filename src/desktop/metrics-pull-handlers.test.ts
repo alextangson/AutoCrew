@@ -15,6 +15,8 @@ let dir: string;
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-pull-ipc-"));
+  // 回流只抓勾了的运营平台（管线重规划 §8-10）：测试默认全勾
+  await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify({ platforms: ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"] }));
 });
 
 afterEach(async () => {
@@ -34,11 +36,11 @@ const rowsOf = (res: Record<string, unknown>): StatusRow[] =>
   ((res.data as { platforms: StatusRow[] }).platforms);
 
 describe("flywheel:pull_status", () => {
-  it("首次使用：三平台全关、从未运行、都不在飞", async () => {
+  it("首次使用：五个平台全关、从未运行、都不在飞（第 4 期接上 B站、公众号）", async () => {
     const res = await pullStatusHandler({ _dataDir: dir });
     expect(res.ok).toBe(true);
     const rows = rowsOf(res);
-    expect(rows.map((r) => r.platform)).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
+    expect(rows.map((r) => r.platform)).toEqual(["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"]);
     expect(rows.every((r) => r.enabled === false && r.lastStatus === "never" && r.inFlight === false)).toBe(true);
     expect(rows[0].label).toBe("抖音");
     expect(rows[2].consoleUrl).toContain("creator.xiaohongshu.com");
@@ -73,7 +75,7 @@ describe("flywheel:pull_toggle", () => {
   });
 
   it("坏 platform / 非布尔 enabled 在边界拒收", async () => {
-    expect((await pullToggleHandler({ _dataDir: dir, platform: "wechat_mp", enabled: true })).ok).toBe(false);
+    expect((await pullToggleHandler({ _dataDir: dir, platform: "youtube", enabled: true })).ok).toBe(false);
     const bad = await pullToggleHandler({ _dataDir: dir, platform: "douyin", enabled: "yes" });
     expect(bad.ok).toBe(false);
     expect(String(bad.error)).toContain("enabled");
@@ -82,7 +84,7 @@ describe("flywheel:pull_toggle", () => {
 
 describe("flywheel:pull_now", () => {
   it("坏 platform 直接拒，不去碰浏览器", async () => {
-    const res = await pullNowHandler({ _dataDir: dir, platform: "bilibili" });
+    const res = await pullNowHandler({ _dataDir: dir, platform: "youtube" });
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain("douyin");
   });

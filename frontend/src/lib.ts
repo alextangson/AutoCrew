@@ -349,8 +349,8 @@ export const PLATFORM_CAPS: Record<string, PlatformCapsMirror> = {
   douyin: { "label": "抖音", "kind": "video", "language": "zh", "coverRatios": ["3:4", "4:3"], "metrics": "browser_pull" },
   wechat_video: { "label": "视频号", "kind": "video", "language": "zh", "coverRatios": ["3:4", "4:3"], "metrics": "browser_pull" },
   xiaohongshu: { "label": "小红书", "kind": "video", "language": "zh", "coverRatios": ["3:4"], "metrics": "browser_pull" },
-  bilibili: { "label": "B站", "kind": "video", "language": "zh", "coverRatios": ["4:3"], "metrics": "bind_only" },
-  wechat_mp: { "label": "公众号", "kind": "article", "language": "zh", "coverRatios": ["2.35:1"], "metrics": "bind_only" },
+  bilibili: { "label": "B站", "kind": "video", "language": "zh", "coverRatios": ["4:3"], "metrics": "browser_pull" },
+  wechat_mp: { "label": "公众号", "kind": "article", "language": "zh", "coverRatios": ["2.35:1"], "metrics": "browser_pull" },
   youtube: { "label": "YouTube", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
   x: { "label": "X（推特）", "kind": "video", "language": "en", "coverRatios": ["16:9"], "metrics": "unsupported" },
 };

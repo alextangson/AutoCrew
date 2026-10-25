@@ -35,6 +35,8 @@ const stateOf = async (platform: "douyin"): Promise<PlatformPullState> => (await
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-pull-schedule-"));
+  // 回流只抓勾了的运营平台（管线重规划 §8-10）：测试默认全勾
+  await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify({ platforms: ["douyin", "wechat_video", "xiaohongshu", "bilibili", "wechat_mp"] }));
 });
 
 afterEach(async () => {
