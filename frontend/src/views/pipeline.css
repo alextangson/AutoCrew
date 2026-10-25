@@ -106,3 +106,5 @@
 .pl-ft-acts { margin-top: 8px; }
 .pl-short { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 16px; color: var(--pl-amber); margin: -4px 0 8px; }
 .pl-short i { flex: none; width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--pl-amber); }
+.pl-head-menu > summary { font-weight: 400; font-size: 14px; }
+.pl-head-menu .bcard-menu-list { font-weight: 400; }

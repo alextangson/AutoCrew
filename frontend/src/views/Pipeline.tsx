@@ -182,8 +182,15 @@ function ColumnHead(p: { col: PipelineColumn; n: number; supply?: TopicSupply; o
   };
   // 列头一行放不下第四样东西：供给不足单独一行，紧贴列头（mock 的「今天 6/10」，文案按 spec「今天只找到 N 条」）
   return <><div className="pl-col-h"><StagePie f={COLUMN_PROGRESS[p.col]} />{p.col} <span className="n">{p.n}</span>
-    {p.col === "选题" && <><button className="tool" style={{ marginLeft: "auto" }} disabled={radar} onClick={() => void collectMore()}>{radar ? "找选题中…" : "再找 5 条"}</button>
-      <button className="tool" style={{ marginLeft: 8 }} onClick={p.onTrash}>回收站</button>
+    {p.col === "选题" && <>{radar && <span className="tool" style={{ marginLeft: "auto" }} role="status">找选题中…</span>}
+      {/* 1440 宽下列头放不下三个文字按钮：「再找 5 条 / 回收站」收进 ⋯ 菜单，＋ 留在外面 */}
+      <details className="bcard-menu pl-head-menu" style={{ marginLeft: radar ? 8 : "auto" }}>
+        <summary aria-label="选题列更多操作" title="再找 5 条 / 回收站">⋯</summary>
+        <div className="bcard-menu-list">
+          <button disabled={radar} onClick={(e) => { e.currentTarget.closest("details")?.removeAttribute("open"); void collectMore(); }}>再找 5 条</button>
+          <button onClick={(e) => { e.currentTarget.closest("details")?.removeAttribute("open"); p.onTrash(); }}>回收站</button>
+        </div>
+      </details>
       <button className="plus" style={{ marginLeft: 8 }} title="新想法" onClick={() => void newIdea().then(p.reload)}>＋</button></>}
   </div>
     {p.col === "选题" && p.supply?.short && <div className="pl-short" role="status" title={p.supply.reason ?? undefined}><i />今天只找到 {p.supply.today} 条{p.supply.reason ? ` · ${p.supply.reason}` : ""}</div>}</>;
