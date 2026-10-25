@@ -304,7 +304,10 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
   const cut = correctedAt(doc, slotId(round, platform));
   const entries = entriesOf(doc, round, platform).filter((e) => e.at > cut).sort((a, b) => a.at - b.at);
   if (!entries.length) return null;
-  const pick = (["trusted", "founder", "accepted", "pending"] as const).map((c) => entries.filter((e) => e.cls === c).at(-1)).find(Boolean)!;
+  const ranked = (["trusted", "founder", "accepted", "pending"] as const).map((c) => entries.filter((e) => e.cls === c).at(-1)).find(Boolean)!;
+  // 可信观察只说「应已公开」（定时过点、没核到）时，创始人之后点的「我发了 / 确认已公开」就是那次核对：以创始人为准
+  const confirm = ranked.cls === "trusted" && ranked.pub_state === "overdue" ? entries.filter((e) => e.cls === "founder" && e.at > ranked.at).at(-1) : undefined;
+  const pick = confirm ?? ranked;
   const o = pick.o;
   return {
     id: slotId(round, platform), round, platform, pub_state: pick.pub_state, verified: pick.cls !== "pending", by: pick.cls, fact_id: pick.fact_id,

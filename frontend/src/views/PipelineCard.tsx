@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { isHttpUrl } from "../lib";
 import { openDialog, toast } from "../ui";
-import { reshootTheme, setDestination } from "./board-api";
+import { markPublished, reshootTheme, setDestination } from "./board-api";
 import { BackMenu, BoardCodexPublish, PickupNudge } from "./BoardCards";
 import { WRITER_LABEL } from "./hand-off";
 import type { HostId } from "./onboarding/connect-api";
@@ -68,6 +68,23 @@ function rowTarget(r: DestRow): PublishTarget {
   return { platform: r.platform, state: "未发", actions: r.actions ?? [], ...(r.slot_id ? { slot_id: r.slot_id } : {}), ...(r.fact_id ? { fact_id: r.fact_id } : {}) };
 }
 
+/** 待核 →「确认已公开」：和旧看板「已经发出去了」同一条路（markPublished → 你标的已发布），链接选填 */
+async function confirmPublic(owner: { id: string }, platform: string, reload: () => Promise<void>) {
+  const name = destLabel(platform);
+  const v = await openDialog({ title: `${name}已经公开了？`, body: "定时过点了还没核到。你在平台上看到它已公开，就记成你确认的已发布。点错了可以在旧看板上撤销。",
+    fields: [{ key: "url", label: "作品链接（选填）", placeholder: "https://…" }], confirmLabel: "确认已公开" });
+  if (!v) return;
+  const url = v.url.trim();
+  if (url && !isHttpUrl(url)) return toast("链接要是 http(s) 开头的地址，没记");
+  try {
+    const r = await markPublished(owner.id, platform, url || undefined);
+    toast(r.ok ? `已记下：${name}已公开` : r.error);
+  } finally { await reload(); }
+}
+
+/** 哪些待核行能「确认已公开」：视频平台槽（中文四平台、英文版的 YouTube / X）；公众号走它自己的回执 */
+export const canConfirmPublic = (r: Pick<DestRow, "state" | "platform" | "content_id">) => r.state === "待核" && r.platform !== "wechat_mp" && Boolean(r.content_id);
+
 function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; reload: () => Promise<void> }) {
   const { r, card } = p;
   const [busy, setBusy] = useState(false);
@@ -93,6 +110,7 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
       {r.url && isHttpUrl(r.url) && <a className="pl-link" href={r.url} target="_blank" rel="noreferrer">看作品</a>}
       {acts.map((a) => <button key={a} className={"pl-link" + (hot ? " go" : "")} disabled={busy} onClick={() => void run(a)}>{ROW_ACTION[a]}</button>)}
       {!acts.length && hot && r.content_id && <button className="pl-link go" onClick={() => p.open(r.content_id!)}>去处理 →</button>}
+      {owner && canConfirmPublic(r) && <button className="pl-link go" disabled={busy} onClick={() => void confirmPublic(owner, r.platform, p.reload)}>确认已公开</button>}
       {canSkip && <button className="pl-link" onClick={() => void skipRow(card, r.platform, true, p.reload)}>不出</button>}
     </span>
   </div>;
