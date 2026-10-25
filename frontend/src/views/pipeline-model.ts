@@ -10,7 +10,8 @@ export const PIPELINE_COLUMNS = ["选题", "写稿", "录制", "剪辑", "待发
 export type PipelineColumn = (typeof PIPELINE_COLUMNS)[number];
 export type ThemeColumn = Exclude<PipelineColumn, "选题">;
 
-export type DestState = "没开始" | "在做" | "待你定" | "已定时" | "已发" | "没发成";
+/** 待核 = 定时过点、还没核到公开（旧看板「应已公开，等核对」）：琥珀色提示，不是没发成 */
+export type DestState = "没开始" | "在做" | "待你定" | "已定时" | "待核" | "已发" | "没发成";
 export interface DestRow {
   platform: string;
   state: DestState;
@@ -58,8 +59,8 @@ export const DEST_LABEL: Record<string, string> = {
 export const destLabel = (p: string) => DEST_LABEL[p] ?? p;
 
 /** 去向条的一格：已发 = 墨色、已定时 = 灰、在做 = 浅灰、待你定 / 没发成 = 橙、没开始 = 空框 */
-export type MeterTone = "done" | "sched" | "wip" | "hot" | "none";
-const TONE: Record<DestState, MeterTone> = { 已发: "done", 已定时: "sched", 在做: "wip", 待你定: "hot", 没发成: "hot", 没开始: "none" };
+export type MeterTone = "done" | "sched" | "check" | "wip" | "hot" | "none";
+const TONE: Record<DestState, MeterTone> = { 已发: "done", 已定时: "sched", 待核: "check", 在做: "wip", 待你定: "hot", 没发成: "hot", 没开始: "none" };
 export const meterTone = (s: DestState): MeterTone => TONE[s];
 
 /** 去向条只画要发的（不出的不画、历史不画） */
@@ -68,10 +69,10 @@ export function meterRows(card: Pick<ThemeCard, "destinations">): DestRow[] {
 }
 
 /** 行内状态的小图标 */
-export type StateIcon = "done" | "sched" | "wip" | "you" | "fail" | "none" | "skip";
+export type StateIcon = "done" | "sched" | "check" | "wip" | "you" | "fail" | "none" | "skip";
 export function stateIcon(d: Pick<DestRow, "state" | "skipped" | "required">): StateIcon {
   if (d.skipped && d.state !== "已发") return "skip";
-  return ({ 已发: "done", 已定时: "sched", 在做: "wip", 待你定: "you", 没发成: "fail", 没开始: "none" } as const)[d.state];
+  return ({ 已发: "done", 已定时: "sched", 待核: "check", 在做: "wip", 待你定: "you", 没发成: "fail", 没开始: "none" } as const)[d.state];
 }
 
 /** 展开前的卡只显示例外（mock：「YouTube 英文版在做」「X 没开始」只在发布段出现；前几列不出去向） */

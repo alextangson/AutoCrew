@@ -67,3 +67,12 @@ describe("管线页面模型", () => {
   });
 });
 
+
+describe("待核（定时过点、还没核到公开）", () => {
+  it("琥珀色：去向条 check、行图标 check；卡上是提示不是红色例外", () => {
+    expect(meterTone("待核")).toBe("check");
+    expect(stateIcon({ state: "待核", required: true })).toBe("check");
+    const rows = exceptionRows(card({ destinations: [{ platform: "wechat_video", state: "待核", detail: "应已公开，等核对", content_id: "v", required: true }] }));
+    expect(rows).toEqual([{ key: "wechat_video-v-", platform: "wechat_video", text: "视频号 应已公开，等核对", hot: false, amber: true }]);
+  });
+});

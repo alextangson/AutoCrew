@@ -19,13 +19,15 @@ import {
 const ROW_ACTION: Record<TargetAction, string> = { prepare_publish: "去发", i_published: "标已发", resubmit: "重新提交", confirm_receipt: "确认", correct_publish: "纠正" };
 
 /** 卡上只显示例外：待你定、没发成、等新成片；发布中再加还没发的；重拍留下的「已定时，要你去撤」 */
-export function exceptionRows(card: ThemeCard): Array<{ key: string; platform: string | null; text: string; hot: boolean }> {
-  const out: Array<{ key: string; platform: string | null; text: string; hot: boolean }> = [];
+/** amber = 待核（过点没核到公开）：提示，不标红 */
+export function exceptionRows(card: ThemeCard): Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> {
+  const out: Array<{ key: string; platform: string | null; text: string; hot: boolean; amber?: boolean }> = [];
   for (const r of card.destinations) {
     const name = `${destLabel(r.platform)}${r.tag ? ` ${r.tag}` : ""}`;
     const key = `${r.platform}-${r.content_id ?? "none"}-${r.tag ?? ""}`;
     if (r.paused) out.push({ key, platform: r.platform, text: `${name} 等新成片`, hot: false });
     else if ((r.state === "待你定" || r.state === "没发成") && (r.required || r.content_id)) out.push({ key, platform: r.platform, text: `${name} ${r.detail}`, hot: true });
+    else if (r.state === "待核" && r.required) out.push({ key, platform: r.platform, text: `${name} ${r.detail}`, hot: false, amber: true });
     else if (card.column === "发布中" && r.required && (r.state === "在做" || r.state === "没开始")) out.push({ key, platform: r.platform, text: `${name} ${r.state === "在做" ? (r.platform === "youtube" || r.platform === "x" ? "英文版在做" : "在做") : "没开始"}`, hot: false });
   }
   for (const c of card.reshoot?.to_cancel ?? []) out.push({ key: `cancel-${c.platform}`, platform: c.platform, text: `${destLabel(c.platform)} 已定时，要你去撤`, hot: true });
@@ -80,9 +82,10 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
     } finally { setBusy(false); await p.reload(); }
   };
   const hot = r.state === "待你定" || r.state === "没发成";
+  const amber = r.state === "待核";
   const canSkip = canSkipRow(card, r);
   const text = r.skipped && r.state !== "已发" ? "不出" : r.history ? `${r.detail} · 计划外` : r.detail;
-  return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : "") + (r.skipped || r.history ? " muted" : "")}>
+  return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : amber ? " amber" : "") + (r.skipped || r.history ? " muted" : "")}>
     <span className="nm"><PGlyph id={r.platform} />{destLabel(r.platform)}{r.tag && <small>{r.tag}</small>}</span>
     <span className="s"><StateGlyph kind={r.paused ? "wip" : stateIcon(r)} /><span title={text}>{text}</span></span>
     <span className="r">
@@ -123,7 +126,6 @@ export function ThemeCardView(p: { card: ThemeCard; expanded: boolean; busy: boo
   const { card } = p;
   const st = showMeter(card) ? null : statusLine(card);
   const ex = exceptionRows(card);
-  const sent = new Set(card.destinations.filter((d) => d.state === "已发").map((d) => d.platform));
   return <article className={"pl-card" + (p.expanded ? " sel" : "")} aria-busy={p.busy} aria-expanded={p.expanded} draggable={!p.busy && !p.expanded}
     onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", card.title); p.onDragStart(card.item); }} onDragEnd={p.onDragEnd}
     onClick={() => { if (!p.expanded) p.toggle(); }}>
@@ -133,10 +135,10 @@ export function ThemeCardView(p: { card: ThemeCard; expanded: boolean; busy: boo
       {showMeter(card)
         ? <>{card.required > 0 && <span className="pl-meter" aria-label="去向">{meterRows(card).map((r, i) => <i key={i} className={meterTone(r.state) === "done" ? "" : meterTone(r.state)} />)}</span>}
           <span className="pl-frac">{card.required > 0 ? `${card.sent}/${card.required} 已发` : "没定去向"}</span></>
-        : <span className="pl-plan" aria-label="要发的去向">{card.plan.required.map((pf) => <span key={pf} style={sent.has(pf) ? { color: "var(--ink)" } : undefined} title={sent.has(pf) ? `${destLabel(pf)} 已发` : destLabel(pf)}><PGlyph id={pf} /></span>)}</span>}
+        : null}
       <span className="d">{mmdd(card.date)}</span>
     </div>
-    {!p.expanded && ex.map((x) => <div key={x.key} className={"pl-ex" + (x.hot ? " hot" : "")}>{x.platform ? <PGlyph id={x.platform} /> : <StateGlyph kind="fail" />}{x.text}</div>)}
+    {!p.expanded && ex.map((x) => <div key={x.key} className={"pl-ex" + (x.hot ? " hot" : x.amber ? " amber" : "")}>{x.platform ? <PGlyph id={x.platform} /> : <StateGlyph kind="fail" />}{x.text}</div>)}
     {p.expanded && <Expanded card={card} open={p.open} reload={p.reload} onMenu={p.onMenu} />}
   </article>;
 }
