@@ -174,10 +174,29 @@ describe("真实资料库回归（2026-10-25 审计）", () => {
     expect(bare.plan.required).toEqual(FOUR);
     expect(bare.column).toBe("全部发完");
     expect(bare.destinations.some((d) => ["wechat_mp", "youtube", "x"].includes(d.platform))).toBe(false);
-    const [full] = run([item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) }), item("w", { platform: "wechat_mp", column: "写稿中", status: "drafting" }), item("e", { platform: "youtube", column: "写稿中", status: "drafting", targets: [tgt("youtube", "未发")] })],
+    const [full] = run([item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) }), item("w", { platform: "wechat_mp", column: "写稿中", status: "drafting" }), item("e", { platform: "youtube", column: "已发布", status: "published", targets: [tgt("youtube", "已公开")] })],
       { derived: { w: { contentId: "v", kind: "wechat_article" }, e: { contentId: "v", kind: "en_edition" } }, legacy: { v: legacyBase() } });
     expect(full.plan.required).toEqual([...FOUR, "wechat_mp", "youtube"]);
     expect(full.column).toBe("发布中");
+  });
+  it("老主题的英文版：按当前勾选补进 targets 的 YouTube / X（未发、不在发布计划里）不算要发；改勾选不挪老主题", () => {
+    const parent = item("v", { column: "已发布", targets: FOUR.map((p) => tgt(p, "已公开")) });
+    const opts = { derived: { e: { contentId: "v", kind: "en_edition" as const } }, legacy: { v: legacyBase() } };
+    const published = { kind: "ok" as const, platforms: [{ platform: "youtube", state: "public" as const, submitted: true, raw: "published", review: null, time: null, reason: null, url: null, campaigns: [], manual: null }] };
+    // 勾选只有 YouTube：英文版 targets = [youtube 已公开]
+    const [a] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开")] })], opts);
+    // 又勾上 X：board-data 把 X 作为「未发」补进 targets
+    const [b] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开"), tgt("x", "未发")] })], opts);
+    // 取消勾选 YouTube：targets 里只剩计划 / 回执带出的 youtube
+    const [c] = run([parent, item("e", { platform: "youtube", column: "已发布", status: "published", publish: published, targets: [tgt("youtube", "已公开")] })], opts);
+    for (const t of [a, b, c]) {
+      expect(t.plan.required).toEqual([...FOUR, "youtube"]);
+      expect(t.column).toBe("全部发完");
+    }
+    // 英文版还没有任何发布计划 / 回执：YouTube / X 都不算要发
+    const [d] = run([parent, item("e", { platform: "youtube", column: "写稿中", status: "drafting", targets: [tgt("youtube", "未发"), tgt("x", "未发")] })], opts);
+    expect(d.plan.required).toEqual(FOUR);
+    expect(d.column).toBe("全部发完");
   });
   it("老主题：创始人标的不出 / 恢复要发盖在「实际有的」上", () => {
     const at = "2026-10-24T00:00:00.000Z";

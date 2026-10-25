@@ -177,7 +177,12 @@ export function legacyPlan(plan: DestinationPlan, parent: BoardItem, children: A
   for (const t of parent.targets ?? []) if (ZH_VIDEO.has(t.platform) && isDestination(t.platform)) had.add(t.platform);
   for (const c of children) {
     if (c.kind === "article") had.add("wechat_mp");
-    else for (const t of c.item.targets ?? []) if (EN_VIDEO.has(t.platform) && isDestination(t.platform)) had.add(t.platform);
+    // 英文版的 targets 里混着按当前勾选补上的平台（enKitPlatforms）：只认落了盘的——发布计划里有的、或已有回执（状态不是未发）的
+    else {
+      const planned = c.item.publish && c.item.publish.kind !== "none" ? c.item.publish.platforms.map((x) => x.platform) : [];
+      const receipted = (c.item.targets ?? []).filter((t) => t.state !== "未发").map((t) => t.platform);
+      for (const p of [...planned, ...receipted]) if (EN_VIDEO.has(p) && isDestination(p)) had.add(p);
+    }
   }
   const destinations: DestinationPlan["destinations"] = {};
   for (const p of DESTINATIONS) {
