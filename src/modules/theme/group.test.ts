@@ -138,4 +138,13 @@ describe("暂停与历史", () => {
     expect(c.destinations.find((d) => d.platform === "bilibili")).toMatchObject({ state: "已发", history: true, required: false });
     expect(c).toMatchObject({ column: "全部发完", sent: 1, required: 1 });
   });
+  it("重拍过的视频：上一轮已发的中文平台照样已发（标上一轮）、不给发布动作、算进已发", () => {
+    const p = plan(["douyin", "bilibili"], { reshoots: [{ round_ended: 1, round: 2, at: "", founder_words: "重拍", via: "board", published: [{ platform: "douyin", content_id: "v" }], to_cancel: [] }] });
+    const unsent: PublishTarget = { platform: "douyin", state: "未发", actions: ["prepare_publish", "i_published"] };
+    const [c] = run([item("v", { round: 2, targets: [unsent, tgt("bilibili", "未发")] })], { plans: { v: p } });
+    expect(c.destinations.find((d) => d.platform === "douyin")).toMatchObject({ state: "已发", detail: "已发 · 上一轮" });
+    expect(c.destinations.find((d) => d.platform === "douyin")?.actions).toBeUndefined();
+    expect(c).toMatchObject({ sent: 1, required: 2, column: "发布中" });
+  });
 });
+

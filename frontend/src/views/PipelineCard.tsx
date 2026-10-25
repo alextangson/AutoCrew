@@ -11,11 +11,10 @@ import { performTarget } from "./StageCard";
 import { topicSourceLabel, type BoardItem, type BoardTopic } from "./board-columns";
 import { PGlyph, StateGlyph } from "./pipeline-glyphs";
 import {
-  DEST_LABEL, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine,
+  DEST_LABEL, canReshoot, canSkipRow, destLabel, meterRows, meterTone, mmdd, showMeter, skippedLine, stateIcon, statusLine,
   type DestRow, type ThemeCard,
 } from "./pipeline-model";
 
-const RESHOOT_COLUMNS = new Set(["剪辑", "待发布", "发布中", "全部发完"]);
 /** 行里地方小：动作用短说法（意思同 publish-targets 的 ACTION_LABEL） */
 const ROW_ACTION: Record<TargetAction, string> = { prepare_publish: "去发", i_published: "标已发", resubmit: "重新提交", confirm_receipt: "确认", correct_publish: "纠正" };
 
@@ -81,8 +80,7 @@ function DestLine(p: { card: ThemeCard; r: DestRow; open: (id: string) => void; 
     } finally { setBusy(false); await p.reload(); }
   };
   const hot = r.state === "待你定" || r.state === "没发成";
-  // 「不出」只给还没动的去向；有事要你做的行先做事（行太挤，别把状态挤没了）
-  const canSkip = card.kind === "video" && r.required && (r.state === "没开始" || r.state === "在做") && !acts.length;
+  const canSkip = canSkipRow(card, r);
   const text = r.skipped && r.state !== "已发" ? "不出" : r.history ? `${r.detail} · 计划外` : r.detail;
   return <div className={"pl-pr" + (hot && !r.skipped ? " hot" : "") + (r.skipped || r.history ? " muted" : "")}>
     <span className="nm"><PGlyph id={r.platform} />{destLabel(r.platform)}{r.tag && <small>{r.tag}</small>}</span>
@@ -111,7 +109,7 @@ function Expanded(p: { card: ThemeCard; open: (id: string) => void; reload: () =
     <div className="pl-ops">
       <button className="pl-link" onClick={() => p.open(it.id)}>打开稿件 →</button>
       {card.children.map((c) => <button key={c.id} className="pl-link" onClick={() => p.open(c.id)}>{c.platform === "wechat_mp" ? "公众号文章" : "英文版"} →</button>)}
-      {card.kind === "video" && it.active && RESHOOT_COLUMNS.has(card.column) && !card.reshoot && <button className="pl-link" onClick={() => void runReshoot(card, p.reload)}>重拍…</button>}
+      {canReshoot(card) && <button className="pl-link" onClick={() => void runReshoot(card, p.reload)}>重拍…</button>}
       <BackMenu item={it} onMenu={p.onMenu} reload={p.reload} />
     </div>
     <PickupNudge item={it} reload={p.reload} />

@@ -74,6 +74,13 @@ describe("重拍", () => {
     expect(await reshoot(c.id, "这条我觉得拍的不好 应该会重新拍", 1, { via: "board" }, env.dir)).toMatchObject({ ok: true, round: 2 });
     expect((await readProductionDoc(c.id, env.dir))!.round).toBe(2);
     expect((await readPlanFile(c.id, env.dir))!.reshoots).toHaveLength(1);
+    // 新一轮又有了素材 → 可以再重拍一次；同一轮重放仍然幂等
+    await mutateProduction(c.id, env.dir, (d) => { d.facts.push(fact("cut", SHA.cut2, { round: d.round, at: NOW })); return { value: null, events: [] }; });
+    expect((await themeOf(c.id)).column).toBe("剪辑");
+    expect(await reshoot(c.id, "还是不行，再拍", 2, { via: "board" }, env.dir)).toMatchObject({ ok: true, round: 3 });
+    expect(await reshoot(c.id, "还是不行，再拍", 2, { via: "board" }, env.dir)).toMatchObject({ ok: true, round: 3 });
+    expect((await readPlanFile(c.id, env.dir))!.reshoots.map((x) => x.round_ended)).toEqual([1, 2]);
+    expect((await themeOf(c.id)).column).toBe("录制");
   });
   it("已经发了一部分：已发的保留，已定时的列出来要你去撤，不自动撤", async () => {
     const c = await approvedVideo("发了一半要重拍");
@@ -85,7 +92,10 @@ describe("重拍", () => {
     expect((await themeOf(c.id)).column).toBe("发布中");
     const r = await reshoot(c.id, "重拍", 1, { via: "chat", host: "claude" }, env.dir);
     expect(r).toMatchObject({ ok: true, published: [{ platform: "douyin" }], to_cancel: [{ platform: "bilibili" }] });
-    expect((await themeOf(c.id)).column).toBe("录制");
+    const t = await themeOf(c.id);
+    expect(t.column).toBe("录制");
+    // 新一轮看不到上一轮的发布槽：抖音照样显示已发（上一轮），不给发布动作
+    expect(t.destinations.find((d) => d.platform === "douyin")).toMatchObject({ state: "已发", detail: "已发 · 上一轮" });
   });
   it("还没开拍的不让重拍；轮次对不上的拒；派生稿 id 不收", async () => {
     const c = await approvedVideo("还没拍");

@@ -123,6 +123,16 @@ function destinationsFor(parent: BoardItem, children: Array<{ item: BoardItem; k
       raw.push(ZH_VIDEO.has(p) ? { ...blank, content_id: parent.id, detail: preReady(parent).ready ? "可以发了" : preReady(parent).reason, state: preReady(parent).ready ? "待你定" : "没开始" } : blank);
     }
   }
+  // 重拍前已经发出去的（各轮 reshoots[].published）：新一轮的发布槽里看不到它们，但作品还在平台上。
+  // 照样显示「已发 · 上一轮」、不给发布动作，并算进已发——这个去向已经有一版公开了，「全部发完」不要求新一轮再发一次；
+  // 要用新成片替换，创始人另行处理（纠正 / 重新发）。
+  const history = new Set((plan?.reshoots ?? []).flatMap((x) => x.published).filter((x) => x.content_id === parent.id).map((x) => x.platform));
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i];
+    if (r.content_id === parent.id && history.has(r.platform) && r.state !== "已发") {
+      raw[i] = { platform: r.platform, state: "已发", detail: "已发 · 上一轮", content_id: parent.id };
+    }
+  }
   const rows: DestRow[] = raw.map((r) => {
     const e = entry(r.platform);
     const skipped = e && !e.required && e.by === "founder" ? { by: e.via === "chat" ? `对话里${e.host ? `（${e.host}）` : ""}` : "你在看板上", founder_words: e.founder_words ?? "", at: e.at } : undefined;

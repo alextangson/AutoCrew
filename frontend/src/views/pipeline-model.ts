@@ -150,3 +150,14 @@ export function mmdd(iso: string | null | undefined): string {
   const d = new Date(t + 8 * 3600_000);
   return `${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
+
+/** 「不出」看发布状态：要发、还没动（没开始 / 在做），不看平台槽上有没有通用动作 */
+export function canSkipRow(card: Pick<ThemeCard, "kind">, r: Pick<DestRow, "required" | "state">): boolean {
+  return card.kind === "video" && r.required && (r.state === "没开始" || r.state === "在做");
+}
+
+/** 「重拍」看本轮有没有素材：剪辑及之后的列 = 本轮已有原片 / 成片事实；不看这一轮是不是重拍开出来的（可以再重拍） */
+const RESHOOT_COLUMNS: ReadonlySet<string> = new Set(["剪辑", "待发布", "发布中", "全部发完"]);
+export function canReshoot(card: Pick<ThemeCard, "kind" | "column" | "item">): boolean {
+  return card.kind === "video" && Boolean(card.item.active) && RESHOOT_COLUMNS.has(card.column);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, skippedLine, statusLine, stateIcon, type ThemeCard } from "./pipeline-model";
+import { canReshoot, canSkipRow, collapsedColumns, DROP_TARGET, groupByTheme, meterRows, meterTone, mmdd, skippedLine, statusLine, stateIcon, type ThemeCard } from "./pipeline-model";
 import { exceptionRows } from "./PipelineCard";
 import type { BoardItem } from "./board-columns";
 
@@ -57,4 +57,13 @@ describe("管线页面模型", () => {
     expect(g.map((x) => [x.theme?.id ?? null, x.rows.map((r) => r.key)])).toEqual([["v", ["a", "c"]], ["o", ["b"]], [null, ["d"]]]);
     expect(g.flatMap((x) => x.rows)).toHaveLength(rows.length);
   });
+  it("「不出」看发布状态，不看通用动作；「重拍」看本轮有没有素材，重拍过的轮次也能再拍", () => {
+    const row = { required: true, state: "没开始" as const, actions: ["prepare_publish" as const, "i_published" as const] };
+    expect(canSkipRow(card(), row)).toBe(true);
+    expect(canSkipRow(card(), { ...row, state: "已定时" })).toBe(false);
+    const reshot = { round_ended: 1, round: 2, at: "", founder_words: "", via: "board" as const, published: [], to_cancel: [] };
+    expect(canReshoot(card({ column: "剪辑", item: item({ active: true }), reshoot: reshot }))).toBe(true);
+    expect(canReshoot(card({ column: "录制", item: item({ active: true }), reshoot: reshot }))).toBe(false);
+  });
 });
+
