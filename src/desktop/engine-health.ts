@@ -8,7 +8,9 @@
  * 逐次记录看 run-log。
  *
  * 三条纪律：
- * 1. **不轮询**。只有四个更新时机（启动 / 保存 / 点测试 / 真实调用），别的地方一律不许探。
+ * 1. **不轮询**。更新时机：启动 / 保存 / 点测试 / 真实调用，外加「复查」（`engine:recheck`）——
+ *    顶栏看到一条失败已经过时（> STALE_FAILURE_MS）就复探一次，或用户点「重新检查」。
+ *    健康的线路从不被复探；只有挂着红点的那条会。
  * 2. **不出密钥**。视图只给 id / 显示名 / 主机名与状态，apiKey 一个字节都不出这个文件。
  * 3. **状态文件坏了当没探过**。健康记录是观测层，它自己不该让产品起不来。
  */
@@ -275,6 +277,62 @@ export async function probeAllProviders(dataDir?: string, deps: ProbeAllDeps = {
     ).catch((err: unknown) => ({ ok: false, ms: 0, error: err instanceof Error ? err.message : String(err) }));
     await recordProbeResult(provider.id, result, dataDir, hostOf(provider.baseUrl));
   }
+}
+
+// ── 复查（过时的失败重新探一次；「重新检查」按钮）──────────────────────────────
+
+/** 一条失败过了这么久还没有新证据，就不再代表「现在」——复探一次再说 */
+export const STALE_FAILURE_MS = 5 * 60_000;
+
+function newest(entry: { probe?: ProbeHealth | null; live?: LiveHealth | null } | undefined): { at: string; ok: boolean } | null {
+  const list = [entry?.probe, entry?.live].filter((e): e is ProbeHealth | LiveHealth => Boolean(e) && Number.isFinite(Date.parse(e!.at)));
+  list.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  return list[0] ?? null;
+}
+
+/** 最近一条证据是失败、且早于 staleMs 的端点 */
+export function staleFailedProviders(state: EngineHealthState, ids: string[], now: number, staleMs = STALE_FAILURE_MS): string[] {
+  return ids.filter((id) => {
+    const last = newest(state.providers[id]);
+    return Boolean(last && !last.ok && now - Date.parse(last.at) > staleMs);
+  });
+}
+
+const inflightRecheck = new Map<string, Promise<string[]>>();
+
+/**
+ * 复查：`force` = 把最近失败的端点（没有失败就全表）现在就探一遍（用户点「重新检查」）；
+ * 否则只探「最近一条是失败且已过时」的端点。同一工作区同时只跑一轮，重复触发共用那一轮。
+ * 返回实际探过的端点 id。
+ */
+export async function recheckProviders(dataDir?: string, opts: { force?: boolean; now?: number; probe?: typeof probeEngineRoute } = {}): Promise<string[]> {
+  const key = getConfigDir(dataDir);
+  const running = inflightRecheck.get(key);
+  if (running) return running;
+  const job = (async () => {
+    const config = await readConfig(dataDir);
+    const ids = (config?.providers ?? []).map((p) => p.id);
+    if (!ids.length) return [];
+    const state = await stateFor(dataDir);
+    const now = opts.now ?? Date.now();
+    const failing = staleFailedProviders(state, ids, now, opts.force ? -1 : STALE_FAILURE_MS);
+    const targets = opts.force && !failing.length ? ids : failing;
+    if (!targets.length) return [];
+    await probeAllProviders(dataDir, { only: targets, ...(opts.probe ? { probe: opts.probe } : {}) });
+    return targets;
+  })().finally(() => inflightRecheck.delete(key));
+  inflightRecheck.set(key, job);
+  return job;
+}
+
+/** IPC `engine:recheck { force? }`：复探后回最新视图（探针最长 20 秒/条） */
+export async function recheckEngineHealth(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const dataDir = (payload._dataDir as string) || undefined;
+  const checked = await recheckProviders(dataDir, { force: payload.force === true });
+  return { ok: true, data: { checked, health: await buildEngineHealth(dataDir) } };
 }
 
 // ── 装配 ────────────────────────────────────────────────────────────────────

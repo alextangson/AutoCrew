@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "project_id": "",
+  "project_root": "",
+  "phase": "rough_cut",
+  "updated_at": "",
+  "next_action": "inspect_source_and_existing_project",
+  "editor": {"project_id": null, "timeline_id": null, "timeline_revision": null, "srt_sha256": null},
+  "gates": {
+    "gate1": {"status": "pending", "artifact_sha256": null, "approved_sha256": null, "shown_at": null, "approved_at": null, "user_message": null},
+    "gate2": {"status": "pending", "artifact_sha256": null, "approved_sha256": null, "shown_at": null, "approved_at": null, "user_message": null},
+    "gate3": {"status": "pending", "artifact_sha256": null, "approved_sha256": null, "shown_at": null, "approved_at": null, "user_message": null},
+    "gate4": {"status": "pending", "artifact_sha256": null, "approved_sha256": null, "shown_at": null, "approved_at": null, "user_message": null}
+  },
+  "budget": {"currency": "USD", "cap": null, "authorization_id": null, "user_message": null},
+  "spend": [],
+  "quota_usage": [],
+  "jobs": [],
+  "assembly": null,
+  "delivery": [],
+  "archive": {
+    "requested": false,
+    "project_id": null,
+    "user_message": null,
+    "requested_at": null,
+    "destination": null,
+    "mode": "archive_and_cleanup",
+    "status": "pending",
+    "proof_path": null,
+    "restore_verified": false,
+    "restore_evidence_path": null,
+    "cleanup_manifest_path": null,
+    "cleanup": {
+      "local": {"status": "pending", "evidence_path": null},
+      "browser": {"status": "pending", "evidence_path": null}
+    }
+  },
+  "monitor": {"kind": "none", "id": null, "last_event_at": null}
+}

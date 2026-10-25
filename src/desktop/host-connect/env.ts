@@ -30,6 +30,8 @@ export interface HostEnv {
   claudeConfig: string;
   /** ~/.codex（CODEX_HOME 设了就是它） */
   codexHome: string;
+  /** 本安装的 skills/ 目录（Codex 技能链到这里） */
+  skillsRoot: string;
   /** 宿主配置里写的转发器命令 */
   forwarder: { command: string; args: string[]; env: Record<string, string> };
   /** 子进程环境（HOME 固定成上面的 home） */
@@ -75,6 +77,7 @@ export function defaultHostEnv(env: NodeJS.ProcessEnv = process.env): HostEnv {
     appDirs: ["/Applications", path.join(home, "Applications")],
     claudeConfig: env.CLAUDE_CONFIG_DIR ? path.join(env.CLAUDE_CONFIG_DIR, ".claude.json") : path.join(home, ".claude.json"),
     codexHome: env.CODEX_HOME || path.join(home, ".codex"),
+    skillsRoot: path.join(repoRoot(), "skills"),
     forwarder: { command: entry.command as string, args: entry.args as string[], env: forwarderEnv },
     childEnv,
     run: makeRunner(childEnv),

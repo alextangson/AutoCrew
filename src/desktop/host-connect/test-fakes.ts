@@ -119,7 +119,7 @@ export async function makeSandbox(opts: { claude?: boolean; codex?: boolean; ext
   const childEnv: NodeJS.ProcessEnv = { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, CODEX_HOME: path.join(home, ".codex"), ...opts.extraEnv };
   const env: HostEnv = {
     home, dataDir, binDirs: [bin], appDirs: [path.join(home, "Applications")],
-    claudeConfig: path.join(home, ".claude.json"), codexHome: path.join(home, ".codex"),
+    claudeConfig: path.join(home, ".claude.json"), codexHome: path.join(home, ".codex"), skillsRoot: path.join(REPO, "skills"),
     forwarder: { command: process.execPath, args: [path.join(REPO, "bin", "autocrew.mjs"), "mcp"], env: { AUTOCREW_PORT: String(port), AUTOCREW_LOCAL_DIR: dataDir } },
     childEnv, run: makeRunner(childEnv), runWith: makeRunner,
   };

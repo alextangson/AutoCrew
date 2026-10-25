@@ -6,6 +6,25 @@ import { describe, it, expect } from "vitest";
 import { classifyEngineError, PROTOCOL_MISMATCH } from "./error-kind.js";
 import { RetryableError } from "../utils/retry.js";
 
+describe("回复流到一半被断开 ≠ 连不上（真机 2026-10-25：97 秒后 terminated 被说成域名解析失败）", () => {
+  it("terminated / premature close 归 interrupted；fetch failed、ECONNREFUSED 仍是 connect", () => {
+    expect(classifyEngineError(new Error("terminated")).kind).toBe("interrupted");
+    expect(classifyEngineError(new Error("premature close")).kind).toBe("interrupted");
+    expect(classifyEngineError(new Error('502 {"message":"terminated"}')).kind).toBe("interrupted");
+    expect(classifyEngineError(new Error("fetch failed")).kind).toBe("connect");
+    expect(classifyEngineError(new Error("connect ECONNREFUSED 1.2.3.4:443")).kind).toBe("connect");
+  });
+
+  it("文案说实话，且仍算线路故障（熔断照认）", async () => {
+    const { describeEngineFailure } = await import("./failure-text.js");
+    const { isLineFault } = await import("./breaker.js");
+    const text = describeEngineFailure({ role: "scout", provider: { id: "main", host: "api.deepseek.com" }, classified: classifyEngineError(new Error("terminated")) });
+    expect(text).toContain("回复到一半被断开（网络或上游中断）");
+    expect(text).not.toContain("域名解析");
+    expect(isLineFault(new Error("terminated"))).toBe(true);
+  });
+});
+
 describe("classifyEngineError", () => {
   it("连接类：undici 的 fetch failed 与各种 errno 都是 connect", () => {
     for (const msg of ["fetch failed", "connect ECONNREFUSED 1.2.3.4:443", "getaddrinfo ENOTFOUND api.bad.invalid", "socket hang up"]) {

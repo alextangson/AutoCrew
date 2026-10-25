@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "project_root": "",
+  "plan_evidence_path": null,
+  "approved_shot_ids": [],
+  "timeline": {
+    "project_id": null,
+    "timeline_id": null,
+    "timeline_revision": null,
+    "duration_frames": null,
+    "snapshot_path": null,
+    "srt_path": null,
+    "srt_sha256": null
+  },
+  "shots": [],
+  "checks": {
+    "coverage": {"status": "pending", "evidence_path": null},
+    "transitions": {"status": "pending", "evidence_path": null},
+    "text": {"status": "pending", "evidence_path": null},
+    "grade": {"status": "pending", "evidence_path": null},
+    "bgm": {"status": "pending", "evidence_path": null},
+    "sfx": {"status": "pending", "evidence_path": null},
+    "mix": {"status": "pending", "evidence_path": null},
+    "continuous_playback": {"status": "pending", "evidence_path": null},
+    "review_surface": {"status": "pending", "evidence_path": null}
+  }
+}

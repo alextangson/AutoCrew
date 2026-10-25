@@ -1,0 +1,17 @@
+{
+  "version": "opus-blueprint-approved-v001",
+  "approved_on": "2026-09-28",
+  "user_quote": "这个审美就很好 可以优化一下opus5.5的skills或者是交接方式，以后按这个审美来出",
+  "scope": "Personal-IP explanatory motion aesthetic reference; not whole-film approval or paid-media authorization",
+  "model": "claude-opus-5-5",
+  "session_id": "3fddcc27-d53f-4ce8-bf93-07071a45d548",
+  "source_project": "/Users/jiaxintang/Projects/broll/20260926 客户问一句「你们用 AI 吗」，你答得上来吗/03-broll/workspace/opus-motion-v001/sample-v001",
+  "reference_is_silent": true,
+  "source_fragments": "theme.ts and BlueprintGrid.tsx are background examples, not a complete runnable composition",
+  "files": {
+    "BlueprintGrid.tsx": "1fd8754f01c7637e5f7878a93ac06ff2088a9737734606497fbe1ce9b17c8c0a",
+    "reference.mp4": "b037c136e3c9ada80e710c29ff7b2a58508d5ad1fa03cc7b42a998a35adf43a0",
+    "contact-sheet.png": "b3d161c42bd87c1bb6bf8836dd67b569379e9680c3d9241cc72437ab88d7ce13",
+    "theme.ts": "5aec4da83d90ba876743f79e7570210f4111560d453d3c83b9dfdf0b2d5cb72b"
+  }
+}

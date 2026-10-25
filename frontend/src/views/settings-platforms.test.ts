@@ -28,7 +28,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => { root.unmount(); }); el.remove(); });
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 10)); });
-const box = (label: string) => [...el.querySelectorAll("label")].find((l) => l.textContent === label)!.querySelector("input")!;
+const box = (label: string) => el.querySelector<HTMLInputElement>(`input[role="switch"][aria-label="${label}"]`)!;
 async function render() {
   const { SettingsPlatforms } = await import("./SettingsPlatforms");
   await act(async () => { root.render(createElement(SettingsPlatforms)); });

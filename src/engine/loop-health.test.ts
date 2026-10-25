@@ -132,3 +132,15 @@ describe("runLoop → 健康回执", () => {
     expect(res.finalMessage).toBe("照常");
   });
 });
+
+describe("我们自己中止的调用不算线路失败", () => {
+  it("用户按停（signal 中止）：主线与备用都不记坏的，横幅不会因为一次取消标红", async () => {
+    const ctrl = new AbortController();
+    const hang = (async () => {
+      ctrl.abort();
+      throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+    }) as unknown as typeof fetch;
+    await runLoop(cfg(true), { model: "main-strong", systemPrompt: "s", userMessage: "u", fetchImpl: hang, signal: ctrl.signal, retryMaxDelayMs: 5 }).catch(() => undefined);
+    expect(records.filter((r) => !r.ok)).toHaveLength(0);
+  });
+});
