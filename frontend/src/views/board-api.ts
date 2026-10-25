@@ -27,7 +27,10 @@ const post = <T>(url: string, payload: Json) => call<T>(url, { method: "POST", h
 export const loadBoard = () => call<BoardData>("/api/board");
 /** 内容管线（一个主题一张卡）；标不出 / 恢复要发、重拍都要原话 */
 export const loadPipeline = () => call<import("./pipeline-model").PipelineData>("/api/pipeline");
-export const setDestination = (contentId: string, platform: string, skip: boolean, founderWords: string) =>
+/** 首页「让 AI 看看」：服务端拼分析指令，走写稿交接同一个 deliver() */
+export type AskKind = "insights" | "meeting" | "retro";
+export const askAI = (kind: AskKind, contentId?: string | null) => post<Delivery & { kind: AskKind }>("/api/home/ask-ai", { kind, ...(contentId ? { content_id: contentId } : {}) });
+export const setDestination =(contentId: string, platform: string, skip: boolean, founderWords: string) =>
   post<{ platform: string; required: boolean }>("/api/pipeline/destination", { content_id: contentId, platform, skip, founder_words: founderWords });
 export const reshootTheme = (contentId: string, round: number, founderWords: string) =>
   post<{ round: number; published: Array<{ platform: string }>; to_cancel: Array<{ platform: string; at?: string }>; warning?: string }>("/api/pipeline/reshoot", { content_id: contentId, round, founder_words: founderWords, confirm: true });

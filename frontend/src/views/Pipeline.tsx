@@ -156,9 +156,21 @@ export function Pipeline(props: { openEditor: (id: string) => void; openTopic: (
 }
 
 function ColumnHead(p: { col: PipelineColumn; n: number; onTrash: () => void; reload: () => Promise<void> }) {
+  const [radar, setRadar] = useState(false);
+  // 旧看板「再找 5 条」搬到这里（第 3 期旧看板退役）：找不到 / 失败都照实说
+  const collectMore = async () => {
+    setRadar(true);
+    try {
+      const r = await invoke("radar:more", { limit: 5, refresh: true });
+      const saved = ((r as Record<string, unknown>).data as { savedCount?: number } | undefined)?.savedCount ?? 0;
+      toast(!r.ok ? r.error ?? "继续收集失败" : saved > 0 ? `新增 ${saved} 条选题` : "这一批没有新的合格选题");
+      await p.reload();
+    } finally { setRadar(false); }
+  };
   return <div className="pl-col-h"><StagePie f={COLUMN_PROGRESS[p.col]} />{p.col} <span className="n">{p.n}</span>
-    {p.col === "选题" && <><button className="tool" style={{ marginLeft: "auto" }} onClick={p.onTrash}>回收站</button>
-      <button className="plus" style={{ marginLeft: 12 }} title="新想法" onClick={() => void newIdea().then(p.reload)}>＋</button></>}
+    {p.col === "选题" && <><button className="tool" style={{ marginLeft: "auto" }} disabled={radar} onClick={() => void collectMore()}>{radar ? "找选题中…" : "再找 5 条"}</button>
+      <button className="tool" style={{ marginLeft: 8 }} onClick={p.onTrash}>回收站</button>
+      <button className="plus" style={{ marginLeft: 8 }} title="新想法" onClick={() => void newIdea().then(p.reload)}>＋</button></>}
   </div>;
 }
 

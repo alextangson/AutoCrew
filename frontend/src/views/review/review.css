@@ -75,3 +75,23 @@
 .ri-lesson .ri-question { font-size: var(--fs-md); margin: 0 0 4px; }
 .ri-lesson select { margin-left: 6px; max-width: 100%; }
 .ri-lesson .ri-check li { border-bottom: none; padding: 4px 0; }
+
+/* 首页「要你做的」（home-mock-v2/home.html 的 .todo）：发丝线分行，不画框；强调色只给动词和件数 */
+.ri-home-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.ri-home-h h2 { font-size: var(--fs-lg); font-weight: 600; line-height: 24px; }
+.ri-home-count { font-size: 13px; font-weight: 600; color: var(--hot); font-variant-numeric: tabular-nums; }
+.ri-home .ri-home-link { margin-left: auto; font-size: 12px; color: var(--muted); border: 0; background: transparent; padding: 0; }
+.ri-home-warn { font-size: 12px; color: var(--hot); margin-bottom: 8px; }
+.ri-home-list { border-top: 1px solid var(--ink); }
+.ri-home-empty { padding: 16px 0; border-bottom: 1px solid #E2DFD5; font-size: 14px; color: var(--muted); }
+.ri-home-theme { padding: 12px 0 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-home .ri-home-row { display: grid; grid-template-columns: 72px 1fr 16px; gap: 16px; width: 100%; padding: 16px 0; border: 0; border-bottom: 1px solid #E2DFD5;
+  border-radius: 0; background: transparent; text-align: left; align-items: start; font: inherit; color: var(--ink); cursor: pointer; height: auto; }
+.ri-home .ri-home-row:hover, .ri-home .ri-home-row.on { background: transparent; }
+.ri-home .ri-home-row:hover .t, .ri-home .ri-home-row.on .t { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #D3CFC3; }
+.ri-home-row .verb { font-size: 13px; font-weight: 600; color: var(--hot); line-height: 22px; }
+.ri-home-row .tx { min-width: 0; display: block; }
+.ri-home-row .t { display: block; font-size: 14px; line-height: 22px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-home-row .m { display: block; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-home-row .arr { color: #B4B0A4; line-height: 22px; }
+.ri-home-foot { font-size: 12px; color: var(--muted); margin-top: 12px; }

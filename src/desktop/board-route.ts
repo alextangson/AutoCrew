@@ -13,6 +13,7 @@ import { createCoverHandler } from "./data-cover-route.js";
 import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/outcome-links.js";
 import { markPublished, startWriting, unmarkPublished } from "./board-actions.js";
 import { handOff, type HandOffDeps } from "./writing-handoff.js";
+import { askAI } from "./home-ask.js";
 import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
@@ -199,6 +200,11 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     // 已有稿件「交给 X 写 / 看」（spec 2026-10-15 §B4、§B5 重新交给）：服务端拼指令和链接，浏览器只说交给谁
     if (p === "/api/board/hand-off" && req.method === "POST") {
       await post(req, res, (b, dir) => handOff(String(b.content_id ?? ""), { host: typeof b.host === "string" ? b.host : null, mode: b.mode === "look" ? "look" : "write" }, dir, deps.open));
+      return true;
+    }
+    // 首页「让 AI 看看」（管线重规划 §8-11）：服务端拼分析指令，走同一个 deliver()
+    if (p === "/api/home/ask-ai" && req.method === "POST") {
+      await post(req, res, (b, dir) => askAI({ kind: String(b.kind ?? ""), content_id: b.content_id, host: typeof b.host === "string" ? b.host : null }, dir, deps.open));
       return true;
     }
     // 本体（spec 2026-09-29）：两个创始人决定只走浏览器会话——重开文稿（§2.5）与启用本体（§4.1）
