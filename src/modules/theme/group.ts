@@ -75,8 +75,10 @@ function rowsOf(item: BoardItem, kind: "parent" | "en" | "article" | "text", inp
     return [{ platform: item.platform, state: done ? "已发" : pre.ready ? "待你定" : pre.waitingFounder ? "待你定" : "在做", detail: done ? "已发" : pre.ready ? "可以发了" : pre.reason, content_id: item.id, ...(done ? { at: mmdd(item.publishTime) } : {}) }];
   }
   const allow = kind === "parent" ? ZH_VIDEO : EN_VIDEO;
+  // 父视频还在写稿 / 等认稿：平台行只是「没开始」，等你认稿由卡的状态行说，不在每个平台上重复
+  const rowPre = kind === "parent" ? { ...pre, waitingFounder: false } : pre;
   return (item.targets ?? []).filter((t) => allow.has(t.platform) && isDestination(t.platform)).map((t) => {
-    const r = fromTarget(t, pre, item.id);
+    const r = fromTarget(t, rowPre, item.id);
     // 英文版还没到能发：稿已经开了，是「在做」不是「没开始」
     const fixed = kind === "en" && r.state === "没开始" ? { ...r, state: "在做" as const } : r;
     return { platform: t.platform as Destination, ...fixed };
