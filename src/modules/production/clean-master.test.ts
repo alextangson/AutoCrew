@@ -8,6 +8,7 @@ import { readProductionDoc } from "../../storage/production-store.js";
 import { setProductionDeps } from "./roots.js";
 import { put, record, type Env } from "./testkit.js";
 import { reconcileContent } from "./reconcile.js";
+import { mutateProduction } from "./service.js";
 import { enSourceVideo, SEGMENTS, approveEnScript, fakeElevenLabs } from "../en-edition/en-test-fixtures.js";
 import { executeEnEdition } from "../../tools/en-edition.js";
 import { setKeychainReader } from "../voice/elevenlabs.js";
@@ -52,6 +53,16 @@ describe("record kind=clean_master 核验", () => {
     set({ durationMs: 12_400 });
     expect(await master(s.id, {}, "d.mp4")).toMatchObject({ ok: true });
     expect((await readProductionDoc(s.id, env.dir))!.facts.filter((f) => f.kind === "clean_master")).toHaveLength(1);
+  });
+
+  it("审过的成片没记时长（对账自己收进来的）：现量成片时长再比，照样登记得上", async () => {
+    const s = await enSourceVideo(["douyin"], undefined, { master: false });
+    env = s.env;
+    await mutateProduction(s.id, env.dir, (d) => { for (const f of d.facts) if (f.kind === "cut") delete f.duration_ms; return { value: null, events: [] }; });
+    const seen: string[] = [];
+    setProductionDeps({ probe: async (file) => { seen.push(file); return { durationMs: 12_000, width: 1920, height: 1080, audio: true }; } });
+    expect(await master(s.id)).toMatchObject({ ok: true });
+    expect(seen.some((f) => f.includes("04-edit") && !f.includes("无字幕"))).toBe(true);
   });
 
   it("for_cut 不是审过的那版：拒", async () => {

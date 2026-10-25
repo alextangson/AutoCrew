@@ -19,6 +19,7 @@ import type { Parsed, RecordArgs } from "./record-args.js";
 import { classify, movableRoots, now, probe, type Location } from "./roots.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
 import { checkMaster, masterCut } from "./clean-master.js";
+import { factPath } from "./chat-approval/files.js";
 
 
 export type Action = "existing" | "in_place" | "move" | "clone" | "candidate";
@@ -202,11 +203,11 @@ export async function checkTargetDir(projectRoot: string, rel: string): Promise<
 }
 
 /** 无字幕母版：先认审过的成片，再按它核尺寸 / 音轨 / 时长（clean-master.ts） */
-async function masterChecks(a: RecordArgs, content: Content, doc: ProductionDoc, file: string): Promise<Parsed<{ for_cut?: string; duration_ms?: number }>> {
+async function masterChecks(a: RecordArgs, content: Content, doc: ProductionDoc, file: string, dataDir: string): Promise<Parsed<{ for_cut?: string; duration_ms?: number }>> {
   if (a.kind !== "clean_master") return { ok: true, value: {} };
   const cut = masterCut(doc, content.body ?? "", a.for_cut);
   if (!cut.ok) return cut;
-  const d = await checkMaster(file, probe, cut.value);
+  const d = await checkMaster(file, probe, cut.value, factPath(content.id, cut.value, dataDir));
   return d.ok ? { ok: true, value: { for_cut: cut.value.sha256!, duration_ms: d.value } } : d;
 }
 
@@ -214,7 +215,7 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
   const library = readLibraryLocation()?.root;
   const file = await inspectFile(a, [contentRoot(content.id, dataDir), ...(library ? [library] : [])]);
   if (!file.ok) return file;
-  const master = await masterChecks(a, content, doc, file.value.source);
+  const master = await masterChecks(a, content, doc, file.value.source, dataDir);
   if (!master.ok) return master;
   if (master.value.duration_ms) file.value.duration_ms = master.value.duration_ms;
   const srtCut = resolveForCut(a, doc);

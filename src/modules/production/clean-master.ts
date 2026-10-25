@@ -27,17 +27,26 @@ export function masterCut(doc: ProductionDoc, body: string, forCut: string | und
 }
 
 /** ffprobe 核尺寸、音轨、时长；cut 有时长时再比时长 */
-export async function checkMaster(file: string, probe: Probe, cut: Fact): Promise<Parsed<number>> {
+/**
+ * cutFile：成片在盘上的绝对路径。对账自己收进来的成片没记时长（observeProject 不跑 ffprobe），
+ * 这时现量一次成片时长，不让自动收进来的成片永远配不上母版。
+ */
+export async function checkMaster(file: string, probe: Probe, cut: Fact, cutFile: string): Promise<Parsed<number>> {
   const r = await probe(file);
   if ("error" in r || !(r.durationMs > 0)) return deny("file_unstable", "读不出这个视频的时长：多半还在导出 / 拷贝，或者文件坏了；等它写完再报，这次什么都没写");
   if (r.width !== MASTER_WIDTH || r.height !== MASTER_HEIGHT) {
     return deny("master_invalid", `无字幕母版要 ${MASTER_WIDTH}×${MASTER_HEIGHT}，这个是 ${r.width ?? "?"}×${r.height ?? "?"}：按 1920×1080 重新导出`);
   }
   if (r.audio !== true) return deny("master_invalid", "无字幕母版里没有音轨：要和成片一样带人声、配乐和混音，重新导出");
-  if (!cut.duration_ms) return deny("master_invalid", "审过的成片没记时长，核不了母版是不是同一版剪辑：重新 record 这版成片后再报母版");
-  const diff = Math.abs(r.durationMs - cut.duration_ms);
+  let cutMs = cut.duration_ms;
+  if (!cutMs) {
+    const c = await probe(cutFile);
+    cutMs = "error" in c ? 0 : c.durationMs;
+  }
+  if (!(cutMs && cutMs > 0)) return deny("master_invalid", "读不出审过的成片的时长，核不了母版是不是同一版剪辑：看一下成片文件还在不在、能不能播");
+  const diff = Math.abs(r.durationMs - cutMs);
   if (diff > MASTER_TOLERANCE_MS) {
-    return deny("master_invalid", `无字幕母版 ${(r.durationMs / 1000).toFixed(2)} 秒，审过的成片 ${(cut.duration_ms / 1000).toFixed(2)} 秒，差了 ${(diff / 1000).toFixed(2)} 秒：要同一条时间线只关字幕导出`);
+    return deny("master_invalid", `无字幕母版 ${(r.durationMs / 1000).toFixed(2)} 秒，审过的成片 ${(cutMs / 1000).toFixed(2)} 秒，差了 ${(diff / 1000).toFixed(2)} 秒：要同一条时间线只关字幕导出`);
   }
   return { ok: true, value: r.durationMs };
 }
