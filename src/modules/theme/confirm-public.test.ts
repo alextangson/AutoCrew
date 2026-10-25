@@ -8,6 +8,7 @@ import { markPublished } from "../../desktop/board-actions.js";
 import { registeredVideo, type Reg } from "../publish/review-gate/testkit.js";
 import { importObservations, type Observation } from "../production/receipts.js";
 import { mutateProduction } from "../production/service.js";
+import { reopenScript } from "../production/reopen.js";
 import { makeEnv, type Env } from "../production/testkit.js";
 import { pipelineData } from "./pipeline-data.js";
 
@@ -48,5 +49,15 @@ describe("待核 → 确认已公开", () => {
     await observe(r, { source: "plan", platform: "douyin", pub_state: "rejected", published_at: past, reason: "封面违规" });
     const t = (await pipelineData(env.dir)).themes.find((x) => x.id === r.id)!;
     expect(t.destinations[0]).toMatchObject({ platform: "douyin", state: "没发成" });
+  });
+  it("带了看到的轮次：对话框开着期间重开过，确认被拒、不落到新一轮", async () => {
+    const r = await registeredVideo(env);
+    await observe(r, { source: "plan", platform: "douyin", pub_state: "overdue", published_at: past });
+    const reopened = await reopenScript(r.id, env.dir, "重拍：测试", 1);
+    expect(reopened.ok).toBe(true);
+    const res = await markPublished(r.id, "douyin", undefined, env.dir, 1);
+    expect(res).toMatchObject({ ok: false, error: expect.stringContaining("重开过") });
+    const { readProductionDoc } = await import("../../storage/production-store.js");
+    expect((await readProductionDoc(r.id, env.dir))!.decisions.some((d) => d.type === "i_published")).toBe(false);
   });
 });

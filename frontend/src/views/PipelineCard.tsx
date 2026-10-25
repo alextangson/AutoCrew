@@ -69,7 +69,7 @@ function rowTarget(r: DestRow): PublishTarget {
 }
 
 /** 待核 →「确认已公开」：和旧看板「已经发出去了」同一条路（markPublished → 你标的已发布），链接选填 */
-async function confirmPublic(owner: { id: string }, platform: string, reload: () => Promise<void>) {
+async function confirmPublic(owner: { id: string; round?: number | null }, platform: string, reload: () => Promise<void>) {
   const name = destLabel(platform);
   const v = await openDialog({ title: `${name}已经公开了？`, body: "定时过点了还没核到。你在平台上看到它已公开，就记成你确认的已发布。点错了可以在旧看板上撤销。",
     fields: [{ key: "url", label: "作品链接（选填）", placeholder: "https://…" }], confirmLabel: "确认已公开" });
@@ -77,7 +77,8 @@ async function confirmPublic(owner: { id: string }, platform: string, reload: ()
   const url = v.url.trim();
   if (url && !isHttpUrl(url)) return toast("链接要是 http(s) 开头的地址，没记");
   try {
-    const r = await markPublished(owner.id, platform, url || undefined);
+    // 带上看到的那一轮：对话框开着期间重拍 / 重开过，服务端拒（「这条已经重开过…刷新再看」）
+    const r = await markPublished(owner.id, platform, url || undefined, owner.round ?? undefined);
     toast(r.ok ? `已记下：${name}已公开` : r.error);
   } finally { await reload(); }
 }
