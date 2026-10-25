@@ -310,7 +310,7 @@ describe("项目缓存 99-cache 不上 NAS", () => {
     expect((await readBackupState(root(c)))!.status).toBe("unmounted");
   });
 
-  it("archive does not carry 99-cache to the NAS and leaves it on the machine", async () => {
+  it("archive does not carry 99-cache to the NAS and clears it from the machine (founder 2026-10-25)", async () => {
     for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
     const old = await published("旧稿", 8);
     await put(old, "99-cache/audio/tmp.wav", "cache");
@@ -319,7 +319,7 @@ describe("项目缓存 99-cache 不上 NAS", () => {
     expect(r.errors).toEqual([]);
     expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
     expect(await exists(path.join(nasDir(old), "99-cache"))).toBe(false);
-    expect(await read(path.join(root(old), "99-cache/audio/tmp.wav"))).toBe("cache");
+    expect(await exists(path.join(root(old), "99-cache"))).toBe(false);
     expect(await fs.readdir(path.join(root(old), "02-aroll"))).toEqual([]);
   });
 });

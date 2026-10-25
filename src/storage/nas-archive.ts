@@ -13,7 +13,7 @@ import { writeJsonAtomic } from "./json-atomic.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { withFileOwnership } from "./file-ownership.js";
-import { copyProject, isProjectCache, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
+import { copyProject, isProjectCache, PROJECT_CACHE_DIR, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 import { assertTargetOutsideSource } from "./nas-safe-path.js";
 import { KEPT_DIR } from "./nas-kept.js";
@@ -34,7 +34,7 @@ export interface ArchiveOptions {
   marginBytes?: number;
 }
 export interface ArchivedItem { title: string; target: string; freedBytes: number }
-export interface ArchiveReport { skipped?: string; archived: ArchivedItem[]; pending: number; errors: string[] }
+export interface ArchiveReport { skipped?: string; archived: ArchivedItem[]; pending: number; errors: string[]; cacheFreed?: ArchivedItem[] }
 interface Ctx { data: string; lib: string; root: string; now: Date; copy: CopyImpl; free: (dir: string) => Promise<number>; margin: number }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -145,6 +145,36 @@ async function pruneEmpty(dir: string, keepSelf: boolean): Promise<void> {
   if (!keepSelf && (await fs.readdir(dir)).length === 0) await fs.rmdir(dir).catch(() => undefined);
 }
 
+/** 99-cache 里要留的：写稿读的口播转写（转写清单 + 旁边的 full.json，见 draft/transcripts.ts），都是小文本 */
+const TRANSCRIPT_MANIFEST = "transcription-manifest.json";
+const KEEP_NEXT_TO_MANIFEST = new Set([TRANSCRIPT_MANIFEST, "full.json"]);
+
+/** 删掉目录下除转写之外的文件，返回删掉的字节数；删空的子目录一并清掉 */
+async function purgeCacheDir(dir: string): Promise<number> {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch((e) => { if (isMissing(e)) return null; throw e; });
+  if (!entries) return 0;
+  const hasManifest = entries.some((e) => e.isFile() && e.name === TRANSCRIPT_MANIFEST);
+  let freed = 0;
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { freed += await purgeCacheDir(p); continue; }
+    if (hasManifest && KEEP_NEXT_TO_MANIFEST.has(e.name)) continue;
+    freed += (await fs.lstat(p)).size;
+    await fs.rm(p, { force: true });
+  }
+  if ((await fs.readdir(dir)).length === 0) await fs.rmdir(dir).catch(() => undefined);
+  return freed;
+}
+
+/** 归档后清 99-cache：成片和素材已在 NAS 上核对过，这里只剩可重建的中间产物（渲染、抽音频）；口播转写留着给写稿用 */
+async function purgeProjectCache(projectRoot: string): Promise<number> {
+  const dir = path.join(projectRoot, PROJECT_CACHE_DIR);
+  const st = await fs.lstat(dir).catch((e) => { if (isMissing(e)) return null; throw e; });
+  // 缓存根是符号链接（指到项目外）就不跟进去删：只清项目自己的目录；子项里的链接只删链接本身
+  if (!st || !st.isDirectory()) return 0;
+  return purgeCacheDir(dir);
+}
+
 async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<ArchivedItem> {
   const projectRoot = resolveContentProject(c.id, ctx.data)!.project_root;
   const target = archiveTarget(archiveRoot, c, projectRoot);
@@ -155,13 +185,13 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
     throw new Error(`NAS 空间不够（要 ${formatBytes(size)} + 预留 ${formatBytes(ctx.margin)}，剩 ${formatBytes(free)}），这次跳过`);
   }
   // 逐文件核对 NAS（发布时已备份的，这里只是核对；缺或不一致先补拷），全部对上才删本机
-  // 缓存 99-cache 不删本机、可重建，不搬上 NAS
+  // 缓存 99-cache 不搬上 NAS（可重建）；素材核对删完后一并清掉
   const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS, { exclude: isProjectCache });
   if (errors.length) throw new Error(`复制或核对出错，本机一个文件都没删，下次重试：${errors.join("；")}`);
   await keepSmallFiles(projectRoot, c, files);
   await writeRecord(projectRoot, target, files, ctx.now);
   const kept = await deleteMedia(projectRoot, files);
-  const freedBytes = files.filter((f) => isMedia(f.rel)).reduce((n, f) => n + f.size, 0);
+  const freedBytes = files.filter((f) => isMedia(f.rel)).reduce((n, f) => n + f.size, 0) + await purgeProjectCache(projectRoot);
   if (kept) console.warn(`[nas-archive] ${c.title}：${kept} 个文件是核对之后才出现 / 被改过的，留在本机，下一轮再归档`);
   await appendArchiveLog(ctx.data, { contentId: c.id, title: c.title, target, freedBytes, archivedAt: ctx.now.toISOString() });
   return { title: c.title, target, freedBytes };
@@ -179,7 +209,11 @@ async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]>
       const binding = resolveContentProject(c.id, ctx.data);
       const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;
       if (busy) { report.errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); continue; }
-      if (binding && !(await isArchived(binding.project_root))) out.push(c);
+      if (!binding) continue;
+      if (!(await isArchived(binding.project_root))) { out.push(c); continue; }
+      // 早先归档时还没清缓存的：这里补清，NAS 不在也能做（不碰 NAS）
+      const freedBytes = await purgeProjectCache(binding.project_root);
+      if (freedBytes > 0) (report.cacheFreed ??= []).push({ title: c.title, target: binding.project_root, freedBytes });
     } catch (e) { report.errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); }
   }
   return out;

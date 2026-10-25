@@ -59,7 +59,7 @@ async function make(title: string, patch: Partial<Content>): Promise<Content> {
 const published = (title: string, days: number, extra: Partial<Content> = {}) =>
   make(title, { status: "published", publishedAt: daysAgo(days), ...extra });
 /** 最近 5 条已发布（1–5 天前），占满保留名额 */
-async function fiveRecent(): Promise<void> { for (let i = 1; i <= 5; i++) await published(`新${i}`, i); }
+async function fiveRecent(): Promise<Content[]> { const out: Content[] = []; for (let i = 1; i <= 5; i++) out.push(await published(`新${i}`, i)); return out; }
 const nasDir = (c: Content) => path.join(nas, "2026", "September", path.basename(root(c)));
 
 describe("NAS 归档", () => {
@@ -230,6 +230,67 @@ describe("NAS 归档", () => {
     const r = await archive({ copyImpl: copy });
     expect(r).toEqual({ archived: [], pending: 0, errors: [] });
     expect(copy).not.toHaveBeenCalled();
+  });
+
+  describe("99-cache", () => {
+    const putCache = async (c: Content, body: string) => {
+      await fs.mkdir(path.join(root(c), "99-cache/remotion"), { recursive: true });
+      await fs.writeFile(path.join(root(c), "99-cache/remotion/render.mp4"), body);
+    };
+
+    it("clears the project cache when it archives, counting it in freedBytes, and never copies it to the NAS", async () => {
+      await fiveRecent();
+      const old = await published("旧稿", 8);
+      await putCache(old, "render-bytes");
+      const r = await archive();
+      expect(r.archived[0].freedBytes).toBe(Buffer.byteLength("旧稿-raw") + Buffer.byteLength("旧稿-cover") + Buffer.byteLength("render-bytes"));
+      expect(await exists(path.join(root(old), "99-cache"))).toBe(false);
+      expect(await exists(path.join(nasDir(old), "99-cache"))).toBe(false);
+    });
+
+    it("clears a cache left behind by an earlier archive, even with the NAS unmounted", async () => {
+      await fiveRecent();
+      const old = await published("旧稿", 8);
+      await archive();
+      await putCache(old, "leftover");
+      const r = await archive({ archiveRoot: path.join(temp, "not-mounted") });
+      expect(r.cacheFreed).toEqual([expect.objectContaining({ title: "旧稿", freedBytes: Buffer.byteLength("leftover") })]);
+      expect(await exists(path.join(root(old), "99-cache"))).toBe(false);
+    });
+
+    it("keeps the founder's spoken transcripts (manifest + full.json) that drafting reads, and drops the rest", async () => {
+      await fiveRecent();
+      const old = await published("旧稿", 8);
+      await putCache(old, "render-bytes");
+      const t = path.join(root(old), "99-cache/edit/transcription");
+      await fs.mkdir(t, { recursive: true });
+      await fs.writeFile(path.join(t, "transcription-manifest.json"), "{}");
+      await fs.writeFile(path.join(t, "full.json"), "{\"transcription\":[]}");
+      await fs.writeFile(path.join(t, "audio.wav"), "wav");
+      await archive();
+      expect(await fs.readdir(t)).toEqual(["full.json", "transcription-manifest.json"]);
+      expect(await exists(path.join(root(old), "99-cache/remotion"))).toBe(false);
+    });
+
+    it("never follows a symlinked 99-cache out of the project", async () => {
+      await fiveRecent();
+      const old = await published("旧稿", 8);
+      const outside = path.join(temp, "outside");
+      await fs.mkdir(outside, { recursive: true });
+      await fs.writeFile(path.join(outside, "precious.mov"), "keep me");
+      await fs.symlink(outside, path.join(root(old), "99-cache"));
+      await archive();
+      expect(await fs.readFile(path.join(outside, "precious.mov"), "utf8")).toBe("keep me");
+    });
+
+    it("keeps the cache of projects that are not archived (kept 5, too young, busy)", async () => {
+      const recent = await fiveRecent();
+      const young = await published("三天稿", 3.5);
+      for (const c of [...recent, young]) await putCache(c, "keep");
+      const r = await archive();
+      expect(r.cacheFreed).toBeUndefined();
+      for (const c of [...recent, young]) expect(await exists(path.join(root(c), "99-cache/remotion/render.mp4"))).toBe(true);
+    });
   });
 
   it("skips an item when the NAS lacks free space", async () => {

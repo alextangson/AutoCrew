@@ -750,6 +750,7 @@ server.listen(PORT, HOST, () => {
       .then((r) => {
         if (!r) return;
         if (r.archived.length) console.log(`[nas-archive] 归档 ${r.archived.length} 条`);
+        if (r.cacheFreed?.length) console.log(`[nas-archive] 清掉已归档项目的 99-cache ${r.cacheFreed.length} 条，${(r.cacheFreed.reduce((n, x) => n + x.freedBytes, 0) / 1024 ** 3).toFixed(1)} GB`);
         if (r.errors.length) console.error(`[nas-archive] ${r.errors.length} 处问题:${r.errors[0]}`);
       })
       .catch((err) => console.error("[nas-archive] 归档失败:", err instanceof Error ? err.message : err))
