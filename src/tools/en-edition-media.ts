@@ -11,6 +11,8 @@ import { approvedEnState, currentEnManifest } from "../modules/en-edition/approv
 import { dubApprovedScript, dubDir, readDubManifest } from "../modules/en-edition/dub.js";
 import { readDubFailure, recordDubFailure } from "../modules/en-edition/dub-failure.js";
 import { buildCues } from "../modules/en-edition/captions.js";
+import { enPicture } from "../modules/en-edition/source.js";
+import { getContent } from "../storage/local-store.js";
 import { readEnThumbnail, setEnThumbnail, thumbnailProblem } from "../modules/en-edition/thumbnail.js";
 import { chaptersFromManifest, EN_PUBLISH_WINDOW } from "../modules/publish/en-kit.js";
 import { REPO_ROOT } from "../modules/video/proc.js";
@@ -30,6 +32,9 @@ export async function dubOp(id: string, dataDir: string): Promise<Result> {
   const a = await approvedState(id, dataDir);
   if ("no" in a) return a.no;
   const s = a.s;
+  // 画面来源先核（2026-10-25）：没有无字幕母版，配出来的音也没处放，先别花配音的钱
+  const pic = await enPicture((await getContent(id, dataDir))!, dataDir);
+  if (!pic.ok) return pic;
   const r = await dubApprovedScript(id, s.script, s.hash, dataDir);
   if (!r.ok) {
     await recordDubFailure(id, dataDir, { reason: r.error, code: r.code, at: new Date().toISOString(), scriptHash: s.hash });
@@ -37,8 +42,8 @@ export async function dubOp(id: string, dataDir: string): Promise<Result> {
   }
   await recordDubFailure(id, dataDir, null);
   const m = r.manifest;
-  return { ok: true, manifest_path: r.path, lines: m.lines.length, dub_end_s: m.dubEndS, source_end_s: m.sourceEndS, overrun_s: m.overrunS, tail_slowdown: Math.round(m.tailSlowdown * 1000) / 1000, slow_from_s: m.slowFromS,
-    next_action: "前台会话按 video-session 的英文版做法：按清单摆音轨、从 slow_from_s 起把画面放慢 tail_slowdown 倍、做口型对齐参考视频，再 op:\"captions\"" };
+  return { ok: true, manifest_path: r.path, picture_source: pic.picture, lines: m.lines.length, dub_end_s: m.dubEndS, source_end_s: m.sourceEndS, overrun_s: m.overrunS, tail_slowdown: Math.round(m.tailSlowdown * 1000) / 1000, slow_from_s: m.slowFromS,
+    next_action: "前台会话按 video-session 的英文版做法：画面用 picture_source（源视频的无字幕母版），按清单摆音轨、从 slow_from_s 起把画面放慢 tail_slowdown 倍、做口型对齐参考视频，再 op:\"captions\"" };
 }
 
 export async function captionsOp(id: string, dataDir: string): Promise<Result> {
@@ -81,7 +86,8 @@ export async function mediaStatus(id: string, s: EnReviewState, dataDir: string)
   const failed = await readDubFailure(id, dataDir);
   const dub = failed ? `配音失败：${failed.reason}（${failed.at}）` : !m ? "还没配音" : m.scriptHash !== s.hash ? "配音是按旧脚本做的，要重配" : m.refused ? `配音超时被拒：${m.refused}` : `已配音：${m.lines.length} 条，尾段放慢 ${m.tailSlowdown.toFixed(3)}×`;
   const thumb = await readEnThumbnail(id, dataDir);
-  return { dub, thumbnail: thumb?.path ?? null, thumbnail_problem: await thumbnailProblem(thumb), kit_platforms: enKitPlatforms(await loadProfile(dataDir)), publish_window: EN_PUBLISH_WINDOW };
+  const pic = await enPicture((await getContent(id, dataDir))!, dataDir);
+  return { dub, picture_source: pic.ok ? pic.picture.path : null, ...(pic.ok ? {} : { picture_problem: pic.error, picture_next_action: pic.next_action }), thumbnail: thumb?.path ?? null, thumbnail_problem: await thumbnailProblem(thumb), kit_platforms: enKitPlatforms(await loadProfile(dataDir)), publish_window: EN_PUBLISH_WINDOW };
 }
 
 /** 英文发布包：审阅页 + 还差什么 + 批准状态（批在「等你拍板」的「英文发布包」那件） */

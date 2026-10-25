@@ -8,12 +8,13 @@
 
 - 英文脚本已在「等你拍板」里批过：`autocrew_content {action:"en_edition", content_id:<英文版>, edition:{op:"status"}}` 的 `approval` 是「已批准」。
 - ElevenLabs 配好了：创始人在「AutoCrew 设置 → 接入更多 → 英文版配音（ElevenLabs）」里填了 API Key 和克隆声音的 Voice ID（都不回显，只显示已配置 / 掩码；环境变量 ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID 优先）。`dub` 回 `elevenlabs_key_missing` / `elevenlabs_voice_missing` 就请他去那里填，`status` 里会一直显示「配音失败：…」直到下一次配成功。
-- 配音已出、没被拒：`edition:{op:"dub"}` 回 `ok:true`，拿到 `manifest_path`、`tail_slowdown`、`slow_from_s`。回 `overrun_too_long` 就回去把脚本写短、重新请创始人批，不硬放慢；回 `tts_failed` 把原话告诉创始人（不换声音、不换 TTS）。
+- 源视频登记了无字幕母版：剪辑方对源视频 `record kind=clean_master captions_off=true`（绑审过的成片、1920×1080、有音轨、时长对得上）。没登记时 `dub` 回 `no_clean_master`，照回执的 `next_action` 请剪辑方导出并登记，不要拿带字幕的成片顶。
+- 配音已出、没被拒：`edition:{op:"dub"}` 回 `ok:true`，拿到 `manifest_path`、`tail_slowdown`、`slow_from_s` 和 `picture_source`（无字幕母版的绝对路径——下面所有画面都从它来）。回 `overrun_too_long` 就回去把脚本写短、重新请创始人批，不硬放慢；回 `tts_failed` 把原话告诉创始人（不换声音、不换 TTS）。
 
 ## 步骤
 
 1. **摆音轨**：按清单 `lines[]` 的 `startS` 把每段 mp3 放上去（清单保证顺排、间隔 ≥0.15 秒、不早于时间槽，不要自己挪）。
-2. **画面重排时**：`tail_slowdown` > 1 时，从 `slow_from_s` 到结尾把画面放慢这个倍数（≤1.15，清单已核过）；口型对齐的脸上**不放定格帧**。原中文音轨按同一倍数 atempo 一起放慢——口型对齐的服务要参考视频里带原始人声。
+2. **画面重排时**（画面 = `picture_source` 的无字幕母版）：`tail_slowdown` > 1 时，从 `slow_from_s` 到结尾把画面放慢这个倍数（≤1.15，清单已核过）；口型对齐的脸上**不放定格帧**。原中文音轨按同一倍数 atempo 一起放慢——口型对齐的服务要参考视频里带原始人声。
 3. **口型对齐参考视频**：导出重排后的画面 + 原中文人声，**小于 50 MiB**（超了先降码率再导）。没有音轨会被拒（demo 里第一次就因为「video has no audio track」失败）。
 4. **口型对齐**：ChatCut `submit_lipsync`，模式 `preserve-video`，参考视频 = 第 3 步那份，音频 = 第 1 步排好的英文配音。只对 A-roll 口播段；先报价，创始人确认后再提交。
 5. **MG / 字卡**：中文字的 MG 卡按英文重做（ChatCut MG 是代码）；B-roll 里的中文截图保留，加英文说明条。

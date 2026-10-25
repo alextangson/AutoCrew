@@ -7,7 +7,8 @@
  */
 
 /** storyboard：脚本生成的分镜审阅页，只显示，不参与阶段推导（不在 PRODUCTION_KINDS 里） */
-export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project" | "storyboard";
+/** clean_master：审过的成片同剪辑、同 B-roll 和配乐、关掉字幕的 1920×1080「无字幕母版」，英文版的画面来源（2026-10-25） */
+export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project" | "storyboard" | "clean_master";
 /** 制作事实：本轮有一条 accepted 就进剪辑中（D4） */
 export const PRODUCTION_KINDS: ReadonlySet<FactKind> = new Set(["aroll", "cut", "srt", "cover", "chatcut_project"]);
 
@@ -63,7 +64,9 @@ export interface Fact {
   auto_attached?: true;
   /** storyboard：同目录脚本回执的 sha256 */
   receipt_sha256?: string;
-  /** srt：所属成片的 sha */
+  /** clean_master：剪辑方声明字幕轨已关（烧进去的字幕自动查不出来，只能靠声明 + ffprobe 核尺寸 / 音轨 / 时长） */
+  captions_off?: true;
+  /** srt / clean_master：所属成片的 sha */
   for_cut?: string;
   /** chatcut_project */
   project_id?: string;

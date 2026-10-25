@@ -267,7 +267,7 @@ function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: strin
     request_id: a.request_id, evidence: p.evidence, ...(txnId ? { txn_id: txnId } : {}),
     path: relPath ?? p.source, sha256: p.sha256, size: p.id.size, mtime_ms: p.id.mtime_ms,
     ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.kind === "cut" ? { export_mtime_ms: p.id.mtime_ms } : {}), ...(p.kind === "aroll" ? { source_path: p.source } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
-    ...(a.cover_text && p.kind === "cover" ? { text: a.cover_text } : {}), ...(p.for_cut ? { for_cut: p.for_cut } : {}), ...(a.note ? { note: a.note } : {}),
+    ...(a.cover_text && p.kind === "cover" ? { text: a.cover_text } : {}), ...(p.for_cut ? { for_cut: p.for_cut } : {}), ...(a.note ? { note: a.note } : {}), ...(a.captions_off && p.kind === "clean_master" ? { captions_off: true as const } : {}),
   };
 }
 
@@ -334,7 +334,7 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
       // 封面记进组（review-inbox §6.1）：项目内原地收的按所在目录；其余按计划的组。同 sha 进新组 = 新成员关系
       const coverEvents = fact.kind === "cover" && fact.state === "accepted" ? joinCoverGroup(doc, fact, p, a) : [];
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
-      if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
+      if (reuse && p.for_cut && (fact.kind === "srt" || fact.kind === "clean_master") && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
       const args = opts.keepArgs ? doc.requests?.[a.request_id]?.args ?? requestArgs(a) : requestArgs(a);
       // group_id 先写进 core 再落盘（整分支审 14 P2）：重放 / 中断后恢复读到的回执要带组
@@ -487,6 +487,7 @@ function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
   if (core.kind === "storyboard") return `分镜已收下。要创始人拍板就用 ask kind=分镜 fact_id="${core.fact_id}"（选项里放 id=approve 表示通过），它会进「等你拍板」；不要再发 MD 或文件路径当分镜，也别在聊天里问。`;
   if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"）。配乐和混音都好了才算可以审：那时 mark_ready fact_id="${core.fact_id}"（或 record 时带 review=true），创始人在「等你拍板」里审——成片通过只能创始人点。`;
+  if (core.kind === "clean_master") return "无字幕母版已记下，绑在审过的那版成片上：英文版会用它当画面。成片换版后要从新时间线关掉字幕重新导出、重新报。";
   if (core.kind === "cover") return "封面已记下。一组要 3:4 + 4:3：下次用 paths 一次记一对，或第二张带 pair_with=<第一张 fact_id>。挑哪组只能创始人在「等你拍板」里点。";
   const missing = exp.missing.length ? `还差：${exp.missing.join("、")}。` : "";
   return `${missing}看 autocrew_content summary 取最新进度；批准与选封面只能创始人在「等你拍板」里点。`;

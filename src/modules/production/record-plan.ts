@@ -18,6 +18,7 @@ import { checkCover, checkDuration, resolveLocalFile, stableFingerprint, type Fi
 import type { Parsed, RecordArgs } from "./record-args.js";
 import { classify, movableRoots, now, probe, type Location } from "./roots.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
+import { checkMaster, masterCut } from "./clean-master.js";
 
 
 export type Action = "existing" | "in_place" | "move" | "clone" | "candidate";
@@ -95,7 +96,7 @@ function resolveForCut(a: RecordArgs, doc: ProductionDoc): Parsed<string | undef
  */
 function sameFileFact(doc: ProductionDoc, kind: Fact["kind"], sha: string, forCut: string | undefined): Fact | undefined {
   const same = inRound(doc).filter((f) => f.kind === kind && f.sha256 === sha);
-  if (kind !== "srt") return same[0];
+  if (kind !== "srt" && kind !== "clean_master") return same[0];
   return same.find((f) => f.for_cut === forCut) ?? same.find((f) => !f.for_cut) ?? same.find((f) => f.state === "rejected");
 }
 
@@ -180,6 +181,8 @@ async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc,
 export function targetDirOf(kind: Fact["kind"], version?: number): string {
   if (kind === "aroll") return "02-aroll";
   if (kind === "cover") return `05-cover/v${String(version).padStart(3, "0")}`;
+  // 母版单放一层：对账只扫 04-edit 顶层的视频当成片，放在顶层会被当成又一版成片收进来
+  if (kind === "clean_master") return "04-edit/无字幕母版";
   return "04-edit";
 }
 
@@ -198,12 +201,25 @@ export async function checkTargetDir(projectRoot: string, rel: string): Promise<
   return { ok: true, value: undefined };
 }
 
+/** 无字幕母版：先认审过的成片，再按它核尺寸 / 音轨 / 时长（clean-master.ts） */
+async function masterChecks(a: RecordArgs, content: Content, doc: ProductionDoc, file: string): Promise<Parsed<{ for_cut?: string; duration_ms?: number }>> {
+  if (a.kind !== "clean_master") return { ok: true, value: {} };
+  const cut = masterCut(doc, content.body ?? "", a.for_cut);
+  if (!cut.ok) return cut;
+  const d = await checkMaster(file, probe, cut.value);
+  return d.ok ? { ok: true, value: { for_cut: cut.value.sha256!, duration_ms: d.value } } : d;
+}
+
 export async function planFileRecord(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Parsed<FilePlan>> {
   const library = readLibraryLocation()?.root;
   const file = await inspectFile(a, [contentRoot(content.id, dataDir), ...(library ? [library] : [])]);
   if (!file.ok) return file;
-  const forCut = resolveForCut(a, doc);
-  if (!forCut.ok) return forCut;
+  const master = await masterChecks(a, content, doc, file.value.source);
+  if (!master.ok) return master;
+  if (master.value.duration_ms) file.value.duration_ms = master.value.duration_ms;
+  const srtCut = resolveForCut(a, doc);
+  if (!srtCut.ok) return srtCut;
+  const forCut = { value: srtCut.value ?? master.value.for_cut };
   const existing = sameFileFact(doc, a.kind, file.value.sha256, forCut.value);
   if (existing?.state === "rejected") return deny("rejected_before", "创始人已经说过这个文件「不是这条」，不再收");
   const target = coverTarget(a, doc, file.value.ratio);

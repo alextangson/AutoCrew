@@ -29,7 +29,8 @@ export const SEGMENTS = [
   { cues: "3-4", en: "Same hard problems, same model. After those numbers, I believe the opposite.", keyword: "the opposite" },
 ];
 
-export async function enSourceVideo(platforms: string[], srt = EN_SRT): Promise<{ env: Env; id: string }> {
+/** master=false：不登记无字幕母版（测英文版缺画面来源时拒） */
+export async function enSourceVideo(platforms: string[], srt = EN_SRT, opts: { master?: boolean } = {}): Promise<{ env: Env; id: string }> {
   const env = await makeEnv({ enabled: true });
   await initProfile(env.dir);
   await updateProfile({ platforms }, env.dir);
@@ -42,6 +43,9 @@ export async function enSourceVideo(platforms: string[], srt = EN_SRT): Promise<
   const sha = doc.facts.find((f) => f.id === cut.fact_id)!.sha256!;
   await waiveSliverCheck(env, c.id, sha);
   expect(await founderDecision(c.id, "approve_cut", { fact_id: cut.fact_id, sha256: sha }, env.dir)).toMatchObject({ ok: true });
+  if (opts.master !== false) {
+    expect(await record(env, { content_id: c.id, kind: "clean_master", path: await put(path.join(env.chatcut, "深度思考-无字幕.mp4"), "master-v1"), request_id: "m", captions_off: true })).toMatchObject({ ok: true });
+  }
   return { env, id: c.id };
 }
 

@@ -210,6 +210,9 @@
      "body": {
       "type": "string"
      },
+     "captions_off": {
+      "type": "boolean"
+     },
      "chatcut_project_id": {
       "type": "string"
      },
@@ -285,6 +288,7 @@
        "chatcut_project",
        "publish",
        "storyboard",
+       "clean_master",
        "粗剪",
        "分镜",
        "样片",
@@ -3246,6 +3250,9 @@
      "body": {
       "type": "string"
      },
+     "captions_off": {
+      "type": "boolean"
+     },
      "chatcut_project_id": {
       "type": "string"
      },
@@ -3321,6 +3328,7 @@
        "chatcut_project",
        "publish",
        "storyboard",
+       "clean_master",
        "粗剪",
        "分镜",
        "样片",

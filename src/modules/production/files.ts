@@ -125,11 +125,15 @@ export async function stableFingerprint(file: string, now: number): Promise<Chec
   return { ok: true, value: { id: after, sha256 } };
 }
 
-export type Probe = (file: string) => Promise<{ durationMs: number } | { error: string }>;
+/** width / height / audio：无字幕母版要核（没给 = 不知道，母版按不合格拒） */
+export interface ProbeInfo { durationMs: number; width?: number; height?: number; audio?: boolean }
+export type Probe = (file: string) => Promise<ProbeInfo | { error: string }>;
 
 export const ffprobeDuration: Probe = async (file) => {
   const r = await probeMedia(file);
-  return r.ok ? { durationMs: r.probe.durationMs } : { error: r.reason };
+  if (!r.ok) return { error: r.reason };
+  const v = r.probe.video;
+  return { durationMs: r.probe.durationMs, ...(v ? { width: v.width, height: v.height } : {}), audio: Boolean(r.probe.audio) };
 };
 
 /** 视频（aroll / cut）：ffprobe 读得出时长 > 0，否则当没导完 */
