@@ -18,6 +18,7 @@ let dir: string;
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-wxpull-"));
+  await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify({ platforms: ["wechat_mp"] }));
 });
 afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -84,5 +85,25 @@ describe("flywheel:wechat_pull", () => {
     expect(String(r.error)).toContain("风控");
     expect(String(r.error)).toContain("入账 1 条");
     expect((await listOutcomes(dir)).some((o) => o.metrics.views === 9)).toBe(true);
+  });
+
+  it("和定时回流同一个入口：没勾公众号不抓；同时在抓就回 in_flight，不重复打后台", async () => {
+    await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify({ platforms: ["douyin"] }));
+    const pull = vi.fn(async () => ({ status: "ok" as const, rows: [] }));
+    const r = (await wechatPullHandler({ _dataDir: dir }, undefined, { pull })) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toContain("没勾");
+    expect(pull).not.toHaveBeenCalled();
+
+    await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify({ platforms: ["wechat_mp"] }));
+    let release!: () => void;
+    const slow = vi.fn(() => new Promise<{ status: "ok"; rows: never[] }>((res) => { release = () => res({ status: "ok", rows: [] }); }));
+    const first = wechatPullHandler({ _dataDir: dir }, undefined, { pull: slow });
+    await vi.waitFor(() => expect(slow).toHaveBeenCalled());
+    const second = (await wechatPullHandler({ _dataDir: dir }, undefined, { pull })) as { ok: boolean; error?: string };
+    expect(second).toMatchObject({ ok: false });
+    expect(String(second.error)).toContain("正在抓");
+    release();
+    expect(await first).toMatchObject({ ok: true, data: { imported: 0 } });
   });
 });
