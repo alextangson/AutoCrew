@@ -9,6 +9,7 @@ import type { RunRecorder } from "../runtime/run-log.js";
 import { resolveFallbackModel, type EngineConfig } from "./config.js";
 import { recordEngineFallback, recordEngineLive } from "./health-sink.js";
 import { breakerOpenError, isLineFault, trippedProviders } from "./breaker.js";
+import { classifyEngineError } from "./error-kind.js";
 import { registerExchange } from "./observer.js";
 import { makePiModel, toPiContext, startPiStream, consumePiStream, fromAssistant } from "./pi-wire.js";
 import type { LoopEvent, LoopFallbackInfo, LoopStreamEvent, LoopTool } from "./loop.js";
@@ -128,6 +129,8 @@ function fallbackProviderId(config: EngineConfig): string {
 
 /** 健康回执（观测层，自吞错）：jobId 取 run-log 的 runId,足够从横幅点回那条任务 */
 function live(p: ModelCallParams, providerId: string, role: string, ok: boolean, err?: unknown): void {
+  // 我们自己掐掉的（用户按停、看门狗中止）说明不了线路好坏：不记，免得一次取消把端点标红
+  if (!ok && (p.signal?.aborted || classifyEngineError(err).kind === "aborted")) return;
   recordEngineLive({
     providerId,
     ok,
@@ -237,7 +240,7 @@ export async function callModel(p: ModelCallParams): Promise<ModelCallOutcome> {
     return { data, model: p.model };
   } catch (err) {
     // 中止不是线路的病:用户按了停,不该把端点标成坏的
-    if (!p.signal?.aborted) live(p, who.providerId, who.role, false, err);
+    live(p, who.providerId, who.role, false, err);
     if (!leg || !isRetryable(err) || p.signal?.aborted) throw err;
     const fbTripped = tripped.get(leg.id);
     if (fbTripped !== undefined) {

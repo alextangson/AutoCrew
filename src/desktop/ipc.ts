@@ -39,6 +39,7 @@ import { deleteExampleTopic } from "../tools/topic-create.js";
  *   settings:open_config {}                                (打开实际生效的 engine.json)
  *   settings:test_route { provider_id, model }             (拿已保存的配置真发一次调用)
  *   engine:health      {}                                  (只读；每个端点最近一次探针 + 真实调用结果)
+ *   engine:recheck     { force? }                          (复探过时的失败 / 「重新检查」；回最新视图)
  *   hosts:list         {}                                  (只读；命名令牌清单，永不含 token 值)
  *   hosts:revoke       { host }                            (删掉 tokens/<host>.token，下一次调用 401)
  *   settings:search_get {}
@@ -139,7 +140,7 @@ import {
   openEngineConfigFile,
 } from "./settings.js";
 import { testEngineRoute } from "./settings-probe.js";
-import { getEngineHealth } from "./engine-health.js";
+import { getEngineHealth, recheckEngineHealth } from "./engine-health.js";
 import { hostsListHandler, hostsRevokeHandler } from "./host-tokens.js";
 import { WORKBUDDY_HOST } from "./workbuddy-connect.js";
 import { wechatPullHandler } from "./wechat-pull.js";
@@ -1313,6 +1314,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "settings:test_route": (payload) => testEngineRoute(payload),
     // 线路健康（P2 spec §4.1）：只读派生视图，不含密钥；更新靠四个时机推，不靠轮询
     "engine:health": getEngineHealth,
+    "engine:recheck": recheckEngineHealth,
     // 宿主令牌（P3 spec §4.1）：只读清单 + 撤销（撤销 = 删文件，下一次调用 401）
     "hosts:list": hostsListHandler,
     "hosts:revoke": async (p) => {

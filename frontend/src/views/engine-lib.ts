@@ -229,6 +229,16 @@ function outcomeClause(view: EngineHealthView, providerId: string, actions: stri
 export interface BannerLine {
   providerId: string;
   text: string;
+  /** 这条失败证据的时间 = 上次检查这条线的时间 */
+  checkedAt: string;
+}
+
+/** 与后端 STALE_FAILURE_MS 同值：失败过了这么久没新证据，就该复探一次 */
+export const STALE_FAILURE_MS = 5 * 60_000;
+
+/** 有没有挂着红点、但证据已经过时的线（前端据此请后端复探） */
+export function hasStaleFailure(lines: BannerLine[], now: number): boolean {
+  return lines.some((l) => now - new Date(l.checkedAt).getTime() > STALE_FAILURE_MS);
 }
 
 /**
@@ -258,7 +268,7 @@ export function engineBannerLines(view: EngineHealthView | null, now: number): B
     // 去掉开头的角色词和结尾的「已中断」句，免得读成「主端点：主端点 …已中断。下次由备用顶上」
     const reason = stripRoleAndOutcome(last.error ?? "调用失败，原因未记录");
     const actions = affectedActions(id, pointers);
-    lines.push({ providerId: id, text: `${who}：${reason}（${relativeTime(last.at, now)}）${outcomeClause(view, id, actions)}` });
+    lines.push({ providerId: id, checkedAt: last.at, text: `${who}：${reason}${outcomeClause(view, id, actions)}上次检查：${relativeTime(last.at, now)}。` });
   }
   return lines;
 }
