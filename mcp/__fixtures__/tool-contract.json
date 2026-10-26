@@ -2563,6 +2563,7 @@
         "type": "string"
        },
        "chapters": {},
+       "ai_disclosure": {},
        "cover_text": {
         "type": "string"
        },
@@ -5471,6 +5472,7 @@
         "type": "string"
        },
        "chapters": {},
+       "ai_disclosure": {},
        "cover_text": {
         "type": "string"
        },
