@@ -1,6 +1,6 @@
 /**
  * 英文字幕的分条（全媒体 spec §3.3「Captions」style A）：文字只取批过的英文脚本，时间取配音的字级时间戳；
- * 每条最多两行、每行不超过 42 个字符，整条一起出一起收，每条最多一个标黄关键词（脚本里该段的 keyword）。
+ * 每条最多两行、每行不超过 42 个字符（装满再换行、句末收条），整条一起出一起收，每条最多一个标黄关键词（脚本里该段的 keyword）。
  * 产出给 `sidecars/captions/burn_captions.py` 烧进画面的 cues JSON；样式参数只在那个脚本里写一份。
  */
 import type { DubManifest, WordTime } from "./dub.js";
@@ -9,34 +9,40 @@ import type { EnScript } from "./script.js";
 export const LINE_MAX = 42;
 export interface Cue { start: number; end: number; lines: string[] }
 
-/** 词数组按 ≤ 2 行 × 42 字符切成若干条；句末标点（. ? ! :）后尽量断 */
-export function chunkWords<T extends { word: string }>(words: T[]): T[][] {
-  const out: T[][] = [];
-  let cur: T[] = [];
-  const fits = (list: T[]) => wrap(list.map((w) => w.word)).length <= 2;
-  for (const w of words) {
-    if (cur.length && !fits([...cur, w])) { out.push(cur); cur = []; }
-    cur.push(w);
-    if (/[.?!:]$/.test(w.word) && cur.map((x) => x.word).join(" ").length >= LINE_MAX / 2) { out.push(cur); cur = []; }
-  }
-  if (cur.length) out.push(cur);
+const SENTENCE_END = /[.?!]["'”’)\]]*$/;
+
+/** 把 w 放进这一条：本行放得下就接上，放不下换第二行；两行都满 = false（要另起一条） */
+function place<T extends { word: string }>(cue: T[][], w: T): boolean {
+  const line = cue.at(-1);
+  if (line && [...line, w].map((x) => x.word).join(" ").length <= LINE_MAX) { line.push(w); return true; }
+  if (cue.length < 2) { cue.push([w]); return true; }
+  return false;
+}
+
+/**
+ * 词 → 若干条，每条 1–2 行（每行 ≤ 42）：一行装满再换行，两行满了另起一条；句末（. ? !）一定收住这一条。
+ * 规则同 2026-10-26 安克首跑创始人认过的 captions-v1-retimed.json（那份手工版偶有句末并条，这里一律在句末断）；
+ * 之前按「两行能否平衡」判，两行都放不下时会漏出 136 字符的一行。
+ */
+export function chunkLines<T extends { word: string }>(words: T[]): T[][][] {
+  const out: T[][][] = [];
+  let cue: T[][] = [];
+  words.forEach((w) => {
+    if (!place(cue, w)) { out.push(cue); cue = [[w]]; }
+    if (SENTENCE_END.test(w.word)) { out.push(cue); cue = []; }
+  });
+  if (cue.length) out.push(cue);
   return out;
 }
 
-/** 词 → 行（每行 ≤ 42）；两行时尽量平衡，且尽量不把关键词拆到两行（keep = 关键词所在的词序号区间） */
-export function wrap(words: string[], keep?: [number, number]): string[] {
-  const text = words.join(" ");
-  if (text.length <= LINE_MAX) return [text];
-  let best: string[] | null = null, bestCuts = true;
-  for (let i = 1; i < words.length; i++) {
-    const a = words.slice(0, i).join(" "), b = words.slice(i).join(" ");
-    if (a.length > LINE_MAX || b.length > LINE_MAX) continue;
-    const cuts = !!keep && i > keep[0] && i <= keep[1];
-    const better = !best || (bestCuts && !cuts) || (bestCuts === cuts && Math.abs(a.length - b.length) < Math.abs(best[0].length - best[1].length));
-    if (better) { best = [a, b]; bestCuts = cuts; }
-  }
-  // 一个词就超过一行（buildCues 已先拒）：原样一行，不截断、不加省略号
-  return best ?? [text];
+/** 关键词被换行拆开、且整体挪到第二行放得下：把换行提前到关键词前（keep = 关键词在这条里的词序号区间） */
+export function keepKeyword(lines: string[][], keep: [number, number] | null): string[][] {
+  if (lines.length !== 2 || !keep) return lines;
+  const n1 = lines[0].length;
+  if (!(keep[0] < n1 && keep[1] >= n1) || keep[0] === 0) return lines;
+  const all = [...lines[0], ...lines[1]];
+  const a = all.slice(0, keep[0]), b = all.slice(keep[0]);
+  return b.join(" ").length <= LINE_MAX ? [a, b] : lines;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -98,11 +104,12 @@ export function buildCues(manifest: DubManifest, script: EnScript): CueResult {
     const long = words.find((w) => w.word.length > LINE_MAX);
     if (long) return { ok: false, error: `第 ${line.index} 段有一个词「${long.word}」超过 ${LINE_MAX} 个字符，一行字幕放不下：把这段改短（比如网址改成口头说法）重交脚本、重新批准，不在字幕里截断批过的文字` };
     let keywordLeft = seg.keyword;
-    for (const group of chunkWords(words)) {
-      const ws = group.map((w) => w.word);
-      const span = keywordSpan(ws, keywordLeft);
+    for (const group of chunkLines(words)) {
+      const flat = group.flat();
+      const span = keywordSpan(flat.map((w) => w.word), keywordLeft);
       if (span) keywordLeft = undefined;
-      cues.push({ start: group[0].startS, end: group.at(-1)!.endS, lines: markKeyword(wrap(ws, span ?? undefined), span) });
+      const lines = keepKeyword(group.map((l) => l.map((w) => w.word)), span).map((l) => l.join(" "));
+      cues.push({ start: flat[0].startS, end: flat.at(-1)!.endS, lines: markKeyword(lines, span) });
     }
   }
   return { ok: true, cues };
