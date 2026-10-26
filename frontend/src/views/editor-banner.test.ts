@@ -3,6 +3,7 @@
  * 1b 验收：待审的视频稿（写稿工作台）已经有原片 → 稿件页标题下那一行要出现，且只出现一次。
  * 渲染整个 Editor，不是单独渲染横幅（上一版只测了组件本身，漏了写稿工作台没挂它）。
  * 2026-10-12：标题下那一行并进顶部「现在轮到你」卡（同一句话只出现一次，不和卡打架），断言改看卡。
+ * 2026-10-26：认稿按钮挪到顶栏「定稿」，卡没有主按钮就收成顶栏一行，原片那句跟着进这一行。
  */
 import { describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
@@ -16,7 +17,9 @@ Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
 const CONTENT = { id: "content-1-abc", title: "两段原片的稿", body: "正文", platform: "douyin", status: "reviewing", tags: [], createdAt: "2026-09-29T00:00:00Z", updatedAt: "2026-09-29T00:00:00Z" };
 
 vi.mock("../transport", () => ({
-  invoke: vi.fn(async (channel: string) => channel === "content:get" ? { ok: true, content: CONTENT } : { ok: true, data: { entries: [], versions: [] }, transitions: [] }),
+  invoke: vi.fn(async (channel: string) => channel === "content:get" ? { ok: true, content: CONTENT }
+    : channel === "script:final_get" ? { ok: true, data: { status: "reviewing", approved_at: null, writing: true, gaps: null } }
+    : { ok: true, data: { entries: [], versions: [] }, transitions: [] }),
   subscribeEvents: () => () => {},
 }));
 vi.mock("./board-api", () => ({
@@ -35,9 +38,10 @@ describe("稿件页（写稿工作台）的阶段行", () => {
     await act(async () => { root.render(createElement(Editor, { id: CONTENT.id, back: () => {} })); });
     await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
     expect(el.querySelectorAll(".ed-production-banner")).toHaveLength(0);
-    const cards = el.querySelectorAll(".stage-card");
-    expect(cards).toHaveLength(1);
-    expect(cards[0].textContent).toContain("稿子没问题");
+    expect(el.querySelectorAll(".stage-card")).toHaveLength(0);
+    expect(el.querySelector(".stage-inline")?.textContent).toContain("顶栏的「定稿」");
+    expect(el.querySelector(".ed-finalize button")?.textContent).toBe("定稿");
+    expect(el.textContent).not.toContain("稿子没问题");
     expect(el.textContent!.split("已经有原片了").length - 1).toBe(1);
     // 顶栏小标签用推导出的阶段，不用原始 status（待审）
     expect(el.querySelector(".ed-status-label")?.textContent).toBe("写稿中");

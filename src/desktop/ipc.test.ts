@@ -158,8 +158,8 @@ describe("IPC_CHANNELS", () => {
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
   // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
-  it("has exactly 178 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(178);
+  it("has exactly 180 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(180);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -253,6 +253,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           // 薄路径定稿：desktop/draft-handlers.ts（「定了」只认浏览器会话）
           ch !== "draft:final_get" &&
           ch !== "draft:finalize" &&
+          ch !== "script:final_get" &&
+          ch !== "script:finalize" &&
           ch !== "generate:script" &&
           // 中断稿原地重写：ipc.ts 的 generateRetryHandler（带 job-claims 防双击）
           ch !== "generate:retry" &&

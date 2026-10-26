@@ -17,7 +17,7 @@ const fail = (code: string, error: string, extra: R = {}): R => ({ ok: false, co
 export const KEPT_REASON = "创始人在工作台定稿时保留，未核验";
 
 /** 保留项写成 user_claim 条目（编号按清单项稳定生成，重复点幂等） */
-function withKeptEntries(c: Content, items: ChecklistItem[]): { entries: LedgerEntry[]; keptIds: Map<string, string> } {
+export function withKeptEntries(c: Content, items: ChecklistItem[]): { entries: LedgerEntry[]; keptIds: Map<string, string> } {
   const ledger = restoreEvidenceLedger(c.evidenceLedger ?? { entries: [], lookups: [], budget: { max: 0, used: 0 } });
   const keptIds = new Map<string, string>();
   for (const item of items) {
@@ -45,7 +45,7 @@ const creatorCitation = (body: string, at: { start: number; end: number }, why: 
 });
 const EXEMPT_WHY = { example: "类比 / 示意例子（agent 标注）", judgment: "我们自己的判断（agent 标注）" } as const;
 
-function citationsFor(body: string, items: ChecklistItem[], entries: readonly LedgerEntry[], keptIds: Map<string, string>): Citation[] {
+export function citationsFor(body: string, items: ChecklistItem[], entries: readonly LedgerEntry[], keptIds: Map<string, string>): Citation[] {
   const byId = new Map(entries.map((e) => [e.id, e]));
   const out = items.flatMap((item) => {
     if (item.status === "exempt") return item.evidence_ids.length ? ledgerCitations(body, item, item.evidence_ids, byId) : [creatorCitation(body, item, EXEMPT_WHY[item.kind ?? "example"])];

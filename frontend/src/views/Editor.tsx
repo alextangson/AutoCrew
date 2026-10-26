@@ -39,6 +39,7 @@ import { PublishDesk } from "./PublishDesk";
 import { CardPanel } from "./CardPanel";
 import { progressKey } from "./card-next";
 import { DraftFinalPanel } from "./DraftFinalPanel";
+import { FinalizeButton } from "./FinalizeButton";
 import {
   platformLabel,
   videoStatus,
@@ -446,6 +447,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   };
 
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
+  // 顶栏「定稿」管视频口播稿（派生的英文版 / 公众号文章照旧走自己的审核）
+  const topbarFinalize = isVideo && !(c as { derivedFrom?: unknown }).derivedFrom;
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
   const statusWorkspace = workspaceForStatus(c.status);
@@ -454,7 +457,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   shownWorkspace.current = workspace;
   const cardEl = (deskMode = false) => <StageCard inlineSlot={stageSlot} content={{ id: props.id, title: c.title, status: c.status, platform: c.platform, body: c.body ?? "", updatedAt: c.updatedAt }}
     transitions={isVideo ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
-    isVideo={isVideo} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft" && !deskMode} deskMode={deskMode} />;
+    isVideo={isVideo} hideApprove={topbarFinalize} dirty={workspace === "draft" && (dirty || saving)} reload={async () => { await load({ quiet: true }); }} onStage={setDerivedStage} showTitle={workspace !== "draft" && !deskMode} deskMode={deskMode} />;
   const stageCard = cardEl();
   // 视频稿：一个发布台读模型 + 本体启用时的左侧进度栏（发布台 spec 吸收 8 / 12）
   const frame = (node: ReactNode) => <DeskFrame contentId={props.id} refreshKey={progressKey(c.status, c.updatedAt)} isVideo={isVideo} versions={versions}>{node}</DeskFrame>;
@@ -500,6 +503,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             onClick={() => void save()}
             title={remoteChanged ? "保存你保留的本地版本" : "保存当前标题和正文"}
           >{saving ? "保存中…" : dirty ? "保存修改" : "✓ 已保存"}</button>}
+          {topbarFinalize && <FinalizeButton contentId={props.id} savedBody={c.body ?? ""} refreshKey={progressKey(c.status, c.updatedAt)}
+            dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />}
         </div>
       </div>
     </div>
@@ -703,7 +708,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
         </div>
 
         {/* 定稿区（试读 + 出处清单 +「定了」）在正文之后：先读稿、再看反馈、再拍板 */}
-        <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}:${(c as { draftPath?: { checklistAt?: string } }).draftPath?.checklistAt ?? ""}`} dirty={dirty || saving} reload={async () => { await load({ quiet: true }); }} />
+        <DraftFinalPanel contentId={props.id} refreshKey={`${c.status}:${c.updatedAt}:${(c as { draftPath?: { checklistAt?: string } }).draftPath?.checklistAt ?? ""}`} />
 
         {/* 配图要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作。
             成片向导与封面折叠区已搬去各自的工作台（阶段制 spec §2）。 */}

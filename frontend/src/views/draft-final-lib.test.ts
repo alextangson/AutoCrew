@@ -25,7 +25,7 @@ import { ChecklistRow, ReviewNotes } from "./DraftFinalPanel";
 
 describe("清单一行（Codex 复审 P2）", () => {
   it("有出处的项也把要人看的模糊数字摆出来", () => {
-    const html = renderToStaticMarkup(createElement(ChecklistRow, { item: { id: "a", status: "sourced", text: "大概三成的人", evidence_ids: ["ev-d1"], needs_human: ["大概三成"] }, kept: false, toggle: () => {} }));
+    const html = renderToStaticMarkup(createElement(ChecklistRow, { item: { id: "a", status: "sourced", text: "大概三成的人", evidence_ids: ["ev-d1"], needs_human: ["大概三成"] } }));
     expect(html).toContain("大概三成");
     expect(html).toContain("要你看一眼的数字");
   });

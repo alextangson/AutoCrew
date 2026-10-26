@@ -164,6 +164,8 @@ export const IPC_CHANNELS = [
   // 灵感 → A-roll 薄路径定稿（2026-10-04）：清单 + 「定了」（只认浏览器会话）
   "draft:final_get",
   "draft:finalize",
+  "script:final_get",
+  "script:finalize",
   "content:delete",
   "content:restore",
   "content:open_folder",

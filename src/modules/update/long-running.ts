@@ -78,7 +78,7 @@ export const SHORT_CHANNELS: ReadonlySet<string> = new Set([
   "campaign:list", "campaign:get", "campaign:create", "campaign:transition", "campaign:artifact_get", "campaign:set_autonomy",
   "campaign:patch_propose", "campaign:patch_decide",
   "topics:list", "topic:update", "topic:delete", "topic:delete_example", "topic:restore", "topic:rate", "topic:select_angle", "topic:clear_angle", "trash:list",
-  "draft:final_get", "draft:finalize",
+  "draft:final_get", "draft:finalize", "script:final_get", "script:finalize",
   "doctor:inbox", "inbox:list", "inbox:delete", "inbox:settings_get", "inbox:settings_set", "inbox:status",
   "patterns:list", "patterns:update", "patterns:delete",
   "research:status", "research:brief_get", "research:list_assets",

@@ -17,6 +17,7 @@ import { publishAsk, showChips, targetDecision, type PublishTarget, type TargetA
 import { PlatformChips } from "./PlatformChips";
 import { useDesk } from "./use-desk";
 import { RailLine } from "./ProgressRail";
+import { withTopbarFinalize } from "./finalize-button";
 import { isHttpUrl, platformLabel } from "../lib";
 
 export interface StageCardProps {
@@ -32,6 +33,8 @@ export interface StageCardProps {
   showTitle?: boolean;
   /** 发布表模式（吸收 14）：平台标签只显示状态、不带动作，动作都在表的行里；卡上没事时写读模型给的一句 */
   deskMode?: boolean;
+  /** 顶栏有「定稿」按钮：卡上的认稿主按钮让位，「更多」里给「撤回定稿」 */
+  hideApprove?: boolean;
   /** 顶栏里留的位置：不用你操作时（AI 在做 / 没事），卡收成顶栏一行挂到这里；轮到你才出整张卡 */
   inlineSlot?: HTMLElement | null;
 }
@@ -71,7 +74,8 @@ export function StageCard(p: StageCardProps) {
     {error ? <p className="stage-card-error" role="alert">进度读不出来：{error} <button className="bcard-link" onClick={() => void refresh()}>重试</button></p> : <p className="stage-card-head">读取中…</p>}
   </section>;
   const idle = Math.floor((Date.now() - Date.parse(c.updatedAt)) / 3600_000);
-  const base: CardModel = data?.active ? derivedModel(data, p.transitions, Number.isFinite(idle) ? idle : null) : legacyModel(c.status, p.transitions, p.isVideo);
+  const raw: CardModel = data?.active ? derivedModel(data, p.transitions, Number.isFinite(idle) ? idle : null) : legacyModel(c.status, p.transitions, p.isVideo);
+  const base = p.hideApprove ? withTopbarFinalize(raw, data?.status ?? c.status) : raw;
   // 已发布、没事可做：「还有 N 天公开」/「公开第 N 天：比你抖音的中位数高 X%」（spec §2 / 吸收 1）
   const model: CardModel = p.deskMode && base.tone === "none" && desk?.summary ? { ...base, text: desk.summary } : base;
   const exec = (label: string, run: Run, confirm?: Confirm) => g.run(label, async () => {
