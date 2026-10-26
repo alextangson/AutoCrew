@@ -2563,6 +2563,7 @@
         "type": "string"
        },
        "chapters": {},
+       "ai_disclosure": {},
        "cover_text": {
         "type": "string"
        },
@@ -2591,6 +2592,9 @@
      },
      "platform": {
       "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
      }
     },
     "required": [
@@ -5471,6 +5475,7 @@
         "type": "string"
        },
        "chapters": {},
+       "ai_disclosure": {},
        "cover_text": {
         "type": "string"
        },
@@ -5499,6 +5504,9 @@
      },
      "platform": {
       "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
      }
     },
     "required": [

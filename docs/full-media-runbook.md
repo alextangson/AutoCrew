@@ -39,6 +39,7 @@ Codex 的剪辑技能包在 `~/.codex/skills/personal-ip-video-loop`（真实目
 1. 字幕保持为 ChatCut 里单独的一条字幕轨，不要烧进画面后再接着剪。
 2. 成片审过之后，除了带字幕的成片，再导出一版同样剪辑、同样 B-roll 和配乐、但关掉字幕轨的「无字幕母版」，1920×1080；文件名带「无字幕」。
 3. 用 autocrew_content record 登记：带字幕的成片 kind:cut；成片字幕 kind:srt（绑这版成片，时间要和成片一致）；无字幕母版 kind:clean_master captions_off:true（绑审过的成片；AutoCrew 核 1920×1080、有音轨、时长和成片差不过 0.5 秒，字幕有没有烧进画面查不出来，captions_off 是剪辑方的声明）。
+4. 给创始人看的预览、口型/无字幕之类的中间片放 04-edit/review/（或 99-cache/），文件名带「预览 / preview / 无字幕 / review」的也一样：AutoCrew 自动对账不把它们收成成片版本。只有正式成片放 04-edit 顶层、或用 record kind:cut 登记。
 ```
 
 ### 英文版剪辑（对口型 + 英文字幕）

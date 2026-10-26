@@ -56,10 +56,18 @@ async function fileSeen(root: string, file: string, kind: Fact["kind"], source: 
 }
 
 /** 视频 / 字幕目录：video → cut（或 aroll），srt → srt */
+/**
+ * 04-edit 里的预览 / 中间片不是成片（2026-10-26 安克英文版：「v1-预览」「v2-口型-无字幕」都被收成了成片版本）。
+ * 约定：预览放 04-edit/review/（只扫顶层，子目录本来就不收）；放在顶层的，文件名带 预览 / preview / 无字幕 / review 也不收。
+ * 真要把这样命名的文件当成片，用 record kind=cut 明确登记。
+ */
+export const NOT_A_CUT = /预览|preview|无字幕|review/i;
+
 async function scanMedia(root: string, rel: string, recursive: boolean, videoKind: "cut" | "aroll"): Promise<Seen[]> {
   const skip = (r: string) => r.startsWith("_作废-") || r === "autocrew-video" || r.startsWith(`autocrew-video${path.sep}`);
   const out: Array<Seen | null> = [];
   for (const file of await listFiles(path.join(root, rel), recursive, skip)) {
+    if (videoKind === "cut" && NOT_A_CUT.test(path.basename(file))) continue;
     if (VIDEO_EXT.has(ext(file))) out.push(await fileSeen(root, file, videoKind, "reconcile", `项目 ${rel}`));
     else if (videoKind === "cut" && SRT_EXT.has(ext(file))) out.push(await fileSeen(root, file, "srt", "reconcile", `项目 ${rel}`));
   }

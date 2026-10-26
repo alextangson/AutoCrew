@@ -159,9 +159,9 @@ describe("IPC_CHANNELS", () => {
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
   // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
-  // 2026-10-25 在 ego lite 里打开平台后台：ego:open_console（ego-open-console.ts）
-  it("has exactly 179 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(179);
+  // 2026-10-25 在 ego lite 里打开平台后台：ego:open_console（ego-open-console.ts）；2026-10-26 顶栏定稿：script:final_get / script:finalize
+  it("has exactly 181 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(181);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -255,6 +255,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           // 薄路径定稿：desktop/draft-handlers.ts（「定了」只认浏览器会话）
           ch !== "draft:final_get" &&
           ch !== "draft:finalize" &&
+          ch !== "script:final_get" &&
+          ch !== "script:finalize" &&
           ch !== "generate:script" &&
           // 中断稿原地重写：ipc.ts 的 generateRetryHandler（带 job-claims 防双击）
           ch !== "generate:retry" &&

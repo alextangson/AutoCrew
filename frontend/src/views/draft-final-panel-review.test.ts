@@ -30,7 +30,7 @@ afterEach(async () => { await act(async () => root.unmount()); el.remove(); });
 describe("定稿面板：审稿记录跨版本", () => {
   it("显示第 4 版的审稿并标「审的是第 4 版，之后又改过」；示意项进折叠组、不出保留勾选", async () => {
     const { DraftFinalPanel } = await import("./DraftFinalPanel");
-    await act(async () => root.render(createElement(DraftFinalPanel, { contentId: "c1", refreshKey: "k", dirty: false, reload: async () => {} })));
+    await act(async () => root.render(createElement(DraftFinalPanel, { contentId: "c1", refreshKey: "k" })));
     await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
     const text = el.textContent ?? "";
     expect(text).toContain("Codex 审稿");
@@ -38,6 +38,8 @@ describe("定稿面板：审稿记录跨版本", () => {
     expect(text).toContain("建议v4");
     expect(el.querySelector("details summary")?.textContent).toContain("示意/判断，不需要出处");
     expect(el.querySelector("details")?.textContent).toContain("打个比方");
-    expect(el.querySelectorAll('input[type="checkbox"]').length).toBe(1);
+    // 保留勾选已撤（顶栏定稿一律记未核验）：没出处的项只写明定稿时怎么记
+    expect(el.querySelectorAll('input[type="checkbox"]').length).toBe(0);
+    expect(text).toContain("定稿时记为未核验");
   });
 });

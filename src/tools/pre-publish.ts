@@ -28,7 +28,7 @@ import {
   type VideoKit,
   getDataDir,
 } from "../storage/local-store.js";
-import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
+import { claimContent, gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { executeReview } from "./review.js";
 import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
@@ -109,6 +109,7 @@ export const prePublishSchema = Type.Object({
     post_text: Type.Optional(Type.String({ description: "x：帖子正文。" })),
     tags: Type.Optional(Type.Unknown({ description: "youtube：英文 tags 数组。" })),
     chapters: Type.Optional(Type.Unknown({ description: "youtube：[{at:\"0:00\", title}]。" })),
+    ai_disclosure: Type.Optional(Type.Unknown({ description: "youtube：Studio「AI use」的答案 yes / no；英文版（克隆声音 + 对口型）不写默认 yes，填 no 被拒。" })),
     hashtags: Type.Optional(Type.Array(Type.String(), {
       description: "话题标签（不带空格）。caption 里还没有的会并到 caption 末尾，字数按合并后的简介算。",
     })),
@@ -116,17 +117,25 @@ export const prePublishSchema = Type.Object({
       description: "3 个四平台通用标题候选 [{title, method, reason}]，分属方法库 3 个不同类（方法库见 action=title_methods）。",
     })),
     title_method: Type.Optional(Type.String({ description: `本平台 post_title 用的方法 id；创始人自己写的填「${SELF_WRITTEN}」。` })),
-  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
-  claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（pack 或 autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
+  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters/ai_disclosure；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
+  claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（上一次 video_kit 回执里的 claim_token，或 pack / autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
+  takeover: Type.Optional(Type.Boolean({ description: "同宿主另一个会话的认领闲置满 10 分钟后接手（换新令牌）；没闲置照样 claim_held。" })),
 });
 
 /** 已经在发布轨上（含已发/归档）：自动流转到此为止，重跑预检不许把已发布的稿倒拨回待发布 */
 const ON_PUBLISH_TRACK = new Set(["publish_ready", "publishing", "published", "archived"]);
 
 /** 写门（P6 §3.8）：交包、预检推进状态都是写。不带 `_host` 的内部调用（工作台、发布门）按 local-user 越门记账 */
-function gatePublishWrite(params: Record<string, unknown>, contentId: string, dataDir?: string): Promise<WriteGate> {
+async function gatePublishWrite(params: Record<string, unknown>, contentId: string, dataDir?: string): Promise<WriteGate> {
   const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
-  const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  let token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  // takeover:true 和别的写口同一条规矩（claimContent）：同宿主、持有会话闲置满 10 分钟才换新令牌，否则照样 claim_held
+  if (params.takeover === true || params.takeover === "true") {
+    const held = (await getContent(contentId, dataDir))?.claim?.employee ?? "editor";
+    const t = await claimContent(contentId, held, host, dataDir, { token: token || undefined, takeover: true });
+    if (!t.ok) return { denied: { ok: false, error: t.error, ...(t.code ? { code: t.code } : {}), ...(t.holder ? { holder: t.holder } : {}) } };
+    if (t.claim.token) token = t.claim.token;
+  }
   return gateClaimWrite(contentId, { host, token: token || undefined }, dataDir);
 }
 

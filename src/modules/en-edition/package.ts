@@ -89,7 +89,7 @@ function kitProblems(content: Content, platforms: string[], binding: { enScriptH
   return { kits, problems };
 }
 
-const kitView = (k: VideoKit) => ({ postTitle: k.postTitle, caption: k.caption, tags: k.tags ?? [], chapters: k.chapters ?? [], enScriptHash: k.enScriptHash ?? null, enDubHash: k.enDubHash ?? null });
+const kitView = (k: VideoKit) => ({ postTitle: k.postTitle, caption: k.caption, tags: k.tags ?? [], chapters: k.chapters ?? [], enScriptHash: k.enScriptHash ?? null, enDubHash: k.enDubHash ?? null, ...(k.aiDisclosure ? { aiDisclosure: k.aiDisclosure } : {}) });
 
 export async function enPackageState(id: string, dataDir: string): Promise<EnPackageState | { code: string; error: string }> {
   const content = await getContent(id, dataDir).catch(missingAsNull);

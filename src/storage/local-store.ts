@@ -272,6 +272,8 @@ export interface VideoKit {
   tags?: string[];
   /** 英文平台（Phase 3）：YouTube 章节（已并进 caption，这里留结构给发布手册核对） */
   chapters?: Array<{ at: string; startS: number; title: string }>;
+  /** YouTube 英文版：Studio「AI use」那一问的答案（克隆声音 + 对口型 = yes）；旧包没有 = 按 yes */
+  aiDisclosure?: "yes" | "no";
   /** 英文平台：做包时批过的英文脚本指纹、配音清单指纹（任何一样变了包就过期） */
   enScriptHash?: string;
   enDubHash?: string;
@@ -1976,7 +1978,8 @@ async function transitionStatusLocked(
   // 分两次写就会出现「状态已推进但账没记」的中间态。
   const handoff = handoffForStatus(content, targetStatus);
   if (handoff) {
-    updates.handoffs = withHandoff(content, {
+    // 补丁里已经记过账（如顶栏定稿释放写手认领）就接在后面，不盖掉
+    updates.handoffs = withHandoff(updates.handoffs ? { handoffs: updates.handoffs } : content, {
       ...handoff,
       by: opts?.host ?? content.claim?.host ?? LOCAL_HOST,
       at: now,

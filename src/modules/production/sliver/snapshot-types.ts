@@ -6,7 +6,7 @@
 
 /**
  * 逐版核过：检查要读的工程 / 时间线 / 轨道 / 素材字段与 v4 一致（10-11 对过真实 v11 工程；10-26 对过本机 v14、v23、v25 工程：
- * v25 视频条目多了变速 speed，v11 起特效挂条目改成 target {kind:"item"}）。新版本先核再加
+ * v25 视频条目多了变速 speed、时间线多了 relations 里的 media-link，v11 起特效挂条目改成 target {kind:"item"}）。新版本先核再加
  */
 export const SUPPORTED_SCHEMAS: ReadonlySet<number> = new Set([4, 9, 11, 14, 23, 25]);
 /** 判定规则一变就升版本：旧结果的指纹随之失效（v2：认 v11 起的特效写法——v1 会把挂在条目上的遮罩漏掉） */

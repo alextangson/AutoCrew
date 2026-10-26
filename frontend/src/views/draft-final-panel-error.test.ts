@@ -27,7 +27,7 @@ describe("定稿面板读失败", () => {
   it("显示原因和重试；恢复后点重试，面板回来", async () => {
     fail = true;
     const { DraftFinalPanel } = await import("./DraftFinalPanel");
-    await act(async () => root.render(createElement(DraftFinalPanel, { contentId: "content-1", refreshKey: "k", dirty: false, reload: async () => {} })));
+    await act(async () => root.render(createElement(DraftFinalPanel, { contentId: "content-1", refreshKey: "k" })));
     await tick();
     expect(el.textContent).toContain("定稿清单没读出来：网络断了");
     const retry = [...el.querySelectorAll("button")].find((b) => b.textContent === "重试");

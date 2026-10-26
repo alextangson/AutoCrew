@@ -35,7 +35,7 @@ describe("youtube / x 能力", () => {
     expect(captionBounds("x")).toEqual([20, 280]);
   });
   it("发布包字段：YouTube 要标签和章节，X 要帖子正文", () => {
-    expect(PLATFORM_CAPS.youtube.kitFields).toEqual(["post_title", "caption", "tags", "chapters"]);
+    expect(PLATFORM_CAPS.youtube.kitFields).toEqual(["post_title", "caption", "tags", "chapters", "ai_disclosure"]);
     expect(PLATFORM_CAPS.x.kitFields).toEqual(["post_text"]);
   });
   it("数据回流明确不含 youtube / x", () => {
