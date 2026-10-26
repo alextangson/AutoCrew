@@ -4,7 +4,7 @@
  * 一句话：**认领是软门，令牌是凭据**。没人认领时谁写都行（单人单机不设卡），写完顺手把
  * 认领记上、把令牌回给写的人；已经有人认领时，写操作必须带匹配的 `claim_token`——
  * **同宿主也不例外**（P6 §3.8：两个 Claude 会话共用一个宿主名，宿主名分不开它们，只有令牌分得开），
- * 否则当场被拒并告诉他持有者是谁、还剩几分钟。持有会话本人（同宿主 + 同一个会话 nonce）认得出，不锁自己。
+ * 否则当场被拒并告诉他持有者是谁、还剩几分钟。
  *
  * 租约 30 分钟，任何带匹配令牌的写操作自动续租。过期即可被接管——**接管换新令牌**，
  * 旧令牌的迟到写入随即被拒，这就是 fencing（codex 评审 #2：没有 fencing 的认领挡不住迟到写入）。
@@ -119,16 +119,6 @@ function refusalMessage(claim: ContentClaim, host: string, now: number = Date.no
   );
 }
 
-/**
- * 持有会话本人（2026-10-26 安克英文版首跑：同一个会话交发布包被自己的认领挡了 30 分钟）：
- * 同宿主、且这次 MCP 调用的会话 nonce 就是认领上记的那个（不是 unknown）= 认领者自己，放行并续租。
- * 另一个会话的 nonce 不同，照旧要令牌——令牌门挡的是「同宿主的另一个会话」，不是持有者本人。
- */
-export function isHolderSession(claim: ContentClaim, host: string): boolean {
-  const session = callerSession();
-  return claim.host === host && !!claim.session && claim.session !== "unknown" && claim.session === session;
-}
-
 export type ClaimGate =
   | { ok: true; override?: boolean }
   | { ok: false; error: string; code: "claim_held"; holder: ClaimView };
@@ -142,7 +132,6 @@ export function assertClaimToken(content: Pick<Content, "claim">, host: string, 
   const claim = activeClaim(content);
   if (!claim) return { ok: true };
   if (tokenMatches(claim.token, token)) return { ok: true };
-  if (isHolderSession(claim, host)) return { ok: true };
   if (host === LOCAL_HOST) return claim.host === LOCAL_HOST ? { ok: true } : { ok: true, override: true };
   return { ok: false, code: "claim_held", error: refusalMessage(claim, host), holder: claimView(claim)! };
 }
@@ -254,7 +243,7 @@ async function claimContentLocked(contentId: string, employee: ClaimEmployee, ho
   const current = activeClaim(content, now);
   if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
   if (current.host !== host) return held(current, host, now);
-  if (tokenMatches(current.token, opts.token) || isHolderSession(current, host)) {
+  if (tokenMatches(current.token, opts.token)) {
     return { ok: true, claim: await writeClaim(content, { employee, host, renew: true, presented: opts.token }, dataDir, now) };
   }
   if (!opts.takeover) return held(current, host, now);

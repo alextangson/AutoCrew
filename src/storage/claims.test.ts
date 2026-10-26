@@ -517,20 +517,6 @@ describe("会话归因（P6 §3.8，只做诊断）", () => {
     });
   });
 
-  it("持有会话本人不带令牌也认得出（2026-10-26 安克：自己被自己的认领锁 30 分钟）；另一个会话 / unknown 照旧 claim_held", async () => {
-    const c = await seed();
-    const mine = await withCallerSession("sess-own-111", () => claimContent(c.id, "writer", "claude-code", dir));
-    if (!mine.ok) throw new Error("claim failed");
-    expect(await withCallerSession("sess-own-111", () => ensureClaim(c.id, { host: "claude-code" }, dir))).toMatchObject({ ok: true });
-    expect(await withCallerSession("sess-own-111", () => claimContent(c.id, "writer", "claude-code", dir))).toMatchObject({ ok: true });
-    expect(await withCallerSession("sess-other-22", () => ensureClaim(c.id, { host: "claude-code" }, dir))).toMatchObject({ ok: false, code: "claim_held" });
-    // 别的宿主带同一个会话 nonce 也不算
-    expect(await withCallerSession("sess-own-111", () => ensureClaim(c.id, { host: "codex" }, dir))).toMatchObject({ ok: false, code: "claim_held" });
-    const u = await seed();
-    await withCallerSession("unknown", () => claimContent(u.id, "writer", "claude-code", dir));
-    expect(await withCallerSession("unknown", () => ensureClaim(u.id, { host: "claude-code" }, dir))).toMatchObject({ ok: false, code: "claim_held" });
-  });
-
   it("工作台越门那条 override 账同样带会话", async () => {
     const c = await seed();
     await claimContent(c.id, "writer", "claude-code", dir);
