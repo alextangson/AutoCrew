@@ -109,6 +109,7 @@ export const prePublishSchema = Type.Object({
     post_text: Type.Optional(Type.String({ description: "x：帖子正文。" })),
     tags: Type.Optional(Type.Unknown({ description: "youtube：英文 tags 数组。" })),
     chapters: Type.Optional(Type.Unknown({ description: "youtube：[{at:\"0:00\", title}]。" })),
+    ai_disclosure: Type.Optional(Type.Unknown({ description: "youtube：Studio「AI use」的答案 yes / no；英文版（克隆声音 + 对口型）不写默认 yes，填 no 被拒。" })),
     hashtags: Type.Optional(Type.Array(Type.String(), {
       description: "话题标签（不带空格）。caption 里还没有的会并到 caption 末尾，字数按合并后的简介算。",
     })),
@@ -116,7 +117,7 @@ export const prePublishSchema = Type.Object({
       description: "3 个四平台通用标题候选 [{title, method, reason}]，分属方法库 3 个不同类（方法库见 action=title_methods）。",
     })),
     title_method: Type.Optional(Type.String({ description: `本平台 post_title 用的方法 id；创始人自己写的填「${SELF_WRITTEN}」。` })),
-  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
+  }, { description: `video_kit 必填，按平台给字段（中文平台 post_title/caption/cover_text；youtube post_title/caption/tags/chapters/ai_disclosure；x post_text）。${kitLimitsText()}。标题先按方法库出 3 个通用候选给创始人挑，再按平台落成 post_title。` })),
   claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（pack 或 autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
 });
 

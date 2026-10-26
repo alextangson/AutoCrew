@@ -26,6 +26,13 @@ const YT = {
 };
 
 describe("youtube 发布包", () => {
+  it("AI use（Studio 必答）：配过音的默认 yes；填 no 被拒；乱填被拒；JSON 布尔 true 也认", () => {
+    const dubbed = { ...OK_CTX, dubbed: true };
+    expect(validateEnKit(YT, "youtube", dubbed)).toMatchObject({ failures: [], fields: { aiDisclosure: "yes" } });
+    expect(validateEnKit({ ...YT, ai_disclosure: true }, "youtube", dubbed)).toMatchObject({ failures: [], fields: { aiDisclosure: "yes" } });
+    expect(validateEnKit({ ...YT, ai_disclosure: "No" }, "youtube", dubbed).failures).toEqual([expect.objectContaining({ field: "ai_disclosure", detail: expect.stringContaining("必须答 Yes") })]);
+    expect(validateEnKit({ ...YT, ai_disclosure: "maybe" }, "youtube", dubbed).failures).toEqual([expect.objectContaining({ field: "ai_disclosure" })]);
+  });
   it("齐全 → 通过；存下的描述 = 描述 + 章节行 + 标签", () => {
     const r = validateEnKit(YT, "youtube", OK_CTX);
     expect(r.failures).toEqual([]);

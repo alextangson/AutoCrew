@@ -2,7 +2,8 @@
  * 英文发布包（YouTube / X，全媒体 spec §3.1 第 5 条、Phase 3）：按 PLATFORM_CAPS 的 kitFields 和上限校验，
  * 字数按字符计（不做中文半字折算），不收中文字。中文四平台的发布包校验一行不动（pre-publish.ts validateKit）。
  *
- * - youtube: post_title ≤100、caption（描述）、tags、chapters（第一个 0:00、≥3 章、每章 ≥10 秒、在片长之内）、16:9 缩略图；
+ * - youtube: post_title ≤100、caption（描述）、tags、chapters（第一个 0:00、≥3 章、每章 ≥10 秒、在片长之内）、16:9 缩略图、
+ *   ai_disclosure（Studio 的「AI use」，配过音的默认 yes、不许 no）；
  *   存下来的 caption = 描述 + 章节行 + 标签（就是粘进 YouTube Studio 的那一份），≤5000。
  * - x: post_text ≤280（发布标题 = 帖子正文，X 视频帖没有独立标题），标签并进正文后再数。
  */
@@ -17,8 +18,22 @@ import type { EnScript } from "../en-edition/script.js";
 export const EN_PUBLISH_WINDOW = { timezone: "Asia/Shanghai", from: "21:00", to: "23:00", note: "北京时间 21:00–23:00（美国上午），不跟中文时段" };
 
 export interface Chapter { at: string; startS: number; title: string }
-export interface EnKitFields { postTitle: string; caption: string; tags?: string[]; chapters?: Chapter[] }
-export interface EnKitContext { thumbnailProblem: string | null; durationS: number | null }
+export type AiDisclosure = "yes" | "no";
+export interface EnKitFields { postTitle: string; caption: string; tags?: string[]; chapters?: Chapter[]; aiDisclosure?: AiDisclosure }
+/** dubbed：英文版用克隆声音配音 + 对口型（有配音清单就是） */
+export interface EnKitContext { thumbnailProblem: string | null; durationS: number | null; dubbed?: boolean }
+
+/**
+ * YouTube Studio 必答的「AI use / 经过改动或合成的内容」：英文版是克隆声音 + 对口型，答 Yes（创始人 2026-10-26 定）。
+ * 不写 = 配过音的默认 yes；配过音还填 no → 拒。
+ */
+function readAiDisclosure(raw: unknown, dubbed: boolean, failures: Failure[]): AiDisclosure {
+  const v = typeof raw === "string" ? raw.trim().toLowerCase() : raw;
+  const parsed: AiDisclosure | null = v === undefined || v === null || v === "" ? (dubbed ? "yes" : "no") : v === true || v === "yes" ? "yes" : v === false || v === "no" ? "no" : null;
+  if (!parsed) { failures.push({ field: "ai_disclosure", detail: "ai_disclosure 只能是 yes / no" }); return dubbed ? "yes" : "no"; }
+  if (dubbed && parsed === "no") failures.push({ field: "ai_disclosure", detail: "英文版用克隆声音配音 + 对口型：YouTube 的「AI use」必须答 Yes" });
+  return parsed;
+}
 type Failure = { field: string; detail: string };
 
 const CJK = /[一-鿿]/;
@@ -89,7 +104,7 @@ function youtubeKit(obj: Record<string, unknown>, ctx: EnKitContext, failures: F
   const caption = description ? mergeTags(`${description}\n\n${block}`.trim(), readTags(obj.hashtags, "hashtags", failures)) : "";
   limit("youtube", "caption", caption, caps.bodyMax, failures, "描述");
   if (ctx.thumbnailProblem) failures.push({ field: "thumbnail", detail: ctx.thumbnailProblem });
-  return { postTitle: text("post_title"), caption, tags, chapters };
+  return { postTitle: text("post_title"), caption, tags, chapters, aiDisclosure: readAiDisclosure(obj.ai_disclosure, ctx.dubbed !== false, failures) };
 }
 
 function xKit(obj: Record<string, unknown>, failures: Failure[]): EnKitFields {

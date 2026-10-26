@@ -51,7 +51,7 @@ export async function enKitBinding(contentId: string, dataDir: string): Promise<
 export async function enKitContext(contentId: string, dataDir: string): Promise<{ ctx: EnKitContext; binding: EnKitBinding } | { no: Refusal }> {
   const b = await enKitBinding(contentId, dataDir);
   if ("no" in b) return b;
-  return { ctx: { thumbnailProblem: await thumbnailProblem(await readEnThumbnail(contentId, dataDir)), durationS: b.durationS }, binding: b.binding };
+  return { ctx: { thumbnailProblem: await thumbnailProblem(await readEnThumbnail(contentId, dataDir)), durationS: b.durationS, dubbed: true }, binding: b.binding };
 }
 
 /** check 时：包绑的脚本 / 配音还是不是现在批过的那份；对得上 = null */

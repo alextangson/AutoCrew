@@ -100,7 +100,7 @@ describe("英文发布包", () => {
     expect(e.prepare).toMatchObject({ ok: true });
     const data = e.prepare.data as { package_hash: string; packages: Array<Record<string, unknown>> };
     expect(data.packages.map((p) => p.platform)).toEqual(["youtube", "x"]);
-    expect(data.packages[0]).toMatchObject({ title: YT.post_title, thumbnail_path: expect.stringContaining("thumb.png"), video_path: expect.stringContaining("english-en-cut-v1.mp4") });
+    expect(data.packages[0]).toMatchObject({ ai_disclosure: "yes", title: YT.post_title, thumbnail_path: expect.stringContaining("thumb.png"), video_path: expect.stringContaining("english-en-cut-v1.mp4") });
     expect(data.packages[1]).toMatchObject({ post_text: "Max effort is not a free upgrade.\n\n#AI" });
     expect(e.final).toMatchObject({ ok: true, package_hash: data.package_hash });
     expect(e.clipboard).toMatchObject({ ok: true });
