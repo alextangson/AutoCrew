@@ -40,11 +40,17 @@ afterEach(async () => {
 });
 
 describe("预设文件", () => {
-  it("随仓库发版的那份：能读、地址是 openai 协议、两个触点默认全关（上线闸）", () => {
+  it("随仓库发版的那份：能读、地址是 openai 协议、自助注册已开放所以两个触点都开着", () => {
     const preset = loadOfferPreset();
     expect(preset?.baseUrl).toBe("https://api.tokencamel.com/v1");
     expect(preset?.protocol).toBe("openai");
-    expect(preset?.touchpoints).toEqual({ onboarding: false, fallback: false });
+    expect(preset?.touchpoints).toEqual({ onboarding: true, fallback: true });
+    // 「去拿 Key」给新用户的是注册页；三个链接都是站内真实页面，不是占位首页
+    expect(preset?.links).toEqual({
+      keys: "https://tokencamel.com/sign-up",
+      pricing: "https://tokencamel.com/pricing",
+      privacy: "https://tokencamel.com/privacy-policy",
+    });
   });
 
   it("E4：文件缺失或坏 = 全关，不抛", async () => {

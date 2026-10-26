@@ -34,7 +34,7 @@ export const OFFER_COPY = {
   dataFlow: "用它时，请求会经过 TokenCamel 的服务器（香港）再到各家模型厂商。",
   leadOnboarding: "还没有能用的模型线路。也可以用：",
   leadFallback: "这条线连不上时，可以加一条备用线路。也可以用：",
-  pricing: "价格与购买",
+  pricing: "模型与价格",
   privacy: "隐私政策",
   attachMain: "接上",
   attachFallback: "接上当备用",
