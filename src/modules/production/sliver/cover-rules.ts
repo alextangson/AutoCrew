@@ -18,7 +18,7 @@ const KNOWN_KEYS = new Set([
   "borderRadius", "opacity", "rotation", "blendingMode", "attributeOverrides", "propertyOverrides",
   // 只影响声音 / 取材位置
   "sourceIn", "decibelAdjustment", "audioFadeInDurationFrames", "audioFadeOutDurationFrames", "playbackRate", "muted", "volume",
-  // v25：变速 {mode:"constant", rate}，只改取材速度；时间线上的 startFrame / durationFrames 已是变速后的
+  // v25 变速：durationFrames 仍是时间线帧数（10-26 对过 354 条），只改取材快慢；只认恒定倍速，下面判
   "speed",
 ]);
 
@@ -45,6 +45,10 @@ function fullCanvas(it: Json, w: number, h: number): boolean | null {
 function itemProps(it: Json, w: number, h: number): Cover | null {
   const unknownKey = Object.keys(it).find((k) => !KNOWN_KEYS.has(k));
   if (unknownKey) return { kind: "unknown", why: `带有不认识的属性 ${unknownKey}` };
+  const speed = it.speed as Json | null | undefined;
+  if (speed !== undefined && speed !== null && !(typeof speed === "object" && speed.mode === "constant" && (num(speed.rate) ?? 0) > 0)) {
+    return { kind: "unknown", why: "变速设置认不出（只认恒定倍速）" };
+  }
   const full = fullCanvas(it, w, h);
   if (full === null) return { kind: "unknown", why: "位置 / 大小 / 裁切读不出" };
   if (!full) return { kind: "none", why: "没有铺满画面" };

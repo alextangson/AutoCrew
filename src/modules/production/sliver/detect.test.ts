@@ -101,6 +101,33 @@ describe("盖住的判定（E6–E9、E22）", () => {
   });
 });
 
+describe("新版工程格式（v11 起特效写法、v25 变速）", () => {
+  const hold = (extra: Json, fx: Json[] = []) => run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 105, 95)], imageItems: [image("h", 100, 5, extra)], pixelEffectItems: fx }));
+  const fx = (target: unknown, extra: Json = {}) => ({ id: "fx", type: "pixel-effect", assetId: "builtin:effect-circle-mask", startFrame: 100, durationFrames: 5, enabled: true, sortOrder: 0, propertyOverrides: {}, target, ...extra });
+  it("v11 起 target {kind:item} 挂在定格上的遮罩：不能丢，定格读不准 → 未检查", () => {
+    expect(hold({})).toMatchObject({ status: "clean" });
+    expect(hold({}, [fx({ kind: "item", itemId: "h" })]).reason).toContain("挂了特效");
+  });
+  it("关掉的特效不算；挂的对象认不出 / 没挂也没轨道 → 未检查", () => {
+    expect(hold({}, [fx({ kind: "item", itemId: "h" }, { enabled: false })])).toMatchObject({ status: "clean" });
+    expect(hold({}, [fx({ kind: "track", trackId: "v1" })]).reason).toContain("特效挂的对象认不出");
+    expect(hold({}, [fx(undefined)]).reason).toContain("没挂条目也没有轨道");
+    expect(hold({}, [fx({ kind: "item", itemId: "missing" }, { trackId: "v1" })]).reason).toContain("特效挂的条目在时间线里找不到");
+    expect(hold({}, [{ id: "fx", trackId: "v1", startFrame: 100, durationFrames: 5, targetItemId: "missing" }]).reason).toContain("特效挂的条目在时间线里找不到");
+  });
+  it("v25 恒定变速的 B-roll 照常算盖住；认不出的变速 → 读不准", () => {
+    const sped = (speed: unknown) => run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70, { speed }), broll("b2", 105, 95, { speed })] }));
+    expect(spans(sped({ mode: "constant", rate: 1.165 }))).toEqual([[100, 105]]);
+    expect(sped(null)).toMatchObject({ status: "slivers" });
+    expect(sped({ mode: "ramp", points: [] })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("变速设置认不出") });
+    expect(sped({ mode: "constant", rate: 0 })).toMatchObject({ status: "unchecked" });
+  });
+  it("转场缺轨道 → 未检查（不静默丢掉）", () => {
+    const tl = timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 105, 95)], pixelTransitionItems: [{ id: "t", startFrame: 98, durationFrames: 4, incomingItemId: "b2", outgoingItemId: "b1" }] });
+    expect(run(tl).reason).toContain("转场缺轨道");
+  });
+});
+
 describe("Codex 审 sliver 回归", () => {
   it("[P1 detect.ts:193] 读不准的条目不能只比两个极端：40 帧空档里两段各 20 帧的未知条目 → 未检查", () => {
     const noFmt = { ...ASSETS, I: { ...ASSETS.I, pix_fmt: null } };
