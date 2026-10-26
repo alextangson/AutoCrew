@@ -79,6 +79,8 @@ export interface DraftFinalRecord {
   finalizedAt: string;
   source: "founder-workbench";
   kept: string[];
+  /** 顶栏「定稿」不等清单：没出清单 / 清单是旧稿的就照定，记下来（交接出处门照旧把关） */
+  checklist?: "none" | "stale";
   /** 定稿时立意记的手册版本：统计按它归属（spec 2026-10-13 §9.4） */
   playbook?: PlaybookPin;
 }

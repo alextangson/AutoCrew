@@ -3,6 +3,7 @@
  * 「定了」只认浏览器会话（创始人本人点的）；令牌调用宿主也拿得到，一律拒——AI 不能批准稿件（09-29 批准伪造漏洞）。
  */
 import { finalizeByFounder, finalPanel } from "../modules/draft/draft-finalize.js";
+import { finalizeScript, finalState } from "../modules/draft/script-finalize.js";
 import type { IpcHandler } from "./ipc.js";
 
 const dirOf = (p: Record<string, unknown>) => (typeof p._dataDir === "string" && p._dataDir) || undefined;
@@ -23,7 +24,21 @@ const finalize: IpcHandler = async (p, ctx) => {
   catch (err) { return { ok: false, error: errText(err) }; }
 };
 
+const scriptState: IpcHandler = async (p) => {
+  try { return await finalState(idOf(p), dirOf(p)); }
+  catch (err) { return { ok: false, error: errText(err) }; }
+};
+
+/** 顶栏「定稿」：同样只认浏览器会话 */
+const scriptFinalize: IpcHandler = async (p, ctx) => {
+  if (ctx?.authMethod !== "session") return { ok: false, code: "founder_only", error: FOUNDER_ONLY_FINALIZE };
+  try { return await finalizeScript(idOf(p), { expectedBodyHash: String(p.expected_body_hash ?? "") }, dirOf(p)); }
+  catch (err) { return { ok: false, error: errText(err) }; }
+};
+
 export const DRAFT_IPC_HANDLERS = {
+  "script:final_get": scriptState,
+  "script:finalize": scriptFinalize,
   "draft:final_get": finalGet,
   "draft:finalize": finalize,
 } as const;
