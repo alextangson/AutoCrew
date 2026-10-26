@@ -4,7 +4,7 @@
 
 入口：https://studio.youtube.com （右上「创建 → 上传视频」）
 
-发的是英文版那条稿（`en_edition` 派生稿）。英文版不走中文登记：只按**批过的英文发布包**发。先调 `autocrew_publish {action:"ego_lite_prepare", content_id:<英文版>}`（不带 check_ids），回执里每个平台的 `video_path` / `thumbnail_path` / 文案就是要上传和粘贴的东西，记下 `package_hash`；回 `en_package_not_approved` 就停下，请创始人在「等你拍板」里批英文发布包（批过之后改过也会回到那里，原因写在那件里）。YouTube 用 `platform:"youtube"` 那一项：`title`、`description`（已含章节行和标签）、`tags`、`video_path`、`thumbnail_path`。默认时段：**北京时间 21:00–23:00（美国上午）**，不跟中文时段。
+发的是英文版那条稿（`en_edition` 派生稿）。英文版不走中文登记：只按**批过的英文发布包**发。先调 `autocrew_publish {action:"ego_lite_prepare", content_id:<英文版>}`（不带 check_ids），回执里每个平台的 `video_path` / `thumbnail_path` / 文案就是要上传和粘贴的东西，记下 `package_hash`；回 `en_package_not_approved` 就停下，请创始人在「等你拍板」里批英文发布包（批过之后改过也会回到那里，原因写在那件里）。YouTube 用 `platform:"youtube"` 那一项：`title`、`description`（已含章节行和标签）、`tags`、`ai_disclosure`、`video_path`、`thumbnail_path`。默认时段：**北京时间 21:00–23:00（美国上午）**，不跟中文时段。
 
 | 步骤 | 动作 | 成功条件 / 已知故障 |
 |---|---|---|
@@ -13,6 +13,7 @@
 | 详细信息 | 标题、说明：清空后粘发布包原文 | 读回全文：标题 ≤100 字符；说明里章节行（`0:00 …` 起）完整、标签在末尾 |
 | 缩略图 | 「上传缩略图」选登记的 16:9 图 | 预览出现这张图；账号没验证电话时这个按钮不可用——停下告诉创始人，不跳过 |
 | 观众 | 「不是为儿童打造的」，按发布包 | 读回选中状态 |
+| AI use（必答） | 「经过改动或合成的内容 / Altered or synthetic content」那一问选 **Yes**：英文版是克隆声音配音 + 对口型（创始人 2026-10-26 定）。按回执的 `ai_disclosure`（英文版恒为 `yes`） | 读回选中 Yes；页面上找不到这一问就停下截图报给创始人，不跳过 |
 | 更多选项 | 「标签」逐个粘 tags；语言选 English | 标签都在框里 |
 | 视频元素 / 检查 | 结束画面、卡片不加；等版权检查结果 | 有版权提示就停下报原文 |
 | 公开范围 | 选「安排时间」，日期时间设到计划的时段（时区按页面显示核对，换算成北京时间读回） | 读回日期、时间和时区；**不选「公开」立即发** |

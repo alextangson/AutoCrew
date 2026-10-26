@@ -14,7 +14,7 @@ const dur = (ms: number | null) => (ms === null ? "时长未知" : `${Math.floor
 function kitHtml(platform: string, k: EnPackageState["kits"][string]): string {
   const chapters = k.chapters?.length ? `<h4>章节</h4><ol>${k.chapters.map((c) => `<li>${esc(c.at)} ${esc(c.title)}</li>`).join("")}</ol>` : "";
   const tags = k.tags?.length ? `<p class="tags">tags：${esc(k.tags.join(", "))}</p>` : "";
-  const title = platform === "x" ? "" : `<h3>${esc(k.postTitle)}</h3>`;
+  const title = platform === "x" ? "" : `<h3>${esc(k.postTitle)}</h3><p class="tags">AI use（Studio 必答）：${(k.aiDisclosure ?? "yes") === "yes" ? "Yes（克隆声音 + 对口型）" : "No"}</p>`;
   return `<section class="kit"><h2>${esc(platform === "x" ? "X 帖子" : "YouTube")}</h2>${title}<pre>${esc(k.caption)}</pre>${tags}${chapters}</section>`;
 }
 

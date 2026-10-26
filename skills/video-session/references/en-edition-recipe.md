@@ -18,9 +18,10 @@
 3. **口型对齐参考视频**：导出重排后的画面 + 原中文人声，**小于 50 MiB**（超了先降码率再导）。没有音轨会被拒（demo 里第一次就因为「video has no audio track」失败）。
 4. **口型对齐**：ChatCut `submit_lipsync`，模式 `preserve-video`，参考视频 = 第 3 步那份，音频 = 第 1 步排好的英文配音。只对 A-roll 口播段；先报价，创始人确认后再提交。
 5. **MG / 字卡**：中文字的 MG 卡按英文重做（ChatCut MG 是代码）；B-roll 里的中文截图保留，加英文说明条。
-6. **字幕（style A）**：`edition:{op:"captions"}` 生成 cues（文字只取批过的脚本，时间取配音的字级时间戳），再按回执的 `burn_command` 跑 `sidecars/captions/burn_captions.py`（路径已加单引号；把 `<…>` 两处换成真实路径时也加单引号——项目路径里有空格和中文）。成片要带音轨（英文配音），没有音轨脚本会直接拒。字幕样式：Avenir Next Demi Bold 54px、白字、柔和深色阴影、底部居中最多两行、每条最多一个黄色关键词、整条一起出一起收。脚本拒绝的 cue（三行、两个关键词、重叠、超长）不要手改 JSON 绕过，回去改脚本或分条。
-7. **登记与审片**：英文成片和中文成片走同一套审片——对英文版这条稿 `autocrew_content record kind:cut`（字幕 `kind:srt` 绑这版成片）、`mark_ready`，再 `autocrew_review_inbox list` 把成片那件给创始人看。**他必须亲耳听**：克隆声音是最大风险，嘴型（牙齿、糊）也在这里抓。登记口型对齐用的参考视频时记成这条稿的 `kind:aroll`（制作段要它）。
-8. **英文发布包**：成片审过、缩略图和各平台发布包都齐了以后，由创始人在「等你拍板」里批一次英文发布包，见 SKILL.md 英文版第 7 步。
+6. **登记实际摆放**（补过 B-roll、或任何一段的起点和清单 `startS` 不同时必做）：英文时间线定稿后，读每段配音在时间线上的实际起点，`edition:{op:"set_placements", placements:[{line:1,start_s:0},{line:2,start_s:15.3},…]}`，清单里每段一条、按段序递增。字幕和章节都按它排；不登记就按配音清单排（回执带 `timing_source:"dub_manifest"` 和提醒），画面里插过时间的话字幕会整段错位。重新配过音后旧的摆放作废（`placements_stale`），要重登。
+7. **字幕（style A）**：`edition:{op:"captions"}` 生成 cues（文字只取批过的脚本，时间取配音的字级时间戳、平移到登记的实际起点；每行 ≤42 字符、每条 ≤2 行、句末收条），再按回执的 `burn_command` 跑 `sidecars/captions/burn_captions.py`（路径已加单引号；把 `<…>` 两处换成真实路径时也加单引号——项目路径里有空格和中文）。成片要带音轨（英文配音），没有音轨脚本会直接拒。字幕样式：Avenir Next Demi Bold 54px、白字、柔和深色阴影、底部居中最多两行、每条最多一个黄色关键词、整条一起出一起收。脚本拒绝的 cue（三行、两个关键词、重叠、超长）不要手改 JSON 绕过，回去改脚本或分条。
+8. **登记与审片**：英文成片和中文成片走同一套审片——对英文版这条稿 `autocrew_content record kind:cut`（字幕 `kind:srt` 绑这版成片）、`mark_ready`，再 `autocrew_review_inbox list` 把成片那件给创始人看。**他必须亲耳听**：克隆声音是最大风险，嘴型（牙齿、糊）也在这里抓。登记口型对齐用的参考视频时记成这条稿的 `kind:aroll`（制作段要它）。
+9. **英文发布包**：章节用 `op:"chapters"`（同样按登记的摆放），`video_kit` 按审过的英文成片片长核章节（不是配音清单的长度）。成片审过、缩略图和各平台发布包都齐了以后，由创始人在「等你拍板」里批一次英文发布包，见 SKILL.md 英文版第 7 步。
 
 ## 源视频成片换版之后（rebind）
 

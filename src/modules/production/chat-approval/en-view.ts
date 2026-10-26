@@ -46,6 +46,7 @@ function kitLines(kits: Record<string, VideoKit>): string[] {
   if (yt) {
     out.push(`YouTube 标题：${yt.postTitle || "（没写）"}`);
     if (yt.chapters?.length) out.push(`YouTube 章节：${yt.chapters.map((c) => `${c.at} ${c.title}`).join(" / ")}`);
+    out.push(`YouTube「AI use」：${(yt.aiDisclosure ?? "yes") === "yes" ? "Yes（克隆声音 + 对口型）" : "No"}`);
   }
   if (x) out.push(`X 帖子：${x.caption || x.postTitle || "（没写）"}`);
   return out;

@@ -18,6 +18,8 @@ const KNOWN_KEYS = new Set([
   "borderRadius", "opacity", "rotation", "blendingMode", "attributeOverrides", "propertyOverrides",
   // 只影响声音 / 取材位置
   "sourceIn", "decibelAdjustment", "audioFadeInDurationFrames", "audioFadeOutDurationFrames", "playbackRate", "muted", "volume",
+  // v25：变速 {mode:"constant", rate}，只改取材速度；时间线上的 startFrame / durationFrames 已是变速后的
+  "speed",
 ]);
 
 /** 已确认不带 alpha 的像素格式（白名单）：只有这些算不透明；不认识的格式当读不准（Codex 审 sliver P2） */
