@@ -50,7 +50,8 @@ async function recordCoverage(c: Content, list: FinalChecklist, dataDir?: string
 function finalizePatch(c: Content, check: { list: FinalChecklist | null; current: boolean }, at: string) {
   return (cur: Content): ContentUpdates => {
     const out: ContentUpdates = {};
-    if (cur.claim) {
+    // 只放写手的认领：封面 / 剪辑等工位占着的照旧归它（Codex 审 P2）
+    if (cur.claim?.employee === "writer") {
       out.claim = undefined;
       out.handoffs = withHandoff(cur, { from: cur.claim.host, to: LOCAL_HOST, by: LOCAL_HOST, note: "创始人定稿，写手认领释放" });
     }
@@ -80,7 +81,8 @@ export async function finalizeScript(contentId: string, input: { expectedBodyHas
     if (err) return fail("citations_invalid", err);
   }
   const moved = await transitionStatus(c.id, "approved", {
-    force: true, expectedStatus: c.status, expectedBodyHash: input.expectedBodyHash,
+    // 标题也绑上：draftFinal 盖的 draftHash 含标题，中途改了标题就别落一份立刻过期的定稿（Codex 审 P2）
+    force: true, expectedStatus: c.status, expectedBodyHash: input.expectedBodyHash, expectedDraft: { title: c.title, body: c.body, platform: c.platform },
     decidedBy: "founder", host: LOCAL_HOST, patch: finalizePatch(c, check, new Date().toISOString()),
   }, dataDir);
   if (!moved.ok) return fail("transition_failed", moved.error ?? "没能定稿");

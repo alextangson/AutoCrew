@@ -20,14 +20,14 @@ const ipc = (ch: "script:finalize" | "script:final_get", payload: Record<string,
   buildIpcHandlers()[ch]({ ...payload, _dataDir: dir }, { authMethod }) as Promise<Record<string, unknown>>;
 
 /** 薄路径写到 drafting、AI 还拿着写手认领，返回令牌 */
-async function drafting(body = BODY): Promise<{ id: string; token: string }> {
+async function drafting(body = BODY, employee: "writer" | "cover" = "writer"): Promise<{ id: string; token: string }> {
   const started = await run("start", { inspiration: "AI 越用越忙" });
   const id = started.content_id as string;
   await run("angle", { content_id: id, base_version: 1, ...ANGLE });
   await pickOpening(run, id, 1);
   const saved = await run("save", { content_id: id, base_version: 1, body });
   if (!saved.ok) throw new Error(JSON.stringify(saved));
-  const claimed = await ensureClaim(id, { host: "claude-code", employee: "writer" }, dir);
+  const claimed = await ensureClaim(id, { host: "claude-code", employee }, dir);
   if (!claimed.ok) throw new Error(claimed.error);
   return { id, token: claimed.claim.token };
 }
@@ -36,6 +36,15 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "script-f
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("script:finalize", () => {
+  it("占着的是封面等别的工位：定稿不动那份认领（只放写手的）", async () => {
+    const { id } = await drafting(BODY, "cover");
+    const before = (await getContent(id, dir))!;
+    expect(await ipc("script:finalize", { id, expected_body_hash: bodyHash(before.body) })).toMatchObject({ ok: true, status: "approved" });
+    const after = (await getContent(id, dir))!;
+    expect(after.claim?.employee).toBe("cover");
+    expect(after.handoffs?.some((h) => h.note?.includes("写手认领释放"))).toBe(false);
+  });
+
   it("写稿中 + AI 占着认领：直接定到 approved，认稿绑正文哈希，认领释放并记账，没清单照定并记下", async () => {
     const { id, token } = await drafting();
     const before = (await getContent(id, dir))!;
