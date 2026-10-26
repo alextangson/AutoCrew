@@ -18,7 +18,7 @@ function platformPackage(s: EnPackageState, p: string): Result {
   return {
     platform: p, publish_url: PLATFORM_CAPS[p as PlatformId].publishUrl, video_path: s.cut!.path, video_sha256: s.cut!.sha256,
     thumbnail_path: s.thumbnail!.path, thumbnail_sha256: s.thumbnail!.sha256,
-    ...(p === "x" ? { post_text: k.caption } : { title: k.postTitle, description: k.caption, tags: k.tags ?? [], chapters: k.chapters ?? [] }),
+    ...(p === "x" ? { post_text: k.caption } : { title: k.postTitle, description: k.caption, tags: k.tags ?? [], chapters: k.chapters ?? [], ai_disclosure: k.aiDisclosure ?? "yes" }),
   };
 }
 
@@ -57,7 +57,8 @@ function formatYoutube(k: EnPackageState["kits"][string]): Result {
   return {
     platform: "youtube", formattedTitle: k.postTitle, formattedBody: k.caption, tags, chapters,
     copyText: `${k.postTitle}\n\n${k.caption}${tags ? `\n\nTags: ${tags}` : ""}`, publishUrl: PLATFORM_CAPS.youtube.publishUrl,
-    tips: ["标题、说明分别粘进 YouTube Studio 的两个框；章节行已在说明里", "tags 粘进「更多选项 → 标签」"],
+    aiDisclosure: k.aiDisclosure ?? "yes",
+    tips: ["标题、说明分别粘进 YouTube Studio 的两个框；章节行已在说明里", "tags 粘进「更多选项 → 标签」", `「AI use / 经过改动或合成的内容」答 ${(k.aiDisclosure ?? "yes") === "yes" ? "Yes（克隆声音 + 对口型）" : "No"}`],
   };
 }
 

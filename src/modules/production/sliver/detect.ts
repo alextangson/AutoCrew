@@ -43,6 +43,11 @@ function parse(snap: Snapshot): Parsed | string {
     orders.set(t.id, t.order);
     if (t.hidden === true) hidden.add(t.id);
   }
+  // v25：relations 里的 media-link 只把同一段素材的画面和声音绑在一起，不影响画面；别的关联（分组等）还没核过
+  const relations = tl.relations === null ? [] : arr(tl.relations);
+  if (relations === null) return "时间线格式认不出（relations 不是列表）";
+  const odd0 = relations.find((r) => r.kind !== "media-link");
+  if (odd0) return `时间线里有不认识的关联 ${String(odd0.kind)}，暂不支持`;
   const nested = arr(tl.timelineItems);
   if (nested === null || nested.length) return "时间线里有分组 / 嵌套条目，暂不支持";
   const odd = Object.keys(tl).find((k) => k.endsWith("Items") && !HANDLED.has(k) && Array.isArray(tl[k]) && (tl[k] as unknown[]).length);

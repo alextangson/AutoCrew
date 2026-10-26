@@ -100,7 +100,7 @@ const TABLE = {
     label: "YouTube", kind: "video", language: "en", coverRatios: ["16:9"], coverSlots: ["16:9"], coverRequired: true,
     titleCounter: "plain", titleMax: 100, bodyMax: 5000,
     captionRule: "Description: first two lines are the hook (shown above the fold), then what the viewer takes away, chapters, 3-5 hashtags",
-    kitFields: ["post_title", "caption", "tags", "chapters"], metrics: "unsupported", publishChannel: "ego_lite",
+    kitFields: ["post_title", "caption", "tags", "chapters", "ai_disclosure"], metrics: "unsupported", publishChannel: "ego_lite",
     publishUrl: "https://studio.youtube.com",
     aliases: ["youtube", "yt", "油管"], textAliases: [],
   },
