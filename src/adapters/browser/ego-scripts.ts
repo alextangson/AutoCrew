@@ -297,6 +297,19 @@ export function finishScript(p: { space: number }): string {
   return wrap(p, body, { finishOnError: false, finishAlways: false });
 }
 
+/**
+ * 给人登录用：在新 TaskSpace 里打开平台后台，交给用户（handOff）——登录要人扫码 / 输密码，Agent 不碰。
+ * 登录态落在 ego lite 的 profile，和数据回流 / 发布用的是同一份（2026-10-25：别再开默认浏览器）。
+ * 交出之后不 finish：finish 会把这页一起关掉。
+ */
+export function openForUserScript(p: { space: string; url: string }): string {
+  const body = `      const page = task.page("p1");
+      await page.goto(P.url);
+      await task.handOff();
+      return {};`;
+  return wrap(p, body, { finishOnError: true, finishAlways: false });
+}
+
 /** doctor 用：只连一下 ego lite（列 TaskSpace），不开任何页 */
 export function pingScript(): string {
   return `${prelude({})}

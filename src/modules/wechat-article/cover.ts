@@ -4,6 +4,7 @@
  * 坐标是相对主图的归一化 X1_Y1_X2_Y2。两张独立封面发不出去，所以包里只存一张主图和两个裁切。
  */
 import fs from "node:fs/promises";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import { createHash } from "node:crypto";
 import { detectFormat, dimensionsOf } from "../research/fetch-image.js";
 
@@ -56,7 +57,9 @@ export type MasterRead = { ok: true; sha256: string; width: number; height: numb
 /** 读主图：只收 PNG / JPEG（公众号永久素材不收 WebP），要读得出像素尺寸 */
 export async function readMaster(file: string): Promise<MasterRead> {
   let bytes: Buffer;
-  try { bytes = await fs.readFile(file); } catch (e) {
+  const found = await resolveArchivedFile(file);
+  if (!found.ok) return { ok: false, error: `封面主图${found.error}` };
+  try { bytes = await fs.readFile(found.path); } catch (e) {
     return { ok: false, error: `封面主图读不了（${(e as NodeJS.ErrnoException).code ?? (e as Error).message}）：${file}` };
   }
   const format = detectFormat(bytes);

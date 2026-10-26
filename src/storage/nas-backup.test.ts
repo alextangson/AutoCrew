@@ -311,7 +311,7 @@ describe("项目缓存 99-cache 不上 NAS", () => {
   });
 
   it("archive does not carry 99-cache to the NAS and clears it from the machine (founder 2026-10-25)", async () => {
-    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i * 0.15);
     const old = await published("旧稿", 8);
     await put(old, "99-cache/audio/tmp.wav", "cache");
     await backup();
@@ -324,9 +324,9 @@ describe("项目缓存 99-cache 不上 NAS", () => {
   });
 });
 
-describe("7 天腾空间前核对 NAS", () => {
+describe("腾空间前核对 NAS", () => {
   async function oldBackedUp(): Promise<Content> {
-    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i * 0.15);
     const old = await published("旧稿", 8);
     await backup();
     return old;
@@ -358,7 +358,7 @@ describe("7 天腾空间前核对 NAS", () => {
   });
 
   it("never writes through an old NAS dir link back into local media, so archive cannot lose unique files (Codex repro)", async () => {
-    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i * 0.15);
     const old = await published("旧稿", 8);
     await fs.rm(path.join(root(old), "03-broll"), { recursive: true, force: true });
     await fs.symlink(path.join(root(old), "02-aroll"), path.join(root(old), "03-broll"));
@@ -490,7 +490,7 @@ describe("已发布文件夹补三样", () => {
 describe("seg11 历史归档记录按版本核对", () => {
   const later = (d: number) => new Date(NOW.getTime() + d * 86400_000);
   it("同一项目归档两次（封面换过版本）：核对按各自版本找留底，不报封面损坏", async () => {
-    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i * 0.15);
     const old = await published("旧稿", 8);
     await backup();
     await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });

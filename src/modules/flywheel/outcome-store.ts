@@ -267,6 +267,24 @@ export async function matchDraft(
 interface DraftCandidate { content: Content; titles: string[] }
 
 /**
+ * 自动对上（2026-10-25）用的候选：登记过这个平台、标题够像（dice ≥ 模糊阈值）的所有在库稿，不看稿件状态——
+ * 比 matchDraft 宽，用来判「是不是唯一候选」，宁可多算一个让创始人裁。
+ */
+export async function titleCandidates(platform: string, platformTitle: string, dataDir?: string): Promise<Array<{ content: Content; score: number }>> {
+  const target = normalizeTitle(platformTitle);
+  if (!target) return [];
+  const out: Array<{ content: Content; score: number }> = [];
+  for (const c of await listContents(dataDir)) {
+    if (c.deletedAt || c.example) continue;
+    const titles = (await draftPlatforms(c, dataDir)).get(normalizePlatform(platform));
+    if (!titles) continue;
+    const score = Math.max(...[c.title, ...titles].map((t) => (normalizeTitle(t) === target ? 1 : diceSimilarity(normalizeTitle(t), target))));
+    if (score >= FUZZY_THRESHOLD) out.push({ content: c, score });
+  }
+  return out;
+}
+
+/**
  * 一篇稿子登记过的全部平台 → 该平台的发布标题。来源：稿件平台、发布包（videoKit）、
  * 发布计划（publish-plan.json 各平台条目）与「我发了」标记。发布计划读不到时只用前几样，
  * 不因为一份坏计划让整批认领失败（认领本来就是尽力而为，坏计划在看板上另有可见状态）。

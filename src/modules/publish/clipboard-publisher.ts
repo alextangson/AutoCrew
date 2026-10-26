@@ -33,7 +33,8 @@ export interface ClipboardOutput {
   tips: string[];
 }
 
-const PUBLISH_URLS: Record<ClipboardPlatform, string> = {
+/** 「复制发布文案」后打开的发布页；ego:open_console 的 publish 目标也按它查（同一个按钮，同一个地址） */
+export const PUBLISH_URLS: Record<ClipboardPlatform, string> = {
   xiaohongshu: "https://creator.xiaohongshu.com/publish/publish",
   douyin: "https://creator.douyin.com/creator-micro/content/upload",
   wechat_mp: "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit",

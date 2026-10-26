@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { contentRoot } from "../../storage/content-project.js";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import { inboxToCreate, movableRoots } from "./roots.js";
 
 export async function arollSourcesView(dataDir: string): Promise<Record<string, unknown>> {
@@ -19,7 +20,10 @@ export async function revealFactPath(contentId: string, factId: string, dataDir:
   const f = doc.facts.find((x) => x.id === factId && x.round === doc.round && (x.state === "candidate" || x.state === "pending_match" || (x.state === "accepted" && x.kind === "aroll")));
   if (!f?.path) return { ok: false, code: "not_allowed", error: "这条没有可显示的文件，刷新再看" };
   const abs = path.isAbsolute(f.path) ? f.path : path.join(contentRoot(contentId, dataDir), f.path);
-  const real = await fs.realpath(abs).catch(() => null);
+  // 归档到 NAS 的：挂着就在访达里显示 NAS 上那份，没挂明说
+  const found = await resolveArchivedFile(abs, contentRoot(contentId, dataDir));
+  if (!found.ok) return { ok: false, code: "on_nas", error: found.error };
+  const real = await fs.realpath(found.path).catch(() => null);
   if (!real) return { ok: false, code: "file_missing", error: "文件不在了（可能已经挪走），刷新再看" };
   return openInFinder(real, false, deps);
 }

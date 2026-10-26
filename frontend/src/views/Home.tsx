@@ -17,6 +17,7 @@ import { OntologyBanner } from "./OntologyBanner";
 import { PersonaReminder } from "./PersonaReminder";
 import { LegacyTwitterReminder } from "./LegacyTwitterReminder";
 import { PullLoginReminder, retryMessage } from "./PullLoginReminder";
+import { openInEgo } from "../ego-open";
 import { PGlyph, StagePie } from "./pipeline-glyphs";
 import { COLUMN_PROGRESS, type PipelineData } from "./pipeline-model";
 import type { DataPageData } from "./data-lib";
@@ -152,7 +153,8 @@ function AccountCellView({ c, account, reload }: { c: AccountCell; account: Acco
       <div className="big-msg"><i />要重新登录</div>
       <p>{s.hint}{s.lastSuccessAt ? ` 上次成功 ${shortTime(s.lastSuccessAt)}，之后的数据没抓到。` : ""}</p>
       <button className="go" disabled={busy} onClick={() => void retry()}>{busy ? "抓取中…" : "登录好了，重抓 →"}</button>
-      <a className="go-2" href={s.consoleUrl} target="_blank" rel="noreferrer">打开{c.label}后台</a>
+      {/* 在 ego lite 里开（回流用它的登录态），不开默认浏览器 */}
+      <button className="go-2" onClick={() => void openInEgo(c.platform)}>在 ego lite 打开{c.label}后台</button>
     </div>;
   }
   if (s.kind === "problem") return <div className="alert-cell">{name}<div className="big-msg"><i />回流没抓成</div><p>{s.text}</p><a className="go-2" href="#/settings?tab=data">去设置看回流 →</a></div>;

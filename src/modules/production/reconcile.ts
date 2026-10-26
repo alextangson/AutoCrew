@@ -16,6 +16,7 @@ import { contentRoot } from "../../storage/content-project.js";
 import { DERIVE_VERSION, isOntologyActive, productionServiceDir, readEnabledMarker, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { importLegacyRegistration } from "./legacy.js";
 import { importObservations, trustedObservations } from "./receipts.js";
+import { applyAutoMatches, planAutoMatches } from "./auto-match.js";
 import { isUngated } from "./publish-check-link.js";
 import { commitRegistration } from "./registration.js";
 import type { ProductionDoc } from "../../storage/production-types.js";
@@ -65,8 +66,14 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
   const receipts = opts.write ? await trustedObservations(content, dataDir) : [];
   const preview = structuredClone(doc);
   const approved = approvedCoverShas(preview, content);
-  const changed = migrateCoverGroups(preview, approved).length + (doc.cover_schema === 1 ? 0 : 1) + applyObservations(preview, obs, owned).changed + importObservations(preview, receipts);
+  const changed0 = migrateCoverGroups(preview, approved).length + (doc.cover_schema === 1 ? 0 : 1) + applyObservations(preview, obs, owned).changed + importObservations(preview, receipts);
   if (!opts.write) return preview;
+  // 按标题猜的回执：平台 + 时间窗 + 唯一候选都对上就自动确认（2026-10-25）；判定在事务外只读，事务里写
+  const autoPlans = await planAutoMatches(content, preview, dataDir).catch((e: unknown) => {
+    opts.warnings?.push(`${content.title}（${content.id}）：自动对上发布回执没判成：${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  });
+  const changed = changed0 + applyAutoMatches(structuredClone(preview), autoPlans).length;
   if (!changed) {
     // 事实没变也补一次投影（认稿之类在别处落的决定，保证 status 与冻结跟上推导）
     await refreshContent(content.id, dataDir);
@@ -77,12 +84,13 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
     const { added, changed: n } = applyObservations(d, obs, owned);
     const before = d.facts.length;
     importObservations(d, receipts);
+    const autoEvents = applyAutoMatches(d, autoPlans);
     // 新写入的可信发布观察：没把关 / 有原话例外都进时间线（发布审查闸门 §11）
     const gateEvents = d.facts.slice(before).filter((f) => f.gate).flatMap((f) => [
       ...(!isUngated(f.gate) ? [] : [{ type: "publish_ungated", detail: { fact_id: f.id, platform: f.platform, note: `发布前未把关：${f.gate!.note ?? ""}` } }]),
       ...f.gate!.overrides.map((q) => ({ type: "publish_override", detail: { fact_id: f.id, platform: f.platform, note: `发布前例外：『${q}』`, check_id: f.gate!.check_id } })),
     ]);
-    return { value: n, events: [...added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })), ...gateEvents] };
+    return { value: n, events: [...added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })), ...gateEvents, ...autoEvents] };
   });
   return r.doc;
 }

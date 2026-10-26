@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { contentRoot } from "../../storage/content-project.js";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isWithin } from "../../storage/storage-roots.js";
 /** 按文件身份（dev、ino、大小、修改时间）缓存的 sha：拖一次进度不再整份重读（整分支审 8 P2） */
@@ -51,8 +52,12 @@ export async function openFactMedia(contentId: string, factId: string, dataDir: 
   if (!type) return { ok: false, status: 415, error: "这种文件不能在网页里预览" };
   const root = await fs.promises.realpath(contentRoot(contentId, dataDir));
   const file = path.isAbsolute(f.path) ? f.path : path.join(root, f.path);
-  const real = await fs.promises.realpath(file).catch(() => null);
-  if (!real || (!path.isAbsolute(f.path) && !isWithin(root, real))) return { ok: false, status: 404, error: "文件不在了" };
+  // 归档过的：本机留底副本或 NAS 上那份（按项目自己的 relocations.json 找，不收页面给的路径）；NAS 没挂明说
+  const found = await resolveArchivedFile(file, root);
+  if (!found.ok) return { ok: false, status: 404, error: found.error };
+  const archived = found.path !== file;
+  const real = await fs.promises.realpath(found.path).catch(() => null);
+  if (!real || (!archived && !path.isAbsolute(f.path) && !isWithin(root, real))) return { ok: false, status: 404, error: "文件不在了" };
   const st = await fs.promises.stat(real);
   if (!st.isFile()) return { ok: false, status: 404, error: "不是普通文件" };
   if ((await cachedSha(real)).sha256 !== f.sha256) return { ok: false, status: 409, error: "文件变过了" };

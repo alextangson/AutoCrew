@@ -89,6 +89,7 @@ describe("IPC_CHANNELS", () => {
     "flywheel:pull_status",
     "flywheel:pull_now",
     "flywheel:pull_toggle",
+    "ego:open_console",
     "flywheel:hypotheses_list",
     "calibration:ledger",
     "dialog:pick_file",
@@ -158,8 +159,9 @@ describe("IPC_CHANNELS", () => {
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
   // 2026-10-04 薄路径定稿：draft:final_get / draft:finalize（draft-handlers.ts）
   // 2026-10-15 试跑示例一键删：topic:delete_example（ipc.ts 直连 deleteExampleTopic）
-  it("has exactly 180 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(180);
+  // 2026-10-25 在 ego lite 里打开平台后台：ego:open_console（ego-open-console.ts）；2026-10-26 顶栏定稿：script:final_get / script:finalize
+  it("has exactly 181 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(181);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -272,6 +274,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "flywheel:pull_status" &&
           ch !== "flywheel:pull_now" &&
           ch !== "flywheel:pull_toggle" &&
+          ch !== "ego:open_console" &&
           ch !== "flywheel:hypotheses_list" &&
           ch !== "calibration:ledger" &&
           ch !== "chat:turn" &&

@@ -22,7 +22,11 @@ const past = new Date(Date.now() - 48 * 3600_000).toISOString();
 
 describe("待核 → 确认已公开", () => {
   it("发布计划只报应已公开：待核、卡在发布中；点确认已公开后变已发、可以全部发完；旧看板的平台标签同样已公开", async () => {
+    // 老主题口径：稿件建于 PROFILE_DEFAULT_SINCE 之前（否则按新主题拿全套勾选做默认去向，随真实日期漂移）
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-20T00:00:00Z"));
     const r = await registeredVideo(env);
+    vi.useRealTimers();
     for (const p of ["douyin", "bilibili"]) await observe(r, { source: "plan", platform: p, pub_state: "overdue", published_at: past });
     const theme = async () => (await pipelineData(env.dir)).themes.find((t) => t.id === r.id)!;
     const before = await theme();

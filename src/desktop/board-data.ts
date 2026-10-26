@@ -15,6 +15,7 @@ import { readReconcileReport, type ReconcileReport } from "../modules/production
 import type { CandidateView } from "../modules/production/derive.js";
 import type { Column } from "../modules/production/explain.js";
 import { isMissing, resolveContentProject } from "../storage/content-project.js";
+import { KEPT_DIR } from "../storage/nas-kept.js";
 import { readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { readProductionDoc } from "../storage/production-store.js";
@@ -134,12 +135,16 @@ const PUBLISH_STATUSES = new Set(["publish_ready", "publishing", "published"]);
 export async function coverOf(contentId: string, dataDir: string): Promise<BoardCover | null> {
   const binding = resolveContentProject(contentId, dataDir);
   if (!binding) return null;
-  let names: string[];
-  try { names = await fs.readdir(path.join(binding.project_root, "05-cover")); } catch (e) { if (isMissing(e)) return null; throw e; }
-  const name = names.find((n) => /^封面-3x4\.(png|jpe?g)$/i.test(n));
-  if (!name) return null;
-  const rel = `05-cover/${name}`;
-  return { path: rel, sha256: (await cachedSha(path.join(binding.project_root, rel))).sha256 };
+  // 归档后 05-cover 空了：用删素材前留在 00-project/kept 的那份
+  for (const dir of ["05-cover", `${KEPT_DIR}/05-cover`]) {
+    let names: string[];
+    try { names = await fs.readdir(path.join(binding.project_root, dir)); } catch (e) { if (isMissing(e)) continue; throw e; }
+    const name = names.find((n) => /^封面-3x4\.(png|jpe?g)$/i.test(n));
+    if (!name) continue;
+    const rel = `${dir}/${name}`;
+    return { path: rel, sha256: (await cachedSha(path.join(binding.project_root, rel))).sha256 };
+  }
+  return null;
 }
 
 /** 最近一条已登记成片的语速：定稿字数 ÷ 成片分钟数 */

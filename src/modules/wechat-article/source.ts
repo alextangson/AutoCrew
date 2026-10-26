@@ -9,6 +9,8 @@ import { ontologyApplies } from "../production/publish-gate.js";
 import { srtFor, validCutApproval } from "../production/derive.js";
 import { factPath } from "../production/chat-approval/files.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
+import { contentRoot } from "../../storage/content-project.js";
 import { missingAsNull } from "../publish/review-gate/plan.js";
 import fs from "node:fs/promises";
 import { srtCues } from "../publish/review-gate/subtitles.js";
@@ -55,7 +57,10 @@ async function registeredSrt(src: Content, dataDir: string): Promise<{ srt: stri
   if (!cut?.sha256) return { srt: null, why: "源视频的成片现在没有有效的审片通过" };
   const fact = srtFor(doc, cut.sha256);
   if (!fact?.path) return { srt: null, why: "审过的这版成片没有登记字幕" };
-  const file = factPath(src.id, fact, dataDir);
+  // 源视频归档了：读本机留底的字幕副本，或 NAS 上的（没挂就明说，不悄悄退回定稿正文）
+  const found = await resolveArchivedFile(factPath(src.id, fact, dataDir), contentRoot(src.id, dataDir));
+  if (!found.ok) return { srt: null, why: `登记字幕${found.error}` };
+  const file = found.path;
   try {
     const sha = createHash("sha256").update(await fs.readFile(file)).digest("hex");
     return sha === fact.sha256 ? { srt: file } : { srt: null, why: "字幕文件在登记之后被改过" };

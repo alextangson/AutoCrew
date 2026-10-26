@@ -24,7 +24,7 @@
 
 ## 让链路通的三个前提（这次真跑踩出来的）
 
-1. **剪辑时字幕必须单独一条轨，并且多导一版「无字幕母版」。** 英文版要在干净画面上换配音、压英文字幕。剪映里把字幕烧进画面导出的老视频，英文版没法做（「深度思考」就卡在这）。
+1. **剪辑时字幕必须单独一条轨，并且多导一版「无字幕母版」，用 `record kind=clean_master` 登记。** 英文版要在干净画面上换配音、压英文字幕；没登记母版时 `edition op:dub` 直接拒，回执的 next_action 写明怎么登记。剪映里把字幕烧进画面导出的老视频，英文版没法做（「深度思考」就卡在这）。
 2. **成片字幕要登记进资料库**（`record kind:srt` 绑这版成片）。公众号长文按它写，英文配音按它卡时间。没登记时公众号退回用定稿正文，英文版直接拒。
 3. **ElevenLabs 的 Voice ID 要填。** 设置 → 接入更多 → 英文版配音：Voice ID 填 `E3xCuJvK3vXyJgMz1CqP`（Key 已在钥匙串，可留空）。不填第一次配音必失败。
 
@@ -38,7 +38,7 @@ Codex 的剪辑技能包在 `~/.codex/skills/personal-ip-video-loop`（真实目
 这条视频之后要出英文版和公众号长文，所以剪辑交付多两件事：
 1. 字幕保持为 ChatCut 里单独的一条字幕轨，不要烧进画面后再接着剪。
 2. 成片审过之后，除了带字幕的成片，再导出一版同样剪辑、同样 B-roll 和配乐、但关掉字幕轨的「无字幕母版」，1920×1080；文件名带「无字幕」。
-3. 用 autocrew_content record 登记：带字幕的成片 kind:cut；成片字幕 kind:srt（绑这版成片，时间要和成片一致）；无字幕母版记在交付说明里写清路径。
+3. 用 autocrew_content record 登记：带字幕的成片 kind:cut；成片字幕 kind:srt（绑这版成片，时间要和成片一致）；无字幕母版 kind:clean_master captions_off:true（绑审过的成片；AutoCrew 核 1920×1080、有音轨、时长和成片差不过 0.5 秒，字幕有没有烧进画面查不出来，captions_off 是剪辑方的声明）。
 ```
 
 ### 英文版剪辑（对口型 + 英文字幕）
@@ -49,7 +49,7 @@ Codex 的剪辑技能包在 `~/.codex/skills/personal-ip-video-loop`（真实目
 做英文版剪辑，英文版 content_id=<英文版 id>，按仓库 skills/video-session/references/en-edition-recipe.md 一步步做。
 先确认：英文脚本已批、dub 已出（edition op:status / dub）。
 ChatCut 动手前 mkdir ~/.cache/autocrew-yt/chatcut.lock，做完放锁；开着 ChatCut 窗口（target_project openWindow=true），每次付费生成前先报价等我确认。
-画面用这条视频的「无字幕母版」；口型参考视频要带原中文人声、小于 50MB（超长就切段）；字幕用 edition op:captions 的 burn_command。
+画面用 edition op:dub 回执里的 picture_source（源视频登记的无字幕母版，kind=clean_master）；口型参考视频要带原中文人声、小于 50MB（超长就切段）；字幕用 edition op:captions 的 burn_command。
 做完 record kind:cut / kind:srt / kind:aroll 到英文版这条稿，mark_ready，等我在「等你拍板」里审片。
 ```
 

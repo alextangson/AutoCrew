@@ -26,7 +26,7 @@ export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
   "topic:create", // 超过 30 字的想法会先蒸馏成选题（Codex 审第 8 轮 P2）
   "article_images:suggest", "onboarding:init", "flywheel:report", "settings:test_route", "settings:list_models", "engine:recheck",
   // 外网抓取 / 雷达 / 数据回流
-  "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now", "research:import_asset",
+  "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now", "ego:open_console", "research:import_asset",
   // 长任务编排
   "campaign:plan_team", "campaign:run_ready", "campaign:retry_task", "campaign:replan",
   "inbox:retry", "inbox:reingest", "inbox:digest_send_now",

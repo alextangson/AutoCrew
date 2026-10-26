@@ -90,7 +90,11 @@ async function toolsFor(host: string) {
  * 2026-10-25 选题星级：autocrew_topic 加 rate 动作与 stars / founder_words 两个参数（对话里转述创始人打星，原话必带）；
  * 实测 33,871，上限从 33,800 提到 33,900。
  */
-export const BUDGET = { total: 33_900, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-25 无字幕母版单独登记：autocrew_content 的 kind 加 clean_master、加 captions_off 参数（声明字幕轨已关），
+ * kind 说明补一句；实测 33,920，上限从 33,900 提到 34,000。
+ */
+export const BUDGET = { total: 34_000, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

@@ -6,7 +6,7 @@
 import type { CoverRatio, FactKind } from "../../storage/production-types.js";
 import { repairQuotes } from "../publish/review-gate/plan.js";
 
-export const RECORD_KINDS: readonly FactKind[] = ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard"];
+export const RECORD_KINDS: readonly FactKind[] = ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard", "clean_master"];
 
 export interface RecordArgs {
   content_id: string;
@@ -38,6 +38,8 @@ export interface RecordArgs {
   paths?: string[];
   /** kind=cover：和这条封面事实成对（§6.1） */
   pair_with?: string;
+  /** kind=clean_master：剪辑方声明这版关掉了字幕轨（必带 true） */
+  captions_off?: boolean;
 }
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; code: string; error: string };
@@ -152,5 +154,11 @@ export function normalizeRecordArgs(params: Record<string, unknown>): Parsed<Rec
     if (kind !== "cut") return { ok: false, code: "bad_param", error: "review=true 只用于 kind=cut（成片可以审了）" };
     out.review = true;
   }
+  const captionsOff = parseBool(params.captions_off);
+  if (captionsOff !== undefined && kind !== "clean_master") return { ok: false, code: "bad_param", error: "captions_off 只用于 kind=clean_master（无字幕母版）" };
+  if (kind === "clean_master" && captionsOff !== true) {
+    return { ok: false, code: "captions_off_required", error: "无字幕母版要带 captions_off=true：声明这版关掉了字幕轨、画面里没有烧进去的字幕（烧进去的字幕自动查不出来，靠这句声明）" };
+  }
+  if (captionsOff) out.captions_off = true;
   return { ok: true, value: out };
 }

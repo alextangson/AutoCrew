@@ -523,14 +523,14 @@ describe("seg12 归档口径", () => {
     expect(p).toMatchObject({ time: "2026-10-08T10:00:00Z", evidenceAt: "2026-09-01T00:00:00Z", submittedAt: null });
   });
 
-  it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
+  it("[3] 保留名单只管视图：视图显示的就是 keep；归档不再看它（10-25 本机只留正在做的）", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");
     const { archiveCandidates } = await import("../../storage/nas-archive.js");
     const { listContents } = await import("../../storage/local-store.js");
     const set = await publishedSet(await listContents(env.dir), env.dir, 1);
     expect([...set.keep]).toEqual([a.id]);
-    expect(archiveCandidates(set, new Date("2026-12-01T00:00:00Z")).due.map((c) => c.id)).not.toContain(a.id);
+    expect(archiveCandidates(set, new Date("2026-12-01T00:00:00Z")).due.map((c) => c.id)).toContain(a.id);
     const { buildPlan } = await import("../../storage/my-content-plan.js");
     const plan = await buildPlan(env.dir, 1);
     expect(Object.values(plan.dirs)).toContain(a.id);

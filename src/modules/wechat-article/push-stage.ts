@@ -4,6 +4,7 @@
  * 复制完用副本重算整包指纹，必须等于批准指纹，才交给脚本。
  */
 import fs from "node:fs/promises";
+import { resolveArchivedFile } from "../../storage/nas-kept.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { contentFile, resolveContentProject } from "../../storage/content-project.js";
@@ -35,13 +36,17 @@ export async function stagePackage(contentId: string, s: ArticleReviewState, dat
   for (const e of s.images.entries) {
     if (!e.imagePath) { entries.push(e); continue; }
     const copy = path.join(dir, "src", `img-${String(e.index + 1).padStart(2, "0")}${path.extname(e.imagePath).toLowerCase() || ".png"}`);
-    await fs.copyFile(e.imagePath, copy);
+    const img = await resolveArchivedFile(e.imagePath);
+    if (!img.ok) throw new Error(`配图 ${e.index + 1}${img.error}`);
+    await fs.copyFile(img.path, copy);
     images[e.index] = copy;
     entries.push({ ...e, imagePath: copy });
   }
   const cover = s.pkg.cover!;
   const coverPath = path.join(dir, "src", `cover${path.extname(cover.path).toLowerCase() || ".png"}`);
-  await fs.copyFile(cover.path, coverPath);
+  const coverSrc = await resolveArchivedFile(cover.path);
+  if (!coverSrc.ok) throw new Error(`封面主图${coverSrc.error}`);
+  await fs.copyFile(coverSrc.path, coverPath);
   const hash = await packageHash(s.content, { ...s.pkg, cover: { ...cover, path: coverPath } }, { entries }, s.theme);
   if (hash !== s.hash) throw new Error("暂存的副本和批过的包对不上（拷贝时文件被改了）：重新核对审阅页再推");
   const md = articleMarkdown(s.pkg.chosenTitle!, s.content.body ?? "", entries);

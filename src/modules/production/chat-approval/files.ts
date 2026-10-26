@@ -4,6 +4,7 @@
  */
 import path from "node:path";
 import { contentRoot } from "../../../storage/content-project.js";
+import { resolveArchivedFile } from "../../../storage/nas-kept.js";
 import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
 import type { Fact } from "../../../storage/production-types.js";
 import { sha256File } from "../../video/handoff/manifest.js";
@@ -19,7 +20,9 @@ async function verifyOne(contentId: string, f: Fact | undefined, dataDir: string
   if (!f || !f.path || !f.sha256) return "这件事背后的文件记录不在了，刷新再看";
   if (f.state === "rejected") return "这个文件已经被否掉了，刷新再看";
   if (f.replaced_at) return `「${path.basename(f.path)}」在盘上被覆盖过，已经不是记下的那份了`;
-  const file = factPath(contentId, f, dataDir);
+  const found = await resolveArchivedFile(factPath(contentId, f, dataDir), contentRoot(contentId, dataDir));
+  if (!found.ok) return found.error;
+  const file = found.path;
   const now = await sha256File(file).catch(() => null);
   if (!now) return `「${path.basename(f.path)}」找不到了（可能挪走或删了）`;
   if (now !== f.sha256) return `「${path.basename(f.path)}」刚变过，和记下的那份对不上`;

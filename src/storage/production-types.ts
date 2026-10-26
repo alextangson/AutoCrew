@@ -7,7 +7,8 @@
  */
 
 /** storyboard：脚本生成的分镜审阅页，只显示，不参与阶段推导（不在 PRODUCTION_KINDS 里） */
-export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project" | "storyboard";
+/** clean_master：审过的成片同剪辑、同 B-roll 和配乐、关掉字幕的 1920×1080「无字幕母版」，英文版的画面来源（2026-10-25） */
+export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project" | "storyboard" | "clean_master";
 /** 制作事实：本轮有一条 accepted 就进剪辑中（D4） */
 export const PRODUCTION_KINDS: ReadonlySet<FactKind> = new Set(["aroll", "cut", "srt", "cover", "chatcut_project"]);
 
@@ -63,7 +64,9 @@ export interface Fact {
   auto_attached?: true;
   /** storyboard：同目录脚本回执的 sha256 */
   receipt_sha256?: string;
-  /** srt：所属成片的 sha */
+  /** clean_master：剪辑方声明字幕轨已关（烧进去的字幕自动查不出来，只能靠声明 + ffprobe 核尺寸 / 音轨 / 时长） */
+  captions_off?: true;
+  /** srt / clean_master：所属成片的 sha */
   for_cut?: string;
   /** chatcut_project */
   project_id?: string;
@@ -141,13 +144,25 @@ export type DecisionType =
   | "script_revise" // 「稿子还要改…」：一句话给 agent
   | "inbox_ack"; // 只确认、不改事实的条目（「对，就是它」自动挂上的原片、「让 agent 补」）
 
+/** 自动对上的证据：平台、作品发布时间、期望时间（发布计划定时 / 稿件记录的发布）、标题分 */
+export interface AutoMatchEvidence {
+  platform: string;
+  item_id: string;
+  work_published_at: string;
+  expected_at: string;
+  expected_kind: "plan_slot" | "content_published";
+  title_score: number;
+}
+
 export interface Decision {
   id: string;
   type: DecisionType;
   round: number;
   at: string;
   /** legacy = 启用本体时由旧状态迁移出来的等价决定（§4.1）；chat = 对话里按创始人原话定的（chat-dialog / chat-reported 是修订前的旧值，照旧可读） */
-  source: "founder" | "legacy" | "chat" | "chat-dialog" | "chat-reported";
+  source: "founder" | "legacy" | "chat" | "chat-dialog" | "chat-reported" | "auto";
+  /** auto：数据回流按标题猜的回执，平台 + 时间窗 + 唯一候选都对上时自动确认（创始人 2026-10-25）的证据 */
+  auto_match?: AutoMatchEvidence;
   /** chat*：创始人在对话里的原话（agent 照抄转述，未经核验） */
   founder_words?: string;
   /** chat*：发起的宿主 / 会话 */
