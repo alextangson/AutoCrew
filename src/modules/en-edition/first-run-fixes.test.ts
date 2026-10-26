@@ -5,12 +5,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { updateContent } from "../../storage/local-store.js";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { founderDecision } from "../production/decisions.js";
-import { put, record, waiveSliverCheck, type Env } from "../production/testkit.js";
+import { png, put, record, waiveSliverCheck, type Env } from "../production/testkit.js";
 import { setProductionDeps } from "../production/roots.js";
 import { executeEnEdition } from "../../tools/en-edition.js";
 import { executePrePublishTool } from "../../tools/pre-publish.js";
+import { withCallerSession } from "../../runtime/run-log.js";
 import { setDurationProbe } from "./dub.js";
 import { setElevenLabsFetch, setKeychainReader } from "../voice/elevenlabs.js";
 import { approveEnScript, EN_SRT_40S, enSourceVideo, fakeElevenLabs, SEGMENTS } from "./en-test-fixtures.js";
@@ -97,6 +99,18 @@ describe("章节按审过的英文成片片长核", () => {
     const r = await kit(CH);
     expect(JSON.stringify(r)).not.toContain("超过片长");
     expect(JSON.stringify(r)).not.toContain("不到 10 秒");
+  });
+});
+
+describe("video_kit 认领：同一会话不锁自己", () => {
+  it("同一会话第二次交包不带令牌也放行；另一个会话 claim_held", async () => {
+    expect(await run({ op: "set_thumbnail", path: await put(path.join(env.outside, "thumb.png"), png(1280, 720, "t1")) })).toMatchObject({ ok: true });
+    await updateContent(id, { claim: undefined }, env.dir); // 测试从「没人认领」开始
+    const kit = (session: string) => withCallerSession(session, () => executePrePublishTool({ _dataDir: env.dir, _host: "claude-code", action: "video_kit", content_id: id, platform: "youtube",
+      kit: { post_title: "Why max effort makes AI drift", caption: "The data says otherwise.", tags: ["AI"], chapters: [{ at: "0:00", title: "Intro" }, { at: "0:12", title: "Test" }, { at: "0:24", title: "Outro" }] } }));
+    { const r1 = await kit("sess-aaa-111"); expect(r1, JSON.stringify(r1)).toMatchObject({ ok: true }); }
+    { const r1 = await kit("sess-aaa-111"); expect(r1, JSON.stringify(r1)).toMatchObject({ ok: true }); }
+    expect(await kit("sess-bbb-222")).toMatchObject({ ok: false, code: "claim_held" });
   });
 });
 
