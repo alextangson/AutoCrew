@@ -11,7 +11,7 @@
  *
  * 全是纯函数、不读盘（稿件视图同理：只读传进来的那份 `Content`）。
  */
-import { evidenceByRef, isAngleCardV3, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
+import { evidenceByRef, isAngleCardV3, type AngleCard, type FirsthandAnchor, type ResearchBrief } from "../modules/research/brief-store.js";
 import { DEFAULT_PERSONAS } from "../modules/research/personas.js";
 import { isAnchorValid } from "../modules/research/angle-stage.js";
 import { creativeTaskHash } from "../modules/writing/creative-task.js";
@@ -39,6 +39,13 @@ export function jobView(job: ResearchJob): Record<string, unknown> {
   };
 }
 
+/** 锚点出自哪：宿主照着念，创始人选卡时要分得清哪张卡锚的是他自己的话、哪张只是调研引文 */
+const ANCHOR_FROM: Record<FirsthandAnchor["kind"], string> = {
+  transcript: "创作者口播转写",
+  approved_draft: "创作者放行稿",
+  brief_evidence: "调研引文，不是亲历",
+};
+
 /** 卡的完整读法：宿主 agent 要能照着念给创始人听，不是只报个 id */
 export function cardView(card: AngleCard): Record<string, unknown> {
   const base = {
@@ -51,6 +58,7 @@ export function cardView(card: AngleCard): Record<string, unknown> {
   if (!isAngleCardV3(card)) {
     return { ...base, cardVersion: 2, audiencePain: card.audiencePain, holdTrigger: card.holdTrigger, hasAnchor: false };
   }
+  const anchor = card.firsthandAnchor;
   return {
     ...base,
     cardVersion: 3,
@@ -71,8 +79,9 @@ export function cardView(card: AngleCard): Record<string, unknown> {
     scoreReasons: card.scoreReasons,
     scoreMeaning: card.scoreReasons?.some(reason => reason.includes("证据支撑分")) ? "evidence_support" : "legacy_uninterpreted",
     scoreNotice: "该分数不能代表传播潜力或爆款概率；历史卡的评分规则可能不同",
-    /** 有没有第一手锚点（创作者自己的转写/成稿）——P1b 之后这是「有没有私货」的判别位 */
-    hasAnchor: Boolean(card.firsthandAnchor),
+    /** 有没有创作者自己的第一手锚点（转写/成稿）——「有没有私货」的判别位；调研引文锚点不算 */
+    hasAnchor: anchor !== undefined && anchor.kind !== "brief_evidence",
+    ...(anchor ? { anchor: { kind: anchor.kind, from: ANCHOR_FROM[anchor.kind], quote: anchor.quote } } : {}),
   };
 }
 

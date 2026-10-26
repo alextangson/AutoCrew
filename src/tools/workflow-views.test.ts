@@ -3,6 +3,7 @@ import { BRIEF_SCHEMA_VERSION, type AngleCardV3, type ResearchBrief } from "../m
 import { angleOptionsView, cardLine, cardView, jobView } from "./workflow-views.js";
 import type { ResearchJob } from "../modules/research/research-job-store.js";
 import { creativeTaskHash } from "../modules/writing/creative-task.js";
+import { excerptHashOf } from "../modules/research/own-material.js";
 
 const card: AngleCardV3 = {
   cardVersion: 3, id: "angle-1", angle: "从清晨的浇水场景进入", thesis: "共同照料让邻居相互熟悉",
@@ -45,6 +46,35 @@ describe("候选推荐说明判断依据及边界", () => {
     expect(cardLine(card)).toContain("内容目标：理解与信任");
     expect(cardLine(card)).not.toContain("他信的是");
     expect(cardLine(card)).not.toContain("误区背景");
+  });
+
+  it("只锚了调研引文的卡不算有创作者自己的材料：hasAnchor=false，锚点标明「调研引文，不是亲历」", () => {
+    const quote = "居民每周轮班浇水";
+    const researchOnly: AngleCardV3 = {
+      ...card,
+      firsthandAnchor: { kind: "brief_evidence", chunkId: "ev-1", quote, excerptHash: excerptHashOf(quote) },
+    };
+    expect(cardView(researchOnly)).toMatchObject({
+      hasAnchor: false,
+      anchor: { kind: "brief_evidence", from: "调研引文，不是亲历", quote },
+    });
+    // 候选列表走同一个视图：创始人选卡时念出来的是同一句
+    expect(angleOptionsView({ ...brief, angleCards: [researchOnly] }).cards[0]).toMatchObject({
+      hasAnchor: false,
+      anchor: { from: "调研引文，不是亲历" },
+    });
+  });
+
+  it("锚了创作者转写 / 放行稿才算有私货；没锚点的卡不带 anchor 字段", () => {
+    for (const [kind, from] of [["transcript", "创作者口播转写"], ["approved_draft", "创作者放行稿"]] as const) {
+      const own: AngleCardV3 = {
+        ...card,
+        firsthandAnchor: { kind, contentId: "content-1", sourceRevision: 1, chunkId: `om:content-1:${kind}:1:0`, quote: "早上六点去浇水", excerptHash: "h" },
+      };
+      expect(cardView(own)).toMatchObject({ hasAnchor: true, anchor: { kind, from, quote: "早上六点去浇水" } });
+    }
+    expect(cardView(card)).toMatchObject({ hasAnchor: false });
+    expect(cardView(card)).not.toHaveProperty("anchor");
   });
 
   it("研究任务视图带出共同任务书及指纹", () => {
