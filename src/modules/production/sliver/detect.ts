@@ -67,10 +67,32 @@ function parse(snap: Snapshot): Parsed | string {
     const sorted = [...list].sort((a, b) => a.start - b.start);
     for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) return `同一条轨道上有重叠的条目（「${sorted[i - 1].name}」和「${sorted[i].name}」），暂不支持`;
   }
-  const effects = arr(tl.pixelEffectItems), transitions = arr(tl.pixelTransitionItems);
-  if (!effects || !transitions) return "时间线格式认不出（特效 / 转场不是列表）";
-  const live = (x: Json) => x.enabled !== false && typeof x.trackId === "string" && !hidden.has(x.trackId);
-  return { items, effects: effects.filter(live), transitions: transitions.filter(live), orders };
+  const rawEffects = arr(tl.pixelEffectItems), rawTransitions = arr(tl.pixelTransitionItems);
+  if (!rawEffects || !rawTransitions) return "时间线格式认不出（特效 / 转场不是列表）";
+  const effects: Json[] = [];
+  for (const e of rawEffects) {
+    const n = liveEffect(e, hidden);
+    if (typeof n === "string") return n;
+    if (n) effects.push(n);
+  }
+  if (rawTransitions.some((t) => t.enabled !== false && typeof t.trackId !== "string")) return "时间线格式认不出（转场缺轨道）";
+  const transitions = rawTransitions.filter((t) => t.enabled !== false && !hidden.has(String(t.trackId)));
+  return { items, effects, transitions, orders };
+}
+
+/**
+ * 特效挂在哪：v4 是 targetItemId（+ trackId），v11 起挂条目写成 target {kind:"item", itemId}、不带 trackId；
+ * 整轨特效带 trackId。都认不出 → 返回原因（不能静默丢掉：丢了遮罩就会把画中画当成整屏盖住）。关掉的 / 隐藏轨上的 → null
+ */
+function liveEffect(e: Json, hidden: ReadonlySet<string>): Json | null | string {
+  if (e.enabled === false) return null;
+  if (typeof e.trackId === "string" && hidden.has(e.trackId)) return null;
+  if (typeof e.targetItemId === "string") return e;
+  const t = e.target as Json | null | undefined;
+  if (t !== undefined && t !== null) {
+    return typeof t === "object" && t.kind === "item" && typeof t.itemId === "string" ? { ...e, targetItemId: t.itemId } : "时间线格式认不出（特效挂的对象认不出）";
+  }
+  return typeof e.trackId === "string" ? e : "时间线格式认不出（特效没挂条目也没有轨道）";
 }
 
 /**

@@ -174,7 +174,7 @@ describe("没跑成：拦、写原因、整条放行（§8、E1–E5、E14、E17
     await writeProject([gapTimeline(5)], { schema: v });
     expect(await reasonOf((await setup()).c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining(`格式版本（${v}）不认识`) });
   });
-  it.each([9, 11])("E3 核过的格式版本 %i → 照常查", async (v) => {
+  it.each([9, 11, 14, 23, 25])("E3 核过的格式版本 %i → 照常查", async (v) => {
     await writeProject([gapTimeline(5)], { schema: v });
     expect((await checks((await setup()).c.id)).at(-1)).toMatchObject({ status: "slivers" });
   });
