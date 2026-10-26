@@ -284,13 +284,16 @@ describe("LLM semantic filter (unified intel layer)", () => {
       { title: "大厂裁员潮下的自救指南", link: "https://a.example/1" },
       { title: "楼市周报", link: "https://a.example/2" },
     ]);
+    // 按标题给分而不是写死 index:两条候选粗筛同分,池序只靠 publishedAt 决胜,而 seed 逐条
+    // 取 new Date() 跨毫秒时顺序会翻——写死 index 0 就把「楼市周报」判成高分了(全量跑时偶发)。
     const judge = async (positioning, _aud, candidates) => {
       expect(positioning).toBe("职场成长");
       expect(candidates).toHaveLength(2);
-      return [
-        { index: 0, score: 9, reason: "裁员潮正是职场成长受众的核心焦虑" },
-        { index: 1, score: 2, reason: "" },
-      ];
+      return candidates.map((c, index) =>
+        c.title.includes("裁员")
+          ? { index, score: 9, reason: "裁员潮正是职场成长受众的核心焦虑" }
+          : { index, score: 2, reason: "" },
+      );
     };
     const result = await intakeRadarTopics(testDir, { judge });
 
