@@ -12,6 +12,8 @@ import { HUMAN_WRITE } from "../storage/first-body-guard.js";
 import { contentFile } from "../storage/content-project.js";
 import { newDraftAngleRefusal } from "../modules/research/angle-gate.js";
 import { buildIpcHandlers } from "../desktop/ipc.js";
+import { recordDiff } from "../modules/learnings/diff-tracker.js";
+import { SPOKEN_DIFF_NOTE } from "../modules/video/handoff/spoken.js";
 
 let dir: string;
 const URL = "https://example.com/report";
@@ -50,6 +52,33 @@ beforeEach(async () => {
 afterEach(async () => { setQuoteFetch(undefined); await fs.rm(dir, { recursive: true, force: true }); });
 
 describe("start", () => {
+  it("带上创始人亲手改过的抖音稿对照：手改与实拍分开标，别的平台、AI 改写不带", async () => {
+    await recordDiff("c-hand", "founder", "body", "这个方法非常好用而且很棒很棒", "说白了这招就是快", dir, "太营销腔了", "douyin");
+    await recordDiff("c-spoken", "founder", "body", "我们今天来聊一聊这个话题", "直接说，这玩意儿我天天用", dir, SPOKEN_DIFF_NOTE, "douyin");
+    await recordDiff("c-wechat", "founder", "body", "公众号里的长句子写法很书面", "公众号改成的另一种书面写法", dir, undefined, "wechat_mp");
+    await recordDiff("c-ai", "ai", "body", "模型自己写的旧版本很长很长", "模型自审后改的新版本", dir, undefined, "douyin");
+    const r = await run("start", { inspiration: "用了 AI 反而更忙" });
+    const edits = (r.context as { founder_edits: { pairs: Array<Record<string, string>>; rule: string; note?: string } }).founder_edits;
+    expect(edits.pairs).toHaveLength(2);
+    const bySource = Object.fromEntries(edits.pairs.map((p) => [p.source, p]));
+    expect(bySource.hand_edit).toMatchObject({ note: "太营销腔了" });
+    expect(bySource.hand_edit.after).toContain("说白了");
+    expect(bySource.spoken.after).toContain("天天用");
+    expect(bySource.spoken.note).toBeUndefined();
+    expect(edits.rule).toContain("不是规则");
+    expect(edits.note).toBeUndefined();
+  });
+
+  it("边界：没有改稿记录 → 空对照并说明；记录读不出来 → 照常开写，原始错误给出去", async () => {
+    const empty = await run("start", { inspiration: "用了 AI 反而更忙" });
+    expect((empty.context as { founder_edits: unknown }).founder_edits).toMatchObject({ pairs: [], note: expect.stringContaining("还没有") });
+    await fs.rm(path.join(dir, "learnings"), { recursive: true, force: true });
+    await fs.writeFile(path.join(dir, "learnings"), "not a dir");
+    const broken = await run("start", { inspiration: "另一个灵感" });
+    expect(broken.ok).toBe(true);
+    expect((broken.context as { founder_edits: unknown }).founder_edits).toMatchObject({ pairs: [], error: expect.stringContaining("改稿对照读取失败") });
+  });
+
   it("一句灵感建选题和抖音稿（写稿中），返回三份上下文、一手材料与版本号", async () => {
     await appendOutcomes([
       { contentId: null, platform: "douyin", platformTitle: "爆款A", publishedAt: new Date(Date.now() - 5 * 86_400_000).toISOString(), metricDate: "2026-10-03", metrics: { views: 90000, completion5s: 40 }, source: "auto", recordedAt: new Date().toISOString(), needsReview: false, reviewReasons: [] },

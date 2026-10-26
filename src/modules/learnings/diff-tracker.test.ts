@@ -196,6 +196,15 @@ describe("changedWindow (V5.7 对比对)", () => {
 });
 
 describe("recentContrastPairs (V5.7 对比对)", () => {
+  it("filters by platform when asked; platform-less diffs don't match", async () => {
+    await recordDiff("c1", "founder", "body", "抖音稿里的旧写法又长又空洞", "抖音改成的短句", testDir, undefined, "douyin");
+    await recordDiff("c2", "founder", "body", "公众号里的旧写法又长又空洞", "公众号改成的写法", testDir, undefined, "wechat_mp");
+    await recordDiff("c3", "founder", "body", "不知平台的旧写法又长又空洞", "不知平台改成的写法", testDir);
+    const pairs = await recentContrastPairs(3, testDir, { platform: "douyin" });
+    expect(pairs.map((p) => p.after)).toEqual(["抖音改成的短句"]);
+    expect(await recentContrastPairs(3, testDir)).toHaveLength(3);
+  });
+
   it("returns body edits with note, skips typo-level and non-body diffs", async () => {
     // 有效:整句改写(核心 > 6 字),带"为什么改"
     await recordDiff("c1", "founder", "body", "这个方法非常好用而且很棒很棒", "说白了这招就是快", testDir, "太营销腔了");

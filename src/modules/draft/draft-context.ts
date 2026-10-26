@@ -16,6 +16,23 @@ import { DRAFT_PLATFORM } from "./draft-types.js";
 import { founderTranscripts, type FounderTranscript } from "./transcripts.js";
 import { excerpt, voiceContext } from "./voice-refs.js";
 import { ruleJudgeContext } from "./draft-feedback.js";
+import { recentContrastPairs } from "../learnings/diff-tracker.js";
+import { SPOKEN_DIFF_NOTE } from "../video/handoff/spoken.js";
+
+const CONTRAST_MAX = 3;
+
+/**
+ * 创始人亲手改过的抖音稿：改前 / 改后对照，给下一篇当口吻参考（不是规则，规则只认他批过的）。
+ * 来源只有作者=创始人的记录：工作台手改，和登记时「实拍口播与定稿的差异」（他实际怎么说出口）。
+ */
+export async function contrastContext(dataDir?: string): Promise<Record<string, unknown>> {
+  const pairs = await recentContrastPairs(CONTRAST_MAX, dataDir, { platform: DRAFT_PLATFORM });
+  return {
+    pairs: pairs.map((p) => ({ source: p.note === SPOKEN_DIFF_NOTE ? "spoken" : "hand_edit", before: p.before, after: p.after, ...(p.note && p.note !== SPOKEN_DIFF_NOTE ? { note: p.note } : {}) })),
+    rule: "参考，不是规则：看他把什么改成了什么，学口吻；spoken = 他拍摄时实际说出口的版本（含口误即兴，只学说法）",
+    ...(pairs.length === 0 ? { note: "还没有创始人亲手改过的抖音稿记录" } : {}),
+  };
+}
 
 const HIT_WINDOW_DAYS = 90;
 const HIT_TOP = 10;

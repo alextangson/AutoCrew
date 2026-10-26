@@ -4,7 +4,7 @@
 import { getContent, getTopic, saveContent, saveTopic, transitionStatus, updateContent, type Content, type Topic } from "../storage/local-store.js";
 import { isRealDraft, modelWrite } from "../storage/first-body-guard.js";
 import { SCRIPT_FROZEN } from "../storage/production-store.js";
-import { firsthandContext, hitsContext, profileContext, seriesContext } from "../modules/draft/draft-context.js";
+import { contrastContext, firsthandContext, hitsContext, profileContext, seriesContext } from "../modules/draft/draft-context.js";
 import { loadChecklist } from "../modules/draft/draft-final.js";
 import { pinnedPlaybook, playbookIndex } from "../modules/playbook/read.js";
 import { draftHash } from "../storage/draft-hash.js";
@@ -125,12 +125,14 @@ export async function draftStart(a: DraftArgs): Promise<Record<string, unknown>>
   if (!("id" in got)) return got;
   const content = got as Content;
   const topic = content.topicId ? await getTopic(content.topicId, a.dataDir) : null;
-  const [profile, hits, series, own, progress, playbooks] = await Promise.all([
+  const [profile, hits, series, own, progress, playbooks, founderEdits] = await Promise.all([
     profileContext(a.dataDir), hitsContext(a.dataDir), seriesContext(content, a.dataDir), firsthandContext(topic, a.dataDir, a.inspiration ?? content.draftPath?.inspiration), progressOf(content, a.dataDir), playbooksContext(a.dataDir),
+    // 读不出来不拦开写，但原始错误照实给出去
+    contrastContext(a.dataDir).catch((e: unknown) => ({ pairs: [], error: `改稿对照读取失败：${e instanceof Error ? e.message : String(e)}` })),
   ]);
   return {
     ok: true, content_id: content.id, topic_id: content.topicId ?? null, resumed: Boolean(a.contentId),
-    context: { profile, hits, series, firsthand: own.firsthand, voice_refs: own.voice_refs, ...playbooks }, progress,
+    context: { profile, hits, series, firsthand: own.firsthand, voice_refs: own.voice_refs, founder_edits: founderEdits, ...playbooks }, progress,
     workbench_url: workbenchUrl(content.id),
     next_action: { note: draftNextNote({ id: content.id, status: content.status, needsAngle: progress.needs_angle as boolean, needsOpening: progress.needs_opening as boolean, opening: openingState(content.draftPath?.angle), hasBody: progress.has_body as boolean, reviewed: (progress.review_notes_for as number[]).length + (progress.test_reads_for as number[]).length > 0, checklistCurrent: Boolean((progress.final as { prepared_for_current?: boolean } | null)?.prepared_for_current) }) },
   };

@@ -168,11 +168,12 @@ export function changedWindow(
  * 最近的有效改稿对比对(正文编辑,按时间倒序):喂给写稿 prompt 学"改动方向"。
  * 过滤标点级微调;整篇重写窗口自动截断到 PAIR_SIDE_MAX。
  */
-export async function recentContrastPairs(limit = 3, dataDir?: string): Promise<ContrastPair[]> {
+export async function recentContrastPairs(limit = 3, dataDir?: string, opts: { platform?: string } = {}): Promise<ContrastPair[]> {
   const diffs = await listFounderDiffs(dataDir);
   const pairs: ContrastPair[] = [];
   for (const d of diffs) {
     if (d.field !== "body" || d.before === d.after) continue;
+    if (opts.platform && d.platform !== opts.platform) continue;
     const win = changedWindow(d.before, d.after);
     if (win.coreLen < PAIR_MIN_CORE) continue;
     pairs.push({

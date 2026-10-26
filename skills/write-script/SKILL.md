@@ -121,6 +121,8 @@ description: |
 
 ## 5 写和观众试读
 
+动笔前看 `context.founder_edits.pairs`：创始人亲手把什么改成了什么（`spoken` 是他拍摄时实际说出口的版本），照着学口吻和说法；只是参考，不当规则，也不照抄里面的内容。有 `error` 就把原因告诉创始人。
+
 按选定的开头、主线、手册骨架、锁住的范文和上面的写法写全文，`save{content_id, base_version, title, body}`。`format_warnings` 有内容就改掉再存。
 
 第一版存下后做一次观众试读：把本技能目录下 `viewer-test-read-prompt.md` 里的 `{{BODY}}` 换成正文。试读者只拿到这份提示词，不看规则、手册、立意和范文。按宿主选通道：
