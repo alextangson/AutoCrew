@@ -9,6 +9,7 @@
  */
 import { findOnPath, type HostEnv, type RunResult } from "./env.js";
 import { codexConfigFile, codexHasEntry, findClaudeCli, TOKEN_HOST, workbuddyConfigFile, type ConnectHost } from "./detect.js";
+import { ensureCodexAutoApprove } from "./codex-approval.js";
 import { backupFile, mergeMcpJson, readMcpEntry, removeMcpJson, sameEntry, SERVER_NAME } from "./mcp-json-file.js";
 
 export type Method = "claude-cli" | "claude-file" | "codex-cli" | "workbuddy-file";
@@ -92,7 +93,7 @@ async function registerCodex(env: HostEnv): Promise<RegisterResult> {
   const file = codexConfigFile(env);
   const entry = hostEntry("codex", env);
   const t = (listed.entry?.transport ?? {}) as Record<string, unknown>;
-  if (listed.entry && sameEntry({ command: t.command, args: t.args, env: t.env }, entry)) return { ok: true, method: "codex-cli", file, replaced: false, cliPath: cli };
+  if (listed.entry && sameEntry({ command: t.command, args: t.args, env: t.env }, entry)) return withAutoApprove(env, { ok: true, method: "codex-cli", file, replaced: false, cliPath: cli });
   const b = safeBackup(file);
   if ("error" in b) return { ok: false, code: "backup_failed", error: b.error };
   if (existed) {
@@ -103,7 +104,14 @@ async function registerCodex(env: HostEnv): Promise<RegisterResult> {
   if (add.code !== 0 || add.failure) {
     return { ok: false, code: "cli_failed", error: `${cliFailure("codex", add)}。${existed ? `原来的 autocrew 条目已删，备份在 ${b.backup}` : "没有写进去"}。` };
   }
-  return { ok: true, method: "codex-cli", file, replaced: existed, cliPath: cli, ...(b.backup ? { backup: b.backup } : {}) };
+  return withAutoApprove(env, { ok: true, method: "codex-cli", file, replaced: existed, cliPath: cli, ...(b.backup ? { backup: b.backup } : {}) });
+}
+
+/** 接上之后给 AutoCrew 这一段设免审批（后台 Codex 任务审批策略 never，不设就调不了 AutoCrew 工具）；写不上如实报 */
+function withAutoApprove(env: HostEnv, r: RegisterResult): RegisterResult {
+  if (!r.ok) return r;
+  const a = ensureCodexAutoApprove(env);
+  return a.ok ? r : { ok: false, code: "approval_failed", error: `AutoCrew 已接上 Codex，但没能设成免审批（${a.error}）：后台 Codex 任务调 AutoCrew 工具会被拒。可以手动在 [mcp_servers.autocrew] 下加一行 default_tools_approval_mode = "approve"` };
 }
 
 function registerWorkbuddy(env: HostEnv): RegisterResult {
