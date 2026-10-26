@@ -152,13 +152,20 @@ export async function scanText(
 
 // --- Helpers ---
 
+const LATIN_WORD = /^[a-z0-9]+$/i;
+const LATIN_CHAR = /[a-z0-9]/i;
+
+/** 拉丁字母词（如「AV」）只认整词：英文稿里 have / saved 不算命中；中文词照旧按子串 */
 function findAllPositions(text: string, word: string): number[] {
   const positions: number[] = [];
   const lower = text.toLowerCase();
   const target = word.toLowerCase();
+  const wholeWord = LATIN_WORD.test(target);
   let idx = lower.indexOf(target);
   while (idx !== -1) {
-    positions.push(idx);
+    const before = idx > 0 ? lower[idx - 1] : "";
+    const after = lower[idx + target.length] ?? "";
+    if (!wholeWord || (!LATIN_CHAR.test(before) && !LATIN_CHAR.test(after))) positions.push(idx);
     idx = lower.indexOf(target, idx + 1);
   }
   return positions;

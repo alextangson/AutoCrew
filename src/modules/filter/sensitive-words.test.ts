@@ -29,6 +29,13 @@ describe("scanText", () => {
     expect(result.hits[0].category).toBeTruthy();
   });
 
+  it("matches Latin-letter terms as whole words only, so English copy doesn't trip on have / saved", async () => {
+    const clean = await scanText("You saved 10 minutes. We have no real fix yet.", undefined, testDir);
+    expect(clean.hits.filter((h) => h.word.toLowerCase() === "av")).toHaveLength(0);
+    const hit = await scanText("这里写了 AV 两个字母", undefined, testDir);
+    expect(hit.hits.some((h) => h.word.toLowerCase() === "av")).toBe(true);
+  });
+
   it("hitCount matches hits array length", async () => {
     const result = await scanText("这是一段普通文字", undefined, testDir);
     expect(result.hitCount).toBe(result.hits.length);
