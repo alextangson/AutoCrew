@@ -400,7 +400,7 @@ export function buildAngleBlock(card: AngleCard, evidence: BriefEvidence[], tens
 }
 
 /** 立意负责主张与范围，表达按已选结构和用户规划；证据纪律不因去模板化放松。 */
-function angleHardRules(): string[] {
+function angleHardRules(card: AngleCardV3): string[] {
   return [
     "———— 这一稿的硬规矩 ————",
     "开头按已选结构与创作者要求进入主题；不强制反常识、提问或固定秒数。亲历复盘可直接从真实经历讲起。",
@@ -410,21 +410,42 @@ function angleHardRules(): string[] {
     "证据纪律：每个数字、每个「某公司/某研究/某人说」都必须来自材料里带 id 的证据" +
       "（简报与补证的 ev-、内部语料的 om-）或 find_evidence 查回来的引文；" +
       "找不到就删掉那个数字或改成定性说法——不要编，也不要写「未证实」蒙混过去，代码会逐个数字对账。",
-    `第一手材料只用上面「第一手锚点」指定的那一处；其余创作者材料只供口吻参考，不得当案例讲。${OWN_MATERIAL_USAGE_RULE}。`,
+    ownMaterialRule(card),
     "自嘲只能嘲行为和判断，不能嘲身份、学历、出身、是否科班。",
     "**不写任何镜头、画面、字幕条、B-roll 标注**（[画面]、[字幕条]、[口播]、[切真人] 一类）：" +
       "画面是稿子定稿之后的事，这一稿只写能读出口的正文。",
   ];
 }
 
-/** 第一手锚点：卡上钉住的那一处亲历材料。quote 已由立意 pass 逐字校验过，这里只做注入消毒 */
+/**
+ * 创作者材料怎么用，跟着锚点来源走。锚的是调研引文（brief_evidence）时，本稿没有任何一处
+ * 创作者材料能当亲历讲——通用那句把锚点叫「第一手材料」、又说「转写可作亲身经历」，
+ * 放在这里等于把调研引文说成他的材料（2026-09-26 写作包第 289 行就是这么写歪的）。
+ */
+function ownMaterialRule(card: AngleCardV3): string {
+  if (card.firsthandAnchor?.kind === "brief_evidence") {
+    return "本稿没有可当亲历讲的创作者材料（第一手锚点是调研引文）：创作者材料只供口吻参考，不得当案例讲，也不要虚构「我当时」「我试过」这类经历。";
+  }
+  return `第一手材料只用上面「第一手锚点」指定的那一处；其余创作者材料只供口吻参考，不得当案例讲。${OWN_MATERIAL_USAGE_RULE}。`;
+}
+
+/**
+ * 第一手锚点：卡上钉住的那一处材料。只有转写 / 放行稿是创作者本人的话；brief_evidence 是
+ * 调研证据里的原文引文，照样钉住主张，但不是他说的、更不是他的亲历。
+ * quote 已由立意 pass 逐字校验过，这里只做注入消毒。
+ */
 function anchorLine(card: AngleCardV3): string {
   const anchor = card.firsthandAnchor;
   if (!anchor) {
     return "第一手锚点：无——这一稿没有可用的亲历材料，不要虚构「我当时」「我试过」这类经历。";
   }
-  const where = anchor.chunkId ? `（片段 ${sanitizeExternal(anchor.chunkId, 80)}）` : "";
-  return `第一手锚点${where}：「${angleField(anchor.quote, ANGLE_LONG_FIELD_MAX)}」——这是创作者本人说过的话，按选定结构放在合适位置，可以改写口吻但不能改事实。`;
+  const ref = anchor.chunkId ? sanitizeExternal(anchor.chunkId, 80) : "";
+  const quote = angleField(anchor.quote, ANGLE_LONG_FIELD_MAX);
+  if (anchor.kind === "brief_evidence") {
+    return `第一手锚点（调研引文${ref ? ` ${ref}` : ""}）：「${quote}」——这是调研查到的原文引文，不是创作者本人说的话，也不能当他的亲身经历讲；引用时${ref ? `带上 ${ref}、` : ""}交代出处。`;
+  }
+  const where = ref ? `（片段 ${ref}）` : "";
+  return `第一手锚点${where}：「${quote}」——这是创作者本人说过的话，按选定结构放在合适位置，可以改写口吻但不能改事实。`;
 }
 
 /**
@@ -466,7 +487,7 @@ export function buildAngleBlockV3(card: AngleCardV3, tensions: string[] = []): s
         "要么用 find_evidence 找到证据，要么写成明确的个人判断，不要伪装成事实。",
     );
   }
-  lines.push(...angleHardRules());
+  lines.push(...angleHardRules(card));
   return lines.join("\n");
 }
 

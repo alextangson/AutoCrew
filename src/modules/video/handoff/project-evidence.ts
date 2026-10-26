@@ -41,7 +41,7 @@ export function validateCoverage(content: Content, coverage: CitationCoverage): 
   const errors = coverage.citations.flatMap(c => citationErrors(c, content.body, entries));
   // A number the ledger can back must cite the ledger: the creator slot is for claims that have no ledger source.
   // 定稿时创始人「保留」生成的 user-kept-* 只替它自己那句作保，不算别的句子的出处
-  const backed = verifyNumbers({ title: "", hook: "", body: content.body, cta: "" }, entries.filter(e => !e.id.startsWith(KEPT_ENTRY_PREFIX))).verified;
+  const backed = verifyNumbers({ title: "", hook: "", body: content.body, cta: "" }, entries.filter(e => !e.id.startsWith(KEPT_ENTRY_PREFIX))).verified.filter(v => !v.citedOnly);
   // Treat an entire factual sentence as the coverage unit, not an isolated digit.
   for (const s of factualSentences(content.body)) {
     const covering = coverage.citations.filter(c => c.start <= s.start && c.end >= s.end);
