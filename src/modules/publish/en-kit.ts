@@ -48,7 +48,7 @@ function readChapters(raw: unknown, failures: Failure[]): Chapter[] {
 /** YouTube 章节规则：第一个 0:00、至少 3 章、递增、每章 ≥10 秒、都在片长之内 */
 export function chapterProblems(ch: Chapter[], durationS: number | null): string[] {
   const out: string[] = [];
-  if (durationS === null) out.push("片长未知（没有当前的配音清单）：章节核不了，先 en_edition dub");
+  if (durationS === null) out.push("片长未知（审过的英文成片读不出时长，或还没有配音清单）：章节核不了，看一下英文成片文件能不能播，或先 en_edition dub");
   if (ch.length < 3) out.push(`YouTube 章节至少 3 个（收到 ${ch.length} 个）`);
   if (ch.length && ch[0].startS !== 0) out.push("第一个章节必须从 0:00 开始");
   ch.forEach((c, i) => {

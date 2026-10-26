@@ -11,6 +11,10 @@ import { readInbox } from "../production/inbox-read.js";
 import { decideItem } from "../production/inbox-decide.js";
 import { setDurationProbe } from "./dub.js";
 import { setElevenLabsFetch } from "../voice/elevenlabs.js";
+import { setProductionDeps } from "../production/roots.js";
+
+/** 英文成片（文件名带 english）的假时长：40 秒，和 EN_SRT_40S 的英文版一样长；章节按审过的英文成片片长核 */
+export const EN_CUT_SECONDS = 40;
 
 export const EN_SRT = [
   "1\n00:00:00,000 --> 00:00:04,000\n说实话，任务越难越想开最大",
@@ -32,6 +36,7 @@ export const SEGMENTS = [
 /** master=false：不登记无字幕母版（测英文版缺画面来源时拒） */
 export async function enSourceVideo(platforms: string[], srt = EN_SRT, opts: { master?: boolean } = {}): Promise<{ env: Env; id: string }> {
   const env = await makeEnv({ enabled: true });
+  setProductionDeps({ probe: async (file) => (path.basename(file).includes("broken") ? { error: "moov atom not found" } : { durationMs: path.basename(file).includes("english") ? EN_CUT_SECONDS * 1000 : 12_000, width: 1920, height: 1080, audio: true }) });
   await initProfile(env.dir);
   await updateProfile({ platforms }, env.dir);
   const c = await videoContent(env, "深度思考开到 max");

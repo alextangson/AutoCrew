@@ -18,6 +18,7 @@ import { chaptersFromManifest, EN_PUBLISH_WINDOW } from "../modules/publish/en-k
 import { REPO_ROOT } from "../modules/video/proc.js";
 import { enPackageState } from "../modules/en-edition/package.js";
 import { enPackageApprovalText, writeEnPackagePreview } from "../modules/en-edition/package-preview.js";
+import { parsePlacements, placedManifest, PLACEMENT_FALLBACK_NOTE, savePlacements } from "../modules/en-edition/placements.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
@@ -52,13 +53,14 @@ export async function captionsOp(id: string, dataDir: string): Promise<Result> {
   const s = a.s;
   const cm = await currentManifest(id, s, dataDir);
   if ("no" in cm) return cm.no;
-  const m = cm.m;
-  const cues = buildCues(m, s.script);
+  const pm = await placedManifest(id, cm.m, dataDir);
+  if ("error" in pm) return fail("placements_stale", pm.error);
+  const cues = buildCues(pm.m, s.script);
   if (!cues.ok) return fail("captions_failed", cues.error);
   const file = path.join(dubDir(id, dataDir), "captions.json");
   await fs.writeFile(file, JSON.stringify({ scriptHash: s.hash, cues: cues.cues }, null, 2));
   const script = path.join(REPO_ROOT, "sidecars", "captions", "burn_captions.py");
-  return { ok: true, captions_path: file, cues: cues.cues.length,
+  return { ok: true, captions_path: file, cues: cues.cues.length, timing_source: pm.source, ...(pm.source === "dub_manifest" ? { timing_warning: PLACEMENT_FALLBACK_NOTE } : {}),
     burn_command: `uv run --project ${shellQuote(path.dirname(script))} ${shellQuote(script)} --cues ${shellQuote(file)} --input <口型对齐后的成片.mp4> --output <英文成片.mp4>`,
     note: "<…> 两处换成真实路径时也要加单引号（项目路径里有空格和中文）" };
 }
@@ -69,9 +71,22 @@ export async function chaptersOp(id: string, dataDir: string): Promise<Result> {
   const s = a.s;
   const cm = await currentManifest(id, s, dataDir);
   if ("no" in cm) return cm.no;
-  const m = cm.m;
-  return { ok: true, segment_starts: chaptersFromManifest(m, s.script),
+  const pm = await placedManifest(id, cm.m, dataDir);
+  if ("error" in pm) return fail("placements_stale", pm.error);
+  return { ok: true, segment_starts: chaptersFromManifest(pm.m, s.script), timing_source: pm.source, ...(pm.source === "dub_manifest" ? { timing_warning: PLACEMENT_FALLBACK_NOTE } : {}),
     note: "YouTube 章节：从这些段起点里挑 3 个以上（第一个必须 0:00，每章 ≥10 秒），给每章写英文标题，放进 youtube 发布包的 chapters" };
+}
+
+/** 剪辑补完 B-roll 后登记每段配音在英文时间线上的实际起点；字幕和章节按它排 */
+export async function placementsOp(id: string, raw: unknown, dataDir: string): Promise<Result> {
+  const a = await approvedState(id, dataDir);
+  if ("no" in a) return a.no;
+  const cm = await currentManifest(id, a.s, dataDir);
+  if ("no" in cm) return cm.no;
+  const list = parsePlacements(raw, cm.m);
+  if (typeof list === "string") return fail("invalid_params", list);
+  const file = await savePlacements(id, cm.m, list, dataDir);
+  return { ok: true, placements_path: file, lines: list.length, next_action: "重新 op:\"captions\" 出字幕、op:\"chapters\" 拿章节起点（之前按清单出的都作废）" };
 }
 
 export async function thumbnailOp(id: string, file: string, dataDir: string): Promise<Result> {

@@ -15,19 +15,19 @@ import { enSource } from "../modules/en-edition/source.js";
 import { buildSegments } from "../modules/en-edition/script-input.js";
 import { readEnScript, scriptBody, scriptHash, segmentBudget, withEnLock, writeEnScript } from "../modules/en-edition/script.js";
 import { enApprovalText, enReviewState, isEnEdition, renderEnReviewPage } from "../modules/en-edition/review.js";
-import { captionsOp, chaptersOp, dubOp, mediaStatus, packageStatusOp, thumbnailOp } from "./en-edition-media.js";
+import { captionsOp, chaptersOp, dubOp, mediaStatus, packageStatusOp, placementsOp, thumbnailOp } from "./en-edition-media.js";
 import { enFinalCheck } from "../modules/en-edition/publish-out.js";
 import { rebindEnEditionLocked } from "../modules/en-edition/rebind.js";
 import { staleReason } from "../modules/lineage/lineage.js";
 
 type Result = Record<string, unknown>;
-const OPS = ["derive", "rebind", "source", "set_script", "verify_quote", "status", "dub", "captions", "chapters", "set_thumbnail", "package_status", "final_check"] as const;
+const OPS = ["derive", "rebind", "source", "set_script", "verify_quote", "status", "dub", "set_placements", "captions", "chapters", "set_thumbnail", "package_status", "final_check"] as const;
 type Op = (typeof OPS)[number];
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 const str = (v: unknown) => (typeof v === "string" ? v.trim().replace(/^"+|"+$/g, "").trim() : "");
 
 export const EN_EDITION_ACTION_DOC =
-  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / rebind（源视频成片换版后绑到新成片：没变的段留着、变了的标出来，批准撤掉重审） / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / captions / chapters / set_thumbnail{path} / package_status（英文发布包审阅页） / final_check{platform}（点安排 / 发帖前必调）";
+  "'en_edition' 审过的中文成片派生英文版（YouTube / X），content_id + edition{op, …}，op: derive{content_id:源视频} / rebind（源视频成片换版后绑到新成片：没变的段留着、变了的标出来，批准撤掉重审） / source（字幕时间槽） / set_script{segments:[{cues:\"1-2\",en,swaps?:[{from,to,reason,factual?,evidence_id?}],keyword?}]} / verify_quote{url,quote,claim?} / status（中英对照审阅页） / dub（脚本批过后配音） / set_placements{placements:[{line,start_s}]}（补完 B-roll 后登记每段在英文时间线上的实际起点；字幕章节按它排） / captions / chapters / set_thumbnail{path} / package_status（英文发布包审阅页） / final_check{platform}（点安排 / 发帖前必调）";
 
 async function derive(params: Result, dataDir: string): Promise<Result> {
   const r = await deriveSibling(str(params.content_id ?? params.id), "en_edition", dataDir);
@@ -138,6 +138,7 @@ function mutate(op: Op, id: string, params: Result, dataDir: string): Promise<Re
     case "set_script": return setScript(id, params, dataDir);
     case "verify_quote": return quote(id, params, dataDir);
     case "dub": return dubOp(id, dataDir);
+    case "set_placements": return placementsOp(id, params.placements, dataDir);
     case "captions": return captionsOp(id, dataDir);
     case "set_thumbnail": return thumbnailOp(id, str(params.path), dataDir);
     default: return Promise.resolve(fail("invalid_params", `未知 op：${op}`));
