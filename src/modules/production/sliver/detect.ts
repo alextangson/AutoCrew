@@ -47,7 +47,7 @@ function parse(snap: Snapshot): Parsed | string {
   if (nested === null || nested.length) return "时间线里有分组 / 嵌套条目，暂不支持";
   const odd = Object.keys(tl).find((k) => k.endsWith("Items") && !HANDLED.has(k) && Array.isArray(tl[k]) && (tl[k] as unknown[]).length);
   if (odd) return `时间线里有不认识的条目类型 ${odd}`;
-  const items: Placed[] = [];
+  const items: Placed[] = [], allIds = new Set<string>();
   for (const group of VISUAL) {
     const list = arr(tl[group]);
     if (!list) return `时间线格式认不出（${group} 不是列表）`;
@@ -56,6 +56,7 @@ function parse(snap: Snapshot): Parsed | string {
       if (typeof it.id !== "string" || typeof it.trackId !== "string" || !orders.has(it.trackId) || start === null || dur === null || start < 0 || dur <= 0) {
         return `时间线格式认不出（${group} 里有条目缺 id / 轨道 / 帧位置）`;
       }
+      allIds.add(it.id);
       if (hidden.has(it.trackId)) continue; // E6：隐藏轨不算
       const asset = typeof it.assetId === "string" ? snap.assets[it.assetId] : undefined;
       items.push({ group, it, id: it.id, start, end: start + dur, order: orders.get(it.trackId)!, name: asset?.name ?? (typeof it.name === "string" ? it.name : it.id) });
@@ -73,6 +74,8 @@ function parse(snap: Snapshot): Parsed | string {
   for (const e of rawEffects) {
     const n = liveEffect(e, hidden);
     if (typeof n === "string") return n;
+    // 挂的条目找不到：不能当没这个特效（Codex 审 v25：会把遮罩下的区间判成盖住）
+    if (n && typeof n.targetItemId === "string" && !allIds.has(n.targetItemId)) return "时间线格式认不出（特效挂的条目在时间线里找不到）";
     if (n) effects.push(n);
   }
   if (rawTransitions.some((t) => t.enabled !== false && typeof t.trackId !== "string")) return "时间线格式认不出（转场缺轨道）";

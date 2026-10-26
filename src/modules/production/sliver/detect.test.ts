@@ -112,6 +112,8 @@ describe("新版工程格式（v11 起特效写法、v25 变速）", () => {
     expect(hold({}, [fx({ kind: "item", itemId: "h" }, { enabled: false })])).toMatchObject({ status: "clean" });
     expect(hold({}, [fx({ kind: "track", trackId: "v1" })]).reason).toContain("特效挂的对象认不出");
     expect(hold({}, [fx(undefined)]).reason).toContain("没挂条目也没有轨道");
+    expect(hold({}, [fx({ kind: "item", itemId: "missing" }, { trackId: "v1" })]).reason).toContain("特效挂的条目在时间线里找不到");
+    expect(hold({}, [{ id: "fx", trackId: "v1", startFrame: 100, durationFrames: 5, targetItemId: "missing" }]).reason).toContain("特效挂的条目在时间线里找不到");
   });
   it("v25 恒定变速的 B-roll 照常算盖住；认不出的变速 → 读不准", () => {
     const sped = (speed: unknown) => run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70, { speed }), broll("b2", 105, 95, { speed })] }));
