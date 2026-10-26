@@ -70,7 +70,7 @@ export const contentSaveSchema = Type.Object({
   import_reason: Type.Optional(Type.String({ description: "save/create_variant：用户提供已有稿件并要求导入的说明；不能用于绕过 AI 交稿门。" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
-  platform: Type.Optional(Type.String({ description: "Target platform: xhs, douyin, wechat_video, wechat_mp, bilibili" })),
+  platform: Type.Optional(Type.String({ description: "Target platform: douyin, xiaohongshu, wechat_mp, wechat_video, bilibili, twitter, reddit, toutiao" })),
   topicId: Type.Optional(Type.String({ description: "Related topic id (for save/create_variant)" })),
   distinct_video: Type.Optional(Type.Boolean({ description: "create_variant：同选题另做一条内容不同的新视频时才填 true。同一条视频发多平台不建变体，在发布计划里加平台。" })),
   status: Type.Optional(Type.Unsafe<string>({
