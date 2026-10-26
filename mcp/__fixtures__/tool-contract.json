@@ -2592,6 +2592,9 @@
      },
      "platform": {
       "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
      }
     },
     "required": [
@@ -5501,6 +5504,9 @@
      },
      "platform": {
       "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
      }
     },
     "required": [
