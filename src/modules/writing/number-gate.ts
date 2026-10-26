@@ -12,6 +12,7 @@
  */
 
 import type { LedgerEntry, LedgerSource } from "../research/evidence-ledger.js";
+import { extractEnglishNumbers } from "./english-numbers.js";
 
 export type NumberKind = "arabic" | "chinese" | "percent" | "range";
 export type NumberRole = "ordinal" | "version" | "list" | "year" | "duration" | "plain";
@@ -41,6 +42,8 @@ export interface NumberMention {
   index: number;
   /** kind === "range" 时的区间端点 */
   range?: { min: number; max: number };
+  /** 英文引文补抽的说法（english-numbers.ts）：只替引了它的句子核数，不让别的句子因此必须引台账 */
+  citedOnly?: true;
 }
 
 export interface FieldNumberMention extends NumberMention {
@@ -56,6 +59,8 @@ export interface VerifiedNumber {
   mention: FieldNumberMention;
   entryId: string;
   source: LedgerSource;
+  /** 只靠英文补抽的说法对上：算核过，但不算「台账对得上、必须引台账」的数（"half" 会撞上稿里每个「一半」） */
+  citedOnly?: true;
 }
 
 export interface NumberVerdict {
@@ -388,6 +393,8 @@ function unitCompatible(mention: NumberMention, quote: NumberMention): boolean {
   if (mention.role === "year" && (b === undefined || b === "year")) return true;
   if (a === undefined && b === "count") return true;
   if (a === "count" && b === undefined) return true;
+  // 英文月份名（July）只对「7 月」这种日历月，不对「7 个月」这种时长
+  if (b === "calendar_month") return a === "month" && !mention.raw.includes("个月");
   return false;
 }
 
@@ -431,7 +438,7 @@ function collectFieldMentions(fields: ScriptFields): FieldNumberMention[] {
 export function verifyNumbers(fields: ScriptFields, entries: readonly LedgerEntry[]): NumberVerdict {
   const index = entries.map((entry) => ({
     entry,
-    mentions: extractNumbers(normalize(entry.quote)).filter((m) => m.role !== "version"),
+    mentions: [...extractNumbers(normalize(entry.quote)), ...extractEnglishNumbers(entry.quote)].filter((m) => m.role !== "version"),
   }));
   const verdict: NumberVerdict = { verified: [], unverified: [], needsHuman: [], exempt: [] };
   for (const mention of collectFieldMentions(fields)) {
@@ -443,13 +450,14 @@ export function verifyNumbers(fields: ScriptFields, entries: readonly LedgerEntr
       verdict.needsHuman.push(mention);
       continue;
     }
-    const hits = index.filter((e) => e.mentions.some((q) => matches(mention, q)));
+    const strong = index.filter((e) => e.mentions.some((q) => !q.citedOnly && matches(mention, q)));
+    const hits = strong.length ? strong : index.filter((e) => e.mentions.some((q) => matches(mention, q)));
     if (hits.length === 0) {
       verdict.unverified.push(mention);
       continue;
     }
     hits.sort((a, b) => SOURCE_RANK[a.entry.source] - SOURCE_RANK[b.entry.source]);
-    verdict.verified.push({ mention, entryId: hits[0].entry.id, source: hits[0].entry.source });
+    verdict.verified.push({ mention, entryId: hits[0].entry.id, source: hits[0].entry.source, ...(strong.length ? {} : { citedOnly: true as const }) });
   }
   return verdict;
 }
