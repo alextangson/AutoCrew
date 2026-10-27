@@ -6,6 +6,19 @@
 
 发布规矩：tag 一旦推到 GitHub 就不再重打（不 `git tag -f`、不强推 tag）。说明写错了或者代码有问题，就发下一个小版本。
 
+## 0.7.0 · 2026-10-27
+
+### 新东西
+- AutoCrew 改名叫「导演椅」（Director's Chair）了：你坐导演椅，只管创作和拍板，剧组替你干活。界面、提示和说明文档都换成了新名字，用法不变。
+- README 的「能做什么」和「推荐工作流」两段重写了，对上现在的功能。
+
+### 修好的
+- 无
+
+### 需要你做的
+- 什么都不用改：命令行还叫 autocrew，已经接好的 Claude Code / Codex 不用重新接，资料和设置原样保留。
+- GitHub 地址换成了 github.com/alextangson/directors-chair，旧地址会自动跳过去，更新照常。想把本机记的地址也换掉，可以运行 git remote set-url origin https://github.com/alextangson/directors-chair.git（可选）。
+
 ## 0.6.0 · 2026-10-26
 
 ### 新东西

@@ -1,6 +1,6 @@
 {
   "name": "autocrew",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "AI content operations crew — automated research, writing, and publishing pipeline.",
   "type": "module",
   "license": "MIT",
