@@ -1,14 +1,14 @@
 /**
  * ChatCut 时间线快照的形状（spec 2026-09-30 §3 / §12-2）：成片登记时把时间线和它引用的素材元数据冻结成 JSON，
- * 检查只针对快照。ChatCut 工程格式是内部格式（核过的 schemaVersion：4、9、11、14、23、25），不是公开接口：这里只声明检查要读的字段，
+ * 检查只针对快照。ChatCut 工程格式是内部格式（核过的 schemaVersion：4、9、11、14、23、25、29），不是公开接口：这里只声明检查要读的字段，
  * 其余原样保留，由 cover-rules 按白名单判断「认不认识」。
  */
 
 /**
  * 逐版核过：检查要读的工程 / 时间线 / 轨道 / 素材字段与 v4 一致（10-11 对过真实 v11 工程；10-26 对过本机 v14、v23、v25 工程：
- * v25 视频条目多了变速 speed、时间线多了 relations 里的 media-link，v11 起特效挂条目改成 target {kind:"item"}）。新版本先核再加
+ * v25 视频条目多了变速 speed、时间线多了 relations 里的 media-link，v11 起特效挂条目改成 target {kind:"item"}；10-27 对过本机 v29 工程：只在时间线顶层多了 markers（时间线标记，不影响画面），条目字段与 v25 相同）。新版本先核再加
  */
-export const SUPPORTED_SCHEMAS: ReadonlySet<number> = new Set([4, 9, 11, 14, 23, 25]);
+export const SUPPORTED_SCHEMAS: ReadonlySet<number> = new Set([4, 9, 11, 14, 23, 25, 29]);
 /** 判定规则一变就升版本：旧结果的指纹随之失效（v2：认 v11 起的特效写法——v1 会把挂在条目上的遮罩漏掉） */
 export const CHECKER_VERSION = "sliver-v2";
 
