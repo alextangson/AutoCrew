@@ -51,7 +51,7 @@ export async function resolveTarget(deps: HandOffDeps, override: string | null |
 /** 开工指令：「这条视频开工」仍能触发 Claude 的 video-session 技能；其余写明工具、稿件 id、平台，任何 agent 都照着做得下去 */
 export function writePrompt(title: string, topicId: string | null, contentId: string, platform: string): string {
   const short = Array.from(title).slice(0, 60).join("");
-  return `这条视频开工：「${short}」。用 AutoCrew MCP 的 autocrew_draft 接手：先调 start{content_id:"${contentId}"}，再照返回的 next_action 一步步写（平台 ${platform}${topicId ? `，选题 ${topicId}` : ""}）。`;
+  return `这条视频开工：「${short}」。用导演椅 MCP 的 autocrew_draft 接手：先调 start{content_id:"${contentId}"}，再照返回的 next_action 一步步写（平台 ${platform}${topicId ? `，选题 ${topicId}` : ""}）。`;
 }
 
 /** 只读看看（原「复制给 WorkBuddy」那句，创始人认过的措辞） */

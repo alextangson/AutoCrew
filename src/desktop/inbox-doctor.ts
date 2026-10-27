@@ -87,7 +87,7 @@ function pollerCheck(status: InboxRuntimeStatus, now: number): DoctorCheck {
         key,
         level: "warn",
         label: `轮询已停 · ${tail}`,
-        hint: poller.lastError ?? "改配置或重启 AutoCrew 可重新拉起",
+        hint: poller.lastError ?? "改配置或重启导演椅可重新拉起",
       };
     case "polling":
       return pollingCheck(poller.lastPollOkAt, tail, now);

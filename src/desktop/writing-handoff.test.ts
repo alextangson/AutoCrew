@@ -41,7 +41,7 @@ beforeEach(async () => {
 afterEach(async () => { await fsp.rm(dir, { recursive: true, force: true }); });
 
 describe("开工指令", () => {
-  it("任何接了 AutoCrew MCP 的 agent 都看得懂：点名 autocrew_draft、稿件 id、平台；仍以「这条视频开工」开头", () => {
+  it("任何接了导演椅 MCP 的 agent 都看得懂：点名 autocrew_draft、稿件 id、平台；仍以「这条视频开工」开头", () => {
     const p = writePrompt("喊一定没用", "topic-1-a", "content-1-b", "douyin");
     expect(p.startsWith("这条视频开工")).toBe(true);
     for (const s of ["autocrew_draft", "start{content_id:\"content-1-b\"}", "douyin", "next_action"]) expect(p).toContain(s);

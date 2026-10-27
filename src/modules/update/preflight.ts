@@ -13,9 +13,9 @@ import { getMachineDir } from "../../storage/storage-roots.js";
 import { ownerAlive, startEpoch } from "./process-start.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
-export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
-export const SERVE_MESSAGE = "这次 AutoCrew 是用 npm run serve 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
-export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
+export const UNMANAGED_MESSAGE = "这次导演椅不是用 npm start 启动的，没法自动重启。先在运行导演椅的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
+export const SERVE_MESSAGE = "这次导演椅是用 npm run serve 启动的，没法自动重启。先在运行导演椅的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
+export const UPDATING_MESSAGE = "导演椅正在更新，稍后再试";
 
 /** 更新锁在手时，新的对话轮、发布动作一律不开（已经在跑的不碰） */
 export function updatingRefusal(machineDir = getMachineDir()): string | null {
@@ -61,7 +61,7 @@ export async function preflight(root: string, machineDir: string, target: string
   if (deps.remoteBusy) {
     let remote: string | null;
     try { remote = await deps.remoteBusy(); }
-    catch (e) { return no("busy_unknown", `没法确认 AutoCrew 现在空闲（${e instanceof Error ? e.message : String(e)}），稍后再试或先停掉服务`); }
+    catch (e) { return no("busy_unknown", `没法确认导演椅现在空闲（${e instanceof Error ? e.message : String(e)}），稍后再试或先停掉服务`); }
     if (remote) return no("busy", remote);
   }
   const launcher = deps.launcher ? await deps.launcher() : { running: false, managed: true };

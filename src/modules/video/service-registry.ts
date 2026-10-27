@@ -15,10 +15,10 @@
 import type { VideoService } from "./service.js";
 
 export const VIDEO_NOT_RUNNING =
-  "视频服务没在跑（重启 AutoCrew 后重试；ffmpeg/ASR 状态见 autocrew doctor）";
+  "视频服务没在跑（重启导演椅后重试；ffmpeg/ASR 状态见 autocrew doctor）";
 
 export const VIDEO_WORKSPACE_MISMATCH =
-  "视频线跟随启动时的工作区——切换工作区后请重启 AutoCrew 再剪片";
+  "视频线跟随启动时的工作区——切换工作区后请重启导演椅再剪片";
 
 let current: { service: VideoService; dataDir: string } | null = null;
 

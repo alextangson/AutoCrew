@@ -111,7 +111,7 @@ async function registerCodex(env: HostEnv): Promise<RegisterResult> {
 function withAutoApprove(env: HostEnv, r: RegisterResult): RegisterResult {
   if (!r.ok) return r;
   const a = ensureCodexAutoApprove(env);
-  return a.ok ? r : { ok: false, code: "approval_failed", error: `AutoCrew 已接上 Codex，但没能设成免审批（${a.error}）：后台 Codex 任务调 AutoCrew 工具会被拒。可以手动在 [mcp_servers.autocrew] 下加一行 default_tools_approval_mode = "approve"` };
+  return a.ok ? r : { ok: false, code: "approval_failed", error: `导演椅已接上 Codex，但没能设成免审批（${a.error}）：后台 Codex 任务调导演椅工具会被拒。可以手动在 [mcp_servers.autocrew] 下加一行 default_tools_approval_mode = "approve"` };
 }
 
 function registerWorkbuddy(env: HostEnv): RegisterResult {

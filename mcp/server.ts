@@ -133,8 +133,8 @@ function promptMessages(name: string, args: Record<string, unknown>) {
   if (name === "write_content") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：${value("requirements")}` } }];
   if (name === "write_wechat") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：用选题《${value("topic")}》写一篇公众号原生文章，先用 workflow prepare 准备材料与立意。` } }];
   if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `先用 autocrew_editorial inspect 读取当前稿件与 draft_hash，再用 feedback 保存用户本次已确认的修改要求；按返回的 writer pack 流程原地改稿、submit 和 review_desk 审稿。默认由当前宿主执行，不调用后台改稿模型。反馈：${value("feedback")}` } }];
-  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `读取 AutoCrew 稿件 ${value("content_id")}，用 autocrew_review_desk pack 领取审稿任务，由当前宿主核对规划、事实与表达，再用 submit 交回具体问题与受众建议。不调用后台模型；按 review_source 说明审稿来源，host_self_review 是同宿主自审，不能称独立审稿。autocrew_review 仅做词表和阅读格式检查。没有写作包时如实说明需先领取 writer 包。不自动替创作者批准。` } }];
-  if (name === "weekly_retro") return [{ role: "user", content: { type: "text", text: `基于 AutoCrew 中的真实数据生成本周复盘。重点：${value("focus") || "选题、内容质量、转化"}。不要编造缺失数据。` } }];
+  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `读取导演椅稿件 ${value("content_id")}，用 autocrew_review_desk pack 领取审稿任务，由当前宿主核对规划、事实与表达，再用 submit 交回具体问题与受众建议。不调用后台模型；按 review_source 说明审稿来源，host_self_review 是同宿主自审，不能称独立审稿。autocrew_review 仅做词表和阅读格式检查。没有写作包时如实说明需先领取 writer 包。不自动替创作者批准。` } }];
+  if (name === "weekly_retro") return [{ role: "user", content: { type: "text", text: `基于导演椅中的真实数据生成本周复盘。重点：${value("focus") || "选题、内容质量、转化"}。不要编造缺失数据。` } }];
   return null;
 }
 
@@ -236,7 +236,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
       protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false }, resources: { listChanged: false }, prompts: { listChanged: false } },
       instructions: MCP_INSTRUCTIONS,
-      serverInfo: { name: "autocrew", version: "0.1.0", description: "Local-first AI content operations crew" },
+      serverInfo: { name: "autocrew", version: "0.1.0", description: "导演椅 Director's Chair (formerly AutoCrew): local-first AI content operations crew" },
     });
   }
   if (method === "ping") return resultResponse(id, {});

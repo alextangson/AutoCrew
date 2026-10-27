@@ -69,5 +69,5 @@ export function createLibraryHandler(deps: LibraryRouteDeps) {
 /** 换绑失败不吞：资料库已经切好了，失败的那部分照实说要重启 */
 async function rebind(fn: () => Promise<string[]>): Promise<string[]> {
   try { return await fn(); }
-  catch (err) { return [`后台服务没能换到新资料库（${err instanceof Error ? err.message : String(err)}），重启 AutoCrew 后生效`]; }
+  catch (err) { return [`后台服务没能换到新资料库（${err instanceof Error ? err.message : String(err)}），重启导演椅后生效`]; }
 }

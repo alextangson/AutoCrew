@@ -64,7 +64,7 @@ async function expectKeptAside(c: Content, col: string, text: string, reason: st
   const aside = path.join(folder(col, c.title), "口播稿（我改过的 20260927-1430）.md");
   expect(await fs.readFile(aside, "utf8")).toBe(text);
   const err = await fs.readFile(path.join(view, ERROR_FILE), "utf8");
-  expect(err).toContain("没有同步回 AutoCrew");
+  expect(err).toContain("没有同步回导演椅");
   expect(err).toContain(reason);
   expect(await founderDiffs(c)).toEqual([]);
 }

@@ -34,7 +34,7 @@ export function plainReason(f: Fact): string {
   const e = (f.evidence ?? "").split(/[；;]|前三名/)[0];
   if (/转写|开头说|听起来/.test(e)) return "开头说的话和这条稿对上了";
   if (/文件名|前缀|对上标题/.test(e)) return "文件名和标题对上了";
-  if (/可搬入目录之外|不会自动/.test(e)) return "放在 AutoCrew 不会自动收的文件夹里，要你确认";
+  if (/可搬入目录之外|不会自动/.test(e)) return "放在导演椅不会自动收的文件夹里，要你确认";
   if (/收件箱/.test(e)) return "在原片收件箱里找到的";
   if (/导出/.test(e)) return "剪辑软件导出的";
   return "要你确认是不是这条";

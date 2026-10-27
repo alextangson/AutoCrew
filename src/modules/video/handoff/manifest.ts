@@ -120,7 +120,7 @@ export interface HandoffFileInput {
 export function renderHandoffFile(input: HandoffFileInput): string {
   const { manifest: m } = input;
   return [
-    `# AutoCrew 交接包：${stripDelimiters(input.title)}`,
+    `# 导演椅交接包：${stripDelimiters(input.title)}`,
     "",
     `- content_id：${m.content_id}`,
     `- generation：${m.generation}`,

@@ -24,7 +24,7 @@ import { scanCoverFolder, withFolderCovers } from "./cover-scan.js";
 import { GATES, approvalInvalidReason, approvalTarget, gateStates, gateView, normalizeApprovals, rejectionTarget,
   type CoverSelection, type GateContext, type GateName, type GateRejection, type StoredApprovals } from "./gate-state.js";
 
-const APPROVAL_MESSAGE = "创始人在 AutoCrew 工作台确认本次展示的产物";
+const APPROVAL_MESSAGE = "创始人在导演椅工作台确认本次展示的产物";
 
 /** 产物索引 + 05-cover/ 文件夹里的封面（封面以文件夹为准，见 cover-scan） */
 export async function executionWithCovers(content: Content, dataDir: string, generation: number) {

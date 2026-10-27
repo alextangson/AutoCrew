@@ -83,7 +83,7 @@ export const workflowSchema = Type.Object({
     type: "string", enum: ["auto", "provided"],
     description: "默认 auto；provided = 创作者自带材料（放 research），仍要出立意卡、由创始人定。跳过调研/选卡的通道已关闭。",
   })),
-  research: Type.Optional(Type.String({ description: "research_mode=provided 时必填的已有材料、来源与摘录；不能伪称 AutoCrew 已调研。" })),
+  research: Type.Optional(Type.String({ description: "research_mode=provided 时必填的已有材料、来源与摘录；不能伪称导演椅已调研。" })),
   execution: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("engine")], { description: "默认host：研究分析/立意交当前宿主完成，无后台模型调用；仅用户明确选择后台模式时engine，模型API与搜索服务使用独立额度。" })),
   content_id: Type.Optional(Type.String({ description: "draft：稿件 id（write 返回的 contentId）" })),
   probe: Type.Optional(
@@ -95,10 +95,10 @@ export const workflowSchema = Type.Object({
 });
 
 export const WORKFLOW_DESCRIPTION = [
-  "AutoCrew 创作统一入口 = 选题会：prepare{topic_id 或 inspiration,platform,requirements} → 多路调研出 3–4 张立意卡 → 创始人定 → 才能开写。完整保留原始要求，不直接 write/generate。",
+  "导演椅创作统一入口 = 选题会：prepare{topic_id 或 inspiration,platform,requirements} → 多路调研出 3–4 张立意卡 → 创始人定 → 才能开写。完整保留原始要求，不直接 write/generate。",
   "prepare 检查材料和立意：默认返回awaiting_host_research和scout任务，由当前宿主分析与提交，不启动后台模型，不轮询等后台；只有显式execution=engine才启动后台调研。",
   "needs_angle：展示各卡的主张、证据、缺口、观众收获和数据依据，让创始人选；不代选。select_angle{angle_id,brief_revision,founder_words（原话）,card?} 保存；创始人自己给角度用 select_angle{direction,founder_words}。ready_to_write 时 next_action 就是 writer pack。",
-  "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；AutoCrew 提供材料、检查和编辑帮助。",
+  "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；导演椅提供材料、检查和编辑帮助。",
   "创作者自带材料用 research_mode=provided 交 research，仍需出卡并由创始人定；没有跳过通道。",
   "research{topic_id,kind} 默认领取scout宿主任务；只有用户明确指定execution=engine才启动后台研究。宿主可自带搜索并将URL交scout read_page核验，scout search使用独立搜索服务额度。status只读状态。prepare 不替用户选卡，也不暗中代写。",
   "write{...,execution:'engine'} 仅供用户明确要求后台模型代写；draft{content_id} 查看实际写作、审稿、证据阻塞状态。",

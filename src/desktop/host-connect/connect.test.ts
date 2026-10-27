@@ -213,7 +213,7 @@ describe("断开（O9）", () => {
     for (const host of ["claude-code", "codex", "workbuddy"]) {
       expect(resolveForwarderToken(sb.dataDir, { AUTOCREW_HOST: host, AUTOCREW_TOKEN: "inherited" }, host)).toBe("");
     }
-    expect(await handshake("claude", sb.env)).toContain("还没接上 AutoCrew");
+    expect(await handshake("claude", sb.env)).toContain("还没接上导演椅");
   });
   it("Codex 断开走 codex mcp remove", async () => {
     await connectHost("codex", sb.env);

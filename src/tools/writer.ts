@@ -137,7 +137,7 @@ export const writerSchema = Type.Object({
 });
 
 export const WRITER_DESCRIPTION = [
-  "AutoCrew 写作包：由当前宿主模型动笔。新需求先 autocrew_workflow prepare，确认研究与立意状态；这里不会替代完整调研。",
+  "导演椅写作包：由当前宿主模型动笔。新需求先 autocrew_workflow prepare，确认研究与立意状态；这里不会替代完整调研。",
   "1) pack{topic_id, platform, direction?, requirements?, research?, research_mode?, force?}：领包。创作者本次规划与修改反馈完整放进 requirements，只有明确改变立意才放 direction；research 只装原文与出处。材料会进研究槽并记进证据台账；不放进来的材料，正文里引用它的数字会被硬门当作查无出处打回。宿主模式通常直接回 {status:'ready', content_id, pack_id, pack_md, synchronous:true}，超 15 秒才回 'preparing'——仅组装本地材料，不读取模型API配置或自动补证。默认无有效调研或未定立意会被拒，按 next_action 继续。新题必须先开选题会、由创始人用原话定立意（否则 needs_founder_angle）；自带材料用 research_mode=provided。候选有推荐理由但最终由创始人选。相同请求复用已备包；未重提的要求与材料会继承。新要求与旧包不同会返回 pack_request_changed，此时带完整更新与 force:true 重领（旧 pack_id 当场作废），不能继续照旧包写。",
   "2) pack_status{content_id}：pack 回 preparing 时才用，隔 poll_after_seconds 至多查 3 次，再查回 pack_stalled 就按 next_action 重领。ready 时带 pack_md——那就是你要照着写的全部材料（岗位规则、立意卡、研究槽、证据台账）。status='failed' 时看 error，别写，按 next_action 用 pack{force:true} 重来。",
   "3) find_evidence{content_id, pack_id, need}：默认返回宿主补证任务和citation_target；由你查找，scout read_page/cite核验入账，不启动后台模型。provided/skip 模式没有研究任务，返回 scout claim_offline 登记入口（不需 task_id），推算出的数登记成 user_claim。只有用户明确指定execution=engine才走旧后台补证（搜索与模型单独额度）。",

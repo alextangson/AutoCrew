@@ -101,7 +101,7 @@ async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
 /** 其他来源（execution.json、meta.assets）的封面按同一条准入：路径不在 vNNN/ 或 final/ → 候选 */
 function admitCover(s: Seen): Seen {
   if (s.kind !== "cover" || s.state !== "accepted" || admittedGroupKey(s.path)) return s;
-  return { ...s, state: "candidate", evidence: s.path && !path.isAbsolute(s.path) ? strayCoverReason(s.path) : "放在 AutoCrew 不会自动收的文件夹里，要你确认" };
+  return { ...s, state: "candidate", evidence: s.path && !path.isAbsolute(s.path) ? strayCoverReason(s.path) : "放在导演椅不会自动收的文件夹里，要你确认" };
 }
 
 /** 旧存法一：execution.json 报到的产物 */

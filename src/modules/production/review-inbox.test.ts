@@ -284,7 +284,7 @@ describe("请示（§5）", () => {
     expect(await items(d.id)).toEqual([]);
   });
 
-  it("R19 附件：HTML 不从 AutoCrew 网址提供；图片带 sandbox + nosniff；字节变了拒", async () => {
+  it("R19 附件：HTML 不从导演椅网址提供；图片带 sandbox + nosniff；字节变了拒", async () => {
     const c = await editing();
     const root = projectRoot(env, c.id);
     const img = await put(path.join(root, "04-edit/rough.png"), png(10, 10));

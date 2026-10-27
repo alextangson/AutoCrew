@@ -15,7 +15,7 @@ import { expandHome } from "./roots.js";
 import { handoffFail } from "./types.js";
 
 export const FINAL_CUT_CANDIDATE = "final-cut-candidate";
-export const SET_EXPORT_DIR_HINT = "在 AutoCrew「设置 → 模型 → 剪映导出目录」里填剪映的导出位置（剪映 → 全局设置 → 导出路径）";
+export const SET_EXPORT_DIR_HINT = "在导演椅「设置 → 模型 → 剪映导出目录」里填剪映的导出位置（剪映 → 全局设置 → 导出路径）";
 
 export type ReportedLocation = { file: string; external: boolean };
 

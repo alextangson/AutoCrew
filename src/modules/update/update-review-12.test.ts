@@ -149,7 +149,7 @@ describe("P2 服务本来没开：也要起一次新版做健康检查", () => {
     const steps = realSteps(REPO, port, { serverWasRunning: false, busy: async () => null, machineDir: tmp, healthTimeoutMs: 10_000 });
     await steps.restart((l) => lines.push(l));
     await steps.health((l) => lines.push(l));
-    expect(lines.join("\n")).toContain("检查通过，AutoCrew 已经启动");
+    expect(lines.join("\n")).toContain("检查通过，导演椅已经启动");
     expect(steps.startedService?.()).toBe(true);
     expect(await answers(port)).toBe(true);
     spawnSync(process.execPath, [path.join(REPO, "bin", "autocrew.mjs"), "stop"], { env: { ...process.env, AUTOCREW_PORT: String(port) } });

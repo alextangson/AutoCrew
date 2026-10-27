@@ -80,11 +80,11 @@ describe("P2 服务本来没开：检查用的服务不再起了又掐，退回�
     expect(fs.readFileSync(path.join(machine, "u.log"), "utf-8")).toContain("退回后也不启动");
   });
 
-  it("检查通过、服务是这次起的：结果里说「AutoCrew 已经启动」", async () => {
+  it("检查通过、服务是这次起的：结果里说「导演椅已经启动」", async () => {
     const { user, machine, commit } = await releases();
     const s = async () => {};
     const steps: UpdateSteps = { install: s, build: s, quiesce: s, serviceDown: async () => false, restart: s, health: s, startedService: () => true };
     const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit, from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
-    expect(r.message).toBe("已更新到 0.5.0，AutoCrew 已经启动");
+    expect(r.message).toBe("已更新到 0.5.0，导演椅已经启动");
   });
 });

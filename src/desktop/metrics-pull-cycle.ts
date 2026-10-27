@@ -235,8 +235,8 @@ function eventLabel(attempt: PullAttempt): string {
     case "timeout":
       return `${name}抓取超时，稍后重试`;
     default:
-      if (attempt.errorCode === "library_writer_lost" && (attempt.imported ?? 0) > 0) return `${name}已入账 ${attempt.imported} 条后失去资料库写入权（另一个 AutoCrew 服务在占用），自动回流暂停`;
-      if (attempt.errorCode === "library_writer_lost") return `${name}没抓：当前进程没有资料库写入权（另一个 AutoCrew 服务在占用），本次零写入`;
+      if (attempt.errorCode === "library_writer_lost" && (attempt.imported ?? 0) > 0) return `${name}已入账 ${attempt.imported} 条后失去资料库写入权（另一个导演椅服务在占用），自动回流暂停`;
+      if (attempt.errorCode === "library_writer_lost") return `${name}没抓：当前进程没有资料库写入权（另一个导演椅服务在占用），本次零写入`;
       if (attempt.errorCode === "library_unavailable") return `${name}没抓：资料库暂时连不上，本次零写入`;
       if (attempt.errorCode === "no_data_response") return `${name}页面没返回作品数据，本次零写入`;
       return `${name}抓取失败：${attempt.errorCode ?? "unknown"}`;

@@ -55,8 +55,8 @@ export async function exportProjectViews(content: Content, root: string): Promis
   }
   if (content.publishedAt || content.publishUrl) await projection(path.join(root, "06-publish/receipts/current.json"), JSON.stringify({ generated: true, revision, publishedAt: content.publishedAt, publishUrl: content.publishUrl }, null, 2));
   if (Object.keys(content.performanceData ?? {}).length) await projection(path.join(root, "06-publish/metrics", `${revision}.json`), JSON.stringify({ generated: true, revision, recorded_at: content.updatedAt, metrics: content.performanceData }, null, 2));
-  await projection(path.join(root, "项目信息.md"), `# ${content.title}\n\nAutoCrew 生成的只读视图；请通过服务修改。\n\n- content_id: ${content.id}\n- 状态: ${content.status}\n- 版本: ${content.versions.length}\n- 来源 SHA-256: ${revision}\n`);
-  await projection(path.join(root, "项目导航.md"), "# 项目导航\n\nAutoCrew 生成。\n\n" + [
+  await projection(path.join(root, "项目信息.md"), `# ${content.title}\n\n导演椅生成的只读视图；请通过服务修改。\n\n- content_id: ${content.id}\n- 状态: ${content.status}\n- 版本: ${content.versions.length}\n- 来源 SHA-256: ${revision}\n`);
+  await projection(path.join(root, "项目导航.md"), "# 项目导航\n\n导演椅生成。\n\n" + [
     ["文稿", "01-script/manuscripts"], ["调研", "01-script/research"], ["来源原件", "01-script/references"],
     ["证据与出处", "01-script/evidence"], ["交接包", "01-script/handoff"], ["口播", "02-aroll"], ["画面素材", "03-broll"],
     ["工程", "04-edit"], ["声音", "05-audio"], ["封面", "05-cover"], ["发布与回流", "06-publish"], ["交付", "07-delivery"],

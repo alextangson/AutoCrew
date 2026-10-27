@@ -31,7 +31,7 @@ export function programRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 }
 
-export const NOT_GIT = "这份 AutoCrew 不是用 git 装的，没法自动更新；请按 README 手动更新";
+export const NOT_GIT = "这份导演椅不是用 git 装的，没法自动更新；请按 README 手动更新";
 
 /** 是 git 安装吗：仓库根就是 git 工作区的顶层（装在别的仓库子目录里的不算） */
 export async function isGitInstall(root: string, git: GitRunner): Promise<boolean> {

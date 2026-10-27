@@ -98,7 +98,7 @@ async function validateTarget(req: StorageRequest): Promise<string> {
   const source = readLibraryLocation()?.root ?? getMachineDir();
   const machine = canonicalTarget(getMachineDir());
   const program = canonicalTarget(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."));
-  if (isWithin(program, target) || isWithin(target, program)) throw new Error("用户资料库必须放在 AutoCrew 程序目录之外");
+  if (isWithin(program, target) || isWithin(target, program)) throw new Error("用户资料库必须放在导演椅程序目录之外");
   if (isWithin(source, target) || isWithin(target, source) || isWithin(machine, target) || isWithin(target, machine)) {
     throw new Error("资料库与现有资料、本机配置目录不能相互包含");
   }
@@ -176,13 +176,13 @@ export async function applyPendingStorage(onProgress?: (copied: number, total: n
   const pidFile = path.join(getMachineDir(), "autocrew.pid");
   if (opts.live) {
     const queued = JSON.parse(await fs.readFile(pendingFile, "utf8")) as StoragePlan;
-    if (queued.action === "migrate") throw new Error("搬旧资料要先停 AutoCrew 服务，不能在运行中搬");
+    if (queued.action === "migrate") throw new Error("搬旧资料要先停导演椅服务，不能在运行中搬");
   } else if (await exists(pidFile)) {
     const pid = Number((await fs.readFile(pidFile, "utf8")).trim());
     if (!Number.isInteger(pid) || pid <= 0) throw new Error("服务进程记录无效，请先检查运行状态");
     let alive = true;
     try { process.kill(pid, 0); } catch (err) { if ((err as NodeJS.ErrnoException).code === "ESRCH") alive = false; else throw err; }
-    if (alive) throw new Error("请先停止 AutoCrew 服务，再应用资料库迁移");
+    if (alive) throw new Error("请先停止导演椅服务，再应用资料库迁移");
   }
   const plan = JSON.parse(await fs.readFile(pendingFile, "utf8")) as StoragePlan;
   if (plan.source !== (readLibraryLocation()?.root ?? getMachineDir()) || plan.sourceId !== (readLibraryLocation()?.id ?? null)) throw new Error("源资料库已改变，请重新预览迁移");
@@ -262,7 +262,7 @@ export async function applyPendingStorage(onProgress?: (copied: number, total: n
       if (plan.action === "create") await initializeProjectLayout(path.join(stage, "workspaces", "default"), id, "default");
       await fs.mkdir(path.join(stage, "shared-assets"), { recursive: true });
       const guide = path.join(stage, "AutoCrew资料库说明.md");
-      if (!await exists(guide)) await fs.writeFile(guide, "# AutoCrew 用户资料库\n\nworkspaces/ 每个运营主体独立保存定位、选题、内容、素材、研究、剪辑工程和复盘。shared-assets/ 保存跨主体通用素材。\n\n内容使用稳定编号与原有状态机；多平台稿件继续通过 topicId/siblings 关联。活动资料库可放本地或 NAS；完成项目的 NAS 归档按当前用户约定执行，复制、恢复验证和清理分别记录。密钥、登录态、服务日志和连接配置保留在本机。\n\n请通过 AutoCrew 导入素材，避免直接改动内容编号或元数据。已有年份归档目录保持原样。\n");
+      if (!await exists(guide)) await fs.writeFile(guide, "# 导演椅用户资料库\n\nworkspaces/ 每个运营主体独立保存定位、选题、内容、素材、研究、剪辑工程和复盘。shared-assets/ 保存跨主体通用素材。\n\n内容使用稳定编号与原有状态机；多平台稿件继续通过 topicId/siblings 关联。活动资料库可放本地或 NAS；完成项目的 NAS 归档按当前用户约定执行，复制、恢复验证和清理分别记录。密钥、登录态、服务日志和连接配置保留在本机。\n\n请通过导演椅导入素材，避免直接改动内容编号或元数据。已有年份归档目录保持原样。\n");
       // A background writer outside the daemon must not turn the copy into a mixed snapshot.
       if (plan.action === "migrate") {
         const fresh = (await inventory()).items.map((i) => i.source).sort();

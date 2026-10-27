@@ -681,7 +681,7 @@ try {
 async function rebindToActiveLibrary(): Promise<string[]> {
   const later: string[] = [];
   initEngineHealth(await activeDataDir());
-  if (videoService && videoService.busyCount() > 0) later.push("正在剪的视频跑完、重启 AutoCrew 后，剪辑才用新资料库");
+  if (videoService && videoService.busyCount() > 0) later.push("正在剪的视频跑完、重启导演椅后，剪辑才用新资料库");
   else {
     const old = videoService;
     videoService = null;
@@ -689,7 +689,7 @@ async function rebindToActiveLibrary(): Promise<string[]> {
     await old?.shutdown();
     await startVideoService();
   }
-  if (digestBoundDir) later.push("每日摘要重启 AutoCrew 后才用新资料库");
+  if (digestBoundDir) later.push("每日摘要重启导演椅后才用新资料库");
   return later;
 }
 
@@ -697,10 +697,10 @@ server.listen(PORT, HOST, () => {
   // 单写者检查（spec 2026-09-28 §3 D）：同一资料目录两个进程同时写会互相覆盖档案与审批
   void activeDataDir().then(async (dir) => {
     const lock = await acquireWriterLock(dir);
-    if (!lock.ok) console.error(`\n  [警告] 资料目录 ${dir} 已被另一个 AutoCrew 进程（pid ${lock.holder.pid}，${lock.holder.startedAt} 启动）占用写入。两个进程同时写会互相覆盖，请先停掉另一个。\n`);
+    if (!lock.ok) console.error(`\n  [警告] 资料目录 ${dir} 已被另一个导演椅进程（pid ${lock.holder.pid}，${lock.holder.startedAt} 启动）占用写入。两个进程同时写会互相覆盖，请先停掉另一个。\n`);
     else process.once("exit", () => releaseWriterLock(dir));
   }).catch((err) => console.error("[writer-lock] 单写者检查失败:", err instanceof Error ? err.message : err));
-  console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
+  console.log("\n  导演椅编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${BROWSER_BOOT_TOKEN}\x1b[0m\n`);
   console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");
 

@@ -413,6 +413,6 @@ async function putArollBack(plan: Plan, record: VideoHandoffRecord, dataDir: str
   try {
     return { aroll_restored_to: await moveArollBack(dataDir, journal, pullDeps().downloadsDir) };
   } catch (err) {
-    return { aroll_restore_failed: `${err instanceof Error ? err.message : String(err)}；原片锁保留，重启 AutoCrew 后自动再试` };
+    return { aroll_restore_failed: `${err instanceof Error ? err.message : String(err)}；原片锁保留，重启导演椅后自动再试` };
   }
 }

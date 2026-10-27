@@ -130,7 +130,7 @@ export function formatDigestDate(date: string): string {
 }
 
 function header(date: string): string {
-  return `AutoCrew 今日选题 · ${formatDigestDate(date)}`;
+  return `导演椅今日选题 · ${formatDigestDate(date)}`;
 }
 
 function itemBlock(item: DigestItem, now: number): string {

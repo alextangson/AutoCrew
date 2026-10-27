@@ -15,7 +15,7 @@ const NO_MAKEUP = "数据缺了、读失败了就照实说缺什么，不编数�
 
 export function insightsPrompt(): string {
   return [
-    "做一次账号洞察：用 AutoCrew MCP 的 autocrew_insights。",
+    "做一次账号洞察：用导演椅 MCP 的 autocrew_insights。",
     "先调 action:\"prepare\" 冻结近 30 天的账号事实（只看我在设置里勾了的运营平台），读它返回的事实和 next_action；",
     "分析哪类题在涨粉 / 涨播放、哪类在掉，每条结论都要指到具体作品和数字；",
     "分析完用 action:\"submit\" 把报告存回去，最后给我三条结论和一条下周可以试的做法。",
@@ -27,7 +27,7 @@ export function insightsPrompt(): string {
 export function meetingPrompt(): string {
   return [
     "开排期会：照 schedule-meeting 技能走。",
-    "先用 AutoCrew MCP 的 autocrew_insights action:\"meeting_brief\" 读确定性简报（回流健康度、作品 D+3/D+7、同平台基线、上次下注对账）；读失败就把原始错误告诉我并停会。",
+    "先用导演椅 MCP 的 autocrew_insights action:\"meeting_brief\" 读确定性简报（回流健康度、作品 D+3/D+7、同平台基线、上次下注对账）；读失败就把原始错误告诉我并停会。",
     "然后结合选题库和在写的稿（autocrew_content summary）提下周片单，每条写清理由；片单要我用原话定了，才用 meeting_save 存。",
     NO_MAKEUP,
   ].join("");
@@ -37,7 +37,7 @@ export function retroPrompt(title: string, contentId: string): string {
   const short = Array.from(title).slice(0, 60).join("");
   return [
     `复盘刚发那条《${short}》（content_id: ${contentId}）：`,
-    `先用 AutoCrew MCP 的 autocrew_content summary 看这条现在的状态和发布记录；`,
+    `先用导演椅 MCP 的 autocrew_content summary 看这条现在的状态和发布记录；`,
     "再用 autocrew_insights action:\"calib_status\" 看它有没有待复盘的预测——有就按 calib_retro{content_id} 的要求做 T+3 复盘（验证 / 推翻每个因素），没有就只做数据对比；",
     "各平台的回流数字跟这个平台平时同发出时长比，说清哪个平台好、哪个差、最可能的原因和下一条要改的一件事。",
     NO_MAKEUP,

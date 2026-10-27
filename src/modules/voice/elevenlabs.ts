@@ -105,7 +105,7 @@ export async function elevenLabsStatus(machineDir?: string): Promise<{ keySource
 }
 
 /** 缺配置时告诉人去哪配（设置页的真实位置） */
-export const SETTINGS_PLACE = "AutoCrew 设置 → 接入更多 → 英文版配音（ElevenLabs）";
+export const SETTINGS_PLACE = "导演椅设置 → 接入更多 → 英文版配音（ElevenLabs）";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : d);
 

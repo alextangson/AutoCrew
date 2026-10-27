@@ -33,7 +33,7 @@ export const ASR_SIDECAR_DIR = path.join(REPO_ROOT, "sidecars", "asr");
 export const ASR_SIDECAR_SCRIPT = path.join(ASR_SIDECAR_DIR, "asr.py");
 
 const INSTALL_UV = "未装 uv（ASR sidecar 的运行器）。装法：brew install uv，装好后重试";
-export const ASR_WARMUP_WHERE = "AutoCrew 设置 →「模型」页 →「语音转写模型」里的「预热 ASR 模型」";
+export const ASR_WARMUP_WHERE = "导演椅设置 →「模型」页 →「语音转写模型」里的「预热 ASR 模型」";
 const NEED_WARMUP = `ASR 模型还没下载（约 1GB）。到 ${ASR_WARMUP_WHERE} 点一次，下完再重试`;
 
 export type AsrStatusValue = "absent" | "warming" | "ready" | "failed";
@@ -307,7 +307,7 @@ export async function effectiveAsrStatus(
     // 不能永远停在「预热中」（第 13 轮 P2）：模型其实到了就算就绪，没到就说清楚、让人再点一次
     return (await asrModelsCached(env))
       ? writeAsrStatus(dataDir, { status: "ready", detail: "模型已在本机缓存里" })
-      : writeAsrStatus(dataDir, { status: "failed", detail: "预热被中断了（AutoCrew 重启过），再点一次「预热 ASR 模型」" });
+      : writeAsrStatus(dataDir, { status: "failed", detail: "预热被中断了（导演椅重启过），再点一次「预热 ASR 模型」" });
   }
   if (await asrModelsCached(env)) return { status: "ready", detail: "模型已在本机缓存里" };
   return record;

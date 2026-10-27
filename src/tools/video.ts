@@ -149,7 +149,7 @@ export const videoSchema = Type.Object({
       { description: "register：两张封面的绝对路径（PNG/JPEG，都在 project_root 里）" },
     ),
   ),
-  srt_path: Type.Optional(Type.String({ description: "register：成片（最终剪辑版）字幕 SRT 的绝对路径（在 project_root 里）；视频平台稿件必填，AutoCrew 据此存实拍版口播" })),
+  srt_path: Type.Optional(Type.String({ description: "register：成片（最终剪辑版）字幕 SRT 的绝对路径（在 project_root 里）；视频平台稿件必填，导演椅据此存实拍版口播" })),
   jianying_draft: Type.Optional(Type.String({ description: "register：可选，剪映草稿名或路径（只记录）" })),
   approvals: Type.Optional(
     Type.Object(
@@ -169,14 +169,14 @@ export const videoSchema = Type.Object({
 });
 
 export const VIDEO_DESCRIPTION = [
-  "AutoCrew 剪辑台：把一篇定稿的视频稿从口播原片剪成成片。机器步骤你自己跑，**三道门都是创作者的决定**。",
+  "导演椅剪辑台：把一篇定稿的视频稿从口播原片剪成成片。机器步骤你自己跑，**三道门都是创作者的决定**。",
   "1) status{content_id}：状态 + 后台任务 + next（下一步的人话）。所有排队动作都是投递即返回，靠轮询 status 等结果，别重复投递。",
   "2) start{content_id}：开工（导入 → 转写 → AI 粗剪）。转写十几分钟起，轮询 status。",
   "3) transcript{content_id, full?}：读转写与 AI 粗剪建议（紧凑视图：每句 id、起止毫秒、文字、suggested_drop 的标记与引句）。回执里的 base_* 就是下一步要原样带回的版本号。",
   "4) cut_confirm{content_id, keeps, flags?, base_transcript_revision, base_cut_revision}：**创作者点头之后**才确认选段。transcript_edit 改错字、cut_preview 出一版低清预览、rough_cut_rerun 重跑建议。transcribe_rerun 会作废已改的字与这一版选段——先问创作者。",
   "5) editor_plan{content_id}：读素材规划（每段 overlay 的落位、时长、来源；generate 是还不存在的画面）。editor_slot_fill 填库里的素材、editor_slot_remove 删一段、editor_back_to_cut 退回选段、editor_rerun 重排。",
   "6) editor_confirm{content_id, plan_revision, kept_overlay_ids}：逐条问过创作者后确认；kept_overlay_ids 传 [] 是合法的「全删，出纯口播」。确认后自动组装渲染。",
-  "7) review{content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}：**把成片路径交给创作者看过**。通过要创作者自己在 AutoCrew 工作台点（成片戳是创作者的批准，宿主报 approve 会被拒）；revise = 替创作者打回，target 选 edit / cut，带上创作者的原话。",
+  "7) review{content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}：**把成片路径交给创作者看过**。通过要创作者自己在导演椅工作台点（成片戳是创作者的批准，宿主报 approve 会被拒）；revise = 替创作者打回，target 选 edit / cut，带上创作者的原话。",
   "8) asr_status / retry / reassemble：转写引擎状态、失败重试、渲染死路时回组装重出一份。",
   "── 交接—登记（Claude 会话 ↔ Codex 剪辑工位，与上面的内置剪辑线并存，不需要视频服务在跑）──",
   "handoff{content_id, aroll_path, confirmation_id, request_id}（剪辑工位发起）：必须带 confirm 给的 confirmation_id；成功回 claim_token（剪辑认领只交给你，report 每 10 分钟心跳一次）。同 request_id 重试 10 分钟内拿回同一结果和令牌。拒绝码：confirmation_required / confirmation_invalid / confirmation_used / aroll_in_use（附 holder）/ claim_held（写稿侧还没释放）/ missing_citations / project_migration_required。",

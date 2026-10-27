@@ -74,7 +74,7 @@ export interface ResearchRuntimeOptions {
 /** 搜索未配置时的人话出口——事实源在 search-provider（core 层，dsh/MCP 也要同一句） */
 export { SEARCH_NOT_CONFIGURED };
 
-const RUNTIME_DOWN = "深调研运行时没在跑（server 未接线）——重启 AutoCrew 后重试";
+const RUNTIME_DOWN = "深调研运行时没在跑（server 未接线）——重启导演椅后重试";
 
 let options: ResearchRuntimeOptions = {};
 let runner: ResearchRunner | null = null;

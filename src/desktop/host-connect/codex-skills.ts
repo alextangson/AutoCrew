@@ -107,7 +107,7 @@ export function checkCodexSkills(codexHome: string, skillsRoot: string): SkillLi
         : { name, ok: false, detail: `链到了本安装，但那里没有 skills/${name}/SKILL.md（安装不完整，重新拉取）` };
     }
     if (target) return { name, ok: false, detail: `链接指向别处（${target}）` };
-    if (exists(dest)) return { name, ok: false, detail: "是一份独立拷贝，不会随 AutoCrew 更新" };
+    if (exists(dest)) return { name, ok: false, detail: "是一份独立拷贝，不会随导演椅更新" };
     return { name, ok: false, detail: "没装" };
   });
 }

@@ -94,7 +94,7 @@ describe("renderDigest · 纯文本与截断（spec §2.2）", () => {
 
   it("头 · 条目 · 尾三段齐全，一条 = 标题/理由·源·时间/链接", () => {
     const text = renderDigest(pickDigestTopics([candidate()], { now: NOW }), opts);
-    expect(text).toContain("AutoCrew 今日选题 · 9 月 7 日");
+    expect(text).toContain("导演椅今日选题 · 9 月 7 日");
     expect(text).toContain("1. DeepSeek Harness 开源实战");
     expect(text).toContain("命中「Agent 落地」 · 36氪 · 3h 前");
     expect(text).toContain("https://example.com/a");
@@ -126,9 +126,9 @@ describe("renderDigest · 纯文本与截断（spec §2.2）", () => {
   });
 
   it("空摘要照发一行，扫了几个源不知道就不写数字", () => {
-    expect(renderEmptyDigest(opts)).toBe("AutoCrew 今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题（扫了 9 个源）。");
+    expect(renderEmptyDigest(opts)).toBe("导演椅今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题（扫了 9 个源）。");
     expect(renderEmptyDigest({ date: "2026-09-07" })).toBe(
-      "AutoCrew 今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题。",
+      "导演椅今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题。",
     );
   });
 

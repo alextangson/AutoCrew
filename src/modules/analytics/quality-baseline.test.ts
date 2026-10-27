@@ -202,7 +202,7 @@ describe("buildBaseline with mixed historical + matched data", () => {
     expect(r.comparisons.every((c) => c.status === "poor")).toBe(false);
   });
 
-  it("compareToBaseline returns insufficient-data when no entries match AutoCrew contents", async () => {
+  it("compareToBaseline returns insufficient-data when no entries match 导演椅 contents", async () => {
     // day-1 状态：纯历史回灌，0 条 matched —— sampleSize 过 3 但 trait 档位全空
     for (let i = 0; i < 10; i++) {
       await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");

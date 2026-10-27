@@ -160,7 +160,7 @@ export async function inspectWritingReadiness(
       return { ...result, status: "needs_attention", note: "使用已有材料需在 research 中提供非空正文或可核查的来源摘录；不能把未调研说成已有材料。" };
     }
     result.research.status = "provided";
-    result.research.reason = "使用宿主或创作者提供的材料；AutoCrew 未执行自动调研，来源仍需核查。";
+    result.research.reason = "使用宿主或创作者提供的材料；导演椅未执行自动调研，来源仍需核查。";
   } else if (mode === "skip") {
     // 只有存量稿会走到这里（新稿在上面就被拒了）：沿用它当初免调研的设置做修订
     result.research.status = "skipped";

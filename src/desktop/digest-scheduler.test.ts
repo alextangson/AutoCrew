@@ -87,7 +87,7 @@ describe("digest 调度 · 到点与幂等（spec §2.3）", () => {
     nowMs = at(7, 9, 0);
     await runDigestTick();
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain("AutoCrew 今日选题 · 9 月 7 日");
+    expect(sent[0]).toContain("导演椅今日选题 · 9 月 7 日");
 
     nowMs = at(7, 10, 0);
     await runDigestTick();
@@ -142,14 +142,14 @@ describe("digest 调度 · 到点与幂等（spec §2.3）", () => {
   it("候选为空也发一行空摘要（沉默会让人分不清「没选题」和「没发出去」）", async () => {
     topics = [];
     await startDigestScheduler(options());
-    expect(sent[0]).toBe("AutoCrew 今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题（扫了 9 个源）。");
+    expect(sent[0]).toBe("导演椅今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题（扫了 9 个源）。");
     expect((await loadDigestState(tmp)).lastDigest?.items).toEqual([]);
   });
 
   it("扫了几个源读不出来就不写数字，不编", async () => {
     topics = [];
     await startDigestScheduler(options({ countSourcesImpl: async () => undefined }));
-    expect(sent[0]).toBe("AutoCrew 今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题。");
+    expect(sent[0]).toBe("导演椅今日选题 · 9 月 7 日\n\n今天雷达没有新的命中定位的选题。");
   });
 
   it("自动发只取上一份之后入库的（上一份已发过的不再推第二次）", async () => {

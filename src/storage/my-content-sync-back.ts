@@ -73,7 +73,7 @@ export async function syncBackFounderEdits(
       const why = await syncOne(entry.owner, text, entry.hash, dataDir);
       if (why === null) continue;
       await keepAside(file);
-      errors.push(`${rel}：你的改稿没有同步回 AutoCrew（${why}），原文件已另存为「口播稿（我改过的 …）.md」`);
+      errors.push(`${rel}：你的改稿没有同步回导演椅（${why}），原文件已另存为「口播稿（我改过的 …）.md」`);
     } catch (e) {
       errors.push(`${rel}：改稿同步失败：${e instanceof Error ? e.message : String(e)}`);
     }

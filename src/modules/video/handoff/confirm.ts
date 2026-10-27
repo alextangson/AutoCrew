@@ -28,7 +28,7 @@ export const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 export const CONFIRM_HARD_LIMIT_MS = 20 * 60_000;
 export const CONFIRMATION_TTL_MS = 30 * 60_000;
 export const IMPORT_LINE = "这篇是导入稿，没过文字审稿，按录音为准交接";
-const TITLE = "AutoCrew 交接确认";
+const TITLE = "导演椅交接确认";
 const MAX_EDIT_ROUNDS = 3;
 
 export interface ConfirmationRecord {
@@ -87,7 +87,7 @@ function dialogFailure(outcome: DialogOutcome<unknown>, clock?: Clock): HandoffR
   if (outcome.kind === "timeout" && clock && clock.deadline >= clock.hardStop) return TOO_LONG;
   if (outcome.kind === "timeout") return { ok: false, code: "confirm_timeout", error: "5 分钟内没人点弹窗，这次什么都没记。创始人在 Mac 前时再调一次 confirm。" };
   if (outcome.kind === "cancel") return { ok: false, code: "confirm_declined", error: "创始人在弹窗里点了取消，这次不交接。" };
-  return { ok: false, code: "confirm_unavailable", error: `这台机器弹不出确认窗（${outcome.reason}）：请创始人在 AutoCrew 工作台确认交接信息。`,
+  return { ok: false, code: "confirm_unavailable", error: `这台机器弹不出确认窗（${outcome.reason}）：请创始人在导演椅工作台确认交接信息。`,
     next_action: "停下，告诉创始人去工作台确认标题、封面字、目标时长；不要把对话里的原话当确认。" };
 }
 

@@ -17,7 +17,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 /** 守护进程没起时的统一话术——创始人看到它就知道下一步敲什么。 */
-export const DAEMON_DOWN_MESSAGE = "AutoCrew 服务没有运行，先在仓库里执行 npm start";
+export const DAEMON_DOWN_MESSAGE = "导演椅服务没有运行，先在仓库里执行 npm start";
 
 export function dataDirOf(env = process.env) {
   return env.AUTOCREW_LOCAL_DIR || env.AUTOCREW_DATA_DIR || path.join(os.homedir(), ".autocrew");
@@ -71,7 +71,7 @@ export function newSessionNonce(now = Date.now(), random = Math.random) {
  * 不发请求、更不回落到 server-token（仓库 .mcp.json 也带 AUTOCREW_HOST=claude-code，2026-10-02）。
  */
 export function notConnectedMessage(host) {
-  return `${host} 还没接上 AutoCrew：在终端运行 autocrew connect ${host}，或在 AutoCrew 工作台的引导页（或 设置 → 接入更多 → 宿主）点「一键接上」，然后新开一个会话`;
+  return `${host} 还没接上导演椅：在终端运行 autocrew connect ${host}，或在导演椅工作台的引导页（或 设置 → 接入更多 → 宿主）点「一键接上」，然后新开一个会话`;
 }
 
 function jsonRpcError(id, code, message) {
@@ -106,14 +106,14 @@ export async function forwardMessage(message, { url, token, session, host = "cla
   if (!response.ok) {
     // 401 是撤销 token 后的正常结局；其它非 2xx 一律照实说，不静默降级。
     const hint = response.status === 401
-      ? `AutoCrew 拒绝了这个令牌（可能已被撤销或断开），重新执行 autocrew connect ${host}`
-      : `AutoCrew 服务返回 HTTP ${response.status}`;
+      ? `导演椅拒绝了这个令牌（可能已被撤销或断开），重新执行 autocrew connect ${host}`
+      : `导演椅服务返回 HTTP ${response.status}`;
     return jsonRpcError(id, -32000, hint);
   }
   try {
     return JSON.parse(body);
   } catch {
-    return jsonRpcError(id, -32000, "AutoCrew 服务返回了非 JSON 应答");
+    return jsonRpcError(id, -32000, "导演椅服务返回了非 JSON 应答");
   }
 }
 

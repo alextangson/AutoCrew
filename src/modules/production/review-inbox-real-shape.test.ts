@@ -105,6 +105,6 @@ describe("说法是人话（量词、原因、没有路径与开发者用词）"
     const covers = list.filter((i) => i.type === "candidate" && i.detail.kind === "cover");
     expect(covers.map((i) => i.summary)).toEqual(["找到一张封面，是这条的吗"]);
     expect(list.find((i) => i.type === "candidate" && i.detail.kind === "cut")!.summary).toBe("找到一段成片，是这条的吗");
-    expect(covers[0].detail.reason).toBe("放在 AutoCrew 不会自动收的文件夹里，要你确认");
+    expect(covers[0].detail.reason).toBe("放在导演椅不会自动收的文件夹里，要你确认");
   });
 });

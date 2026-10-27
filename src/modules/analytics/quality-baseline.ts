@@ -326,7 +326,7 @@ export async function compareToBaseline(
     return {
       matchScore: 50,
       comparisons: [],
-      summary: `已有 ${baseline.sampleSize} 条表现数据，但能对应到 AutoCrew 稿件的不足 3 条。发布后在编辑器点「我已发布,确认」打标，积累 3 条即可对比。`,
+      summary: `已有 ${baseline.sampleSize} 条表现数据，但能对应到导演椅稿件的不足 3 条。发布后在编辑器点「我已发布,确认」打标，积累 3 条即可对比。`,
     };
   }
 

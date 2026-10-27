@@ -39,7 +39,7 @@ export function renderArchiveLog(entries: ArchiveLogEntry[]): string {
   const rows = entries.map((e) => `| ${day(e.archivedAt)} | ${e.title.replace(/\|/g, "／")} | ${e.target} | ${formatBytes(e.freedBytes)} |`);
   return `# 归档记录
 
-发布满 7 天、又不在「已发布」最近 5 条里的稿件，AutoCrew 每天把整个项目复制到 NAS、逐个文件核对无误后，才删掉本机的原片、素材、剪辑工程、封面和成片（口播稿、发布记录留在本机）。最新的在最上面。
+发布满 7 天、又不在「已发布」最近 5 条里的稿件，导演椅每天把整个项目复制到 NAS、逐个文件核对无误后，才删掉本机的原片、素材、剪辑工程、封面和成片（口播稿、发布记录留在本机）。最新的在最上面。
 
 | 归档日期 | 标题 | NAS 位置 | 腾出空间 |
 |---|---|---|---|

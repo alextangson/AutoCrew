@@ -81,7 +81,7 @@ async function syncNow(dataDir: string): Promise<Record<string, unknown>> {
   const r = await runSweep(dataDir).catch((e: unknown) => ({ errors: [], warnings: [], view_errors: [], error: e instanceof Error ? e.message : String(e), skipped: undefined, joined: undefined }));
   const health = sweepHealth();
   if (health && r.error === undefined && !r.skipped) return { ok: true, ...(r.joined ? { joined: true } : {}), errors: r.errors, warnings: r.warnings, view_errors: r.view_errors, scheduled_error: health };
-  if (r.skipped) return { ok: false, code: "updating", error: "正在更新 AutoCrew，这一轮巡检跳过了：更新完再说「同步一下」" };
+  if (r.skipped) return { ok: false, code: "updating", error: "正在更新导演椅，这一轮巡检跳过了：更新完再说「同步一下」" };
   if (r.error) return { ok: false, code: "sweep_failed", error: `巡检没跑成：${r.error}` };
   return { ok: true, ...(r.joined ? { joined: true } : {}), errors: r.errors, warnings: r.warnings, view_errors: r.view_errors };
 }

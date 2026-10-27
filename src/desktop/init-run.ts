@@ -51,7 +51,7 @@ function libraryStep(r: SetupResult, target: string): InitStep {
   switch (r.status) {
     case "already": return { step: "library", state: "skipped", message: `资料库已经建好（${r.root}），跳过${later(r)}` };
     case "created": return { step: "library", state: "done", message: `资料库建好了：${r.root}，已经生效${later(r)}` };
-    case "opened": return { step: "library", state: "done", message: `${r.root} 本来就是 AutoCrew 资料库，已经接上用${later(r)}` };
+    case "opened": return { step: "library", state: "done", message: `${r.root} 本来就是导演椅资料库，已经接上用${later(r)}` };
     case "migrated": return { step: "library", state: "done", message: `资料库建好了：${r.root}，旧稿已搬进去（搬前备份在 ${r.backup}）` };
     case "queued_restart": return { step: "library", state: "needs_answer", message: `旧稿已备份到 ${r.backup}；搬家要重启一次服务才执行，现在还没生效`,
       next: "先确认没有正在写的稿（GET /api/update/busy），再 npm run restart；重启后重跑 autocrew init 确认" };

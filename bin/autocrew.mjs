@@ -19,7 +19,7 @@ const rawCommand = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 const command = process.argv.includes("--help") || process.argv.includes("-h") ? "help" : rawCommand || "start";
 
 function printHelp() {
-  console.log(`AutoCrew 快速启动器
+  console.log(`导演椅快速启动器
 
 用法:
   autocrew                后台启动并打开浏览器
@@ -79,7 +79,7 @@ function printResult(result, summary) {
 }
 
 async function invokeChannel(channel, payload = {}) {
-  if (!(await serverUp())) throw new Error("AutoCrew 未运行，请先执行 autocrew start");
+  if (!(await serverUp())) throw new Error("导演椅未运行，请先执行 autocrew start");
   let token = "";
   try {
     token = (await fsp.readFile(path.join(DATA_DIR, "server-token"), "utf-8")).trim();
@@ -145,7 +145,7 @@ function openBrowser(url) {
 }
 
 function runBuild() {
-  console.log("AutoCrew 正在构建前端…");
+  console.log("导演椅正在构建前端…");
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const result = spawnSync(npm, ["run", "fe:build"], { cwd: ROOT, stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status ?? 1);
@@ -254,14 +254,14 @@ async function start() {
   if (await serverUp()) {
     // 端口有人应答 ≠ 是我们起的那个 AutoCrew（e2e P1-1）：只有标记对上才算已在运行
     if (await ourServerUp()) {
-      console.log(`AutoCrew 已在运行: ${BASE_URL}`);
+      console.log(`导演椅已在运行: ${BASE_URL}`);
       openBrowser(BASE_URL);
       return;
     }
     const info = await launchInfo();
     console.error(info?.via === "serve"
-      ? `端口 ${PORT} 上已在运行的 AutoCrew 是用 npm run serve 启动的，不归启动器管，没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`
-      : `端口 ${PORT} 上已在运行的不是这个启动器起的 AutoCrew（或是别的程序），没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+      ? `端口 ${PORT} 上已在运行的导演椅是用 npm run serve 启动的，不归启动器管，没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`
+      : `端口 ${PORT} 上已在运行的不是这个启动器起的导演椅（或是别的程序），没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
     process.exit(1);
   }
 
@@ -307,11 +307,11 @@ async function start() {
     killLaunched(child.pid);
     await fsp.rm(PID_FILE, { force: true });
     console.error(url
-      ? `AutoCrew 启动失败：端口 ${PORT} 上应答的不是这次启动的进程，已结束它。查看日志: ${LOG_FILE}`
-      : `AutoCrew ${Math.round(LAUNCH_TIMEOUT_MS / 1000)} 秒内没起来，已结束这次启动的进程。查看日志: ${LOG_FILE}`);
+      ? `导演椅启动失败：端口 ${PORT} 上应答的不是这次启动的进程，已结束它。查看日志: ${LOG_FILE}`
+      : `导演椅 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)} 秒内没起来，已结束这次启动的进程。查看日志: ${LOG_FILE}`);
     process.exit(1);
   }
-  console.log(`AutoCrew 已启动（PID ${child.pid}）`);
+  console.log(`导演椅已启动（PID ${child.pid}）`);
   console.log(`浏览器地址: ${BASE_URL}`);
   console.log(`日志: ${LOG_FILE}`);
   openBrowser(url);
@@ -321,7 +321,7 @@ async function stop() {
   const pid = readPid();
   if (!pid || !processAlive(pid)) {
     await fsp.rm(PID_FILE, { force: true });
-    console.log("AutoCrew 当前未由快速启动器运行");
+    console.log("导演椅当前未由快速启动器运行");
     return;
   }
   try {
@@ -333,19 +333,19 @@ async function stop() {
   while (Date.now() < deadline && processAlive(pid)) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  if (processAlive(pid)) throw new Error("AutoCrew 尚未退出；不会迁移仍在写入的资料，请稍后重试");
+  if (processAlive(pid)) throw new Error("导演椅尚未退出；不会迁移仍在写入的资料，请稍后重试");
   await fsp.rm(PID_FILE, { force: true });
-  console.log("AutoCrew 已停止");
+  console.log("导演椅已停止");
 }
 
 async function status() {
   const pid = readPid();
   const up = await serverUp();
   if (up) {
-    console.log(`AutoCrew 运行中${pid && processAlive(pid) ? `（PID ${pid}）` : ""}: ${BASE_URL}`);
+    console.log(`导演椅运行中${pid && processAlive(pid) ? `（PID ${pid}）` : ""}: ${BASE_URL}`);
     return;
   }
-  console.log("AutoCrew 未运行");
+  console.log("导演椅未运行");
   process.exitCode = 1;
 }
 
@@ -354,15 +354,15 @@ async function status() {
  * 「单次 POST /mcp」的路。hook 失败会搅乱会话开场：任何情况都退出 0，只印一句人话。
  */
 async function statusBrief() {
-  if (!(await serverUp())) return console.log("AutoCrew 未运行（npm start）");
+  if (!(await serverUp())) return console.log("导演椅未运行（npm start）");
   const { forwardMessage, resolveForwarderToken } = await import("./mcp-forwarder.mjs");
   const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "autocrew_status", arguments: { brief: true } } };
   const fetchImpl = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(5_000) });
   const reply = await forwardMessage(call, { url: `${BASE_URL}mcp`, token: resolveForwarderToken(DATA_DIR), fetchImpl });
   const result = reply?.result?.structuredContent;
-  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}${result.review ? `\nAutoCrew ${result.review}` : ""}${result.update ? `\nAutoCrew ${result.update}` : ""}`);
+  if (typeof result?.brief === "string") return printResult(result, () => `导演椅待办：${result.brief}${result.review ? `\n导演椅 ${result.review}` : ""}${result.update ? `\n导演椅 ${result.update}` : ""}`);
   const failure = reply?.error?.message ?? (reply?.result?.isError ? reply.result.content?.[0]?.text : null);
-  console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
+  console.log(failure ? `导演椅待办读取失败（${failure}）` : "导演椅运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
 }
 
 /**
@@ -492,7 +492,7 @@ function interruptedUpdateHelp() {
 if (["start", "stop", "restart"].includes(command) && process.env.AUTOCREW_UPDATER !== "1") {
   const lock = liveUpdateLock();
   if (lock) {
-    console.error(`AutoCrew 正在更新，先别${command === "stop" ? "停止" : command === "start" ? "启动" : "重启"}——等它跑完会自动重启好。进度记录在 ${path.join(DATA_DIR, "update-logs")} 里最新的那份。`);
+    console.error(`导演椅正在更新，先别${command === "stop" ? "停止" : command === "start" ? "启动" : "重启"}——等它跑完会自动重启好。进度记录在 ${path.join(DATA_DIR, "update-logs")} 里最新的那份。`);
     process.exit(1);
   }
 }
@@ -511,7 +511,7 @@ switch (command) {
     await stop();
     // 停完端口上还有人应答：旧的没停下来（pid 记录丢了 / 不是启动器起的）。这不是「已在运行」，是重启失败（Codex 审第 10 轮 P1）
     if (await serverUp()) {
-      console.error(`AutoCrew 重启失败：端口 ${PORT} 上已在运行的旧服务停不下来（找不到它的进程记录）。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+      console.error(`导演椅重启失败：端口 ${PORT} 上已在运行的旧服务停不下来（找不到它的进程记录）。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
       process.exit(1);
     }
     await start();
@@ -756,7 +756,7 @@ switch (command) {
       ? await invokeChannel("doctor:inbox").then((r) => r.data).catch((err) => ({
           text: `· inbox: 收件箱检查不可用（${err.message}）`,
         }))
-      : { text: "· inbox: AutoCrew 未运行，收件箱状态未知（autocrew start 后重查）" };
+      : { text: "· inbox: 导演椅未运行，收件箱状态未知（autocrew start 后重查）" };
 
     printResult({ ...checks, inbox: inbox.checks ?? [] }, () =>
       Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
@@ -793,7 +793,7 @@ switch (command) {
     // 一键更新（self-update §3）：和看板上「更新」走同一个执行进程，只是在前台跑
     // 先看有没有更新正在跑（纯 JS，不依赖 node_modules）：装依赖那几十秒里 tsx 暂时不在，不能叫人去 npm ci（e2e 1002 P2-D）
     if (liveUpdateLock()) {
-      console.error("AutoCrew 正在更新，等它跑完；跑完会自动重启好。进度记录在 " + path.join(DATA_DIR, "update-logs") + " 里最新的那份。");
+      console.error("导演椅正在更新，等它跑完；跑完会自动重启好。进度记录在 " + path.join(DATA_DIR, "update-logs") + " 里最新的那份。");
       process.exitCode = 1;
       break;
     }

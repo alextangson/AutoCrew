@@ -105,6 +105,6 @@ export async function runPreview(action: Exclude<MenuAction, "edit">, arollPath:
 
 /** 交接真正提交后调一次：通知窗不等创始人点（只看起窗那 1.5 秒）；弹不出来只回 warning，不影响交接 */
 export async function announceHandoff(contentId: string, title: string): Promise<Record<string, unknown>> {
-  const r = await pullDeps().notifier({ title: "AutoCrew", message: `已交给剪辑：${title}。成片和封面到了会出现在工作台。`, url: benchUrl(contentId) }).catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) }));
+  const r = await pullDeps().notifier({ title: "导演椅", message: `已交给剪辑：${title}。成片和封面到了会出现在工作台。`, url: benchUrl(contentId) }).catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) }));
   return r.ok ? {} : { warnings: [`交接成功通知没弹出来：${r.reason}`] };
 }

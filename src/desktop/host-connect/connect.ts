@@ -70,7 +70,7 @@ async function verifyClaudeList(env: HostEnv): Promise<string | null> {
   const line = r.stdout.split("\n").find((l) => /^autocrew:/.test(l.trim()));
   if (!line) return "Claude 的 MCP 列表里没看到 autocrew";
   if (/✔|connected/i.test(line) && !/✗|failed/i.test(line)) return null;
-  return `Claude 说连不上 autocrew（${line.split(" - ").pop()?.trim() ?? line.trim()}）——多半是 AutoCrew 服务没在运行`;
+  return `Claude 说连不上 autocrew（${line.split(" - ").pop()?.trim() ?? line.trim()}）——多半是导演椅服务没在运行`;
 }
 
 async function verifyCodexList(env: HostEnv): Promise<string | null> {
@@ -86,13 +86,13 @@ async function verifyCodexList(env: HostEnv): Promise<string | null> {
 export async function verifyHost(host: ConnectHost, env: HostEnv, since: number): Promise<string | null> {
   const listProblem = host === "claude" ? await verifyClaudeList(env) : host === "codex" ? await verifyCodexList(env) : await handshake(host, env);
   if (listProblem) return listProblem;
-  if (!tokenUsedSince(host, since, env)) return "配置写好了，但 AutoCrew 没收到它的调用：确认 AutoCrew 服务在运行，再点一次";
+  if (!tokenUsedSince(host, since, env)) return "配置写好了，但导演椅没收到它的调用：确认导演椅服务在运行，再点一次";
   return null;
 }
 
 function connectedMessage(host: ConnectHost, method: string, verified: boolean, reason?: string): string {
   const label = HOST_LABEL[host];
-  const head = verified ? `已接上 ${label}，核对过能连上` : `已把 AutoCrew 写进 ${label} 的配置，但还没核对上：${reason}`;
+  const head = verified ? `已接上 ${label}，核对过能连上` : `已把导演椅写进 ${label} 的配置，但还没核对上：${reason}`;
   const tail = host === "claude"
     ? method === "claude-file"
       ? "。没找到 claude 命令，直接改了 ~/.claude.json：新开一个会话生效；如果新会话里看不到 autocrew，关掉 Claude 再点一次（它开着时可能把这次改动盖掉）"

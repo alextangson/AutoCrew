@@ -197,7 +197,7 @@ AutoCrew 独占管理 00-project/autocrew、项目信息.md、项目导航.md �
 /**
  * 本体启用后的项目约定（spec 2026-09-29 §8：项目 AGENTS.md 改为一行指向）。启用时对未手改过的旧约定原地替换。
  */
-export const ONTOLOGY_PROJECT_RULES = `# AutoCrew 内容项目\n\n这条稿的进度和下一步只看 \`autocrew_content summary\`（id 见 00-project/autocrew/meta.json）的 next_action；做出来的原片 / 成片 / 字幕 / 封面 / ChatCut 工程用 \`autocrew_content record\` 报上来，认稿、成片通过、选封面、我发了只归创始人点。\n`;
+export const ONTOLOGY_PROJECT_RULES = `# 导演椅内容项目\n\n这条稿的进度和下一步只看 \`autocrew_content summary\`（id 见 00-project/autocrew/meta.json）的 next_action；做出来的原片 / 成片 / 字幕 / 封面 / ChatCut 工程用 \`autocrew_content record\` 报上来，认稿、成片通过、选封面、我发了只归创始人点。\n`;
 
 /** 本体启用标记（与 production-store.readEnabledMarker 同一份文件；这里同步读，建项目时用） */
 export function ontologyEnabledIn(dataDir: string): boolean {

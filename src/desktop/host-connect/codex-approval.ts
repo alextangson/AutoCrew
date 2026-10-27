@@ -70,6 +70,6 @@ export function codexApprovalStatus(env: HostEnv, connected: boolean): { name: s
   if (!connected) return null;
   const mode = codexApprovalMode(env);
   return mode === CODEX_APPROVAL_VALUE
-    ? { name: "AutoCrew 工具免审批", ok: true, detail: "Codex 后台任务能直接调 AutoCrew 工具" }
-    : { name: "AutoCrew 工具免审批", ok: false, detail: `[mcp_servers.autocrew] 的 ${CODEX_APPROVAL_KEY} 是 ${mode ?? "没设"}，后台 Codex（审批策略 never）调 AutoCrew 工具会被拒` };
+    ? { name: "导演椅工具免审批", ok: true, detail: "Codex 后台任务能直接调导演椅工具" }
+    : { name: "导演椅工具免审批", ok: false, detail: `[mcp_servers.autocrew] 的 ${CODEX_APPROVAL_KEY} 是 ${mode ?? "没设"}，后台 Codex（审批策略 never）调导演椅工具会被拒` };
 }

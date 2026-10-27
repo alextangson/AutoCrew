@@ -147,7 +147,7 @@ function claudeCodeSteps(tokenPath: string, endpoint: string): string[] {
     "   npx autocrew connect claude",
     "",
     `接上的是转发器 bin/autocrew.mjs mcp：把 stdio 上的 JSON-RPC 转发到 ${endpoint}，令牌读 ${tokenPath}。`,
-    "AutoCrew 要在跑（npm start）；守护进程没起时工具调用会回一条「AutoCrew 服务没有运行」。",
+    "导演椅要在跑（npm start）；守护进程没起时工具调用会回一条「导演椅服务没有运行」。",
   ];
 }
 
@@ -176,7 +176,7 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
 
   if (!existsSync(path.join(dataDir, "server-token"))) {
     return [
-      `AutoCrew 还没启动过（${tildify(dataDir, home)} 里没有 server-token）。`,
+      `导演椅还没启动过（${tildify(dataDir, home)} 里没有 server-token）。`,
       "先在仓库里执行 npm start，等浏览器打开后再重跑：",
       `  npx autocrew host ${host}`,
     ].join("\n");
@@ -192,7 +192,7 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
 
   const lines = [
     `宿主 ${host} 的令牌已就绪：${tokenPath}`,
-    "这个文件等于你的编辑部钥匙——能读到它的人能调用全部 AutoCrew 工具。撤销就是删掉它。",
+    "这个文件等于你的编辑部钥匙——能读到它的人能调用全部导演椅工具。撤销就是删掉它。",
     "",
     ...steps,
   ];
@@ -205,7 +205,7 @@ function workbuddyLines(options: HostCliOptions, home: string): string {
   const lines = [
     "接上 WorkBuddy 用一键接入（写它的 ~/.workbuddy/mcp.json，写前备份，接完核对能连上）：",
     "   npx autocrew connect workbuddy",
-    "也可以在 AutoCrew 的「设置 · 接入更多 · 宿主」里点「接上」。",
+    "也可以在导演椅的「设置 · 接入更多 · 宿主」里点「接上」。",
   ];
   if (options.dir) lines.push("", ...personaLines("workbuddy", options, home));
   return lines.join("\n");
@@ -219,7 +219,7 @@ function personaLines(host: KnownHost, options: HostCliOptions, home: string): s
     return [`--role ${role} 不认识。可用：${HOST_ROLES.join(" / ")}`];
   }
   if (host === "workbuddy") {
-    return ["WorkBuddy 不读工作目录里的人设文件，--dir 这次被忽略。人设随 AutoCrew 的工具说明一起给它。"];
+    return ["WorkBuddy 不读工作目录里的人设文件，--dir 这次被忽略。人设随导演椅的工具说明一起给它。"];
   }
   if (host === "dsh") {
     return [

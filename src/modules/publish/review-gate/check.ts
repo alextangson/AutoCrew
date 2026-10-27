@@ -70,7 +70,7 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps, fresh 
   const id = typeof params.content_id === "string" ? params.content_id.trim() : "";
   if (!id) return { ok: false, code: "missing_content_id", error: "content_id 必填" };
   const content = await getContent(id, dataDir).catch(missingAsNull);
-  if (!content) return { ok: false, code: "not_found", error: `内容不在 AutoCrew 里：${id}。按技能说明在最终点击前停下来问创始人，明确说「这次不检查直接发」才继续` };
+  if (!content) return { ok: false, code: "not_found", error: `内容不在导演椅里：${id}。按技能说明在最终点击前停下来问创始人，明确说「这次不检查直接发」才继续` };
   const quotes = readQuotes(params.founder_quotes);
   if (!quotes.ok) return quotes;
   const overrides = readOverrides(params.overrides);

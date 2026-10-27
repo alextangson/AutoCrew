@@ -424,7 +424,7 @@ describe("e2e 1002b", () => {
     expect(updateView(root, m, false, "0.5.5").banner).toBeNull();
   });
 
-  it("N6：服务本来没开、更新失败后退回时把原来的版本起起来了：说「AutoCrew 已经启动」", async () => {
+  it("N6：服务本来没开、更新失败后退回时把原来的版本起起来了：说「导演椅已经启动」", async () => {
     const origin = path.join(tmp, "o.git"), dev = path.join(tmp, "d"), user = path.join(tmp, "u"), m = path.join(tmp, "m");
     const g = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, env: ENV, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     g(tmp, "init", "-q", "--bare", "-b", "main", origin); g(tmp, "clone", "-q", origin, dev); g(dev, "checkout", "-q", "-b", "main");
@@ -438,7 +438,7 @@ describe("e2e 1002b", () => {
       health: async () => { if (++healths === 1) throw new Error("服务 60 秒内没回来"); }, startedService: () => true };
     const r = await runUpdate({ root: user, machineDir: m, tag: "v0.5.3", commit: g(user, "rev-parse", "v0.5.3^{commit}"), from: "0.5.2", to: "0.5.3", git: gitRunner(user), steps, logFile: path.join(m, "u.log") });
     expect(r.outcome).toBe("rolled_back");
-    expect(r.message).toContain("已退回 0.5.2，AutoCrew 已经启动");
+    expect(r.message).toContain("已退回 0.5.2，导演椅已经启动");
   });
 
   it("N7：安装已经一致（新版过了检查）：留着的完整旧依赖不再是恢复来源，删掉", async () => {

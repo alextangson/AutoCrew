@@ -15,7 +15,7 @@ import { handoffFail, type HandoffCode, type HandoffResult } from "./types.js";
 export type HandoffFailureClass = "handoff_rejected" | "handoff_not_committed" | "handoff_pending_recovery";
 
 const NEXT_ACTION: Record<HandoffEvidenceError["code"], string> = {
-  missing_decisions: "请创作者在 AutoCrew 工作台确认这条稿的标题、封面字、平台与目标时长，确认后再交接。",
+  missing_decisions: "请创作者在导演椅工作台确认这条稿的标题、封面字、平台与目标时长，确认后再交接。",
   missing_citations: "写稿侧按 uncovered_sentences 补齐当前定稿的逐句出处，用 autocrew_video citations 提交后再交接。",
 };
 
@@ -39,7 +39,7 @@ export function pendingRecovery(err: unknown): HandoffResult {
   return handoffFail("handoff_pending_recovery", `交接结果待恢复：${err instanceof Error ? err.message : String(err)}`, {
     failure_class: "handoff_pending_recovery",
     claim_restored: false,
-    next_action: "停下，把 error 原文报告给创作者；重启 AutoCrew 后由它核定这次交接是否已提交，核定前不要重试或改稿。",
+    next_action: "停下，把 error 原文报告给创作者；重启导演椅后由它核定这次交接是否已提交，核定前不要重试或改稿。",
   });
 }
 

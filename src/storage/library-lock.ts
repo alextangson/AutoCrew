@@ -29,7 +29,7 @@ export function acquireLibraryLock(root?: string): () => void {
     let old: typeof owner;
     try { old = JSON.parse(readFileSync(path.join(dir, "owner.json"), "utf8")); }
     catch { throw new Error("资料库正在被占用或占用记录不完整；请确认原服务已停止。"); }
-    throw new Error(`资料库已被 ${old.host} 的 AutoCrew 占用；若原进程异常退出，请先确认没有其他写入方，再清理占用记录。`);
+    throw new Error(`资料库已被 ${old.host} 的导演椅占用；若原进程异常退出，请先确认没有其他写入方，再清理占用记录。`);
   }
   writeFileSync(path.join(dir, "owner.json"), JSON.stringify(owner));
   held.set(path.resolve(root ?? location!.root), owner.nonce);

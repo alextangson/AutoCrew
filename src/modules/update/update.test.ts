@@ -162,7 +162,7 @@ describe("预检", () => {
   it("服务不是启动器起的：不动手", async () => {
     await fetchFirst();
     const r = await preflight(user, machine, "v0.5.0", { git: git(), ...noBusy, launcher: async () => ({ running: true, managed: false }) });
-    expect(r).toMatchObject({ ok: false, code: "unmanaged", reason: "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。" });
+    expect(r).toMatchObject({ ok: false, code: "unmanaged", reason: "这次导演椅不是用 npm start 启动的，没法自动重启。先在运行导演椅的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。" });
     const serve = await preflight(user, machine, "v0.5.0", { git: git(), ...noBusy, launcher: async () => ({ running: true, managed: false, via: "serve" }) });
     expect(serve).toMatchObject({ ok: false, code: "unmanaged", reason: expect.stringContaining("npm run serve") });
   });

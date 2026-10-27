@@ -266,7 +266,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   const log = fileLogger(job.logFile);
   const at = () => (job.now?.() ?? new Date()).toISOString();
   const base = { from: job.from, to: job.to, log: job.logFile, ...(job.notes ? { notes: job.notes } : {}) };
-  log(`AutoCrew 更新 ${job.from} → ${job.to}（${job.tag}）`);
+  log(`导演椅更新 ${job.from} → ${job.to}（${job.tag}）`);
   let oldHead: string;
   try { oldHead = await gitStep(job.git, ["rev-parse", "HEAD"], log); }
   catch (e) {
@@ -285,7 +285,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   try {
     await forward(job, oldHead, log, progress);
     if (job.steps.cleanup) await job.steps.cleanup(log).catch((e) => log(`!! 删旧依赖没删成（不影响使用，可手动删 *.prev-* 目录）：${errText(e)}`));
-    return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}${job.steps.startedService?.() ? "，AutoCrew 已经启动" : ""}` }, log);
+    return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}${job.steps.startedService?.() ? "，导演椅已经启动" : ""}` }, log);
   } catch (e) {
     // 子进程被中止信号结束时，报的是「中止」而不是「装依赖失败」
     const aborted = e instanceof AbortedError || Boolean(job.signal?.aborted);
@@ -306,7 +306,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     try {
       const how = await rollback(job, oldHead, log, !busy, progress);
       // 服务本来没开、退回时把原来的版本起起来了：和成功时一样说一声（e2e 1002b N6）
-      const startedNote = how === "restarted" && job.steps.startedService?.() ? "，AutoCrew 已经启动" : "";
+      const startedNote = how === "restarted" && job.steps.startedService?.() ? "，导演椅已经启动" : "";
       return finish(job, { ok: false, outcome: how !== "not_restarted" && busy ? "cancelled" : how !== "not_restarted" && aborted ? "aborted" : "rolled_back", at: at(), ...base,
         message: how === "not_restarted"
           ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
@@ -439,7 +439,7 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
     health: async (log, ctx) => {
       if (ctx?.rollback && skipRollbackStart) return;
       await waitHealthy(`http://127.0.0.1:${port}/`, opts.healthTimeoutMs ?? 60_000, log, fetch, { port, machineDir: opts.machineDir ?? getMachineDir(), notNonce: nonceBefore });
-      if (startedForCheck) log("检查通过，AutoCrew 已经启动");
+      if (startedForCheck) log("检查通过，导演椅已经启动");
     },
     startedService: () => startedForCheck,
   };
@@ -461,7 +461,7 @@ export async function waitHealthy(url: string, timeoutMs: number, log: Log, fetc
         const info = await fetchLaunchInfo(identity.port, fetchImpl);
         const fresh = !identity.notNonce || info?.nonce !== identity.notNonce;
         if (fresh && managedBy(info?.nonce, identity.machineDir)) { log(`首页 200，且是这次启动的进程：${url}`); return; }
-        last = "端口上应答的不是这次启动的 AutoCrew";
+        last = "端口上应答的不是这次启动的导演椅";
       } else last = `HTTP ${r.status}`;
     } catch (e) { last = errText(e); }
     await new Promise((r) => setTimeout(r, 1_000));
