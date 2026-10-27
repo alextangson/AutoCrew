@@ -19,7 +19,7 @@ import "./onboarding/onboarding.css";
 type Step = "pick" | "connect" | "library" | "persona" | "done";
 
 /** 开工提示按能力查表，不按宿主名写死：能力来自服务端的 host-policy（canWrite），以后放开谁写稿不用改这里 */
-const START_HINT = { write: "帮我写一条……", edit: "把这条视频的成片登记到 AutoCrew" } as const;
+const START_HINT = { write: "帮我写一条……", edit: "把这条视频的成片登记到导演椅" } as const;
 
 /** 默认写稿 AI 记下了没有（spec 2026-10-15 §B1）：记下 → 说是谁；没记下 → 照实说 */
 export type WriterSaved = { label: string; error?: string } | null;
@@ -41,7 +41,7 @@ export function DonePage(props: { connected: HostStatus[]; engineReady: boolean;
           <button className="btn-ghost ob-inline" onClick={props.onOpenSettings}>去设置里填钥匙</button>
         </p>
       )}
-      <div className="ob-actions"><button className="primary" onClick={props.onEnter}>进入 AutoCrew</button></div>
+      <div className="ob-actions"><button className="primary" onClick={props.onEnter}>进入导演椅</button></div>
     </>
   );
 }
@@ -100,7 +100,7 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
   return (
     <div className="ob">
       <div className="ob-panel">
-        <div className="ob-brand">AutoCrew</div>
+        <div className="ob-brand">导演椅</div>
         {step === "pick" && (
           <PickStep hosts={hosts} picked={picked} setPicked={setPicked} onRefresh={() => void load()} onHostUpdate={(host, patch) => setHosts((list) => list?.map((h) => (h.host === host ? { ...h, ...patch } : h)) ?? list)} onNext={() => setStep("connect")}
             onSkip={() => void skip()} onEngineSaved={() => void engineSaved()} engineReady={engineReady} onFinish={() => setStep("library")}

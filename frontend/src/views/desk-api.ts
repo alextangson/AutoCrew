@@ -36,6 +36,6 @@ export async function loadDesk(contentId: string): Promise<{ ok: true; data: Des
     return { ok: true, data: body };
   } catch (e) {
     if (e instanceof Error && e.message === SESSION_EXPIRED) return { ok: false, error: SESSION_EXPIRED };
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }

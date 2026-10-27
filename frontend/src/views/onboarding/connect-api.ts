@@ -33,7 +33,7 @@ async function call<T>(url: string, init?: RequestInit, raw = false): Promise<Re
     if (body.ok === false) return { ok: false, error: body.error ?? "没成功，原因没写" };
     return { ok: true, data: (body.data ?? body) as T };
   } catch (e) {
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 const post = <T>(url: string, payload: Record<string, unknown>, raw = false) =>

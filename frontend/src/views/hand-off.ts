@@ -73,7 +73,7 @@ type Failure = { error: string; body?: Record<string, unknown> };
 export async function explainFailure(f: Failure, retry: (host: HostId) => Promise<void>): Promise<void> {
   const code = f.body?.code;
   if (code === "no_writer") {
-    const go = await confirmDialog({ title: "先接一个 AI", body: "写稿要一个接上了 AutoCrew 的 AI（Claude Code、Codex 或 WorkBuddy）。去设置里接上就能开工，这次什么都没建。", confirmLabel: "去设置" });
+    const go = await confirmDialog({ title: "先接一个 AI", body: "写稿要一个接上了导演椅的 AI（Claude Code、Codex 或 WorkBuddy）。去设置里接上就能开工，这次什么都没建。", confirmLabel: "去设置" });
     if (go) window.location.hash = SETTINGS_HREF;
     return;
   }

@@ -20,7 +20,7 @@ declare global {
 export function getConfig(): AutocrewConfig {
   const cfg = window.__AUTOCREW;
   if (!cfg?.methodMap) {
-    throw new Error("启动配置缺失:请从 AutoCrew 本地 server 打开的页面进入(/config.js 未注入)");
+    throw new Error("启动配置缺失:请从导演椅本地 server 打开的页面进入(/config.js 未注入)");
   }
   return cfg;
 }

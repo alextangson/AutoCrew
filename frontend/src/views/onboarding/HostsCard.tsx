@@ -21,7 +21,7 @@ function HostRow(props: { h: HostStatus; reload: () => void; isDefault: boolean;
     if (verb === "disconnect") {
       const ok = await confirmDialog({
         title: `断开 ${h.label}？`,
-        body: `会从 ${h.label} 的配置里删掉 AutoCrew（先留备份），并撤销它的令牌：它正在做的事会当场断掉，之后再调用会被拒绝。想再接回来点「接上」就行。`,
+        body: `会从 ${h.label} 的配置里删掉导演椅（先留备份），并撤销它的令牌：它正在做的事会当场断掉，之后再调用会被拒绝。想再接回来点「接上」就行。`,
         confirmLabel: "断开",
         danger: true,
       });
@@ -91,7 +91,7 @@ export function HostsCard() {
         <h3 className="serif set-title">宿主 · Claude Code / Codex / WorkBuddy</h3>
         <span className="chip">{hosts ? (connected ? `${connected} 个已接上` : "还没接") : "…"}</span>
       </div>
-      <p className="muted int-line">让你电脑上的 AI 直接用 AutoCrew：写稿、审稿、剪辑、发布都能做；审片、认稿、选封面、「我发了」只有你在这里点。</p>
+      <p className="muted int-line">让你电脑上的 AI 直接用导演椅：写稿、审稿、剪辑、发布都能做；审片、认稿、选封面、「我发了」只有你在这里点。</p>
       {error && <p className="set-test-fail">没查到宿主状态：{error}</p>}
       {hosts?.map((h) => <HostRow key={h.host} h={h} reload={() => void load()} isDefault={h.host === writingHost && writers.includes(h.host)} canDefault={writers.includes(h.host)} />)}
       {others.map((t) => (

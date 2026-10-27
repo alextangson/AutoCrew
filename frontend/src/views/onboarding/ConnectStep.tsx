@@ -58,7 +58,7 @@ export function ConnectStep(props: {
   return (
     <>
       <h1 className="ob-title">接上</h1>
-      <p className="ob-sub">点一下，AutoCrew 就出现在它的工具里。改它的配置之前会先留一份备份。</p>
+      <p className="ob-sub">点一下，导演椅就出现在它的工具里。改它的配置之前会先留一份备份。</p>
       {many && !settled && (
         <div className="ob-actions ob-top">
           <button className="primary" disabled={busy.size > 0} onClick={() => void runAll()}>{busy.size > 0 ? "正在接…" : "全部接上"}</button>

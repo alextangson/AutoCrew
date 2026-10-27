@@ -6,7 +6,7 @@ import { waitBack, type UpdateView, type WaitState } from "./update-api";
 
 const running = { ok: true as const, data: { running: true } as UpdateView };
 const done = { ok: true as const, data: { running: false } as UpdateView };
-const down = { ok: false as const, error: "连不上 AutoCrew 服务" };
+const down = { ok: false as const, error: "连不上导演椅服务" };
 
 describe("waitBack", () => {
   it("服务连得上、一直在更新（远超 5 分钟）：一直等，直到更新完才返回", async () => {

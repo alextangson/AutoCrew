@@ -297,7 +297,7 @@ export function Campaigns(props: { onSelect?: (id: string | null) => void } = {}
       <div className="campaign-head">
         <div>
           <h2 className="serif">增长项目</h2>
-          <p className="muted">输入独立站或业务，AutoCrew 组建 Agent Team，并把推广拆成可审批、可追踪的任务。</p>
+          <p className="muted">输入独立站或业务，导演椅组建 Agent Team，并把推广拆成可审批、可追踪的任务。</p>
         </div>
         <button className="primary" onClick={() => setCreating((value) => !value)}>{creating ? "收起" : "＋新建项目"}</button>
       </div>
@@ -364,7 +364,7 @@ export function Campaigns(props: { onSelect?: (id: string | null) => void } = {}
               </label>
               {selected.workflow.autonomy !== "manual" && (
                 <p className="muted">
-                  AutoCrew 本地服务在线时自动托管
+                  导演椅本地服务在线时自动托管
                   {selected.workflow.schedule.nextRunAt
                     ? ` · 下次检查 ${new Date(selected.workflow.schedule.nextRunAt).toLocaleString()}`
                     : ""}

@@ -194,14 +194,14 @@ export function toNotify(items: InboxItem[], state: NotifyState, now: number): I
 
 /** 标签页标题：「(3) AutoCrew」；没事时就是「AutoCrew」 */
 /** stale：列表没刷新成（连不上 / 登录过期）——保留上次的件数、加问号「(2?) AutoCrew」 */
-export const tabTitle = (n: number, stale = false) => (n > 0 ? `(${n}${stale ? "?" : ""}) AutoCrew` : stale ? "(?) AutoCrew" : "AutoCrew");
+export const tabTitle = (n: number, stale = false) => (n > 0 ? `(${n}${stale ? "?" : ""}) 导演椅` : stale ? "(?) 导演椅" : "导演椅");
 
 /** 列表停住时列表头的那句：登录过期 → 刷新页面；其他 → 连不上、停在几点几分 */
 export function staleLine(error: string, lastOkAt: number | null, expired: boolean): string {
   if (expired) return "登录过期，刷新页面";
   const t = lastOkAt ? new Date(lastOkAt) : null;
   const hm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
-  return hm ? `连不上 AutoCrew，列表停在 ${hm}` : `连不上 AutoCrew：${error}`;
+  return hm ? `连不上导演椅，列表停在 ${hm}` : `连不上导演椅：${error}`;
 }
 
 /** 行上直接能点的主按钮（不开面板）：只给封面挑组和候选确认——成片要看片，带一句话的动作要写，都不给 */

@@ -14,10 +14,10 @@ function okMessage(r: SetupResult): string | null {
 
 function okBase(r: SetupResult): string | null {
   if (r.status === "created") return `建好了：${r.root}。你自己看的稿在里面的「我的内容」文件夹。`;
-  if (r.status === "opened") return `${r.root} 本来就是 AutoCrew 资料库，已经接上用。`;
+  if (r.status === "opened") return `${r.root} 本来就是导演椅资料库，已经接上用。`;
   if (r.status === "already") return `资料库已经在 ${r.root}。`;
   if (r.status === "migrated") return `建好了，旧稿已经搬进去（搬之前的备份在 ${r.backup}）。`;
-  if (r.status === "queued_restart") return `旧稿已经备份到 ${r.backup}。搬家要重启一次 AutoCrew 才会执行，现在先用着原来的位置。`;
+  if (r.status === "queued_restart") return `旧稿已经备份到 ${r.backup}。搬家要重启一次导演椅才会执行，现在先用着原来的位置。`;
   return null;
 }
 

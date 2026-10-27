@@ -145,7 +145,7 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   /** 行上直接点：不开面板；失败回原因（就地显示），成功照常提示 + 刷新 */
   const quick = async (item: InboxItem, a: InboxAction): Promise<string | null> => {
     if (busy.current) return "上一件还在处理，稍等再点";
-    if (stale) return `${staleText ?? "连不上 AutoCrew"}：这次没记上`;
+    if (stale) return `${staleText ?? "连不上导演椅"}：这次没记上`;
     busy.current = true;
     try {
       const r = await decideItem({ content_id: item.content_id ?? undefined, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}) });
@@ -166,7 +166,7 @@ export function ReviewInbox(props: { focusContent?: string; focusTypes?: string[
   const act = async (item: InboxItem, a: InboxAction, extra: Record<string, unknown> = {}, quiet = false) => {
     if (busy.current) return false;
     // 列表停住了（连不上 / 登录过期）：不在旧列表上悄悄点，明说为什么没记上
-    if (stale) { showToast({ text: `${staleText ?? "连不上 AutoCrew"}：这次没记上，等连上再点`, undo: null, left: rows.length }); return false; }
+    if (stale) { showToast({ text: `${staleText ?? "连不上导演椅"}：这次没记上，等连上再点`, undo: null, left: rows.length }); return false; }
     busy.current = true;
     try {
       const r = await decideItem({ content_id: item.content_id ?? undefined, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}), ...extra });

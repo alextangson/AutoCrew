@@ -23,7 +23,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<Reply<T>> {
     if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`) };
     return { ok: true, data: (body.data ?? body) as T };
   } catch (e) {
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 const post = <T>(url: string, payload: Record<string, unknown> = {}) =>

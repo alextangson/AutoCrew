@@ -108,7 +108,7 @@ describe("封面（§I.56）", () => {
     expect(coverFileProblem({ type: "image/gif", size: 1 })).toMatch(/png/);
     expect(coverFileProblem({ type: "image/webp", size: 10 * 1024 * 1024 + 1 })).toMatch(/10MB/);
   });
-  it("地址：AutoCrew 封面走稿件产物，其它走数据页封面端点", () => {
+  it("地址：导演椅封面走稿件产物，其它走数据页封面端点", () => {
     expect(coverSrc({ kind: "manual", file: "manual-a.png", key: "w:x" })).toBe("/api/data/cover-file?name=manual-a.png");
     expect(coverSrc({ kind: "autocrew", contentId: "c1", path: "05-cover/封面-3x4.png", sha256: "ab" })).toContain("/api/project-artifact?content_id=c1");
   });

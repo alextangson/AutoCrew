@@ -31,17 +31,17 @@ export function SettingsStorage() {
     try {
       const r = await invoke("storage:configure", { action: plan.action, target: plan.target });
       if (!r.ok) toast(r.error || "设置失败");
-      else { setPlan(null); await load(); toast("已准备好，重启 AutoCrew 后完成切换"); }
+      else { setPlan(null); await load(); toast("已准备好，重启导演椅后完成切换"); }
     } finally { setBusy(false); }
   };
   return <Section title="用户资料库" on={status?.connected ?? false} status={status?.connected ? "已连接" : "未连接"}>
     <p>账号定位、选题、稿件、素材和运营数据保存在你选择的位置，软件升级不会移动这些资料。</p>
     <p className="wrap-anywhere">当前位置：{status?.root || "读取中…"}</p>
     {status?.error && <p role="alert">{status.error}</p>}
-    <p className="muted">密钥、登录凭据和服务日志保留在本机。NAS 同一时间由一台电脑的 AutoCrew 服务写入。</p>
+    <p className="muted">密钥、登录凭据和服务日志保留在本机。NAS 同一时间由一台电脑的导演椅服务写入。</p>
     {status?.pending && <div role="status">
       <p className="wrap-anywhere">待切换到：{status.pending.target}</p>
-      <p>重启 AutoCrew 后执行。迁移会先复制、校验，再切换；原资料保留。校验失败则继续保留原位置。</p>
+      <p>重启导演椅后执行。迁移会先复制、校验，再切换；原资料保留。校验失败则继续保留原位置。</p>
       <button onClick={async () => { const r = await invoke("storage:cancel"); if (r.ok) await load(); else toast(r.error || "取消失败"); }}>取消待切换</button>
     </div>}
     <label>操作 <select value={action} disabled={busy} onChange={(e) => { setAction(e.target.value); setPlan(null); }}>

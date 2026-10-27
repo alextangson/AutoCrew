@@ -96,7 +96,7 @@ describe("列表：空 / 收起 / 展开（§2）", () => {
     expect(el.querySelector(".ri-row")!.textContent).toContain("5 分钟前");
     await click(btn("收起"));
     expect(el.querySelector(".ri-list")).toBeNull();
-    expect(document.title).toBe(`(${ITEMS.length}) AutoCrew`);
+    expect(document.title).toBe(`(${ITEMS.length}) 导演椅`);
   });
 });
 
@@ -274,7 +274,7 @@ describe("网页提醒（§9）", () => {
     expect(btn("打开提醒")).toBeUndefined();
     expect(N.requestPermission).not.toHaveBeenCalled();
     expect(created).toHaveLength(0);
-    expect(document.title).toBe("(2) AutoCrew");
+    expect(document.title).toBe("(2) 导演椅");
   });
   it("已授权：页面打开时已有的事不弹；之后新来的才弹，点了打开那一件", async () => {
     const { created } = fakeNotification("granted");
@@ -292,7 +292,7 @@ describe("网页提醒（§9）", () => {
 
 const candCover = (n: number): InboxItem => base({ item_id: `cand:c${n}`, gen: `g${n}`, type: "candidate", summary: "找到一张封面，是这条的吗",
   actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: `c${n}`, sha256: `s${n}` } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: `c${n}`, sha256: `s${n}` } }],
-  detail: { fact_id: `c${n}`, kind: "cover", name: `${n}.png`, reason: "放在 AutoCrew 不会自动收的文件夹里，要你确认", preview: true } });
+  detail: { fact_id: `c${n}`, kind: "cover", name: `${n}.png`, reason: "放在导演椅不会自动收的文件夹里，要你确认", preview: true } });
 describe("合成的行（2a 真实数据验收）", () => {
   it("同一条稿的 3 张候选封面 = 一行「找到 3 张封面，看看是不是这条的」；面板里逐张有图、对 / 不是，另有「都不是」", async () => {
     await mountInbox([candCover(1), candCover(2), candCover(3)]);
@@ -366,11 +366,11 @@ describe("卡片：以前的封面文件", () => {
 });
 
 describe("件数 = 看到的行数", () => {
-  it("一段成片候选 + 3 张候选封面 = 2 行：列表头「2 件」，标签页「(2) AutoCrew」", async () => {
+  it("一段成片候选 + 3 张候选封面 = 2 行：列表头「2 件」，标签页「(2) 导演椅」", async () => {
     await mountInbox([ITEMS[3], candCover(1), candCover(2), candCover(3)]);
     expect(el.querySelectorAll(".ri-row").length).toBe(2);
     expect(el.querySelector(".ri-count")!.textContent).toBe("2 件");
-    expect(document.title).toBe("(2) AutoCrew");
+    expect(document.title).toBe("(2) 导演椅");
   });
 });
 
@@ -393,13 +393,13 @@ describe("两条稿同一轮的成片、封面（整分支审 2）", () => {
 
 describe("列表读不成（整分支审 3 P2）", () => {
   const poll = async () => { const { POLL_MS } = await import("./ReviewInbox"); await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); }); };
-  it("连不上：旧列表留着，列表头写「连不上 AutoCrew，列表停在 HH:MM」，标题「(N?) AutoCrew」；主按钮明说没记上；下一次读成就恢复", async () => {
+  it("连不上：旧列表留着，列表头写「连不上导演椅，列表停在 HH:MM」，标题「(N?) 导演椅」；主按钮明说没记上；下一次读成就恢复", async () => {
     await mountInbox([ITEMS[6]]);
-    failWith = "连不上 AutoCrew 服务：fetch failed";
+    failWith = "连不上导演椅服务：fetch failed";
     await poll();
     expect(el.querySelectorAll(".ri-row").length).toBe(1);
-    expect(el.querySelector(".ri-warn")!.textContent).toMatch(/^连不上 AutoCrew，列表停在 \d\d:\d\d$/);
-    expect(document.title).toBe("(1?) AutoCrew");
+    expect(el.querySelector(".ri-warn")!.textContent).toMatch(/^连不上导演椅，列表停在 \d\d:\d\d$/);
+    expect(document.title).toBe("(1?) 导演椅");
     await openRow("发之前再看一眼（抖音）");
     await click(btn("没问题"));
     expect(decided).toEqual([]);
@@ -407,7 +407,7 @@ describe("列表读不成（整分支审 3 P2）", () => {
     failWith = null;
     await poll();
     expect(el.querySelector(".ri-warn")).toBeNull();
-    expect(document.title).toBe("(1) AutoCrew");
+    expect(document.title).toBe("(1) 导演椅");
   }, 15_000);
   it("登录过期：列表头写「登录过期，刷新页面」", async () => {
     await mountInbox([ITEMS[6]]);
@@ -433,7 +433,7 @@ describe("整分支审 5", () => {
       const other = { ...ITEMS[1], item_id: "cut:content-9-z:r1", content_id: "content-9-z" };
       inbox = [ITEMS[0], other];
       await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
-      expect(document.title).toBe("(2) AutoCrew");
+      expect(document.title).toBe("(2) 导演椅");
       expect(created).toEqual([ITEMS[1].summary]);
     } finally { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); }
   }, 10_000);

@@ -19,7 +19,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<LibReply<T>> {
     if (body.ok === false) return { ok: false, error: body.error ?? "没成功，原因没写" };
     return { ok: true, data: body.data as T };
   } catch (e) {
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 

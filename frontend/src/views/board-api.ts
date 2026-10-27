@@ -18,7 +18,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   } catch (e) {
     // 会话交换失败（地址栏 token 与 cookie 都无效）不是「连不上」：原样给怎么拿新链接
     if (e instanceof Error && e.message === SESSION_EXPIRED) return { ok: false, error: SESSION_EXPIRED };
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
 
@@ -59,7 +59,7 @@ export async function enableOntology(exclude: string[] = []): Promise<{ ok: bool
     if (!r.ok || !body) return { ok: false, error: r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`, failures: [] };
     return { ok: body.ok === true, ...(body.error ? { error: body.error } : {}), failures: body.failures ?? [] };
   } catch (e) {
-    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}`, failures: [] };
+    return { ok: false, error: `连不上导演椅服务：${e instanceof Error ? e.message : String(e)}`, failures: [] };
   }
 }
 

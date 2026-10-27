@@ -22,9 +22,9 @@ export function UpdatingOverlay(props: { stalled: boolean; log?: string; logDir?
   const where = props.log || props.logDir;
   return <div className="upd-overlay" role="alertdialog" aria-label="正在更新">
     <div className="upd-overlay-card">
-      <h3>AutoCrew 正在更新，大约 1 分钟</h3>
+      <h3>导演椅正在更新，大约 1 分钟</h3>
       <p className="muted">{props.stalled
-        ? "服务已经 5 分钟连不上了。可以在终端运行 npm start：更新还在跑的话它会拒绝，不会打断更新；更新已经结束的话它会把 AutoCrew 起来，这一页随后显示更新结果和下一步。"
+        ? "服务已经 5 分钟连不上了。可以在终端运行 npm start：更新还在跑的话它会拒绝，不会打断更新；更新已经结束的话它会把导演椅起来，这一页随后显示更新结果和下一步。"
         : "更新完会自动刷新这一页，不用动。网慢时装依赖要多等几分钟。"}</p>
       {where && <p className="muted">{props.log ? "完整记录" : "更新记录在这个文件夹里"}：{where}</p>}
     </div>
@@ -74,7 +74,7 @@ export function UpdateBanner(props: { initial?: UpdateView | null; reload?: () =
       {!confirming && <Button variant="primary" size="sm" onClick={() => setConfirming(true)}>更新</Button>}
     </div>
     {confirming && <div className="upd-confirm">
-      <span>更新时 AutoCrew 会重启，大约 1 分钟，这期间页面用不了；出问题会自动退回现在的版本。</span>
+      <span>更新时导演椅会重启，大约 1 分钟，这期间页面用不了；出问题会自动退回现在的版本。</span>
       <Button variant="primary" size="sm" onClick={() => void go()}>开始更新</Button>
       <Button variant="quiet" size="sm" onClick={() => setConfirming(false)}>先不</Button>
     </div>}

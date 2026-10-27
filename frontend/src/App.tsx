@@ -130,7 +130,7 @@ export function App() {
             if ((e.key === "Enter" || e.key === " ") && !e.nativeEvent.isComposing) setRoute({ view: "board" });
           }}
         >
-          AutoCrew
+          导演椅
         </span>
         <nav className="topnav">
           {PRIMARY_NAV.map((n) => (
