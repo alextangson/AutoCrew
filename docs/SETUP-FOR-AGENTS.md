@@ -6,7 +6,7 @@
 规矩：
 - 跟用户说话用大白话，不说 MCP、token、端口这类词；必须说时顺手解释一句。
 - 系统级的东西（Node、git、Homebrew）不要自己装，先问用户。
-- 已经在跑的 AutoCrew 不要重启（会打断正在写的稿）；要重启先按第 3 步查有没有活在跑。
+- 已经在跑的导演椅不要重启（会打断正在写的稿）；要重启先按第 3 步查有没有活在跑。
 - `autocrew` 指 `node <仓库目录>/bin/autocrew.mjs`；下面命令都在仓库目录里跑。
 
 ## 0. 先看电脑上有没有要用的东西
@@ -18,15 +18,15 @@
 | npm | `npm -v` | 跟 Node 一起装的 |
 
 失败时对用户说：
-- **没有 Node 或低于 22.19**：「AutoCrew 需要 Node 22.19 以上，你电脑上是 X（或没有）。要我帮你装吗？用 Homebrew 的话是 `brew install node@22`，或者去 nodejs.org 下载安装包。」等用户同意再装。
+- **没有 Node 或低于 22.19**：「导演椅需要 Node 22.19 以上，你电脑上是 X（或没有）。要我帮你装吗？用 Homebrew 的话是 `brew install node@22`，或者去 nodejs.org 下载安装包。」等用户同意再装。
 - **没有 git**：「需要先装 git。在终端运行 `xcode-select --install`，按弹窗装好（几分钟），装好告诉我。」macOS 上这会弹系统窗口，必须用户自己点。
 - **npm 没有**：Node 没装好，按上面重装 Node。
 
 ## 1. 下载
 
 ```bash
-git clone https://github.com/alextangson/AutoCrew.git
-cd AutoCrew
+git clone https://github.com/alextangson/directors-chair.git
+cd directors-chair
 ```
 
 确认：目录里有 `package.json`。已经下过就 `cd` 进去，`git pull` 一下，不要重新 clone。
@@ -53,9 +53,9 @@ npm ci
 curl -s http://127.0.0.1:4317/__autocrew/launch
 ```
 
-- 返回 `{"ok":true,…}`：**已经有 AutoCrew 在跑，直接用它，不要重启、不要再 start。**
-- 连不上：`npm start -- --no-open`（第一次会构建前端，要一两分钟）。确认：输出里有「AutoCrew 已启动」。
-- `npm start` 说端口被别的程序占着：告诉用户「4317 这个位置被别的程序占了」，问他是不是之前开过 AutoCrew；不要自己去杀进程。
+- 返回 `{"ok":true,…}`：**已经有导演椅在跑，直接用它，不要重启、不要再 start。**
+- 连不上：`npm start -- --no-open`（第一次会构建前端，要一两分钟）。确认：输出里有「导演椅已启动」。
+- `npm start` 说端口被别的程序占着：告诉用户「4317 这个位置被别的程序占了」，问他是不是之前开过导演椅；不要自己去杀进程。
 
 只有在必须重启时（比如第 4 步说搬旧稿要重启）才重启，并且先查有没有活在跑：
 
@@ -76,7 +76,7 @@ node bin/autocrew.mjs init --host claude --library ~/AutoCrew资料库
 `--host` 填你自己：Claude Code → `claude`，Codex → `codex`，WorkBuddy → `workbuddy`。可以重复跑：做过的步骤会说「跳过」。
 
 看退出码和输出：
-- **0**：两行都是 ✓。告诉用户「接上了，资料库建在 X」。如果资料库那行后面有「注意：……重启后……」，把这句也照实告诉用户。接上之后你要**新开一个会话**才能用到 AutoCrew 的工具（Claude Code / Codex 都是）；提醒用户这一点，或者让他在新会话里继续。
+- **0**：两行都是 ✓。告诉用户「接上了，资料库建在 X」。如果资料库那行后面有「注意：……重启后……」，把这句也照实告诉用户。接上之后你要**新开一个会话**才能用到导演椅的工具（Claude Code / Codex 都是）；提醒用户这一点，或者让他在新会话里继续。
 - **1**：某一步 ✕，下面有「原因」和「下一步」。把原因用大白话告诉用户，照「下一步」做；不要往后走。常见的：
   - 没装 / 没登录这个 AI：照原因让用户登录（如 `codex login`），再重跑。
   - 路径里已经有别的东西：换一个空文件夹，或用它建议的子文件夹。
@@ -108,10 +108,10 @@ node bin/autocrew.mjs call onboarding:init --payload '{"industry":"…","platfor
 
 先确认你能写稿：`node bin/autocrew.mjs connect --list --json` 里你那一项 `connected: true` 且 `canWrite: true`。
 
-1. **建示例选题**：用画像里的方向想一个具体的题，用 AutoCrew 的选题工具建，**一定带 `example: true`**：
+1. **建示例选题**：用画像里的方向想一个具体的题，用导演椅的选题工具建，**一定带 `example: true`**：
    `autocrew_topic`，`action: "create"`，`title`、`description`、`tags`、`example: true`。
    示例稿不进数据回流、不拿来学用户的写法，用户随时能在看板卡片上点「删掉示例」。
-2. **写稿**：按 AutoCrew 工具说明里规定的写稿路径走（抖音口播走 `autocrew_draft`：`start` 带上一步的 `topic_id` → 调研并核引文 → 让用户在对话里挑立意 → `save` → `prepare_final`；其他平台走选题会流程）。每一步照返回里的 `next_action` 做，不要绕开。
+2. **写稿**：按导演椅工具说明里规定的写稿路径走（抖音口播走 `autocrew_draft`：`start` 带上一步的 `topic_id` → 调研并核引文 → 让用户在对话里挑立意 → `save` → `prepare_final`；其他平台走选题会流程）。每一步照返回里的 `next_action` 做，不要绕开。
 3. **定稿**：`prepare_final` 会给一个工作台链接，让用户点「定了」。点了以后这条稿就进了看板的「待录制」。**到这里就停**，不要往下剪辑、发布。
 4. 告诉用户下一步：「去拍这条的原片，拍好把视频文件发给我（或拖进工作台收件箱），我帮你挂到这条稿上。」
 

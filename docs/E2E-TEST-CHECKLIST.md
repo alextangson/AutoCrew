@@ -1,12 +1,12 @@
-# AutoCrew 端到端测试清单
+# 导演椅端到端测试清单
 
 ## 环境准备
 
 ```bash
 # 1. MacBook 上 clone + link 安装
 cd ~/projects
-git clone https://github.com/alextangson/AutoCrew.git
-cd AutoCrew
+git clone https://github.com/alextangson/directors-chair.git
+cd directors-chair
 npm install
 openclaw plugins install --link .
 
@@ -14,7 +14,7 @@ openclaw plugins install --link .
 # 方式 A：环境变量
 export GEMINI_API_KEY="你的key"
 # 方式 B：OpenClaw 插件配置（推荐）
-# 在 OpenClaw 设置里找到 AutoCrew 插件，填入 gemini_api_key
+# 在 OpenClaw 设置里找到导演椅插件，填入 gemini_api_key
 
 # 3. 验证安装
 openclaw crew status
